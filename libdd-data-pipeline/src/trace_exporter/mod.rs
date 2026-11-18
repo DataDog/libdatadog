@@ -1417,7 +1417,7 @@ impl<
         // Without an agent to normalize the traces, normalize them before stats, filtering and
         // telemetry read them, as the agent would.
         if self.agentless_config.is_some() {
-            libdd_data_pipeline_core::normalize_traces_v1(&mut traces);
+            libdd_data_pipeline_core::normalize_traces_v1(&mut traces, &self.metadata.language);
         }
 
         // Process stats computation and drop non-sampled (p0) chunks.

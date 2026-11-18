@@ -170,7 +170,7 @@ fn run_pb(input: &Input) -> Option<Output> {
 fn run_v1(input: &Input) -> Option<Output> {
     let before = now();
     let mut chunk = v1_chunk(vec![v1_span(input)]);
-    generic::normalize_trace(&mut chunk).ok()?;
+    generic::normalize_trace(&mut chunk, "").ok()?;
     Some(v1_output(input, &chunk.spans[0], before))
 }
 
@@ -367,7 +367,7 @@ fn normalizers_reject_zero_span_id() {
     assert_eq!(run_v1(&input), None);
     let mut chunk = v1_chunk(vec![v1_span(&input)]);
     assert_eq!(
-        generic::normalize_trace(&mut chunk),
+        generic::normalize_trace(&mut chunk, ""),
         Err(NormalizeError::SpanIdZero)
     );
 }
@@ -538,16 +538,111 @@ fn normalizers_agree_on_chunks() {
 fn generic_rejects_empty_chunk() {
     let mut chunk = v1_chunk(vec![]);
     assert_eq!(
-        generic::normalize_trace(&mut chunk),
+        generic::normalize_trace(&mut chunk, ""),
         Err(NormalizeError::EmptyTrace)
     );
 }
 
+/// The agent's `normalizeTraceChunkV1` never checks the trace id value, unlike its v0.4 one.
 #[test]
 fn generic_accepts_zero_trace_id() {
     let mut chunk = v1_chunk(vec![v1_span(&Input::default())]);
     chunk.trace_id = [0; 16];
-    assert_eq!(generic::normalize_trace(&mut chunk), Ok(()));
+    assert_eq!(generic::normalize_trace(&mut chunk, ""), Ok(()));
+}
+
+fn run_generic(span: v1::Span<BytesData>, lang: &str) -> v1::Span<BytesData> {
+    let mut chunk = v1_chunk(vec![span]);
+    generic::normalize_trace(&mut chunk, lang).unwrap();
+    chunk.spans.remove(0)
+}
+
+fn str_attribute(
+    attributes: &libdd_trace_utils::span::vec_map::VecMap<BytesString, AttributeValue<BytesData>>,
+    key: &str,
+) -> Option<String> {
+    attributes
+        .get(key)
+        .and_then(|v| v.as_str())
+        .map(str::to_owned)
+}
+
+#[test]
+fn generic_falls_back_to_lang_service() {
+    let empty = || {
+        v1_span(&Input {
+            service: String::new(),
+            ..Default::default()
+        })
+    };
+    assert_eq!(
+        run_generic(empty(), "php").service.as_str(),
+        "unnamed-php-service"
+    );
+    assert_eq!(run_generic(empty(), "").service.as_str(), "unnamed-service");
+    // A set service is normalized, not replaced.
+    let span = v1_span(&Input {
+        service: "My Service".into(),
+        ..Default::default()
+    });
+    assert_eq!(run_generic(span, "php").service.as_str(), "my_service");
+}
+
+#[test]
+fn generic_normalizes_peer_and_base_service() {
+    for key in ["peer.service", "_dd.base_service"] {
+        let cases = [
+            ("Other Service", Some("other_service")),
+            ("valid-svc", Some("valid-svc")),
+            // Empty is left alone: no unnamed fallback for tags.
+            ("", Some("")),
+        ];
+        for (value, expected) in cases {
+            let mut span = v1_span(&Input::default());
+            span.attributes
+                .insert(key.into(), AttributeValue::String(value.into()));
+            let span = run_generic(span, "php");
+            assert_eq!(
+                str_attribute(&span.attributes, key).as_deref(),
+                expected,
+                "{key}={value:?}"
+            );
+        }
+        // Truncated to the service length limit.
+        let mut span = v1_span(&Input::default());
+        span.attributes
+            .insert(key.into(), AttributeValue::String("a".repeat(150).into()));
+        let span = run_generic(span, "");
+        assert_eq!(str_attribute(&span.attributes, key), Some("a".repeat(100)));
+    }
+}
+
+#[test]
+fn generic_normalizes_span_link_names() {
+    let link = |name: Option<&'static str>| {
+        let mut link = v1::SpanLink::<BytesData>::default();
+        if let Some(name) = name {
+            link.attributes
+                .insert("link.name".into(), AttributeValue::String(name.into()));
+        }
+        link
+    };
+    let mut span = v1_span(&Input::default());
+    span.span_links = vec![link(Some("")), link(Some("bad-name")), link(None)].into();
+    let span = run_generic(span, "");
+    let names: Vec<_> = span
+        .span_links
+        .iter()
+        .map(|l| str_attribute(&l.attributes, "link.name"))
+        .collect();
+    assert_eq!(
+        names,
+        [
+            Some("unnamed_operation".to_owned()),
+            Some("bad_name".to_owned()),
+            None
+        ]
+    );
 }
 
 #[test]
@@ -556,7 +651,7 @@ fn generic_resets_parent_id_equal_to_span_id() {
         parent_id: SPAN_ID,
         ..Default::default()
     })]);
-    generic::normalize_trace(&mut chunk).unwrap();
+    generic::normalize_trace(&mut chunk, "").unwrap();
     assert_eq!(chunk.spans[0].parent_id, 0);
 }
 
@@ -574,7 +669,7 @@ fn generic_validates_non_string_status_codes() {
         span.attributes
             .insert("http.status_code".into(), value.clone());
         let mut chunk = v1_chunk(vec![span]);
-        generic::normalize_trace(&mut chunk).unwrap();
+        generic::normalize_trace(&mut chunk, "").unwrap();
         assert_eq!(
             chunk.spans[0].attributes.contains_key("http.status_code"),
             valid,

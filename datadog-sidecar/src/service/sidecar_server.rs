@@ -20,7 +20,7 @@ use libdd_ipc::SeqpacketConn;
 use libdd_ipc::platform::{FileBackedHandle, ShmHandle};
 use libdd_telemetry::metrics::MetricContext;
 use libdd_telemetry::worker::{LifecycleAction, TelemetryActions, TelemetryWorkerStats};
-use libdd_trace_normalization::normalizer_v1;
+use libdd_trace_normalization::generic as normalizer;
 use libdd_trace_utils::msgpack_encoder;
 use libdd_trace_utils::msgpack_encoder::v04::V1DowngradeOptions;
 use libdd_trace_utils::send_with_retry::{RetryBackoffType, RetryStrategy};
@@ -715,7 +715,7 @@ impl SidecarServer {
                 // Agentless payloads skip the agent, so normalize them as it would have.
                 if supports_v1 && v1_target.api_key.is_some() {
                     tracer_payload.chunks.retain_mut(|chunk| {
-                        normalizer_v1::normalize_chunk(chunk, lang.borrow())
+                        normalizer::normalize_trace(chunk, lang.borrow())
                             .inspect_err(|e| warn!("Dropping agentless V1 trace chunk: {e}"))
                             .is_ok()
                     });

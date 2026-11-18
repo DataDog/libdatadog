@@ -294,7 +294,7 @@ fn normalize_metric_name(name: &mut String) {
 fn normalized_with<'b>(
     value: &str,
     buf: &'b mut String,
-    normalize: fn(&mut String),
+    normalize: impl FnOnce(&mut String),
 ) -> Option<&'b str> {
     buf.clear();
     buf.push_str(value);
@@ -302,9 +302,22 @@ fn normalized_with<'b>(
     (buf.as_str() != value).then_some(buf.as_str())
 }
 
-/// [`normalize_service`] through a scratch buffer, see [`normalized_with`].
-pub(crate) fn normalized_service<'b>(svc: &str, buf: &'b mut String) -> Option<&'b str> {
-    normalized_with(svc, buf, normalize_service)
+/// [`normalize_service_with_lang`] through a scratch buffer, see [`normalized_with`].
+pub(crate) fn normalized_service<'b>(
+    svc: &str,
+    lang: &str,
+    buf: &'b mut String,
+) -> Option<&'b str> {
+    normalized_with(svc, buf, |s| normalize_service_with_lang(s, lang))
+}
+
+/// Normalizes a service name held in a tag (`peer.service`, `_dd.base_service`): truncated to
+/// [`MAX_SERVICE_LEN`] then normalized as a tag, with no fallback, through a scratch buffer.
+pub(crate) fn normalized_service_tag<'b>(svc: &str, buf: &'b mut String) -> Option<&'b str> {
+    normalized_with(svc, buf, |s| {
+        truncate_utf8(s, MAX_SERVICE_LEN);
+        normalize_tag(s);
+    })
 }
 
 /// [`normalize_name`] through a scratch buffer, see [`normalized_with`].
@@ -339,12 +352,24 @@ mod tests {
     #[test]
     fn test_normalized_returns_only_changes() {
         let mut buf = String::new();
-        assert_eq!(normalized_service("good", &mut buf), None);
+        assert_eq!(normalized_service("good", "", &mut buf), None);
         assert_eq!(
-            normalized_service("Bad&Service", &mut buf),
+            normalized_service("Bad&Service", "", &mut buf),
             Some("bad_service")
         );
-        assert_eq!(normalized_service("", &mut buf), Some(DEFAULT_SERVICE_NAME));
+        assert_eq!(
+            normalized_service("", "", &mut buf),
+            Some(DEFAULT_SERVICE_NAME)
+        );
+        assert_eq!(
+            normalized_service("", "php", &mut buf),
+            Some("unnamed-php-service")
+        );
+        assert_eq!(normalized_service_tag("good", &mut buf), None);
+        assert_eq!(
+            normalized_service_tag("Other Svc", &mut buf),
+            Some("other_svc")
+        );
         assert_eq!(normalized_name("good.name", &mut buf), None);
         assert_eq!(normalized_name("bad-name", &mut buf), Some("bad_name"));
         assert_eq!(normalized_span_type("web", &mut buf), None);

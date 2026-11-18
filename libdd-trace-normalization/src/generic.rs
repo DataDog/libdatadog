@@ -7,15 +7,23 @@
 //! `pkg/trace/agent/normalizer.go`). The field rules are shared with the protobuf
 //! [`normalizer`] through [`normalize_utils`]. Where the two differ, it is
 //! because the agent's v1 normalizer differs from its v0.4 one:
-//! - spans are not rejected for a zero trace id, and there is no foreign span check: the trace id
-//!   belongs to the chunk;
+//! - neither spans nor chunks are rejected for a zero trace id, and there is no foreign span check:
+//!   the trace id belongs to the chunk;
 //! - the parent id is reset when it equals the span id, whatever the trace id;
-//! - `http.status_code` is validated whatever its type, not only as a string.
+//! - `http.status_code` is validated whatever its type, not only as a string;
+//! - an empty service falls back to `unnamed-<lang>-service`, `peer.service` and `_dd.base_service`
+//!   are normalized like services, and span links' `link.name` like names.
 
 use crate::{normalize_utils, normalizer};
-use libdd_trace_model::{Attributes, ORIGIN_KEY, SAMPLING_PRIORITY_KEY, SpanMut, TraceChunkMut};
+use libdd_trace_model::{
+    AttributeValue, Attributes, AttributesMut, ORIGIN_KEY, SAMPLING_PRIORITY_KEY, SpanMut,
+    TraceChunkMut, TraceText,
+};
 
 const HTTP_STATUS_CODE_KEY: &str = "http.status_code";
+const PEER_SERVICE_KEY: &str = "peer.service";
+const BASE_SERVICE_KEY: &str = "_dd.base_service";
+const LINK_NAME_KEY: &str = "link.name";
 
 /// The reason a trace chunk could not be normalized.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
@@ -31,32 +39,47 @@ pub enum NormalizeError {
     RootSpanIndexOutOfBounds(usize),
 }
 
-/// Normalizes every span of `chunk` in place.
+/// Normalizes every span of `chunk` in place. `lang` is the tracer language, naming the fallback
+/// service `unnamed-<lang>-service` (`unnamed-service` if empty).
 ///
 /// Returns an error if the chunk can't be repaired, in which case it must be dropped (some of its
 /// spans may already have been modified).
-pub fn normalize_trace<C: TraceChunkMut>(chunk: &mut C) -> Result<(), NormalizeError> {
+pub fn normalize_trace<C: TraceChunkMut>(chunk: &mut C, lang: &str) -> Result<(), NormalizeError> {
     if chunk.spans().next().is_none() {
         return Err(NormalizeError::EmptyTrace);
     }
+    // A zero trace id is accepted: the agent's `normalizeTraceChunkV1`
+    // (pkg/trace/agent/normalizer.go, datadog-agent 839cfc505) never checks its value, only a zero
+    // span id drops the chunk.
     // Shared by every field of every span, so that values which are already normal cost no
     // allocation.
     let mut buf = String::new();
     for span in chunk.spans_mut() {
-        normalize_span(span, &mut buf)?;
+        normalize_span(span, lang, &mut buf)?;
     }
     Ok(())
 }
 
-fn normalize_span<S: SpanMut>(span: &mut S, buf: &mut String) -> Result<(), NormalizeError> {
+fn normalize_span<S: SpanMut>(
+    span: &mut S,
+    lang: &str,
+    buf: &mut String,
+) -> Result<(), NormalizeError> {
     if span.span_id() == 0 {
         return Err(NormalizeError::SpanIdZero);
     }
 
     // TODO: component2name, as in the protobuf normalizer.
 
-    if let Some(service) = normalize_utils::normalized_service(span.service(), buf) {
+    if let Some(service) = normalize_utils::normalized_service(span.service(), lang, buf) {
         span.set_service(service.to_owned().into());
+    }
+    for key in [PEER_SERVICE_KEY, BASE_SERVICE_KEY] {
+        if let Some(value) = span.attribute_str(key).filter(|v| !v.is_empty())
+            && let Some(value) = normalize_utils::normalized_service_tag(value, buf)
+        {
+            set_str_attribute(span, key, value.to_owned());
+        }
     }
     if let Some(name) = normalize_utils::normalized_name(span.name(), buf) {
         span.set_name(name.to_owned().into());
@@ -87,7 +110,22 @@ fn normalize_span<S: SpanMut>(span: &mut S, buf: &mut String) -> Result<(), Norm
     if span.has_attribute(HTTP_STATUS_CODE_KEY) && !has_valid_http_status_code(span) {
         span.remove_attribute(HTTP_STATUS_CODE_KEY);
     }
+
+    for link in span.span_links_mut() {
+        if let Some(name) = link.attribute_str(LINK_NAME_KEY)
+            && let Some(name) = normalize_utils::normalized_name(name, buf)
+        {
+            set_str_attribute(link, LINK_NAME_KEY, name.to_owned());
+        }
+    }
     Ok(())
+}
+
+fn set_str_attribute<A: AttributesMut>(attrs: &mut A, key: &'static str, value: String) {
+    attrs.set_attribute(
+        A::Text::from_static(key),
+        AttributeValue::String(value.into()),
+    );
 }
 
 /// The agent stringifies a non-string `http.status_code` before validating it: an integer, or a

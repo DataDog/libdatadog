@@ -118,9 +118,11 @@ where
 /// Call it once before anything reads the spans (stats, top-level computation, trace filtering),
 /// as the agent normalizes first: the v1 agentless senders don't normalize. It isn't idempotent
 /// for every input (e.g. a reset start can make a large duration overflow on a second pass).
-pub fn normalize_traces_v1<T: TraceData>(traces: &mut PooledTraceChunks<'_, T>) {
+///
+/// `lang` is the tracer language, used for the `unnamed-<lang>-service` fallback service.
+pub fn normalize_traces_v1<T: TraceData>(traces: &mut PooledTraceChunks<'_, T>, lang: &str) {
     traces.retain_mut(|chunk| {
-        if let Err(error) = normalizer::normalize_trace(chunk) {
+        if let Err(error) = normalizer::normalize_trace(chunk, lang) {
             debug!(%error, "Dropping invalid trace");
             return false;
         }
@@ -466,7 +468,7 @@ mod tests {
         };
         let mut traces =
             PooledTraceChunks::unpooled(vec![chunk(2), chunk(0), TraceChunk::default()]);
-        normalize_traces_v1(&mut traces);
+        normalize_traces_v1(&mut traces, "");
         let capabilities = TestCapabilities::default();
         let result = futures::executor::block_on(send_agentless_traces_v1(
             &capabilities,
