@@ -124,8 +124,8 @@ fn headers_returns_the_same_slice_on_every_call() {
     });
     let response = client.send(&Req::get("/h")).expect("send");
 
-    let first = unsafe { ddog_http_response_headers(response.0) };
-    let second = unsafe { ddog_http_response_headers(response.0) };
+    let first = unsafe { ddog_http_response_headers(response.0.as_ref()) };
+    let second = unsafe { ddog_http_response_headers(response.0.as_ref()) };
 
     assert!(!first.is_empty());
     assert_eq!(first.as_raw_parts(), second.as_raw_parts());

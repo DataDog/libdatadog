@@ -14,7 +14,7 @@ use libdd_http_client_ffi::*;
 use libdd_shared_runtime::ForkSafeRuntime;
 use std::ffi::CStr;
 use std::net::{SocketAddr, TcpListener};
-use std::ptr::{null, null_mut};
+use std::ptr::{NonNull, null, null_mut};
 use std::sync::Arc;
 
 #[derive(Debug)]
@@ -104,10 +104,12 @@ impl Cfg {
             max_retries: self.max_retries,
             retry_initial_delay_ms: self.retry_initial_delay_ms,
         };
-        let mut out: *mut HttpClient = null_mut();
-        let error = unsafe { ddog_http_client_new(&config, runtime, &mut out) };
+        let mut out: Option<Box<HttpClient>> = None;
+        let error = unsafe {
+            ddog_http_client_new(Some(&config), runtime, Some(NonNull::from(&mut out).cast()))
+        };
         take_error(error)?;
-        Ok(Client(out))
+        Ok(Client(out.map_or(null_mut(), Box::into_raw)))
     }
 }
 
@@ -123,13 +125,18 @@ impl Client {
     }
 
     pub fn send_with(&self, request: &Req, cancel: Option<&Token>) -> Result<Response, FfiError> {
-        let cancel_ptr: *const HttpCancellationToken = cancel.map_or(null(), |t| t.0.cast_const());
-        let mut out: *mut HttpResponse = null_mut();
+        let cancel_ref = cancel.and_then(|t| unsafe { t.0.as_ref() });
+        let mut out: Option<Box<HttpResponse>> = None;
         let error = request.with_ffi(|request| unsafe {
-            ddog_http_client_send(self.0, request, cancel_ptr, &mut out)
+            ddog_http_client_send(
+                self.0.as_ref(),
+                Some(request),
+                cancel_ref,
+                Some(NonNull::from(&mut out).cast()),
+            )
         });
         take_error(error)?;
-        Ok(Response(out))
+        Ok(Response(out.map_or(null_mut(), Box::into_raw)))
     }
 }
 
@@ -259,17 +266,17 @@ pub struct Response(pub *mut HttpResponse);
 
 impl Response {
     pub fn status(&self) -> u16 {
-        unsafe { ddog_http_response_status(self.0) }
+        unsafe { ddog_http_response_status(self.0.as_ref()) }
     }
 
     pub fn body(&self) -> Vec<u8> {
-        unsafe { ddog_http_response_body(self.0) }
+        unsafe { ddog_http_response_body(self.0.as_ref()) }
             .as_slice()
             .to_vec()
     }
 
     pub fn headers(&self) -> Vec<(String, String)> {
-        unsafe { ddog_http_response_headers(self.0) }
+        unsafe { ddog_http_response_headers(self.0.as_ref()) }
             .as_slice()
             .iter()
             .map(|header| {
@@ -283,7 +290,8 @@ impl Response {
 
     /// `None` when the API returns an empty slice.
     pub fn header(&self, name: &str) -> Option<String> {
-        let value = unsafe { ddog_http_response_header_get(self.0, CharSlice::from(name)) };
+        let value =
+            unsafe { ddog_http_response_header_get(self.0.as_ref(), CharSlice::from(name)) };
         let value = String::from_utf8_lossy(value.as_bytes()).into_owned();
         (!value.is_empty()).then_some(value)
     }
@@ -314,7 +322,7 @@ impl Token {
     }
 
     pub fn cancel(&self) -> bool {
-        unsafe { ddog_http_cancel_token_cancel(self.0) }
+        unsafe { ddog_http_cancel_token_cancel(self.0.as_ref()) }
     }
 }
 

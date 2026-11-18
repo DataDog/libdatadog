@@ -26,28 +26,6 @@ pub enum HttpMethod {
     Options,
 }
 
-/// Read by [`crate::ddog_http_client_new`] and not retained. `base_url` and `timeout_ms` are
-/// required; for every other field, zero or empty selects the default.
-#[repr(C)]
-#[derive(Copy, Clone, Debug)]
-pub struct HttpClientConfig<'a> {
-    /// Relative request URLs are appended to it, e.g. `http://localhost:8126`. The host is ignored
-    /// when `unix_socket_path` is set.
-    pub base_url: CharSlice<'a>,
-    /// Default timeout of a request.
-    pub timeout_ms: u64,
-    /// Connect through this Unix socket instead of TCP (Unix only).
-    pub unix_socket_path: CharSlice<'a>,
-    /// Added to every request. A request header of the same name (case-insensitive) replaces it.
-    pub default_headers: Slice<'a, HttpHeader<'a>>,
-    /// For clients used for periodic flushes: pooled connections expire quickly.
-    pub periodic: bool,
-    /// Retries of a failed send (never of an HTTP status), with backoff. `0` disables them.
-    pub max_retries: u32,
-    /// Delay before the first retry.
-    pub retry_initial_delay_ms: u64,
-}
-
 #[repr(C)]
 #[derive(Copy, Clone, Debug)]
 pub struct HttpMultipartPart<'a> {

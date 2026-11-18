@@ -42,10 +42,10 @@ pub extern "C" fn ddog_http_cancel_token_new() -> Option<Box<HttpCancellationTok
 /// `token` must be a live token pointer.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ddog_http_cancel_token_cancel(
-    token: *const HttpCancellationToken,
+    token: Option<&HttpCancellationToken>,
 ) -> bool {
     catch_panic!(
-        match unsafe { token.as_ref() } {
+        match token {
             Some(token) => {
                 let first = !token.claimed.swap(true, Ordering::AcqRel);
                 token.token.cancel();
@@ -75,9 +75,9 @@ mod tests {
     fn cancelling_is_idempotent_and_reports_only_the_first_call() {
         let token = ddog_http_cancel_token_new().expect("a token");
 
-        assert!(unsafe { ddog_http_cancel_token_cancel(&*token) });
-        assert!(!unsafe { ddog_http_cancel_token_cancel(&*token) });
-        assert!(!unsafe { ddog_http_cancel_token_cancel(&*token) });
+        assert!(unsafe { ddog_http_cancel_token_cancel(Some(&token)) });
+        assert!(!unsafe { ddog_http_cancel_token_cancel(Some(&token)) });
+        assert!(!unsafe { ddog_http_cancel_token_cancel(Some(&token)) });
     }
 
     #[test]
@@ -91,7 +91,7 @@ mod tests {
                     .map(|_| {
                         scope.spawn(|| {
                             barrier.wait();
-                            unsafe { ddog_http_cancel_token_cancel(&*token) }
+                            unsafe { ddog_http_cancel_token_cancel(Some(&token)) }
                         })
                     })
                     .collect();

@@ -59,7 +59,6 @@ fn a_refused_connection_is_connection_failed() {
 
 #[test]
 #[cfg_attr(miri, ignore)]
-#[cfg_attr(miri, ignore)]
 fn a_silent_server_times_out_using_the_client_timeout() {
     let server = slow_server();
     let client = Cfg::new(server.base_url())

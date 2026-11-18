@@ -34,9 +34,9 @@ fn str_slice(s: &str) -> CharSlice<'static> {
 ///
 /// `response` must be a live response pointer.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn ddog_http_response_status(response: *const HttpResponse) -> u16 {
+pub unsafe extern "C" fn ddog_http_response_status(response: Option<&HttpResponse>) -> u16 {
     catch_panic!(
-        unsafe { response.as_ref() }.map_or(0, |response| response.inner.status_code()),
+        response.map_or(0, |response| response.inner.status_code()),
         0
     )
 }
@@ -48,10 +48,10 @@ pub unsafe extern "C" fn ddog_http_response_status(response: *const HttpResponse
 /// `response` must be a live response pointer.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ddog_http_response_body(
-    response: *const HttpResponse,
+    response: Option<&HttpResponse>,
 ) -> ByteSlice<'static> {
     catch_panic!(
-        unsafe { response.as_ref() }.map_or(ByteSlice::default(), |response| {
+        response.map_or(ByteSlice::default(), |response| {
             let body = response.inner.body();
             unsafe { ByteSlice::from_raw_parts(body.as_ptr(), body.len()) }
         }),
@@ -67,10 +67,10 @@ pub unsafe extern "C" fn ddog_http_response_body(
 /// `response` must be a live response pointer.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ddog_http_response_headers(
-    response: *const HttpResponse,
+    response: Option<&HttpResponse>,
 ) -> Slice<'static, HttpHeader<'static>> {
     catch_panic!(
-        unsafe { response.as_ref() }.map_or(Slice::default(), |response| {
+        response.map_or(Slice::default(), |response| {
             let headers = response.headers.get_or_init(|| {
                 response
                     .inner
@@ -97,12 +97,11 @@ pub unsafe extern "C" fn ddog_http_response_headers(
 /// `response` must be a live response pointer; `name` must be valid for reads.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ddog_http_response_header_get(
-    response: *const HttpResponse,
+    response: Option<&HttpResponse>,
     name: CharSlice<'_>,
 ) -> CharSlice<'static> {
     catch_panic!(
         {
-            let response = unsafe { response.as_ref() };
             match (response, str_arg(name)) {
                 (Some(response), Ok(name)) => response
                     .inner

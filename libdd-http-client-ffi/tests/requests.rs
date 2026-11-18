@@ -8,7 +8,7 @@ use httpmock::prelude::*;
 use libdd_common_ffi::CharSlice;
 use libdd_common_ffi::slice::ByteSlice;
 use libdd_http_client_ffi::*;
-use std::ptr::{null, null_mut};
+use std::ptr::NonNull;
 use std::sync::Arc;
 use std::thread;
 
@@ -357,20 +357,23 @@ fn send_rejects_null_pointers() {
     let request = Req::get("/x");
 
     unsafe {
-        let mut out: *mut HttpResponse = null_mut();
-        let no_client = request.with_ffi(|r| ddog_http_client_send(null(), r, null(), &mut out));
+        let mut out: Option<Box<HttpResponse>> = None;
+        let out_ptr = NonNull::from(&mut out).cast();
+        let no_client =
+            request.with_ffi(|r| ddog_http_client_send(None, Some(r), None, Some(out_ptr)));
         assert_eq!(
             take_error(no_client).unwrap_err().code,
             HttpClientErrorCode::InvalidArgument
         );
 
-        let no_request = ddog_http_client_send(client.0, null(), null(), &mut out);
+        let no_request = ddog_http_client_send(client.0.as_ref(), None, None, Some(out_ptr));
         assert_eq!(
             take_error(no_request).unwrap_err().code,
             HttpClientErrorCode::InvalidArgument
         );
 
-        let no_out = request.with_ffi(|r| ddog_http_client_send(client.0, r, null(), null_mut()));
+        let no_out =
+            request.with_ffi(|r| ddog_http_client_send(client.0.as_ref(), Some(r), None, None));
         assert_eq!(
             take_error(no_out).unwrap_err().code,
             HttpClientErrorCode::InvalidArgument
@@ -391,9 +394,12 @@ fn send_rejects_a_url_that_is_not_utf8() {
         timeout_ms: 0,
     };
 
-    let mut out: *mut HttpResponse = null_mut();
-    let error = take_error(unsafe { ddog_http_client_send(client.0, &request, null(), &mut out) })
-        .expect_err("non-UTF-8 url");
+    let mut out: Option<Box<HttpResponse>> = None;
+    let out_ptr = NonNull::from(&mut out).cast();
+    let error = take_error(unsafe {
+        ddog_http_client_send(client.0.as_ref(), Some(&request), None, Some(out_ptr))
+    })
+    .expect_err("non-UTF-8 url");
 
     assert_eq!(error.code, HttpClientErrorCode::InvalidArgument);
 }

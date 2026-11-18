@@ -6,21 +6,41 @@ use crate::catch_panic;
 use crate::error::{HttpClientError, HttpClientErrorCode};
 use crate::gen_error;
 use crate::request::{
-    HttpClientConfig, HttpMethod, HttpRequest, bytes_arg, headers_arg, merge_headers, parts_arg,
-    str_arg,
+    HttpHeader, HttpMethod, HttpRequest, bytes_arg, headers_arg, merge_headers, parts_arg, str_arg,
 };
 use crate::response::HttpResponse;
+use libdd_common_ffi::{CharSlice, Slice};
 use libdd_http_client::{
     HttpClient as InnerClient, HttpClientError as UpstreamError, HttpMethod as InnerMethod,
     HttpRequest as InnerRequest, RetryConfig,
 };
 use libdd_shared_runtime::{BlockingRuntime, ForkSafeRuntime};
-use std::future::Future;
+use std::ptr::NonNull;
 use std::sync::Arc;
-use std::task::Poll;
 use std::time::Duration;
-use tokio_util::sync::CancellationToken;
 use url::Url;
+
+/// Read by [`crate::ddog_http_client_new`] and not retained. `base_url` and `timeout_ms` are
+/// required; for every other field, zero or empty selects the default.
+#[repr(C)]
+#[derive(Copy, Clone, Debug)]
+pub struct HttpClientConfig<'a> {
+    /// Relative request URLs are appended to it, e.g. `http://localhost:8126`. The host is ignored
+    /// when `unix_socket_path` is set.
+    pub base_url: CharSlice<'a>,
+    /// Default timeout of a request.
+    pub timeout_ms: u64,
+    /// Connect through this Unix socket instead of TCP (Unix only).
+    pub unix_socket_path: CharSlice<'a>,
+    /// Added to every request. A request header of the same name (case-insensitive) replaces it.
+    pub default_headers: Slice<'a, HttpHeader<'a>>,
+    /// For clients used for periodic flushes: pooled connections expire quickly.
+    pub periodic: bool,
+    /// Retries of a failed send (never of an HTTP status), with backoff. `0` disables them.
+    pub max_retries: u32,
+    /// Delay before the first retry.
+    pub retry_initial_delay_ms: u64,
+}
 
 #[derive(Debug)]
 pub struct HttpClient {
@@ -144,7 +164,14 @@ impl HttpClient {
             .runtime
             .block_on(async {
                 match cancel {
-                    Some(token) => until_cancelled(token, self.inner.send(inner_request)).await,
+                    // An already cancelled token must not start a request. Older `tokio-util`
+                    // versions of `run_until_cancelled` poll the future before checking it.
+                    Some(token) if token.is_cancelled() => None,
+                    Some(token) => {
+                        token
+                            .run_until_cancelled(self.inner.send(inner_request))
+                            .await
+                    }
                     None => Some(self.inner.send(inner_request).await),
                 }
             })
@@ -216,20 +243,6 @@ fn normalize_base_url(base_url: &str) -> Result<String, Option<Box<HttpClientErr
     ))
 }
 
-/// Runs `future` unless `token` is cancelled first. The token is checked before polling, so a
-/// cancelled token starts nothing.
-async fn until_cancelled<F: Future>(token: &CancellationToken, future: F) -> Option<F::Output> {
-    let mut cancelled = std::pin::pin!(token.cancelled());
-    let mut future = std::pin::pin!(future);
-    std::future::poll_fn(move |cx| {
-        if cancelled.as_mut().poll(cx).is_ready() {
-            return Poll::Ready(None);
-        }
-        future.as_mut().poll(cx).map(Some)
-    })
-    .await
-}
-
 /// Creates a client and writes it to `*out`. Returns `NULL` on success, and the caller then owns
 /// `*out` and releases it with [`ddog_http_client_drop`]. On failure `*out` is untouched.
 ///
@@ -251,16 +264,16 @@ async fn until_cancelled<F: Future>(token: &CancellationToken, future: F) -> Opt
 #[unsafe(no_mangle)]
 #[must_use]
 pub unsafe extern "C" fn ddog_http_client_new(
-    config: *const HttpClientConfig<'_>,
+    config: Option<&HttpClientConfig<'_>>,
     runtime: *const ForkSafeRuntime,
-    out: *mut *mut HttpClient,
+    out: Option<NonNull<Box<HttpClient>>>,
 ) -> Option<Box<HttpClientError>> {
     catch_panic!(
-        match unsafe { config.as_ref() } {
-            Some(config) if !out.is_null() => {
+        match (config, out) {
+            (Some(config), Some(out)) => {
                 match unsafe { HttpClient::from_config(config, runtime) } {
                     Ok(client) => {
-                        unsafe { out.write(Box::into_raw(Box::new(client))) };
+                        unsafe { out.as_ptr().write(Box::new(client)) };
                         None
                     }
                     Err(error) => error,
@@ -303,17 +316,17 @@ pub unsafe extern "C" fn ddog_http_client_drop(client: Option<Box<HttpClient>>) 
 #[unsafe(no_mangle)]
 #[must_use]
 pub unsafe extern "C" fn ddog_http_client_send(
-    client: *const HttpClient,
-    request: *const HttpRequest<'_>,
-    cancel: *const HttpCancellationToken,
-    out: *mut *mut HttpResponse,
+    client: Option<&HttpClient>,
+    request: Option<&HttpRequest<'_>>,
+    cancel: Option<&HttpCancellationToken>,
+    out: Option<NonNull<Box<HttpResponse>>>,
 ) -> Option<Box<HttpClientError>> {
     catch_panic!(
-        match (unsafe { client.as_ref() }, unsafe { request.as_ref() }) {
-            (Some(client), Some(request)) if !out.is_null() => {
-                match client.send(request, unsafe { cancel.as_ref() }) {
+        match (client, request, out) {
+            (Some(client), Some(request), Some(out)) => {
+                match client.send(request, cancel) {
                     Ok(response) => {
-                        unsafe { out.write(Box::into_raw(Box::new(response))) };
+                        unsafe { out.as_ptr().write(Box::new(response)) };
                         None
                     }
                     Err(error) => error,
@@ -329,7 +342,7 @@ pub unsafe extern "C" fn ddog_http_client_send(
 mod tests {
     use super::*;
     use libdd_common_ffi::{CharSlice, Slice};
-    use std::ptr::{NonNull, null, null_mut};
+    use std::ptr::null;
 
     fn config(base_url: CharSlice<'_>, timeout_ms: u64) -> HttpClientConfig<'_> {
         HttpClientConfig {
@@ -424,11 +437,12 @@ mod tests {
 
     #[test]
     fn new_rejects_a_null_config_and_a_null_out_pointer() {
-        let mut out = null_mut();
+        let mut out: Option<Box<HttpClient>> = None;
         let config = config(CharSlice::from("http://localhost"), 1_000);
 
-        let no_config = unsafe { ddog_http_client_new(null(), null(), &mut out) };
-        let no_out = unsafe { ddog_http_client_new(&config, null(), null_mut()) };
+        let no_config =
+            unsafe { ddog_http_client_new(None, null(), Some(NonNull::from(&mut out).cast())) };
+        let no_out = unsafe { ddog_http_client_new(Some(&config), null(), None) };
 
         assert_eq!(
             no_config.expect("an error").code,
@@ -443,13 +457,14 @@ mod tests {
     #[test]
     fn new_leaves_the_out_pointer_untouched_on_error() {
         let config = config(CharSlice::from(""), 1_000);
-        let sentinel: *mut HttpClient = NonNull::dangling().as_ptr();
-        let mut out = sentinel;
+        let mut out: Option<Box<HttpClient>> = None;
 
-        let error = unsafe { ddog_http_client_new(&config, null(), &mut out) };
+        let error = unsafe {
+            ddog_http_client_new(Some(&config), null(), Some(NonNull::from(&mut out).cast()))
+        };
 
         assert!(error.is_some());
-        assert_eq!(out, sentinel);
+        assert!(out.is_none());
     }
 
     #[test]

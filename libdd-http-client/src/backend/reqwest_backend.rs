@@ -26,6 +26,15 @@ impl super::Backend for ReqwestBackend {
         let mut builder = reqwest::Client::builder().timeout(client_config.timeout());
         let base_url_is_https = is_https_url(client_config.base_url());
 
+        // Route reqwest HTTPS through the shared TLS configuration so the
+        // compromised-key distrust check and the selected crypto provider apply
+        // (see `crate::tls`). Without this, reqwest would build its own platform
+        // verifier, bypassing the distrust wrapper.
+        //
+        // Only HTTPS base URLs get the preconfigured TLS backend: building the
+        // configuration eagerly loads the system CA roots, which must not happen
+        // for plain-HTTP clients in minimal environments that have no CA
+        // certificates installed.
         #[cfg(any(feature = "https", feature = "fips"))]
         if base_url_is_https {
             builder = builder.tls_backend_preconfigured(crate::tls::build_tls_config()?);
