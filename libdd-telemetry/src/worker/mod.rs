@@ -2542,6 +2542,111 @@ mod tests {
         );
     }
 
+    #[cfg_attr(miri, ignore)]
+    #[test]
+    fn test_discard_cancels_in_flight_http_without_response() {
+        use crate::data::{Configuration, ConfigurationOrigin};
+        use httpmock::prelude::*;
+        use libdd_shared_runtime::{BlockingRuntime, ForkSafeRuntime, SharedRuntime};
+        use std::time::{Duration, Instant};
+
+        const TELEMETRY_PATH: &str = "/telemetry/proxy/api/v2/apmtelemetry";
+
+        fn wait_for_call(mock: &httpmock::Mock<'_>, what: &str) {
+            let deadline = Instant::now() + Duration::from_secs(2);
+            while mock.calls() == 0 {
+                assert!(Instant::now() < deadline, "telemetry did not send {what}");
+                std::thread::sleep(Duration::from_millis(10));
+            }
+        }
+
+        // httpmock serves the first mock that matches, so the catch-all goes last, and `closing`
+        // precedes `in_flight` because a Stop batch carries both app-closing and pending config.
+        let server = MockServer::start();
+        // Acknowledge app-started so the worker is started: from then on, a graceful Stop
+        // would have to send app-closing and flush pending data.
+        let started = server.mock(|when, then| {
+            when.method(POST)
+                .path(TELEMETRY_PATH)
+                .body_includes(r#""request_type":"app-started""#);
+            then.status(202).body("");
+        });
+        let closing = server.mock(|when, then| {
+            when.method(POST)
+                .path(TELEMETRY_PATH)
+                .body_includes(r#""request_type":"app-closing""#);
+            then.status(202).body("");
+        });
+        // Receive the configuration flush but do not answer it within the test. Retirement must
+        // not wait for the 60-second HTTP timeout.
+        let in_flight = server.mock(|when, then| {
+            when.method(POST)
+                .path(TELEMETRY_PATH)
+                .body_includes(r#""request_type":"app-client-configuration-change""#);
+            then.status(202).body("").delay(Duration::from_secs(120));
+        });
+        let other = server.mock(|_when, then| {
+            then.status(202).body("");
+        });
+
+        let runtime = ForkSafeRuntime::new().unwrap();
+        let runtime_handle = runtime
+            .block_on(async { tokio::runtime::Handle::current() })
+            .unwrap();
+        let mut builder = TelemetryWorkerBuilder::new(
+            "host".into(),
+            "svc".into(),
+            "lang".into(),
+            "1".into(),
+            "tv".into(),
+        );
+        builder.config.telemetry_heartbeat_interval = Duration::from_secs(3600);
+        builder
+            .config
+            .set_endpoint(TelemetryEndpoint {
+                url: Some(server.url("/")),
+                timeout_ms: 60_000,
+                ..Default::default()
+            })
+            .unwrap();
+        let (telemetry, worker) = builder.build_worker::<NativeCapabilities>(Some(runtime_handle));
+        let worker = runtime.spawn_worker(worker, true).unwrap();
+        telemetry.send_start().unwrap();
+        wait_for_call(&started, "app-started");
+        // The worker handles actions in order, so this request starts only after app-started
+        // has been acknowledged and the worker is started.
+        telemetry
+            .try_send_msg(TelemetryActions::AddConfig(Configuration {
+                name: "discard_test".into(),
+                value: Some("1".into()),
+                origin: ConfigurationOrigin::Default,
+                config_id: None,
+                seq_id: None,
+            }))
+            .unwrap();
+        telemetry
+            .try_send_msg(TelemetryActions::Lifecycle(LifecycleAction::FlushData))
+            .unwrap();
+        wait_for_call(&in_flight, "the configuration flush");
+
+        runtime
+            .block_on_with_timeout(worker.discard(), Duration::from_secs(1))
+            .expect("discard waited for the HTTP response")
+            .unwrap();
+        // Give a send started by retirement time to arrive before checking that none did.
+        std::thread::sleep(Duration::from_millis(300));
+        assert_eq!(closing.calls(), 0, "discard must not send app-closing");
+        assert_eq!(
+            (started.calls(), in_flight.calls(), other.calls()),
+            (1, 1, 0),
+            "discard must not send a final flush"
+        );
+        assert!(
+            telemetry.send_start().is_err(),
+            "discard must drop the telemetry mailbox"
+        );
+    }
+
     /// An action enqueued into the mailbox but not yet processed by the runloop
     /// must still be reflected in the final Stop flush. Drives `shutdown()`
     /// directly (no `run_loop`) so the assertion is deterministic.

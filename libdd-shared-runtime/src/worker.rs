@@ -16,6 +16,10 @@ use libdd_capabilities::{MaybeSend, maybe_send::MaybeSync};
 /// worker at this point will be saved and used to restart the worker. To be able to safely restart,
 /// the worker must be in a valid state on every call to `.await` within the trigger function.
 /// See [`tokio::select#cancellation-safety`] for more details.
+///
+/// [`WorkerHandle::discard`](crate::WorkerHandle::discard) can cancel any worker method at a
+/// yield point and drop the entire worker. Cancelled run/flush state is never resumed. Destructors
+/// must release resources without flushing or waiting for network I/O.
 #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
 #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
 pub trait Worker: std::fmt::Debug + MaybeSend + MaybeSync {

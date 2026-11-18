@@ -35,13 +35,16 @@ impl LocalRuntime {
         restart_on_fork: bool,
     ) -> WorkerHandle {
         let worker_id = self.next_worker_id.fetch_add(1, Ordering::Relaxed);
+        let disposition = Arc::new(std::sync::atomic::AtomicU8::new(super::ACTIVE));
         workers_guard.push(WorkerEntry {
             id: worker_id,
+            disposition: disposition.clone(),
             restart_on_fork,
             worker: pausable_worker,
         });
         WorkerHandle {
             worker_id,
+            disposition,
             workers: self.workers.clone(),
         }
     }
@@ -69,7 +72,8 @@ impl SharedRuntime for LocalRuntime {
             use futures_util::FutureExt;
             let (remote, handle) = future.remote_handle();
             wasm_bindgen_futures::spawn_local(remote);
-            Box::pin(async { Ok(handle.await) })
+            // Dropping `handle` cancels the task, which is how discard aborts it.
+            (Box::pin(async { Ok(handle.await) }), ())
         })?;
 
         Ok(self.push_worker(&mut workers_guard, pausable_worker, restart_on_fork))
@@ -77,10 +81,7 @@ impl SharedRuntime for LocalRuntime {
 
     async fn shutdown_async(&self) {
         debug!("Shutting down all workers on LocalRuntime");
-        let workers = {
-            let mut workers_lock = self.workers.lock_or_panic();
-            std::mem::take(&mut *workers_lock)
-        };
+        let (workers, retirements) = super::take_for_shutdown(&self.workers);
 
         let futures: FuturesUnordered<_> = workers
             .into_iter()
@@ -94,5 +95,6 @@ impl SharedRuntime for LocalRuntime {
             .collect();
 
         futures.collect::<()>().await;
+        super::finish_retirements(retirements).await;
     }
 }
