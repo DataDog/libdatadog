@@ -36,7 +36,7 @@ use crate::trace_exporter::agent_response::{
     AgentResponsePayloadVersion, DATADOG_RATES_PAYLOAD_VERSION,
 };
 use crate::trace_exporter::error::{
-    InternalErrorKind, RequestError, ShutdownError, TraceExporterError,
+    ExporterWorker, InternalErrorKind, RequestError, ShutdownError, TraceExporterError,
 };
 use crate::trace_exporter::stats::StatsComputationConfig;
 use crate::{
@@ -55,8 +55,8 @@ use libdd_common::Endpoint;
 use libdd_common::tag::Tag;
 use libdd_dogstatsd_client::DogStatsDClient;
 #[cfg(not(target_arch = "wasm32"))]
-use libdd_shared_runtime::BlockingRuntime;
-use libdd_shared_runtime::{SharedRuntime, WorkerHandle};
+use libdd_shared_runtime::{BlockOnTimeoutError, BlockingRuntime};
+use libdd_shared_runtime::{SharedRuntime, WorkerHandle, WorkerHandleError};
 #[cfg(feature = "telemetry")]
 use libdd_telemetry::worker::TelemetryWorkerHandle;
 use libdd_trace_utils::msgpack_decoder;
@@ -75,7 +75,7 @@ use libdd_trace_utils::trace_utils::TracerHeaderTags;
 use prost::Message;
 use std::collections::BTreeMap;
 use std::io;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, Ordering, fence};
 use std::sync::{Arc, Once};
 use std::time::Duration;
 use std::{borrow::Borrow, str::FromStr};
@@ -237,6 +237,27 @@ pub(crate) struct TraceExporterWorkers {
     telemetry: Option<WorkerHandle>,
 }
 
+/// Classify the result of discarding one worker in
+/// [`TraceExporter::shutdown_without_flush_async`].
+///
+/// `claim` is the result of [`WorkerHandle::claim_discard`] at call time, and `discard` the
+/// result of awaiting [`WorkerHandle::discard`]. Returns `Ok(())` when the worker is retired
+/// without being flushed, or the error to report for it.
+fn discard_outcome(
+    worker: ExporterWorker,
+    claim: Result<(), WorkerHandleError>,
+    discard: Result<(), WorkerHandleError>,
+) -> Result<(), ShutdownError> {
+    match (claim, discard) {
+        // A graceful stop or runtime shutdown claimed the worker first; it may have flushed.
+        (Err(_), _) => Err(ShutdownError::WorkerAlreadyStopped { worker }),
+        // Once claimed, shutdown and fork only retire the worker, so AlreadyStopped means
+        // another caller finished this retirement.
+        (Ok(()), Ok(()) | Err(WorkerHandleError::AlreadyStopped)) => Ok(()),
+        (Ok(()), Err(source)) => Err(ShutdownError::WorkerFailed { worker, source }),
+    }
+}
+
 /// The TraceExporter ingest traces from the tracers serialized as messagepack and forward them to
 /// the agent while applying some transformation.
 ///
@@ -361,6 +382,7 @@ impl<
     /// without rebuilding the whole trace exporter.
     ///
     /// Pass `None` on telemetry shut down, so reporting stops rather than targeting a dead worker.
+    /// Sends that start after [`Self::shutdown_without_flush_async`] is called report to no handle.
     #[cfg(feature = "telemetry")]
     pub fn set_telemetry_handle(&self, handle: Option<TelemetryWorkerHandle<C>>) {
         #[cfg(feature = "external-observations")]
@@ -369,6 +391,18 @@ impl<
         }
         self.telemetry
             .store(handle.map(|h| Arc::new(TelemetryClient::with_handle(h))));
+    }
+
+    /// The telemetry client that sends report to, or `None` once the exporter is retiring, even
+    /// with a handle from [`Self::set_telemetry_handle`]. Retiring discards the exporter-owned
+    /// telemetry worker, which then no longer drains its metric ring, so reporting to it would
+    /// block the send once the ring is full.
+    #[cfg(feature = "telemetry")]
+    fn telemetry_client(&self) -> Option<Arc<TelemetryClient<C>>> {
+        if self.client_side_stats.retiring.load(Ordering::SeqCst) {
+            return None;
+        }
+        self.telemetry.load_full()
     }
 
     #[cfg(feature = "telemetry")]
@@ -391,7 +425,7 @@ impl<
         if observations::record_payload(payload) {
             return;
         }
-        if let Some(telemetry) = self.telemetry.load_full().as_deref()
+        if let Some(telemetry) = self.telemetry_client().as_deref()
             && let Err(e) = telemetry.send(&payload())
         {
             error!(?e, "Error sending telemetry");
@@ -500,6 +534,158 @@ impl<
         }
     }
 
+    /// Retire the background workers owned by this exporter without flushing them.
+    ///
+    /// Sync facade over [`Self::shutdown_without_flush_async`]; panics inside an existing tokio
+    /// context. The first poll runs on the calling thread before the executor is involved, so
+    /// every worker is cancelled before this method waits. `timeout` then bounds the wait with
+    /// [`BlockingRuntime::block_on_with_timeout`]; zero is an immediate deadline.
+    ///
+    /// # Errors
+    /// Returns [`TraceExporterError::Shutdown`] with:
+    /// - [`ShutdownError::TimedOut`] if the timeout elapsed. The workers are cancelled and finish
+    ///   retiring in the background. A stats send poll still in progress may not have ended, and
+    ///   can start a request after this method returns. Worker errors found before the deadline are
+    ///   logged, not returned.
+    /// - [`ShutdownError::Executor`] if the executor could not run the rest of the discard. The
+    ///   workers are cancelled as for `TimedOut`.
+    /// - the worker errors of [`Self::shutdown_without_flush_async`].
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn shutdown_without_flush(
+        &self,
+        timeout: Option<Duration>,
+    ) -> Result<(), TraceExporterError>
+    where
+        R: BlockingRuntime,
+    {
+        let mut discard = Box::pin(self.shutdown_without_flush_async());
+        // The first poll only takes the registry lock and cancels the tasks, which needs no
+        // executor. Doing it here keeps an executor error or a timerless runtime from leaving
+        // claimed workers running.
+        if let Some(result) = futures::FutureExt::now_or_never(&mut discard) {
+            return result;
+        }
+        let result = match timeout {
+            Some(timeout) => self
+                .shared_runtime
+                .block_on_with_timeout(discard, timeout)
+                .map_err(|e| match e {
+                    BlockOnTimeoutError::TimedOut(timeout) => ShutdownError::TimedOut(timeout),
+                    BlockOnTimeoutError::Io(e) => ShutdownError::Executor(e),
+                }),
+            None => self
+                .shared_runtime
+                .block_on(discard)
+                .map_err(ShutdownError::Executor),
+        };
+        result.map_err(TraceExporterError::Shutdown)?
+    }
+
+    /// Retire the background workers owned by this exporter without flushing them.
+    ///
+    /// Use this when the data held by the workers must not be sent, for example after the
+    /// runtime identity changed. The stats, `/info` fetcher, DogStatsD and exporter-owned
+    /// telemetry workers are cancelled: in-flight requests are dropped, and no final stats or
+    /// telemetry metrics are flushed. Requests already sent cannot be recalled. A telemetry
+    /// handle passed to [`Self::set_telemetry_handle`] is not touched. Sends that start after
+    /// this call report no native telemetry, not even to that handle, and no health metrics. The
+    /// process-wide agent info cache is not cleared, since a replacement exporter may already
+    /// use it. Exporters wrapped in a trace buffer are not covered.
+    ///
+    /// The discard is claimed when this method is called, before the returned future is
+    /// polled. From then on, runtime shutdown and fork never flush or restart these workers,
+    /// and a concurrent send neither starts the stats worker nor stops it gracefully, nor
+    /// flushes client-side stats. Three stats sends can still be running: a forced flush from a
+    /// concurrent [`Self::flush_client_side_stats_async`] call, a stats worker that a concurrent
+    /// send was already starting, which that send then discards, and a graceful stop that a
+    /// concurrent send began because the agent stopped advertising stats, which is not reported.
+    /// Each stops at its next poll, and the first poll of the returned future wakes those waiting
+    /// on a response. The future then waits for a poll of theirs still in progress, so none of them
+    /// starts a request after the future completes, though a request that poll started can still go
+    /// out. If the process forks during such a poll, the child waits for it forever: bound the wait
+    /// with a timeout there. The workers keep running until the future is first polled, which
+    /// cancels all of them. That first poll is the only step that locks the worker registry or the
+    /// waiters of stats sends, so it follows the fork-safety rules of [`WorkerHandle::discard`]. If
+    /// the future is dropped, the next call, fork or runtime shutdown finishes the retirement.
+    ///
+    /// Calling this again is safe: workers already retired count as done.
+    ///
+    /// # Errors
+    /// Returns [`TraceExporterError::Shutdown`] with the first failure in the order telemetry,
+    /// DogStatsD, info fetcher, stats. Each failure is logged when it is found.
+    /// - [`ShutdownError::WorkerAlreadyStopped`]: a graceful stop or runtime shutdown claimed the
+    ///   worker first, so it may have flushed.
+    /// - [`ShutdownError::WorkerFailed`]: the worker task failed while being discarded.
+    pub fn shutdown_without_flush_async(
+        &self,
+    ) -> impl Future<Output = Result<(), TraceExporterError>> + MaybeSend + 'static {
+        // Set the flag before loading the stats status. A send that starts or stops the stats
+        // worker concurrently either sees the flag or stores a status loaded below.
+        self.client_side_stats
+            .retiring
+            .store(true, Ordering::SeqCst);
+        fence(Ordering::SeqCst);
+
+        let mut workers: Vec<(ExporterWorker, WorkerHandle)> = Vec::with_capacity(4);
+        #[cfg(feature = "telemetry")]
+        if let Some(handle) = &self.workers.telemetry {
+            workers.push((ExporterWorker::Telemetry, handle.clone()));
+        }
+        if let Some(handle) = &self.workers.dogstatsd {
+            workers.push((ExporterWorker::DogStatsD, handle.clone()));
+        }
+        if let Some(handle) = &self.workers.info_fetcher {
+            workers.push((ExporterWorker::InfoFetcher, handle.clone()));
+        }
+        if let StatsComputationStatus::Enabled { worker_handle, .. } =
+            &**self.client_side_stats.status.load()
+        {
+            workers.push((ExporterWorker::Stats, worker_handle.clone()));
+        }
+
+        // Claim now, so shutdown and fork honor the discard even if the future is never polled.
+        let discards: Vec<_> = workers
+            .into_iter()
+            .map(|(worker, handle)| {
+                let claim = handle.claim_discard();
+                async move {
+                    let outcome = discard_outcome(worker, claim, handle.discard().await);
+                    // Log here, so a failure found before a timeout drops the join is not lost.
+                    if let Err(e) = &outcome {
+                        error!("Failed to discard worker: {e}");
+                    }
+                    outcome
+                }
+            })
+            .collect();
+
+        let polling_flushes = self.client_side_stats.polling_flushes.clone();
+        let retired = self.client_side_stats.retired.clone();
+        let sleeper = self.capabilities.clone();
+        async move {
+            // Wake the stats flushes waiting on a response, so they see the flag and stop.
+            retired.notify_waiters();
+            // join_all polls every discard on its first poll, so a short timeout cannot elapse
+            // before all workers are cancelled.
+            let result = futures::future::join_all(discards)
+                .await
+                .into_iter()
+                .find_map(Result::err)
+                .map_or(Ok(()), |e| Err(TraceExporterError::Shutdown(e)));
+            // A stats flush that missed the flag can be mid-poll, about to send. Wait for that
+            // poll: its next one sees the flag.
+            if polling_flushes.load(Ordering::SeqCst) != 0 {
+                // shutdown_without_flush makes the first poll outside any executor, where the
+                // sleeper may have no timer. Yield so it reaches the sleep from the executor.
+                tokio::task::yield_now().await;
+                while polling_flushes.load(Ordering::SeqCst) != 0 {
+                    sleeper.sleep(Duration::from_millis(1)).await;
+                }
+            }
+            result
+        }
+    }
+
     /// Send msgpack serialized traces to the agent.
     ///
     /// Sync facade over [`Self::send_async`]; panics inside an existing tokio context.
@@ -589,7 +775,8 @@ impl<
         }
 
         // OTLP trace metrics run the concentrator independently; skip stats enable/disable.
-        if self.otlp_stats_enabled {
+        // A retiring exporter must not start or gracefully stop (flush) its stats worker.
+        if self.otlp_stats_enabled || self.client_side_stats.is_retiring() {
             return;
         }
 
@@ -627,12 +814,14 @@ impl<
                     #[cfg(not(feature = "telemetry"))]
                     _phantom: std::marker::PhantomData,
                 };
-                stats::handle_stats_disabled_by_agent(
+                if let Some(worker) = stats::handle_stats_disabled_by_agent(
                     &ctx,
                     &agent_info,
                     self.capabilities.clone(),
                     &self.client_side_stats,
-                );
+                ) {
+                    stats::discard_stats_worker(&worker).await;
+                }
             }
             StatsComputationStatus::Enabled {
                 stats_concentrator, ..
@@ -706,17 +895,18 @@ impl<
         }
     }
 
-    /// Emit a health metric to dogstatsd
+    /// Emit a health metric to dogstatsd, unless the exporter is retiring: its DogStatsD worker
+    /// is then discarded, and every metric would only log a send error.
     fn emit_metric(&self, metric: HealthMetric, custom_tags: Option<Vec<&Tag>>) {
-        if self.health_metrics_enabled {
+        if self.health_metrics_enabled && !self.client_side_stats.retiring.load(Ordering::SeqCst) {
             let emitter = MetricsEmitter::new(self.dogstatsd.as_ref(), &self.common_stats_tags);
             emitter.emit(metric, custom_tags);
         }
     }
 
-    /// Emit all health metrics from a SendResult
+    /// Emit all health metrics from a SendResult, unless the exporter is retiring.
     fn emit_send_result(&self, result: &SendResult) {
-        if self.health_metrics_enabled {
+        if self.health_metrics_enabled && !self.client_side_stats.retiring.load(Ordering::SeqCst) {
             let emitter = MetricsEmitter::new(self.dogstatsd.as_ref(), &self.common_stats_tags);
             emitter.emit_from_send_result(result);
         }
@@ -797,14 +987,32 @@ impl<
     /// # Returns
     ///
     /// `true` when client-side stats computation is enabled and a flush was requested.
-    /// `false` when stats computation is disabled. A `true` return does not guarantee that
+    /// `false` when stats computation is disabled or the exporter is retiring after
+    /// [`Self::shutdown_without_flush_async`]. A `true` return does not guarantee that
     /// the flush completed: if the stats worker was concurrently shut down (during forks
-    /// for instance), no flush is performed.
+    /// for instance), no flush is performed. A flush still running when
+    /// [`Self::shutdown_without_flush_async`] is called stops at its next poll, and the first poll
+    /// of the future that method returns wakes it if it waits on a response. A poll already in
+    /// progress can still start a request, and that future waits for that poll to end, so no
+    /// request starts after the future completes.
     pub async fn flush_client_side_stats_async(&self) -> bool {
+        // The flush runs on this task, outside the stats worker, so the discard cannot cancel it:
+        // until_retiring stops it instead.
+        if self.client_side_stats.is_retiring() {
+            return false;
+        }
         let status = self.client_side_stats.status.load_full();
         if let StatsComputationStatus::Enabled { flush_handle, .. } = &*status {
             if let Some(exporter) = flush_handle.upgrade() {
-                exporter.force_flush().await;
+                let stats = &self.client_side_stats;
+                let (retiring, polling, retired) =
+                    (&stats.retiring, &stats.polling_flushes, &stats.retired);
+                if stats::until_retiring(exporter.force_flush(), retiring, polling, retired)
+                    .await
+                    .is_none()
+                {
+                    return false;
+                }
             }
             true
         } else {
@@ -1201,7 +1409,7 @@ impl<
             self.client_computed_top_level,
             &self.trace_filterer.load(),
             #[cfg(feature = "telemetry")]
-            self.telemetry.load_full().as_deref(),
+            self.telemetry_client().as_deref(),
         );
 
         // Agent and agentless both send the Datadog format; the builder rejects agentless + OTLP.
@@ -1423,7 +1631,7 @@ impl<
             self.client_computed_top_level,
             &self.trace_filterer.load(),
             #[cfg(feature = "telemetry")]
-            self.telemetry.load_full().as_deref(),
+            self.telemetry_client().as_deref(),
         );
 
         for chunk in traces.iter_mut() {
@@ -1758,6 +1966,32 @@ mod tests {
     use libdd_trace_utils::msgpack_encoder;
     use libdd_trace_utils::span::v04::SpanBytes;
     use std::net;
+
+    #[test]
+    fn test_discard_outcome() {
+        use WorkerHandleError::{AlreadyStopped, FlushAborted};
+        let worker = ExporterWorker::Stats;
+
+        assert!(discard_outcome(worker, Ok(()), Ok(())).is_ok());
+        // Once claimed, shutdown and fork only ever retire the worker without flushing it.
+        assert!(
+            discard_outcome(worker, Ok(()), Err(AlreadyStopped)).is_ok(),
+            "a claimed worker that another caller already retired counts as discarded"
+        );
+        assert!(matches!(
+            discard_outcome(worker, Err(AlreadyStopped), Err(AlreadyStopped)),
+            Err(ShutdownError::WorkerAlreadyStopped {
+                worker: ExporterWorker::Stats
+            })
+        ));
+        assert!(matches!(
+            discard_outcome(worker, Ok(()), Err(FlushAborted)),
+            Err(ShutdownError::WorkerFailed {
+                worker: ExporterWorker::Stats,
+                source: FlushAborted
+            })
+        ));
+    }
 
     #[test]
     fn grpc_retry_delay_applies_backoff_and_cap() {
@@ -4199,5 +4433,877 @@ mod single_threaded_tests {
             "V1 endpoint must be tried at least once before the fail-closed flip"
         );
         mock_v04.assert();
+    }
+
+    mod shutdown_without_flush {
+        use super::*;
+        use libdd_capabilities::maybe_send::MaybeSync;
+        use libdd_shared_runtime::{SharedRuntimeError, Worker};
+        use std::pin::Pin;
+        use std::sync::Mutex;
+        use std::sync::atomic::AtomicUsize;
+        use std::time::Instant;
+
+        const TELEMETRY_PATH: &str = "/telemetry/proxy/api/v2/apmtelemetry";
+        const TIMEOUT: Option<Duration> = Some(Duration::from_secs(1));
+
+        #[derive(Debug, Default)]
+        struct WorkerCounters {
+            live: AtomicUsize,
+            graceful_shutdowns: AtomicUsize,
+            /// Makes the next worker destruction block for [`SLOW_DROP`].
+            slow_next_drop: AtomicBool,
+            /// Makes the next worker destruction panic, so its task fails.
+            panic_next_drop: AtomicBool,
+        }
+
+        type SpawnHook = Box<dyn FnOnce() + Send>;
+
+        /// Runs once inside the next `spawn_worker` call, before the worker is registered.
+        #[derive(Default)]
+        struct OnSpawn(Mutex<Option<SpawnHook>>);
+
+        impl std::fmt::Debug for OnSpawn {
+            fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                f.write_str("OnSpawn")
+            }
+        }
+
+        const SLOW_DROP: Duration = Duration::from_secs(2);
+
+        /// Keeps [`WorkerCounters`] up to date for the worker it wraps.
+        #[derive(Debug)]
+        struct CountedWorker<T> {
+            inner: T,
+            counters: Arc<WorkerCounters>,
+        }
+
+        impl<T> Drop for CountedWorker<T> {
+            fn drop(&mut self) {
+                if self.counters.slow_next_drop.swap(false, Ordering::SeqCst) {
+                    std::thread::sleep(SLOW_DROP);
+                }
+                self.counters.live.fetch_sub(1, Ordering::SeqCst);
+                if self.counters.panic_next_drop.swap(false, Ordering::SeqCst) {
+                    panic!("worker destructor failed");
+                }
+            }
+        }
+
+        #[async_trait::async_trait]
+        impl<T: Worker> Worker for CountedWorker<T> {
+            async fn run(&mut self) {
+                self.inner.run().await
+            }
+
+            async fn trigger(&mut self) {
+                self.inner.trigger().await
+            }
+
+            async fn initial_trigger(&mut self) {
+                self.inner.initial_trigger().await
+            }
+
+            fn reset(&mut self) {
+                self.inner.reset()
+            }
+
+            async fn flush(&mut self) {
+                self.inner.flush().await
+            }
+
+            async fn shutdown(&mut self) {
+                self.counters
+                    .graceful_shutdowns
+                    .fetch_add(1, Ordering::SeqCst);
+                self.inner.shutdown().await
+            }
+        }
+
+        /// A [`ForkSafeRuntime`] that counts the workers it spawned that are still alive, not
+        /// its registry entries, and how many of them were shut down gracefully.
+        #[derive(Debug)]
+        struct CountingRuntime {
+            inner: ForkSafeRuntime,
+            counters: Arc<WorkerCounters>,
+            /// Makes `block_on` fail like an executor that cannot be reached.
+            fail_block_on: AtomicBool,
+            on_spawn: OnSpawn,
+        }
+
+        impl CountingRuntime {
+            fn with_worker_threads(threads: usize) -> Result<Self, SharedRuntimeError> {
+                Ok(Self {
+                    inner: ForkSafeRuntime::with_worker_threads(threads)?,
+                    counters: Arc::default(),
+                    fail_block_on: AtomicBool::new(false),
+                    on_spawn: OnSpawn::default(),
+                })
+            }
+
+            fn set_on_spawn(&self, hook: impl FnOnce() + Send + 'static) {
+                *self.on_spawn.0.lock().unwrap() = Some(Box::new(hook));
+            }
+
+            fn live_workers(&self) -> usize {
+                self.counters.live.load(Ordering::SeqCst)
+            }
+
+            fn graceful_shutdowns(&self) -> usize {
+                self.counters.graceful_shutdowns.load(Ordering::SeqCst)
+            }
+
+            /// Shut the runtime down as the host does at exit.
+            fn shutdown(&self) {
+                self.inner.shutdown(None).unwrap();
+            }
+        }
+
+        impl SharedRuntime for CountingRuntime {
+            fn new() -> Result<Self, SharedRuntimeError> {
+                Self::with_worker_threads(1)
+            }
+
+            fn spawn_worker<T: Worker + MaybeSync + 'static>(
+                &self,
+                worker: T,
+                restart_on_fork: bool,
+            ) -> Result<WorkerHandle, SharedRuntimeError> {
+                let hook = self.on_spawn.0.lock().unwrap().take();
+                if let Some(hook) = hook {
+                    hook();
+                }
+                self.counters.live.fetch_add(1, Ordering::SeqCst);
+                let worker = CountedWorker {
+                    inner: worker,
+                    counters: self.counters.clone(),
+                };
+                self.inner.spawn_worker(worker, restart_on_fork)
+            }
+
+            fn shutdown_async(&self) -> impl Future<Output = ()> + MaybeSend + '_
+            where
+                Self: Sync,
+            {
+                self.inner.shutdown_async()
+            }
+        }
+
+        impl BlockingRuntime for CountingRuntime {
+            fn block_on<F: Future>(&self, f: F) -> Result<F::Output, io::Error> {
+                if self.fail_block_on.load(Ordering::SeqCst) {
+                    return Err(io::Error::other("executor unavailable"));
+                }
+                self.inner.block_on(f)
+            }
+        }
+
+        fn wait_until(what: &str, condition: impl Fn() -> bool) {
+            let deadline = Instant::now() + Duration::from_secs(10);
+            while !condition() {
+                assert!(Instant::now() < deadline, "timed out waiting for {what}");
+                std::thread::sleep(Duration::from_millis(10));
+            }
+        }
+
+        /// Give a worker that was not retired time to send a final flush.
+        fn wait_for_late_requests() {
+            std::thread::sleep(Duration::from_millis(300));
+        }
+
+        fn trace_payload() -> Vec<u8> {
+            msgpack_encoder::v04::to_vec_from_v04(&[vec![SpanBytes {
+                service: "test".into(),
+                name: "test".into(),
+                resource: "test".into(),
+                duration: 10,
+                ..Default::default()
+            }]])
+        }
+
+        /// Mock an agent that advertises client-side stats. Returns the trace and stats mocks.
+        fn mock_stats_agent(
+            server: &MockServer,
+            traces_delay: Duration,
+        ) -> (httpmock::Mock<'_>, httpmock::Mock<'_>) {
+            let traces = server.mock(|when, then| {
+                when.method(POST).path(V04_TRACES_ENDPOINT);
+                then.status(200)
+                    .delay(traces_delay)
+                    .header("content-type", "application/json")
+                    .body(r#"{"rate_by_service":{"service:test,env:staging":1.0}}"#);
+            });
+            let stats = server.mock(|when, then| {
+                when.method(POST).path(STATS_ENDPOINT);
+                then.status(200).body("");
+            });
+            server.mock(|when, then| {
+                when.method(GET).path(INFO_ENDPOINT);
+                then.status(200)
+                    .header("content-type", "application/json")
+                    .header("datadog-agent-state", "1")
+                    .body(format!(
+                        r#"{{"version":"1","client_drop_p0s":true,"endpoints":["{V04_TRACES_ENDPOINT}","{STATS_ENDPOINT}"]}}"#
+                    ));
+            });
+            (traces, stats)
+        }
+
+        fn builder(runtime: &Arc<CountingRuntime>) -> TraceExporterBuilder<CountingRuntime> {
+            let mut builder = TraceExporter::<NativeCapabilities, CountingRuntime>::builder();
+            builder
+                .set_service("test")
+                .set_env("staging")
+                .set_tracer_version("v0.1")
+                .set_language("nodejs")
+                .set_language_version("1.0")
+                .set_language_interpreter("v8")
+                .set_shared_runtime(runtime.clone())
+                .enable_stats(Duration::from_secs(600));
+            builder
+        }
+
+        fn agent_exporter(
+            server: &MockServer,
+            runtime: &Arc<CountingRuntime>,
+        ) -> TraceExporter<NativeCapabilities, CountingRuntime> {
+            let mut builder = builder(runtime);
+            builder.set_url(&server.url("/"));
+            builder.build::<NativeCapabilities>().unwrap()
+        }
+
+        /// Build an agent exporter, then send a trace so its stats worker holds data.
+        fn exporter_with_stats(
+            server: &MockServer,
+            runtime: &Arc<CountingRuntime>,
+        ) -> TraceExporter<NativeCapabilities, CountingRuntime> {
+            let exporter = agent_exporter(server, runtime);
+            wait_until("agent info", || agent_info::get_agent_info().is_some());
+            exporter.send(&trace_payload()).unwrap();
+            wait_until("the stats worker", || exporter.is_stats_worker_active());
+            exporter
+        }
+
+        #[cfg_attr(miri, ignore)]
+        #[test]
+        fn test_discards_every_worker_without_flushing() {
+            agent_info::clear_cache_for_test();
+            let server = MockServer::start();
+            let (_traces, stats) = mock_stats_agent(&server, Duration::ZERO);
+            let telemetry = server.mock(|when, then| {
+                when.method(POST).path(TELEMETRY_PATH);
+                then.status(202).body("");
+            });
+            let dogstatsd = std::net::UdpSocket::bind("127.0.0.1:0").unwrap();
+            let runtime = Arc::new(CountingRuntime::new().unwrap());
+
+            let mut builder = builder(&runtime);
+            builder
+                .set_url(&server.url("/"))
+                .set_dogstatsd_url(&dogstatsd.local_addr().unwrap().to_string());
+            // The hour-long heartbeat keeps the send's telemetry metrics buffered: only a
+            // graceful stop would flush them.
+            #[cfg(feature = "telemetry")]
+            builder.enable_telemetry(TelemetryConfig {
+                heartbeat: 3_600_000,
+                ..Default::default()
+            });
+            let exporter = builder.build::<NativeCapabilities>().unwrap();
+            wait_until("agent info", || agent_info::get_agent_info().is_some());
+            exporter.send(&trace_payload()).unwrap();
+            wait_until("the stats worker", || exporter.is_stats_worker_active());
+            // Stats, info fetcher, DogStatsD and, with the telemetry feature, telemetry.
+            let exporter_workers = if cfg!(feature = "telemetry") { 4 } else { 3 };
+            assert_eq!(runtime.live_workers(), exporter_workers);
+
+            // A refresh builds the replacement exporter before discarding the old one.
+            let replacement = agent_exporter(&server, &runtime);
+            let replacement_workers = runtime.live_workers() - exporter_workers;
+
+            exporter.shutdown_without_flush(TIMEOUT).unwrap();
+            assert_eq!(
+                runtime.live_workers(),
+                replacement_workers,
+                "discard must destroy the old exporter's workers and only those"
+            );
+            assert_eq!(runtime.graceful_shutdowns(), 0);
+            assert!(
+                agent_info::get_agent_info().is_some(),
+                "the agent info cache is shared with the replacement and must not be cleared"
+            );
+            exporter
+                .shutdown_without_flush(TIMEOUT)
+                .expect("a second call finds the workers retired");
+
+            runtime.shutdown();
+            assert_eq!(runtime.graceful_shutdowns(), replacement_workers);
+            assert_eq!(runtime.live_workers(), 0);
+            drop(replacement);
+            wait_for_late_requests();
+            assert_eq!(stats.calls(), 0, "discarded stats must not be flushed");
+            assert_eq!(
+                telemetry.calls(),
+                0,
+                "discarded telemetry metrics must not be flushed"
+            );
+        }
+
+        #[cfg_attr(miri, ignore)]
+        #[test]
+        fn test_discard_during_send_holds_at_exit() {
+            agent_info::clear_cache_for_test();
+            let server = MockServer::start();
+            let (traces, stats) = mock_stats_agent(&server, Duration::from_secs(2));
+            let runtime = Arc::new(CountingRuntime::new().unwrap());
+            let exporter = Arc::new(agent_exporter(&server, &runtime));
+            wait_until("agent info", || agent_info::get_agent_info().is_some());
+
+            let send = {
+                let exporter = exporter.clone();
+                std::thread::spawn(move || exporter.send(&trace_payload()))
+            };
+            // httpmock counts a request before delaying its response.
+            wait_until("the trace request", || traces.calls() > 0);
+            assert!(exporter.is_stats_worker_active());
+
+            // The refresh discards the exporter while the send still borrows it, and the
+            // process exits before the agent answers.
+            exporter.shutdown_without_flush(TIMEOUT).unwrap();
+            assert!(!send.is_finished());
+            runtime.shutdown();
+            assert_eq!(runtime.graceful_shutdowns(), 0);
+            assert_eq!(runtime.live_workers(), 0);
+
+            send.join().unwrap().expect("the in-flight send completes");
+            wait_for_late_requests();
+            assert_eq!(stats.calls(), 0, "discarded stats must not be flushed");
+        }
+
+        #[cfg_attr(miri, ignore)]
+        #[test]
+        fn test_retiring_exporter_does_not_start_stats() {
+            agent_info::clear_cache_for_test();
+            let server = MockServer::start();
+            let (_traces, stats) = mock_stats_agent(&server, Duration::ZERO);
+            let runtime = Arc::new(CountingRuntime::new().unwrap());
+            let exporter = agent_exporter(&server, &runtime);
+            wait_until("agent info", || agent_info::get_agent_info().is_some());
+
+            exporter.shutdown_without_flush(TIMEOUT).unwrap();
+            assert_eq!(runtime.live_workers(), 0);
+            // The agent advertises stats, but a retiring exporter must not start a stats worker.
+            exporter.send(&trace_payload()).unwrap();
+            assert!(!exporter.is_stats_worker_active());
+            assert_eq!(runtime.live_workers(), 0);
+
+            runtime.shutdown();
+            wait_for_late_requests();
+            assert_eq!(stats.calls(), 0);
+        }
+
+        /// The discarded telemetry worker no longer drains its metric ring, which holds 2048
+        /// points, so a retiring exporter that kept reporting to it would block once it is full.
+        #[cfg(feature = "telemetry")]
+        #[cfg_attr(miri, ignore)]
+        #[test]
+        fn test_retiring_exporter_reports_no_telemetry() {
+            let server = MockServer::start();
+            let runtime = Arc::new(CountingRuntime::new().unwrap());
+            let mut builder = builder(&runtime);
+            builder
+                .set_url(&server.url("/"))
+                .enable_telemetry(TelemetryConfig {
+                    heartbeat: 3_600_000,
+                    ..Default::default()
+                });
+            let exporter = builder.build::<NativeCapabilities>().unwrap();
+            exporter.shutdown_without_flush(TIMEOUT).unwrap();
+            assert_eq!(runtime.live_workers(), 0);
+
+            // Each serialization drop reports at least two points.
+            let (done, finished) = std::sync::mpsc::channel();
+            std::thread::spawn(move || {
+                for _ in 0..2048 {
+                    exporter.emit_serialization_drop(PayloadCounts {
+                        chunks: 1,
+                        spans: 1,
+                    });
+                }
+                done.send(()).unwrap();
+            });
+            finished
+                .recv_timeout(Duration::from_secs(10))
+                .expect("a retiring exporter must not block on telemetry");
+        }
+
+        /// The agent info races with `shutdown_without_flush` cannot be scheduled
+        /// deterministically, so this drives the stats stop with the flag already set.
+        /// `test_discard_racing_stats_start` covers a send that starts stats while retiring.
+        #[cfg_attr(miri, ignore)]
+        #[test]
+        fn test_retiring_exporter_discards_stats_on_agent_changes() {
+            agent_info::clear_cache_for_test();
+            let server = MockServer::start();
+            let (_traces, stats) = mock_stats_agent(&server, Duration::ZERO);
+            let runtime = Arc::new(CountingRuntime::new().unwrap());
+
+            // The agent stopped advertising stats while a send was reconciling them.
+            let disabled = exporter_with_stats(&server, &runtime);
+            disabled
+                .client_side_stats
+                .retiring
+                .store(true, Ordering::SeqCst);
+            let workers = runtime.live_workers();
+            runtime
+                .block_on(stats::stop_stats_computation(&disabled.client_side_stats))
+                .unwrap();
+            assert!(!disabled.is_stats_worker_active());
+            assert_eq!(runtime.live_workers(), workers - 1);
+            assert_eq!(
+                runtime.graceful_shutdowns(),
+                0,
+                "a retiring exporter must discard its stats worker, not stop it gracefully"
+            );
+
+            runtime.shutdown();
+            wait_for_late_requests();
+            assert_eq!(stats.calls(), 0, "discarded stats must not be flushed");
+        }
+
+        #[cfg_attr(miri, ignore)]
+        #[test]
+        fn test_executor_error_still_cancels_workers() {
+            agent_info::clear_cache_for_test();
+            let server = MockServer::start();
+            let (_traces, stats) = mock_stats_agent(&server, Duration::ZERO);
+            let runtime = Arc::new(CountingRuntime::new().unwrap());
+
+            for timeout in [None, TIMEOUT] {
+                let exporter = exporter_with_stats(&server, &runtime);
+                // A slow destructor keeps the discard pending until the executor is needed.
+                runtime
+                    .counters
+                    .slow_next_drop
+                    .store(true, Ordering::SeqCst);
+                runtime.fail_block_on.store(true, Ordering::SeqCst);
+                assert!(matches!(
+                    exporter.shutdown_without_flush(timeout),
+                    Err(TraceExporterError::Shutdown(ShutdownError::Executor(_)))
+                ));
+                runtime.fail_block_on.store(false, Ordering::SeqCst);
+                // The first poll ran on the calling thread and cancelled every worker.
+                wait_until("every worker to be destroyed", || {
+                    runtime.live_workers() == 0
+                });
+            }
+
+            runtime.shutdown();
+            assert_eq!(runtime.graceful_shutdowns(), 0);
+            wait_for_late_requests();
+            assert_eq!(stats.calls(), 0, "cancelled stats must not be flushed");
+        }
+
+        #[cfg_attr(miri, ignore)]
+        #[test]
+        fn test_unpolled_discard_still_claims_workers() {
+            agent_info::clear_cache_for_test();
+            let server = MockServer::start();
+            let (_traces, stats) = mock_stats_agent(&server, Duration::ZERO);
+            let runtime = Arc::new(CountingRuntime::new().unwrap());
+            let exporter = exporter_with_stats(&server, &runtime);
+            let workers = runtime.live_workers();
+
+            // The caller gives up before the first poll: nothing is cancelled yet.
+            drop(exporter.shutdown_without_flush_async());
+            assert_eq!(runtime.live_workers(), workers);
+            // The stats worker is still alive, but a retiring exporter must not flush it.
+            assert!(!exporter.flush_client_side_stats());
+
+            // Exit honors the claims made at call time.
+            runtime.shutdown();
+            assert_eq!(runtime.graceful_shutdowns(), 0);
+            assert_eq!(runtime.live_workers(), 0);
+            wait_for_late_requests();
+            assert_eq!(stats.calls(), 0, "claimed stats must not be flushed");
+        }
+
+        #[cfg_attr(miri, ignore)]
+        #[test]
+        fn test_discard_racing_stats_start() {
+            agent_info::clear_cache_for_test();
+            let server = MockServer::start();
+            let (_traces, stats) = mock_stats_agent(&server, Duration::ZERO);
+            let runtime = Arc::new(CountingRuntime::new().unwrap());
+            let exporter = Arc::new(agent_exporter(&server, &runtime));
+            wait_until("agent info", || agent_info::get_agent_info().is_some());
+
+            // The refresh runs while the send spawns the stats worker: after the send checked
+            // the flag and before it stores the new status, so the discard misses the worker.
+            type Discard = Pin<Box<dyn Future<Output = Result<(), TraceExporterError>> + Send>>;
+            let discard: Arc<Mutex<Option<Discard>>> = Arc::default();
+            runtime.set_on_spawn({
+                let exporter = Arc::downgrade(&exporter);
+                let discard = discard.clone();
+                move || {
+                    let exporter = exporter.upgrade().unwrap();
+                    *discard.lock().unwrap() =
+                        Some(Box::pin(exporter.shutdown_without_flush_async()));
+                }
+            });
+            exporter.send(&trace_payload()).unwrap();
+            let discard = discard
+                .lock()
+                .unwrap()
+                .take()
+                .expect("the send started stats");
+            runtime.block_on(discard).unwrap().unwrap();
+            assert_eq!(
+                runtime.live_workers(),
+                0,
+                "the send must discard the stats worker it started for a retiring exporter"
+            );
+
+            runtime.shutdown();
+            assert_eq!(runtime.graceful_shutdowns(), 0);
+            wait_for_late_requests();
+            assert_eq!(stats.calls(), 0, "discarded stats must not be flushed");
+        }
+
+        /// `shutdown_without_flush` misses a stats worker that a send registered but has not
+        /// published yet, and runtime shutdown can stop it before that send discards it. The
+        /// race cannot be scheduled deterministically, so this sets the flag without claiming
+        /// the worker.
+        #[cfg_attr(miri, ignore)]
+        #[test]
+        fn test_runtime_shutdown_does_not_flush_unclaimed_stats() {
+            agent_info::clear_cache_for_test();
+            let server = MockServer::start();
+            let (_traces, stats) = mock_stats_agent(&server, Duration::ZERO);
+            let runtime = Arc::new(CountingRuntime::new().unwrap());
+            let exporter = exporter_with_stats(&server, &runtime);
+
+            exporter
+                .client_side_stats
+                .retiring
+                .store(true, Ordering::SeqCst);
+            // The info fetcher and the unclaimed stats worker.
+            let workers = runtime.live_workers();
+            runtime.shutdown();
+            assert_eq!(
+                runtime.graceful_shutdowns(),
+                workers,
+                "runtime shutdown stops every worker, including the unclaimed stats worker"
+            );
+            wait_for_late_requests();
+            assert_eq!(
+                stats.calls(),
+                0,
+                "the stats worker of a retiring exporter must not flush"
+            );
+        }
+
+        #[cfg_attr(miri, ignore)]
+        #[test]
+        fn test_concurrent_stats_starts_keep_one_worker() {
+            agent_info::clear_cache_for_test();
+            let server = MockServer::start();
+            let (_traces, stats) = mock_stats_agent(&server, Duration::ZERO);
+            let runtime = Arc::new(CountingRuntime::new().unwrap());
+            let exporter = Arc::new(agent_exporter(&server, &runtime));
+            wait_until("agent info", || agent_info::get_agent_info().is_some());
+            let workers = runtime.live_workers();
+
+            // Both sends see stats disabled. The second one publishes its stats worker while
+            // the first one is spawning its own.
+            runtime.set_on_spawn({
+                let exporter = Arc::downgrade(&exporter);
+                move || {
+                    let exporter = exporter.upgrade().unwrap();
+                    std::thread::spawn(move || exporter.send(&trace_payload()))
+                        .join()
+                        .unwrap()
+                        .unwrap();
+                }
+            });
+            exporter.send(&trace_payload()).unwrap();
+            assert_eq!(
+                runtime.live_workers(),
+                workers + 1,
+                "the send that lost the race to publish must discard its stats worker"
+            );
+
+            exporter.shutdown_without_flush(TIMEOUT).unwrap();
+            runtime.shutdown();
+            assert_eq!(
+                runtime.graceful_shutdowns(),
+                0,
+                "no stats worker may be left for runtime shutdown to stop"
+            );
+            assert_eq!(runtime.live_workers(), 0);
+            wait_for_late_requests();
+            assert_eq!(stats.calls(), 0, "discarded stats must not be flushed");
+        }
+
+        #[cfg_attr(miri, ignore)]
+        #[test]
+        fn test_discard_stops_running_forced_flush() {
+            agent_info::clear_cache_for_test();
+            let server = MockServer::start();
+            let (_traces, mut stats) = mock_stats_agent(&server, Duration::ZERO);
+            let runtime = Arc::new(CountingRuntime::new().unwrap());
+            let exporter = Arc::new(exporter_with_stats(&server, &runtime));
+            // Hold the forced flush's response past its 3 s request timeout.
+            stats.delete();
+            let slow_stats = server.mock(|when, then| {
+                when.method(POST).path(STATS_ENDPOINT);
+                then.status(200).delay(Duration::from_secs(10)).body("");
+            });
+
+            let (done, flushed) = std::sync::mpsc::channel();
+            {
+                let exporter = exporter.clone();
+                std::thread::spawn(move || done.send(exporter.flush_client_side_stats()));
+            }
+            // httpmock counts a request before delaying its response.
+            wait_until("the stats request", || slow_stats.calls() > 0);
+            exporter.shutdown_without_flush(TIMEOUT).unwrap();
+            // Without a wake-up, the flush would only end when its request times out.
+            let flushed = flushed
+                .recv_timeout(Duration::from_secs(1))
+                .expect("the discard must wake the forced flush waiting on its response");
+            assert!(!flushed, "the discard must stop the running forced flush");
+
+            runtime.shutdown();
+            assert_eq!(runtime.graceful_shutdowns(), 0);
+        }
+
+        /// A graceful stats stop that a send began, waiting on its final flush's response, stops
+        /// when the exporter retires. This also checks that a stats worker started by a send
+        /// shares the exporter's wake-up.
+        #[cfg_attr(miri, ignore)]
+        #[test]
+        fn test_discard_stops_graceful_stats_stop() {
+            agent_info::clear_cache_for_test();
+            let server = MockServer::start();
+            let (_traces, mut stats) = mock_stats_agent(&server, Duration::ZERO);
+            let runtime = Arc::new(CountingRuntime::new().unwrap());
+            let exporter = exporter_with_stats(&server, &runtime);
+            // Hold the final flush's response past its 3 s request timeout.
+            stats.delete();
+            let slow_stats = server.mock(|when, then| {
+                when.method(POST).path(STATS_ENDPOINT);
+                then.status(200).delay(Duration::from_secs(10)).body("");
+            });
+            let status = exporter.client_side_stats.status.load_full();
+            let StatsComputationStatus::Enabled { worker_handle, .. } = &*status else {
+                panic!("the send must have started the stats worker");
+            };
+
+            // What a send does when the agent stops advertising stats.
+            let stop = worker_handle.clone().stop();
+            let (done, stopped) = std::sync::mpsc::channel();
+            {
+                let runtime = runtime.clone();
+                std::thread::spawn(move || done.send(runtime.block_on(stop)));
+            }
+            wait_until("the final stats request", || slow_stats.calls() > 0);
+            assert!(matches!(
+                exporter.shutdown_without_flush(TIMEOUT),
+                Err(TraceExporterError::Shutdown(
+                    ShutdownError::WorkerAlreadyStopped {
+                        worker: ExporterWorker::Stats
+                    }
+                ))
+            ));
+            // Without a wake-up, the final flush would only end when its request times out.
+            let stopped = stopped
+                .recv_timeout(Duration::from_secs(1))
+                .expect("the discard must wake the final flush waiting on its response");
+            assert!(matches!(stopped, Ok(Ok(()))));
+
+            runtime.shutdown();
+        }
+
+        /// A forced flush can be mid-poll, about to send, when the discard sets the flag.
+        #[cfg_attr(miri, ignore)]
+        #[test]
+        fn test_discard_waits_for_running_forced_flush() {
+            agent_info::clear_cache_for_test();
+            let server = MockServer::start();
+            mock_stats_agent(&server, Duration::ZERO);
+            let runtime = Arc::new(CountingRuntime::new().unwrap());
+            let exporter = Arc::new(exporter_with_stats(&server, &runtime));
+
+            // The flush blocks on the concentrator in its first poll, after checking the flag.
+            let status = exporter.client_side_stats.status.load_full();
+            let StatsComputationStatus::Enabled {
+                stats_concentrator, ..
+            } = &*status
+            else {
+                panic!("the send started stats");
+            };
+            let concentrator = stats_concentrator.lock().unwrap();
+            let flush = {
+                let exporter = exporter.clone();
+                std::thread::spawn(move || exporter.flush_client_side_stats())
+            };
+            wait_until("the flush poll", || {
+                exporter
+                    .client_side_stats
+                    .polling_flushes
+                    .load(Ordering::SeqCst)
+                    == 1
+            });
+            // Let the flush get past the flag check to the concentrator.
+            std::thread::sleep(Duration::from_millis(50));
+
+            // The second call finds every worker retired, so its first poll reaches the wait.
+            for _ in 0..2 {
+                assert!(
+                    matches!(
+                        exporter.shutdown_without_flush(Some(Duration::from_millis(300))),
+                        Err(TraceExporterError::Shutdown(ShutdownError::TimedOut(_)))
+                    ),
+                    "the discard must wait for the running forced flush"
+                );
+            }
+            drop(concentrator);
+            exporter.shutdown_without_flush(TIMEOUT).unwrap();
+            flush.join().unwrap();
+
+            runtime.shutdown();
+            assert_eq!(runtime.graceful_shutdowns(), 0);
+        }
+
+        #[cfg_attr(miri, ignore)]
+        #[test]
+        fn test_failed_worker_task_reports_worker_failed() {
+            agent_info::clear_cache_for_test();
+            let server = MockServer::start();
+            mock_stats_agent(&server, Duration::ZERO);
+            let runtime = Arc::new(CountingRuntime::new().unwrap());
+            let exporter = exporter_with_stats(&server, &runtime);
+
+            runtime
+                .counters
+                .panic_next_drop
+                .store(true, Ordering::SeqCst);
+            assert!(matches!(
+                exporter.shutdown_without_flush(TIMEOUT),
+                Err(TraceExporterError::Shutdown(
+                    ShutdownError::WorkerFailed { .. }
+                ))
+            ));
+            assert_eq!(runtime.live_workers(), 0);
+            runtime.shutdown();
+            assert_eq!(runtime.graceful_shutdowns(), 0);
+        }
+
+        #[cfg_attr(miri, ignore)]
+        #[test]
+        fn test_runtime_shutdown_first_reports_already_stopped() {
+            agent_info::clear_cache_for_test();
+            let server = MockServer::start();
+            mock_stats_agent(&server, Duration::ZERO);
+            let runtime = Arc::new(CountingRuntime::new().unwrap());
+            let exporter = agent_exporter(&server, &runtime);
+
+            runtime.shutdown();
+            assert!(matches!(
+                exporter.shutdown_without_flush(TIMEOUT),
+                Err(TraceExporterError::Shutdown(
+                    ShutdownError::WorkerAlreadyStopped {
+                        worker: ExporterWorker::InfoFetcher
+                    }
+                ))
+            ));
+        }
+
+        #[cfg_attr(miri, ignore)]
+        #[test]
+        fn test_zero_timeout_still_aborts_every_worker() {
+            agent_info::clear_cache_for_test();
+            let server = MockServer::start();
+            let (_traces, stats) = mock_stats_agent(&server, Duration::ZERO);
+            // One runtime thread blocks in the slow destructor while the other drives the
+            // timer, so the deadline elapses while the first discard is still pending.
+            let runtime = Arc::new(CountingRuntime::with_worker_threads(2).unwrap());
+            let exporter = exporter_with_stats(&server, &runtime);
+            runtime
+                .counters
+                .slow_next_drop
+                .store(true, Ordering::SeqCst);
+
+            assert!(matches!(
+                exporter.shutdown_without_flush(Some(Duration::ZERO)),
+                Err(TraceExporterError::Shutdown(ShutdownError::TimedOut(_)))
+            ));
+            // Every worker was aborted before the deadline, so retirement finishes in the
+            // background without another call, fork or shutdown. Awaiting the discards one
+            // by one would never reach the worker after the slow one.
+            wait_until("every worker to be destroyed", || {
+                runtime.live_workers() == 0
+            });
+            runtime.shutdown();
+            assert_eq!(runtime.graceful_shutdowns(), 0);
+            wait_for_late_requests();
+            assert_eq!(stats.calls(), 0, "aborted stats must not be flushed");
+        }
+
+        /// Discard an exporter whose stats worker starts at build time, then exit.
+        fn assert_build_time_stats_discarded(
+            configure: impl FnOnce(&mut TraceExporterBuilder<CountingRuntime>, &MockServer),
+            stats_path: &str,
+        ) {
+            let server = MockServer::start();
+            let stats = server.mock(|when, then| {
+                when.method(POST).path(stats_path);
+                then.status(200).body("");
+            });
+            let _other = server.mock(|_when, then| {
+                then.status(200).body("{}");
+            });
+            let runtime = Arc::new(CountingRuntime::new().unwrap());
+            let mut builder = builder(&runtime);
+            configure(&mut builder, &server);
+            let exporter = builder.build::<NativeCapabilities>().unwrap();
+            assert!(exporter.is_stats_worker_active());
+            exporter.send(&trace_payload()).unwrap();
+
+            exporter.shutdown_without_flush(TIMEOUT).unwrap();
+            runtime.shutdown();
+            assert_eq!(runtime.graceful_shutdowns(), 0);
+            assert_eq!(runtime.live_workers(), 0);
+            wait_for_late_requests();
+            assert_eq!(stats.calls(), 0, "discarded stats must not be flushed");
+        }
+
+        #[cfg_attr(miri, ignore)]
+        #[test]
+        fn test_discards_otlp_stats() {
+            assert_build_time_stats_discarded(
+                |builder, server| {
+                    builder
+                        .set_url(&server.url("/"))
+                        .set_otlp_endpoint(&server.url("/v1/traces"))
+                        .set_otlp_metrics_endpoint(&server.url("/v1/metrics"));
+                },
+                "/v1/metrics",
+            );
+        }
+
+        #[cfg(feature = "stats-obfuscation")]
+        #[cfg_attr(miri, ignore)]
+        #[test]
+        fn test_discards_agentless_stats() {
+            assert_build_time_stats_discarded(
+                |builder, server| {
+                    builder
+                        .set_agentless_endpoint(&server.url("/v1/input"), "test-api-key")
+                        .set_agentless_stats_endpoint(&server.url("/api/v0.2/stats"));
+                },
+                "/api/v0.2/stats",
+            );
+        }
     }
 }
