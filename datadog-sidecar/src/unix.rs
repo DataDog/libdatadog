@@ -63,6 +63,11 @@ pub extern "C" fn ddog_daemon_entry_point(trampoline_data: &TrampolineData) {
     let now = Instant::now();
 
     if let Some(fd) = spawn_worker::recv_passed_fd() {
+        // Passed without close-on-exec: a child the sidecar execs would keep the name bound.
+        let _ = nix::fcntl::fcntl(
+            fd.as_raw_fd(),
+            nix::fcntl::FcntlArg::F_SETFD(nix::fcntl::FdFlag::FD_CLOEXEC),
+        );
         let seqpacket_listener = SeqpacketListener::from_owned_fd(fd);
         info!("Starting sidecar, pid: {}", getpid());
         let acquire_listener = move || {
@@ -402,11 +407,22 @@ mod tests {
             }
             let name = std::env::var(TEST_SIDECAR_LISTENER).unwrap();
             let listener = SeqpacketListener::bind_abstract(name.as_bytes()).unwrap();
-            // The SHM names are kept to this process.
+            // Passed as spawn_worker does, by a dup2 that leaves it inherited on exec; the SHM
+            // names are kept to this process.
+            let source = listener.into_raw_fd();
+            // SAFETY: the target number is free in this fresh process, and the source is ours:
+            // closed, so that only the passed descriptor holds the name.
+            unsafe {
+                assert_eq!(
+                    libc::dup2(source, TEST_SIDECAR_PASSED_FD),
+                    TEST_SIDECAR_PASSED_FD
+                );
+                libc::close(source);
+            }
             unsafe {
                 std::env::set_var(
                     "__DD_INTERNAL_PASSED_FD",
-                    listener.into_raw_fd().to_string(),
+                    TEST_SIDECAR_PASSED_FD.to_string(),
                 )
             };
             use_thread_sidecar_shm_namespace(Some(std::process::id()));
@@ -442,6 +458,8 @@ mod tests {
     const TEST_SIDECAR_LISTENER: &str = "_DD_TEST_SIDECAR_LISTENER";
     #[cfg(target_os = "linux")]
     const TEST_SIDECAR_SOFT_NOFILE: &str = "_DD_TEST_SIDECAR_SOFT_NOFILE";
+    #[cfg(target_os = "linux")]
+    const TEST_SIDECAR_PASSED_FD: RawFd = 100;
 
     /// A queued payload must not hold the descriptor of its shared memory: payloads queue up
     /// while the agent is slow, and the sidecar ran out of descriptors.
@@ -532,6 +550,38 @@ mod tests {
             log.contains("At startup, RLIMIT_NOFILE soft=256 hard=")
                 && log.contains("Raised the RLIMIT_NOFILE soft limit from 256 to "),
             "the limits were not logged: {log}"
+        );
+    }
+
+    /// A child the sidecar execs, like the crashtracker receiver, must inherit neither its
+    /// listener, which keeps the name bound, nor its clients, which then see no end of file.
+    #[test]
+    #[cfg(target_os = "linux")]
+    #[cfg_attr(miri, ignore)]
+    fn the_sidecar_sockets_are_close_on_exec() {
+        let Some(sidecar) = TestSidecar::start("the_sidecar_sockets_are_close_on_exec", None)
+        else {
+            return;
+        };
+        let pid = sidecar.pid();
+        let inherited: Vec<_> = std::fs::read_dir(format!("/proc/{pid}/fd"))
+            .unwrap()
+            .flatten()
+            .filter(|fd| {
+                std::fs::read_link(fd.path())
+                    .is_ok_and(|target| target.to_string_lossy().starts_with("socket:"))
+            })
+            .filter_map(|fd| {
+                let fd = fd.file_name().to_string_lossy().into_owned();
+                let info = std::fs::read_to_string(format!("/proc/{pid}/fdinfo/{fd}")).ok()?;
+                let flags = info.lines().find_map(|line| line.strip_prefix("flags:"))?;
+                let flags = u32::from_str_radix(flags.trim(), 8).ok()?;
+                (flags & libc::O_CLOEXEC as u32 == 0).then_some(fd)
+            })
+            .collect();
+        assert!(
+            inherited.is_empty(),
+            "sockets inherited on exec: {inherited:?}"
         );
     }
 

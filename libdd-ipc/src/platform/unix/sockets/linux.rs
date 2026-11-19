@@ -4,7 +4,7 @@
 //! Linux-specific IPC socket implementation using `AF_UNIX SOCK_SEQPACKET`.
 
 use super::{PeerCredentials, SeqpacketConn, SeqpacketListener, create_unix_socket};
-use nix::sys::socket::{Backlog, SockType, UnixAddr, accept, bind, connect, listen};
+use nix::sys::socket::{Backlog, SockFlag, SockType, UnixAddr, accept4, bind, connect, listen};
 use std::os::fd::RawFd;
 use std::{
     io,
@@ -48,7 +48,9 @@ impl SeqpacketListener {
     /// check if the peer has already closed the connection (EOF). If so, discard and loop.
     pub fn try_accept(&self) -> io::Result<SeqpacketConn> {
         loop {
-            let new_fd = accept(self.inner.as_raw_fd()).map_err(io::Error::from)?;
+            // Close-on-exec, or a child the server execs keeps the client connected.
+            let new_fd =
+                accept4(self.inner.as_raw_fd(), SockFlag::SOCK_CLOEXEC).map_err(io::Error::from)?;
             let owned = unsafe { OwnedFd::from_raw_fd(new_fd) };
             let conn = SeqpacketConn::from_owned(owned)?;
             // Peek to detect EOF phantom connections left by is_listening probes.
@@ -257,6 +259,23 @@ mod tests {
                 );
             }
         }
+    }
+
+    /// Accepted connections must not outlive the server in the children it execs.
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn accepted_connections_are_close_on_exec() {
+        let name = format!("libdd-ipc-cloexec-{}", std::process::id()).into_bytes();
+        let listener = SeqpacketListener::bind_abstract(&name).expect("bind");
+        let _client = SeqpacketConn::connect_abstract(&name).expect("connect");
+        let accepted = listener.try_accept().expect("accept");
+        // SAFETY: F_GETFD only reads the descriptor flags.
+        let flags = unsafe { libc::fcntl(accepted.inner.as_raw_fd(), libc::F_GETFD) };
+        assert_ne!(
+            flags & libc::FD_CLOEXEC,
+            0,
+            "the accepted connection is inherited on exec"
+        );
     }
 
     /// More descriptors than the receive buffer holds only lose that message, not the sidecar,
