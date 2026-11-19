@@ -290,7 +290,6 @@ mod grpc_export_tests {
         server.join().expect("server thread failed");
     }
 
-    #[cfg_attr(miri, ignore)]
     #[test]
     fn grpc_export_end_to_end_and_survives_shared_runtime_restart() {
         std::thread::scope(|scope| {
@@ -299,7 +298,6 @@ mod grpc_export_tests {
     }
 
     #[cfg(feature = "telemetry")]
-    #[cfg_attr(miri, ignore)]
     #[test]
     fn grpc_retry_emits_native_trace_telemetry() {
         let telemetry_server = httpmock::MockServer::start();

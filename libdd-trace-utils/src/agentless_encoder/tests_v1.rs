@@ -103,7 +103,6 @@ fn encode_first_span(chunks: &[TraceChunkBytes]) -> Value {
     v["traces"][0]["spans"][0].clone()
 }
 
-#[cfg_attr(miri, ignore)] // serde_json overhead is prohibitively slow under Miri
 #[test]
 fn top_level_payload_shape_and_metadata() {
     let chunk = minimal_chunk([0u8; 16], minimal_span());
@@ -140,7 +139,6 @@ fn top_level_payload_shape_and_metadata() {
     assert_eq!(s["meta"]["_dd.compute_stats"], "1");
 }
 
-#[cfg_attr(miri, ignore)]
 #[test]
 fn resource_defaults_to_name_when_empty() {
     let span = SpanBytes {
@@ -156,7 +154,6 @@ fn resource_defaults_to_name_when_empty() {
     assert_eq!(out["resource"], "op");
 }
 
-#[cfg_attr(miri, ignore)]
 #[test]
 fn keeps_existing_dd_p_tid_in_meta() {
     // When the tracer already supplies `_dd.p.tid`, the encoder must pass it through unchanged
@@ -179,7 +176,6 @@ fn keeps_existing_dd_p_tid_in_meta() {
     assert_eq!(out["meta"]["some.tag"], "kept");
 }
 
-#[cfg_attr(miri, ignore)]
 #[test]
 fn p_tid_is_auto_injected_from_trace_id_high_bits_when_absent() {
     let mut tid = [0u8; 16];
@@ -190,7 +186,6 @@ fn p_tid_is_auto_injected_from_trace_id_high_bits_when_absent() {
     assert_eq!(out["meta"]["_dd.p.tid"], "deadbeefcafebabe");
 }
 
-#[cfg_attr(miri, ignore)]
 #[test]
 fn promoted_fields_are_copied_into_meta() {
     let span = SpanBytes {
@@ -207,14 +202,12 @@ fn promoted_fields_are_copied_into_meta() {
     assert_eq!(out["meta"]["span.kind"], "server");
 }
 
-#[cfg_attr(miri, ignore)]
 #[test]
 fn span_kind_internal_is_not_emitted() {
     let out = encode_first_span(&[minimal_chunk([0u8; 16], minimal_span())]);
     assert!(out["meta"].get("span.kind").is_none());
 }
 
-#[cfg_attr(miri, ignore)]
 #[test]
 fn attribute_sharing_a_promoted_key_name_is_dropped_in_favor_of_the_dedicated_field() {
     let mut attrs: VecMap<BytesString, AttributeValueBytes> = VecMap::new();
@@ -230,7 +223,6 @@ fn attribute_sharing_a_promoted_key_name_is_dropped_in_favor_of_the_dedicated_fi
     assert_eq!(out["meta"]["http.method"], "GET");
 }
 
-#[cfg_attr(miri, ignore)]
 #[test]
 fn span_attributes_override_chunk_attributes_of_the_same_key() {
     let mut chunk_attrs: VecMap<BytesString, AttributeValueBytes> = VecMap::new();
@@ -252,7 +244,6 @@ fn span_attributes_override_chunk_attributes_of_the_same_key() {
     assert_eq!(out["meta"]["k"], "from-span");
 }
 
-#[cfg_attr(miri, ignore)]
 #[test]
 fn chunk_attributes_propagate_to_every_span() {
     let mut chunk_attrs: VecMap<BytesString, AttributeValueBytes> = VecMap::new();
@@ -282,7 +273,6 @@ fn chunk_attributes_propagate_to_every_span() {
     assert!(spans[1]["meta"].get("_dd.compute_stats").is_none());
 }
 
-#[cfg_attr(miri, ignore)]
 #[test]
 fn client_side_stats_suppresses_compute_stats_injection() {
     let chunk = minimal_chunk([0u8; 16], minimal_span());
@@ -292,7 +282,6 @@ fn client_side_stats_suppresses_compute_stats_injection() {
     assert!(spans[0]["meta"].get("_dd.compute_stats").is_none());
 }
 
-#[cfg_attr(miri, ignore)]
 #[test]
 fn trace_id_only_carries_low_64_bits() {
     let mut tid = [0u8; 16];
@@ -302,7 +291,6 @@ fn trace_id_only_carries_low_64_bits() {
     assert_eq!(out["trace_id"], "0123456789abcdef");
 }
 
-#[cfg_attr(miri, ignore)]
 #[test]
 fn error_true_emits_one_false_emits_zero() {
     let err_span = SpanBytes {
@@ -319,7 +307,6 @@ fn error_true_emits_one_false_emits_zero() {
     );
 }
 
-#[cfg_attr(miri, ignore)]
 #[test]
 fn string_attribute_is_routed_to_meta() {
     let mut attrs: VecMap<BytesString, AttributeValueBytes> = VecMap::new();
@@ -332,7 +319,6 @@ fn string_attribute_is_routed_to_meta() {
     assert_eq!(out["meta"]["http.method"], "GET");
 }
 
-#[cfg_attr(miri, ignore)]
 #[test]
 fn bool_attribute_is_stringified_in_meta() {
     let mut attrs: VecMap<BytesString, AttributeValueBytes> = VecMap::new();
@@ -347,7 +333,6 @@ fn bool_attribute_is_stringified_in_meta() {
     assert_eq!(out["meta"]["cached"], "false");
 }
 
-#[cfg_attr(miri, ignore)]
 #[test]
 fn float_and_int_attributes_route_to_metrics_as_f64() {
     let mut attrs: VecMap<BytesString, AttributeValueBytes> = VecMap::new();
@@ -362,7 +347,6 @@ fn float_and_int_attributes_route_to_metrics_as_f64() {
     assert_eq!(out["metrics"]["status"], 200.0);
 }
 
-#[cfg_attr(miri, ignore)]
 #[test]
 fn top_level_metric_is_serialized_as_integer_not_float() {
     // `_top_level` must render as `1`, not `1.0`, on the wire.
@@ -382,7 +366,6 @@ fn top_level_metric_is_serialized_as_integer_not_float() {
     assert!(!text.contains("\"_top_level\":1.0"));
 }
 
-#[cfg_attr(miri, ignore)]
 #[test]
 fn bytes_attribute_is_transcoded_into_meta_struct() {
     #[derive(serde::Serialize)]
@@ -414,14 +397,12 @@ fn bytes_attribute_is_transcoded_into_meta_struct() {
     assert_eq!(ms["_dd.appsec.json"]["rule_id"], "crs-913-110");
 }
 
-#[cfg_attr(miri, ignore)]
 #[test]
 fn meta_struct_field_omitted_when_no_bytes_attributes() {
     let out = encode_first_span(&[minimal_chunk([0u8; 16], minimal_span())]);
     assert!(out.get("meta_struct").is_none());
 }
 
-#[cfg_attr(miri, ignore)]
 #[test]
 fn nested_bytes_attribute_in_list_is_routed_to_meta_struct() {
     let payload = rmp_serde::to_vec(&42u32).unwrap();
@@ -449,7 +430,6 @@ fn nested_bytes_attribute_in_list_is_routed_to_meta_struct() {
     assert_eq!(ms["items.1"], 42);
 }
 
-#[cfg_attr(miri, ignore)]
 #[test]
 fn non_finite_metric_attributes_are_dropped() {
     let mut attrs: VecMap<BytesString, AttributeValueBytes> = VecMap::new();
@@ -477,7 +457,6 @@ fn non_finite_metric_attributes_are_dropped() {
     assert_eq!(out["metrics"]["finite_metric"], 1.5);
 }
 
-#[cfg_attr(miri, ignore)]
 #[test]
 fn nested_key_value_attribute_is_flattened_with_dotted_keys() {
     let mut inner: VecMap<BytesString, AttributeValueBytes> = VecMap::new();
@@ -492,7 +471,6 @@ fn nested_key_value_attribute_is_flattened_with_dotted_keys() {
     assert_eq!(out["meta"]["a.b"], "v");
 }
 
-#[cfg_attr(miri, ignore)]
 #[test]
 fn nested_attribute_flattening_to_a_promoted_key_does_not_override_dedicated_field() {
     let mut inner: VecMap<BytesString, AttributeValueBytes> = VecMap::new();
@@ -514,7 +492,6 @@ fn nested_attribute_flattening_to_a_promoted_key_does_not_override_dedicated_fie
     assert_eq!(out["meta"]["_dd.origin"], "rum");
 }
 
-#[cfg_attr(miri, ignore)]
 #[test]
 fn chunk_origin_priority_and_sampling_mechanism_are_mapped() {
     let chunk = TraceChunkBytes {
@@ -529,7 +506,6 @@ fn chunk_origin_priority_and_sampling_mechanism_are_mapped() {
     assert_eq!(out["metrics"]["_sampling_priority_v1"], 1.0);
 }
 
-#[cfg_attr(miri, ignore)]
 #[test]
 fn dropped_trace_is_ignored() {
     // `dropped_trace` is agent-owned output, not a sampling input: the span must encode exactly
@@ -548,7 +524,6 @@ fn dropped_trace_is_ignored() {
     }
 }
 
-#[cfg_attr(miri, ignore)]
 #[test]
 fn span_links_serialised_into_meta_as_json_string() {
     let mut attrs: VecMap<BytesString, AttributeValueBytes> = VecMap::new();
@@ -580,7 +555,6 @@ fn span_links_serialised_into_meta_as_json_string() {
     assert_eq!(link_obj["tracestate"], "dd=s:1");
 }
 
-#[cfg_attr(miri, ignore)]
 #[test]
 fn span_link_attributes_are_filtered_to_string_and_bool() {
     let mut attrs: VecMap<BytesString, AttributeValueBytes> = VecMap::new();
@@ -605,7 +579,6 @@ fn span_link_attributes_are_filtered_to_string_and_bool() {
     assert!(link["attributes"].get("dropped").is_none());
 }
 
-#[cfg_attr(miri, ignore)]
 #[test]
 fn span_link_flags_sentinel_bit_masked() {
     let span = SpanBytes {
@@ -623,7 +596,6 @@ fn span_link_flags_sentinel_bit_masked() {
     assert_eq!(links[0]["flags"], 1);
 }
 
-#[cfg_attr(miri, ignore)]
 #[test]
 fn existing_span_links_meta_is_kept_and_not_overwritten() {
     let mut attrs: VecMap<BytesString, AttributeValueBytes> = VecMap::new();
@@ -644,7 +616,6 @@ fn existing_span_links_meta_is_kept_and_not_overwritten() {
     assert_eq!(out["meta"]["_dd.span_links"], "[{\"already\":\"there\"}]");
 }
 
-#[cfg_attr(miri, ignore)]
 #[test]
 fn span_events_serialised_into_meta_as_json_string() {
     let mut attrs: VecMap<BytesString, AttributeValueBytes> = VecMap::new();
@@ -672,7 +643,6 @@ fn span_events_serialised_into_meta_as_json_string() {
     assert_eq!(evt["attributes"]["exception.message"], "timeout");
 }
 
-#[cfg_attr(miri, ignore)]
 #[test]
 fn span_event_list_attribute_becomes_json_array_of_scalars() {
     let mut attrs: VecMap<BytesString, AttributeValueBytes> = VecMap::new();
@@ -698,7 +668,6 @@ fn span_event_list_attribute_becomes_json_array_of_scalars() {
     assert_eq!(value, &serde_json::json!(["a", 2]));
 }
 
-#[cfg_attr(miri, ignore)]
 #[test]
 fn span_event_bytes_attribute_is_dropped() {
     let mut attrs: VecMap<BytesString, AttributeValueBytes> = VecMap::new();
@@ -720,7 +689,6 @@ fn span_event_bytes_attribute_is_dropped() {
     assert!(events[0].get("attributes").is_none());
 }
 
-#[cfg_attr(miri, ignore)]
 #[test]
 fn span_event_non_finite_float_attribute_becomes_null() {
     let mut attrs: VecMap<BytesString, AttributeValueBytes> = VecMap::new();

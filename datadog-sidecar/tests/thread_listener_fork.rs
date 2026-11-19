@@ -12,7 +12,6 @@ use libdd_ipc::rate_limiter::ShmLimiterMemory;
 use std::time::{Duration, Instant};
 
 #[test]
-#[cfg_attr(miri, ignore)]
 fn a_forked_worker_can_start_its_own_listener() {
     MasterListener::start(Config::get().clone()).unwrap();
     let mut parent = connect_to_master(std::process::id().try_into().unwrap()).unwrap();

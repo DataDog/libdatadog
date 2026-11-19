@@ -411,6 +411,7 @@ mod tests {
         for _ in receiver.try_iter() {}
     }
 
+    #[libdd_test_macros::miri_test]
     #[test]
     fn test_restart() {
         let (mut pw, receiver, _, runtime) = setup();
@@ -429,6 +430,7 @@ mod tests {
     }
 
     // A paused then restarted worker keeps running and is not re-paused by a leftover command.
+    #[libdd_test_macros::miri_test]
     #[test]
     fn test_pause_start_keeps_running() {
         let (mut pw, receiver, _, runtime) = setup();
@@ -443,6 +445,7 @@ mod tests {
     }
 
     // Pausing twice sends a single pause, so the worker keeps running after restart.
+    #[libdd_test_macros::miri_test]
     #[test]
     fn test_double_pause() {
         let (mut pw, receiver, _, runtime) = setup();
@@ -460,6 +463,7 @@ mod tests {
     }
 
     // A flush requested on a running worker calls `flush` once and resolves its token.
+    #[libdd_test_macros::miri_test]
     #[test]
     fn test_flush_while_running() {
         let (mut pw, _receiver, flushes, runtime) = setup();
@@ -470,6 +474,7 @@ mod tests {
     }
 
     // A flush requested while paused runs only after restart and the worker state is preserved.
+    #[libdd_test_macros::miri_test]
     #[test]
     fn test_flush_while_paused() {
         let (mut pw, receiver, flushes, runtime) = setup();

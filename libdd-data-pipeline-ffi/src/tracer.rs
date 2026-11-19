@@ -799,6 +799,7 @@ pub unsafe extern "C" fn ddog_trace_exporter_send_trace_chunks(
 }
 
 #[cfg(test)]
+#[libdd_test_macros::miri_test]
 mod tests {
     use super::*;
     use crate::error::ddog_trace_exporter_error_free;

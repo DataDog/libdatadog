@@ -1081,6 +1081,7 @@ pub unsafe extern "C" fn ddog_trace_exporter_send(
 }
 
 #[cfg(test)]
+#[libdd_test_macros::miri_test]
 #[allow(deprecated)]
 mod tests {
     use super::*;

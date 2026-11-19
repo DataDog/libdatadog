@@ -321,7 +321,6 @@ mod tests {
 
     #[test]
     #[cfg(unix)]
-    #[cfg_attr(miri, ignore)]
     fn readers_follow_a_new_thread_master() {
         const CHILD: &str = "DD_TEST_AGENT_INFO_MASTER_CHANGE";
         if std::env::var_os(CHILD).is_none() {
@@ -398,7 +397,6 @@ mod tests {
         );
     }
 
-    #[cfg_attr(miri, ignore)]
     #[tokio::test]
     async fn v1_active_follows_each_new_info_and_a_404() {
         let (future, completer) = ManualFuture::new();
@@ -453,7 +451,6 @@ mod tests {
         assert!(!guard.v1_active());
     }
 
-    #[cfg_attr(miri, ignore)]
     #[tokio::test]
     async fn v1_is_off_for_agents_before_7_79() {
         let (future, completer) = ManualFuture::new();
@@ -490,7 +487,6 @@ mod tests {
         }
     }
 
-    #[cfg_attr(miri, ignore)]
     #[tokio::test]
     async fn the_debugger_flag_is_set_before_the_info_is_published() {
         let endpoint = Endpoint::from_slice("http://derived-state.invalid:8126");
@@ -556,7 +552,6 @@ mod tests {
 
     const TEST_INFO_HASH: &str = "8c732aba385d605b010cd5bd12c03fef402eaefce989f0055aa4c7e92fe30077";
 
-    #[cfg_attr(miri, ignore)]
     #[tokio::test]
     async fn test_fetch_info_without_state() {
         let server = MockServer::start();

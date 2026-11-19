@@ -32,7 +32,6 @@ macro_rules! crash_tracking_tests {
     ($(($test_name:ident, $profile:expr, $mode:expr, $crash_type:expr)),* $(,)?) => {
         $(
             #[test]
-            #[cfg_attr(miri, ignore)]
             fn $test_name() {
                 run_standard_crash_test_refactored($profile, $mode, $crash_type);
             }
@@ -98,7 +97,6 @@ fn run_standard_crash_test_refactored(
 // that doesn't fit the simple macro-generated pattern.
 
 #[test]
-#[cfg_attr(miri, ignore)]
 fn test_crash_tracking_bin_errno_preservation() {
     use bin_tests::modes::unix::test_016_errno_preservation::ERRNO_STATUS_FILENAME;
 
@@ -125,7 +123,6 @@ fn test_crash_tracking_bin_errno_preservation() {
 }
 
 #[test]
-#[cfg_attr(miri, ignore)]
 fn test_crash_tracking_bin_unhandled_exception() {
     let config = CrashTestConfig::new(
         BuildProfile::Release,
@@ -164,7 +161,6 @@ fn test_crash_tracking_bin_unhandled_exception() {
 /// expression string in the error message.
 #[test]
 #[cfg(target_os = "linux")]
-#[cfg_attr(miri, ignore)]
 fn test_crash_tracking_bin_assert_fail() {
     let config = CrashTestConfig::new(
         BuildProfile::Release,
@@ -206,7 +202,6 @@ fn test_crash_tracking_bin_assert_fail() {
 /// Requires a Linux environment that permits ptrace attach.
 #[test]
 #[cfg(target_os = "linux")]
-#[cfg_attr(miri, ignore)]
 fn test_crash_tracking_bin_unhandled_exception_multi_thread() {
     let config = CrashTestConfig::new(
         BuildProfile::Release,
@@ -315,7 +310,6 @@ fn test_crash_tracking_bin_unhandled_exception_multi_thread() {
 }
 
 #[test]
-#[cfg_attr(miri, ignore)]
 fn test_crash_tracking_bin_runtime_callback_frame() {
     let config = CrashTestConfig::new(
         BuildProfile::Release,
@@ -363,7 +357,6 @@ fn test_crash_tracking_bin_runtime_callback_frame() {
 /// Requires a Linux environment that permits ptrace attach.
 #[test]
 #[cfg(target_os = "linux")]
-#[cfg_attr(miri, ignore)]
 fn test_crash_tracking_multi_thread_collection() {
     let config = CrashTestConfig::new(
         BuildProfile::Release,
@@ -533,7 +526,6 @@ fn crashed_thread_frames(payload: &Value) -> anyhow::Result<&[Value]> {
     target_os = "linux",
     any(target_arch = "x86_64", target_arch = "aarch64")
 ))]
-#[cfg_attr(miri, ignore)]
 fn test_crash_tracking_bin_promotes_saved_context_stack() {
     let config = CrashTestConfig::new(
         BuildProfile::Debug,
@@ -601,7 +593,6 @@ fn test_crash_tracking_bin_promotes_saved_context_stack() {
     target_os = "linux",
     any(target_arch = "x86_64", target_arch = "aarch64")
 ))]
-#[cfg_attr(miri, ignore)]
 fn test_crash_tracking_bin_keeps_inprocess_symbols_with_saved_context() {
     let config = CrashTestConfig::new(
         BuildProfile::Debug,
@@ -636,7 +627,6 @@ fn test_crash_tracking_bin_keeps_inprocess_symbols_with_saved_context() {
 /// Spawns default max threads and verifies the crash report contains all of them.
 #[test]
 #[cfg(target_os = "linux")]
-#[cfg_attr(miri, ignore)]
 fn test_crash_tracking_thread_limit() {
     const THREAD_COUNT: usize = libdd_crashtracker::default_max_threads();
 
@@ -733,7 +723,6 @@ fn wait_or_kill(child: &mut process::Child, timeout: std::time::Duration) -> pro
 /// crash handler connects to through a Unix socket.
 #[test]
 #[cfg(target_os = "linux")]
-#[cfg_attr(miri, ignore)]
 fn test_crash_tracking_sidecar_basic() {
     const RECEIVER_TIMEOUT_MS: &str = "15000";
     const RECEIVER_WAIT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
@@ -811,7 +800,6 @@ fn test_crash_tracking_sidecar_basic() {
 /// report `yama ptrace_scope = 2` at the moment.
 #[test]
 #[cfg(target_os = "linux")]
-#[cfg_attr(miri, ignore)]
 fn test_crash_tracking_sidecar_multi_thread_collection() {
     const RECEIVER_TIMEOUT_MS: &str = "15000";
     const RECEIVER_WAIT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
@@ -944,7 +932,6 @@ fn test_crash_tracking_sidecar_multi_thread_collection() {
 
 #[test]
 #[cfg(target_os = "linux")]
-#[cfg_attr(miri, ignore)]
 fn test_crash_tracking_thread_name() {
     let config = CrashTestConfig::new(
         BuildProfile::Release,
@@ -977,7 +964,6 @@ fn test_crash_tracking_thread_name() {
 }
 
 #[test]
-#[cfg_attr(miri, ignore)]
 fn test_crash_tracking_bin_runtime_callback_string() {
     let config = CrashTestConfig::new(
         BuildProfile::Release,
@@ -1006,7 +992,6 @@ fn test_crash_tracking_bin_runtime_callback_string() {
 }
 
 #[test]
-#[cfg_attr(miri, ignore)]
 fn test_crash_tracking_bin_no_runtime_callback() {
     let config = CrashTestConfig::new(
         BuildProfile::Release,
@@ -1035,7 +1020,6 @@ fn test_crash_tracking_bin_no_runtime_callback() {
 }
 
 #[test]
-#[cfg_attr(miri, ignore)]
 #[cfg(all(target_os = "linux", not(target_env = "musl")))]
 fn test_collector_no_allocations_stacktrace_modes() {
     // (env_value, should_expect_log)
@@ -1082,7 +1066,6 @@ fn test_collector_no_allocations_stacktrace_modes() {
 }
 
 #[test]
-#[cfg_attr(miri, ignore)]
 fn test_crash_tracking_bin_runtime_callback_frame_invalid_utf8() {
     let config = CrashTestConfig::new(
         BuildProfile::Release,
@@ -1111,7 +1094,6 @@ fn test_crash_tracking_bin_runtime_callback_frame_invalid_utf8() {
 }
 
 #[test]
-#[cfg_attr(miri, ignore)]
 fn test_crash_ping_timing_and_content() {
     // This test is identical to the simple donothing test
     run_standard_crash_test_refactored(
@@ -1122,7 +1104,6 @@ fn test_crash_ping_timing_and_content() {
 }
 
 #[test]
-#[cfg_attr(miri, ignore)]
 fn test_crash_tracking_errors_intake_upload() {
     let config = CrashTestConfig::new(
         BuildProfile::Release,
@@ -1155,7 +1136,6 @@ fn test_crash_tracking_errors_intake_upload() {
 }
 
 #[test]
-#[cfg_attr(miri, ignore)]
 fn test_crash_tracking_errors_intake_crash_ping() {
     let config = CrashTestConfig::new(
         BuildProfile::Release,
@@ -1186,7 +1166,6 @@ fn test_crash_tracking_errors_intake_crash_ping() {
 /// Validates that the errors intake payload correctly inherits fields from the crash info payload.
 /// Both payloads are written to file during the same crash, so we can compare them directly.
 #[test]
-#[cfg_attr(miri, ignore)]
 fn test_crash_tracking_errors_intake_crash_info_parity() {
     let config = CrashTestConfig::new(
         BuildProfile::Release,
@@ -1355,7 +1334,6 @@ fn test_crash_tracking_errors_intake_crash_info_parity() {
 }
 
 #[test]
-#[cfg_attr(miri, ignore)]
 #[cfg(unix)]
 fn test_crash_tracking_errors_intake_uds_socket() {
     // This test requires special UDS socket setup, keeping the old implementation
@@ -1367,13 +1345,11 @@ fn test_crash_tracking_errors_intake_uds_socket() {
 }
 
 #[test]
-#[cfg_attr(miri, ignore)]
 fn test_crash_tracking_bin_panic() {
     test_crash_tracking_app("panic");
 }
 
 #[test]
-#[cfg_attr(miri, ignore)]
 fn test_crash_tracking_bin_segfault() {
     test_crash_tracking_app("segfault");
 }
@@ -1426,7 +1402,6 @@ fn test_crash_tracking_app(crash_type: &str) {
 }
 
 #[test]
-#[cfg_attr(miri, ignore)]
 fn test_crash_tracking_bin_panic_hook_after_fork() {
     test_panic_hook_mode(
         "panic_hook_after_fork",
@@ -1436,13 +1411,11 @@ fn test_crash_tracking_bin_panic_hook_after_fork() {
 }
 
 #[test]
-#[cfg_attr(miri, ignore)]
 fn test_crash_tracking_bin_panic_hook_string() {
     test_panic_hook_mode("panic_hook_string", "message", Some("Panic with value: 42"));
 }
 
 #[test]
-#[cfg_attr(miri, ignore)]
 fn test_crash_tracking_bin_panic_hook_unknown_type() {
     test_panic_hook_mode(
         "panic_hook_unknown_type",
@@ -1521,7 +1494,6 @@ fn test_panic_hook_mode(mode: &str, expected_category: &str, expected_panic_mess
 // These tests use `run_custom_crash_test` with the crashing_test_app artifact.
 
 #[test]
-#[cfg_attr(miri, ignore)]
 fn test_crasht_tracking_validate_callstack() {
     test_crash_tracking_callstack()
 }
@@ -2191,7 +2163,6 @@ fn assert_os_info_matches(os_info_val: &Value, context: &str) {
 }
 
 #[test]
-#[cfg_attr(miri, ignore)]
 #[cfg(unix)]
 #[allow(clippy::zombie_processes)]
 fn crash_tracking_empty_endpoint() {
@@ -2286,7 +2257,6 @@ fn crash_tracking_empty_endpoint() {
 /// sends all data, the receiver still uploads a partial crash report (incomplete=true)
 /// rather than silently discarding everything collected up to that point.
 #[test]
-#[cfg_attr(miri, ignore)]
 #[cfg(unix)]
 fn test_receiver_uploads_partial_report_on_timeout() -> anyhow::Result<()> {
     use libdd_crashtracker::ErrorKind;
@@ -2452,7 +2422,6 @@ fn test_receiver_uploads_partial_report_on_timeout() -> anyhow::Result<()> {
 }
 
 #[test]
-#[cfg_attr(miri, ignore)]
 #[cfg(unix)]
 fn test_receiver_emits_debug_logs_on_receiver_issue() -> anyhow::Result<()> {
     use std::time::Duration;
@@ -3021,7 +2990,6 @@ fn extend_path<T: AsRef<Path>>(parent: &Path, path: T) -> PathBuf {
 
 /// Verify that the receiver reads OTel thread contexts from all threads.
 #[test]
-#[cfg_attr(miri, ignore)]
 #[cfg(target_os = "linux")]
 fn test_crash_tracking_otel_thread_ctx() {
     use bin_tests::modes::unix::test_022_otel_thread_ctx::{MAIN_SPAN_ID, MAIN_TRACE_ID};

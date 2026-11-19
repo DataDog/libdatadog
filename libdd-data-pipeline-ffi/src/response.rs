@@ -53,6 +53,7 @@ pub unsafe extern "C" fn ddog_trace_exporter_response_free(response: *mut Export
 }
 
 #[cfg(test)]
+#[libdd_test_macros::miri_test]
 mod tests {
     use super::*;
 

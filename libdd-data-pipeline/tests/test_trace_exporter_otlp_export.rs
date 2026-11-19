@@ -40,7 +40,6 @@ mod otlp_export_tests {
         rmp_serde::to_vec(&(dict, vec![vec![span]])).unwrap()
     }
 
-    #[cfg_attr(miri, ignore)]
     #[tokio::test]
     async fn otlp_export_sends_correct_payload() {
         use httpmock::MockServer;
@@ -146,7 +145,6 @@ mod otlp_export_tests {
         );
     }
 
-    #[cfg_attr(miri, ignore)]
     #[tokio::test]
     async fn otlp_mutable_metadata_runtime_id_updates_propagate() {
         use httpmock::MockServer;
@@ -242,7 +240,6 @@ mod otlp_export_tests {
         }
     }
 
-    #[cfg_attr(miri, ignore)]
     #[tokio::test]
     async fn otlp_v05_export_sets_sampled_flag() {
         use httpmock::MockServer;
@@ -284,7 +281,6 @@ mod otlp_export_tests {
         mock.delete();
     }
 
-    #[cfg_attr(miri, ignore)]
     #[tokio::test]
     async fn otlp_export_unsampled_traces_not_exported() {
         use httpmock::MockServer;

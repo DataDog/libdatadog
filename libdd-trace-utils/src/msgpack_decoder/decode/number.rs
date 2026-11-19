@@ -210,6 +210,7 @@ pub fn read_nullable_number<T: DeserializableTraceData, R: TryFrom<Number, Error
 }
 
 #[cfg(test)]
+#[libdd_test_macros::miri_test]
 mod tests {
     use super::*;
     use crate::span::SliceData;

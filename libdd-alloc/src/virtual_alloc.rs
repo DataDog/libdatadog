@@ -217,6 +217,7 @@ mod tests {
             })
     }
 
+    #[libdd_test_macros::miri_test]
     #[test]
     fn test_zero_sized() {
         let alloc = VirtualAllocator {};
@@ -225,6 +226,7 @@ mod tests {
         _ = alloc.allocate(zero_sized_layout).unwrap_err();
     }
 
+    #[libdd_test_macros::miri_test]
     #[test]
     fn test_too_large_alignment() {
         let page_size = os::page_size().unwrap();
@@ -236,6 +238,7 @@ mod tests {
         _ = alloc.allocate(too_large_layout).unwrap_err();
     }
 
+    #[libdd_test_macros::miri_test]
     #[test]
     fn test_small_cases() {
         let page_size = os::page_size().unwrap();
@@ -284,16 +287,19 @@ mod tests {
         unsafe { alloc.deallocate(wide_ptr.cast(), layout) };
     }
 
+    #[libdd_test_macros::miri_test]
     #[test]
     fn realistic_size_1mib() {
         realistic_size(1024 * 1024);
     }
 
+    #[libdd_test_macros::miri_test]
     #[test]
     fn realistic_size_2mib() {
         realistic_size(2 * 1024 * 1024);
     }
 
+    #[libdd_test_macros::miri_test]
     #[test]
     fn realistic_size_4mib() {
         realistic_size(4 * 1024 * 1024);

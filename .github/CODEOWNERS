@@ -70,6 +70,7 @@ libdd-profiling-heap-*/              @DataDog/libdatadog-profiling
 libdd-sampling/                      @DataDog/apm-common-components-core
 libdd-shared-runtime*/               @DataDog/apm-common-components-core
 libdd-telemetry*/                    @DataDog/apm-common-components-core
+libdd-test-macros                    @DataDog/apm-common-components-core
 libdd-tinybytes                      @DataDog/apm-common-components-core
 libdd-trace-model                    @DataDog/apm-common-components-core
 libdd-trace-normalization            @DataDog/apm-common-components-core
@@ -177,6 +178,7 @@ libdd-shared-runtime/Cargo.toml              @DataDog/apm-common-components-core
 libdd-telemetry-ffi/Cargo.toml               @DataDog/apm-common-components-core @DataDog/libdatadog-release
 libdd-telemetry/CHANGELOG.md                 @DataDog/apm-common-components-core @DataDog/libdatadog-release
 libdd-telemetry/Cargo.toml                   @DataDog/apm-common-components-core @DataDog/libdatadog-release
+libdd-test-macros/Cargo.toml                 @DataDog/apm-common-components-core @DataDog/libdatadog-release
 libdd-tinybytes/CHANGELOG.md                 @DataDog/apm-common-components-core @DataDog/libdatadog-release
 libdd-tinybytes/Cargo.toml                   @DataDog/apm-common-components-core @DataDog/libdatadog-release
 libdd-trace-stats/CHANGELOG.md               @DataDog/apm-common-components-core @DataDog/libdatadog-release

@@ -514,6 +514,7 @@ mod tests {
         }
     }
 
+    #[libdd_test_macros::miri_test]
     #[test]
     fn test_try_into_success() {
         let span_data1 = json!([{
@@ -601,7 +602,6 @@ mod tests {
         }
     }
 
-    #[cfg_attr(miri, ignore)]
     #[test]
     fn test_try_into_empty() {
         let empty_data = vec![0x90];
@@ -615,6 +615,7 @@ mod tests {
         assert_eq!(0, collection.size());
     }
 
+    #[libdd_test_macros::miri_test]
     #[test]
     fn test_try_into_meta_metrics_success() {
         let dummy_trace = create_trace();

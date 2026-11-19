@@ -547,7 +547,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[cfg_attr(miri, ignore = "tests HTTP cancellation, not unsafe memory access")]
     async fn cancellation_interrupts_an_inflight_http_request() {
         use tokio::io::AsyncReadExt;
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();

@@ -22,6 +22,7 @@ arbitrary = { workspace = true, features = ["derive"], optional = true }
 fuzzing = ["arbitrary"]
 
 [dev-dependencies]
+libdd-test-macros = { path = "../libdd-test-macros" }
 rand = { workspace = true, default-features = true }
 duplicate = { workspace = true, default-features = true }
 criterion.workspace = true

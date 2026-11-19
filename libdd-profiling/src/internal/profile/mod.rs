@@ -1194,6 +1194,7 @@ mod api_tests {
     use libdd_profiling_protobuf::prost_impls;
     use std::collections::HashSet;
 
+    #[libdd_test_macros::miri_test]
     #[test]
     fn interning() {
         let sample_types = [api::SampleType::CpuSamples];
@@ -1209,6 +1210,7 @@ mod api_tests {
         assert_eq!(id1, expected_id);
     }
 
+    #[libdd_test_macros::miri_test]
     #[test]
     fn api() {
         let sample_types = [api::SampleType::CpuSamples, api::SampleType::WallTime];
@@ -1340,6 +1342,7 @@ mod api_tests {
         profile
     }
 
+    #[libdd_test_macros::miri_test]
     #[test]
     fn impl_from_profile_for_pprof_profile() {
         let locations = provide_distinct_locations();
@@ -1426,6 +1429,7 @@ mod api_tests {
         assert_eq!(num_unit, "");
     }
 
+    #[libdd_test_macros::miri_test]
     #[test]
     fn reset() {
         let mut profile = provide_distinct_locations();
@@ -1507,6 +1511,7 @@ mod api_tests {
         assert!(profile.try_add_sample(sample, None).is_err());
     }
 
+    #[libdd_test_macros::miri_test]
     #[test]
     fn lazy_endpoints() -> anyhow::Result<()> {
         let sample_types = [api::SampleType::CpuSamples, api::SampleType::WallTime];
@@ -1597,6 +1602,7 @@ mod api_tests {
         Ok(())
     }
 
+    #[libdd_test_macros::miri_test]
     #[test]
     fn omit_local_root_span_id_when_serializing() {
         let sample_types = [api::SampleType::CpuSamples, api::SampleType::WallTime];
@@ -1654,6 +1660,7 @@ mod api_tests {
         assert_eq!(omit_sample.labels.len(), 1);
     }
 
+    #[libdd_test_macros::miri_test]
     #[test]
     fn endpoint_counts_empty_test() {
         let sample_types = [api::SampleType::CpuSamples, api::SampleType::WallTime];
@@ -1668,6 +1675,7 @@ mod api_tests {
         assert!(endpoints_stats.is_empty());
     }
 
+    #[libdd_test_macros::miri_test]
     #[test]
     fn endpoint_counts_test() -> anyhow::Result<()> {
         let sample_types = [api::SampleType::CpuSamples, api::SampleType::WallTime];
@@ -1727,6 +1735,7 @@ mod api_tests {
         profile.try_add_sample(sample, None).unwrap_err();
     }
 
+    #[libdd_test_macros::miri_test]
     #[test]
     fn test_no_upscaling_if_no_rules() {
         let sample_types = vec![api::SampleType::CpuSamples, api::SampleType::WallTime];
@@ -1776,6 +1785,7 @@ mod api_tests {
         }
     }
 
+    #[libdd_test_macros::miri_test]
     #[test]
     fn test_upscaling_by_value_a_zero_value() {
         let sample_types = create_samples_types();
@@ -1806,6 +1816,7 @@ mod api_tests {
         assert_eq!(first.values, vec![0, 10000, 42]);
     }
 
+    #[libdd_test_macros::miri_test]
     #[test]
     fn test_upscaling_by_value_on_one_value() {
         let sample_types = create_samples_types();
@@ -1836,6 +1847,7 @@ mod api_tests {
         assert_eq!(first.values, vec![3, 10000, 42]);
     }
 
+    #[libdd_test_macros::miri_test]
     #[test]
     fn test_upscaling_by_value_on_one_value_with_poisson() {
         let sample_types = create_samples_types();
@@ -1870,6 +1882,7 @@ mod api_tests {
         assert_eq!(first.values, vec![1, 298, 29]);
     }
 
+    #[libdd_test_macros::miri_test]
     #[test]
     fn test_upscaling_by_value_on_one_value_with_poisson_count() {
         let sample_types = create_samples_types();
@@ -1904,6 +1917,7 @@ mod api_tests {
         assert_eq!(first.values, vec![1, 298, 29]);
     }
 
+    #[libdd_test_macros::miri_test]
     #[test]
     fn test_upscaling_by_value_on_zero_value_with_poisson() {
         let sample_types = create_samples_types();
@@ -1987,6 +2001,7 @@ mod api_tests {
             .expect_err("Cannot add a rule if the offset y is invalid");
     }
 
+    #[libdd_test_macros::miri_test]
     #[test]
     fn test_upscaling_by_value_on_two_values() {
         let sample_types = create_samples_types();
@@ -2047,6 +2062,7 @@ mod api_tests {
         assert_eq!(second.values, vec![10, 24, 198]);
     }
 
+    #[libdd_test_macros::miri_test]
     #[test]
     fn test_upscaling_by_value_on_two_value_with_two_rules() {
         let sample_types = create_samples_types();
@@ -2115,6 +2131,7 @@ mod api_tests {
         assert_eq!(second.values, vec![10, 24, 495]);
     }
 
+    #[libdd_test_macros::miri_test]
     #[test]
     fn test_no_upscaling_by_label_if_no_match() {
         let sample_types = create_samples_types();
@@ -2173,6 +2190,7 @@ mod api_tests {
         assert_eq!(first.values, vec![1, 10000, 42]);
     }
 
+    #[libdd_test_macros::miri_test]
     #[test]
     fn test_upscaling_by_label_on_one_value() {
         let sample_types = create_samples_types();
@@ -2210,6 +2228,7 @@ mod api_tests {
         assert_eq!(first.values, vec![2, 10000, 42]);
     }
 
+    #[libdd_test_macros::miri_test]
     #[test]
     fn test_upscaling_by_label_on_only_sample_out_of_two() {
         let sample_types = create_samples_types();
@@ -2275,6 +2294,7 @@ mod api_tests {
         assert_eq!(second.values, vec![5, 24, 99]);
     }
 
+    #[libdd_test_macros::miri_test]
     #[test]
     fn test_upscaling_by_label_with_two_different_rules_on_two_different_sample() {
         let sample_types = create_samples_types();
@@ -2362,6 +2382,7 @@ mod api_tests {
         assert_eq!(second.values, vec![5, 24, 990]);
     }
 
+    #[libdd_test_macros::miri_test]
     #[test]
     fn test_upscaling_by_label_on_two_values() {
         let sample_types = create_samples_types();
@@ -2400,6 +2421,7 @@ mod api_tests {
 
         assert_eq!(first.values, vec![2, 20000, 42]);
     }
+    #[libdd_test_macros::miri_test]
     #[test]
     fn test_upscaling_by_value_and_by_label_different_values() {
         let sample_types = create_samples_types();
@@ -2713,6 +2735,7 @@ mod api_tests {
             .expect_err("Rule added");
     }
 
+    #[libdd_test_macros::miri_test]
     #[test]
     fn local_root_span_id_label_as_i64() -> anyhow::Result<()> {
         let sample_types = vec![api::SampleType::CpuSamples, api::SampleType::WallTime];
@@ -2826,7 +2849,6 @@ mod api_tests {
     }
 
     #[test]
-    #[cfg_attr(miri, ignore)]
     fn test_try_new_with_dictionary_and_try_add_sample2() {
         struct Frame {
             file_name: &'static str,
@@ -3098,6 +3120,7 @@ mod api_tests {
         assert_eq!(values, vec![1, 1, 2]);
     }
 
+    #[libdd_test_macros::miri_test]
     #[test]
     fn test_regression_managed_string_table_correctly_maps_ids() {
         let storage = Arc::new(Mutex::new(ManagedStringStorage::new()));
@@ -3169,6 +3192,7 @@ mod api_tests {
         );
     }
 
+    #[libdd_test_macros::miri_test]
     #[test]
     fn reproduce_crash_with_anyhow_bailout() {
         let sample_types = [api::SampleType::CpuSamples];
@@ -3226,6 +3250,7 @@ mod api_tests {
         }
     }
 
+    #[libdd_test_macros::miri_test]
     #[test]
     fn invalid_label_set_id_returns_error_instead_of_panicking() {
         let sample_types = [api::SampleType::CpuSamples];
@@ -3286,6 +3311,7 @@ mod api_tests {
     /// Basic smoke test: a profile created with a custom slot serializes without
     /// error after the slot is configured, and round-trips the configured
     /// type/unit strings through pprof.
+    #[libdd_test_macros::miri_test]
     #[test]
     fn custom_sample_type_slot_round_trip() -> anyhow::Result<()> {
         let period = api::Period {
@@ -3335,6 +3361,7 @@ mod api_tests {
 
     /// Custom slot configuration survives a profile reset: the new profile keeps
     /// the configured (type, unit) strings.
+    #[libdd_test_macros::miri_test]
     #[test]
     fn custom_sample_type_slot_survives_reset() -> anyhow::Result<()> {
         let mut profile = Profile::new(&[api::SampleType::Custom1], None);
@@ -3392,6 +3419,7 @@ mod api_tests {
         );
     }
 
+    #[libdd_test_macros::miri_test]
     #[test]
     fn unresolved_custom_sample_type_slot_is_rejected_on_serialize() {
         let profile = Profile::new(&[api::SampleType::Custom1], None);

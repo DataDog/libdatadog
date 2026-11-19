@@ -67,6 +67,7 @@ unsafe impl<T: Send> Send for AtomicOptionBox<T> {}
 unsafe impl<T: Send> Sync for AtomicOptionBox<T> {}
 
 #[cfg(test)]
+#[libdd_test_macros::miri_test]
 mod tests {
     use super::*;
 

@@ -578,6 +578,7 @@ static THREAD_ID: ConstString<9> = ConstString::new("thread id");
 static THREAD_NAME: ConstString<11> = ConstString::new("thread name");
 
 #[cfg(test)]
+#[libdd_test_macros::miri_test]
 mod tests {
     use super::*;
     use libdd_alloc::Global;

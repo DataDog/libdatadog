@@ -91,7 +91,6 @@ fn assert_events(kind: &str, case: &Case, mut actual: Vec<Value>) {
 }
 
 #[test]
-#[cfg_attr(miri, ignore)]
 fn canonical_dependent_flag_results_and_telemetry() {
     let suite = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("ffe-system-test-data/evaluation-suites/dependent-flags");

@@ -141,6 +141,7 @@ pub extern "C" fn ddog_Vec_U8_drop(_vec: ffi::Vec<u8>) {
 }
 
 #[cfg(test)]
+#[libdd_test_macros::miri_test]
 mod tests {
     use super::*;
 

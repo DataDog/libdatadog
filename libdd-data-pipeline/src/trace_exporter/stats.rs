@@ -785,7 +785,6 @@ mod tests {
         /// `process_traces_for_stats_v1` reports that stats were computed, and flips both
         /// `client_computed_*` header tags, when stats computation is enabled.
         #[test]
-        #[cfg_attr(miri, ignore)]
         fn process_traces_for_stats_v1_enabled() {
             use libdd_shared_runtime::{ForkSafeRuntime, SharedRuntime, Worker};
 

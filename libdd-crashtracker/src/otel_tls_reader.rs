@@ -402,6 +402,7 @@ pub(crate) fn read_thread_name(pid: u32, tid: i32) -> Option<String> {
 }
 
 #[cfg(test)]
+#[libdd_test_macros::miri_test]
 mod tests {
     use super::*;
 

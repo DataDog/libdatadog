@@ -210,6 +210,7 @@ mod tests {
 }
 
 #[cfg(test)]
+#[libdd_test_macros::miri_test]
 mod alignment_tests {
     use super::*;
     use allocator_api2::alloc::Global;

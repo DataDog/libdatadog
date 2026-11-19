@@ -45,6 +45,7 @@ pub fn read_meta_struct<T: DeserializableTraceData>(
 }
 
 #[cfg(test)]
+#[libdd_test_macros::miri_test]
 mod tests {
     use super::*;
     use crate::span::SliceData;

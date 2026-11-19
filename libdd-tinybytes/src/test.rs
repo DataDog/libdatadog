@@ -23,6 +23,7 @@ fn hello_slice(range: impl RangeBounds<usize>) -> Bytes {
     hello().slice(range)
 }
 
+#[libdd_test_macros::miri_test]
 #[test]
 fn test_from_underlying_vec() {
     let b = Bytes::from_underlying(vec![1, 2, 3]);
@@ -37,6 +38,7 @@ fn test_from_underlying_vec() {
     drop(b1);
 }
 
+#[libdd_test_macros::miri_test]
 #[test]
 fn test_make_refcounted() {
     let data = vec![1, 2, 3];
@@ -47,6 +49,7 @@ fn test_make_refcounted() {
     drop(refcounted_clone);
 }
 
+#[libdd_test_macros::miri_test]
 #[allow(clippy::reversed_empty_ranges)]
 #[test_case(0..0, ""; "0 to 0 is empty")]
 #[test_case(.., "hello"; "full range is hello")]
@@ -66,6 +69,7 @@ fn test_bytes_slice_range(range: impl RangeBounds<usize>, expected: &str) {
     );
 }
 
+#[libdd_test_macros::miri_test]
 #[test_case(hello(), b"", ""; "any empty slice is empty")]
 #[test_case(hello(), &hello_slice(..), "hello"; "full range is hello")]
 #[test_case(hello(), &hello_slice(2..4), "ll"; "2 to 4 is ll")]
@@ -92,6 +96,7 @@ fn test_runner() -> test_runner::TestRunner {
     )
 }
 
+#[libdd_test_macros::miri_test]
 #[test]
 fn test_bytes_clone_is_shallow() {
     test_runner()
@@ -108,6 +113,7 @@ fn test_bytes_clone_is_shallow() {
         .unwrap();
 }
 
+#[libdd_test_macros::miri_test]
 #[test]
 fn test_bytes_slice_is_shallow() {
     test_runner()
@@ -130,6 +136,7 @@ fn test_bytes_slice_is_shallow() {
         })
         .unwrap();
 }
+#[libdd_test_macros::miri_test]
 #[test]
 fn test_bytes_slice_ref_is_shallow() {
     test_runner()
@@ -154,7 +161,6 @@ fn test_bytes_slice_ref_is_shallow() {
 }
 
 #[test]
-#[cfg_attr(miri, ignore)]
 fn test_bytes_drop_frees_underlying() {
     let underlying = CountingU8::new(vec![1, 2, 3, 4, 5].into());
     let counter = underlying.counter();
@@ -170,6 +176,7 @@ fn test_bytes_drop_frees_underlying() {
 }
 
 #[cfg(feature = "serde")]
+#[libdd_test_macros::miri_test]
 #[test]
 fn test_serialization() {
     static DATA: [u8; 4] = [1, 2, 3, 4];

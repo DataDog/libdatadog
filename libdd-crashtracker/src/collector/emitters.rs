@@ -1384,6 +1384,7 @@ mod tests {
 
     // We only test edge cases specific to this wrapper function here.
     // The core unwinding logic is tested in the libunwind crate.
+    #[libdd_test_macros::miri_test]
     #[test]
     #[cfg(target_os = "linux")]
     fn test_emit_backtrace_via_libunwind_null_ucontext() {
@@ -1402,7 +1403,6 @@ mod tests {
 
     #[test]
     #[cfg(target_os = "linux")]
-    #[cfg_attr(miri, ignore)]
     fn test_emit_backtrace_via_libunwind_unw_init_failure() {
         // Test that when unw_init_local2 fails (e.g., with invalid context),
         // the function returns Ok(()) gracefully without writing anything
@@ -1422,6 +1422,7 @@ mod tests {
         );
     }
 
+    #[libdd_test_macros::miri_test]
     #[test]
     fn test_emit_ucontext_null_pointer() {
         let mut buf = Vec::new();
@@ -1432,6 +1433,7 @@ mod tests {
         assert!(buf.is_empty());
     }
 
+    #[libdd_test_macros::miri_test]
     #[test]
     #[cfg(target_os = "linux")]
     fn test_emit_ucontext_linux_valid() {
@@ -1524,7 +1526,6 @@ mod tests {
 
     #[test]
     #[cfg(target_os = "macos")]
-    #[cfg_attr(miri, ignore)]
     fn test_emit_ucontext_macos_valid() {
         use libc::__darwin_ucontext;
         // Create a minimal valid ucontext_t for macOS
@@ -1602,7 +1603,6 @@ mod tests {
 
     #[test]
     #[cfg(target_os = "macos")]
-    #[cfg_attr(miri, ignore)]
     fn test_emit_ucontext_macos_null_mcontext() {
         // Test the fallback case when mcontext is null
         let mut context: libc::ucontext_t = unsafe { core::mem::zeroed() };

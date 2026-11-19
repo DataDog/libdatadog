@@ -220,6 +220,7 @@ impl IntoLendingIterator for StringTable {
 }
 
 #[cfg(test)]
+#[libdd_test_macros::miri_test]
 mod tests {
     use super::*;
     use crate::collections::identifiable::Id;

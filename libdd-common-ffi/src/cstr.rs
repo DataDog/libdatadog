@@ -134,6 +134,7 @@ impl Drop for CString {
 }
 
 #[cfg(test)]
+#[libdd_test_macros::miri_test]
 mod tests {
     use super::*;
 

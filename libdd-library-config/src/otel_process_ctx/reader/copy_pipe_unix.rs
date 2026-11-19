@@ -201,7 +201,6 @@ mod tests {
     use super::{CopyPipe, ProcessMemoryCopy, io, retry_on_eintr};
 
     #[test]
-    #[cfg_attr(miri, ignore)]
     fn copies_valid_memory_across_multiple_chunks() {
         let pipe = CopyPipe::new().expect("pipe creation should succeed");
         let len = pipe.chunk_size + 1;
@@ -215,7 +214,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg_attr(miri, ignore)]
     fn rejects_a_range_crossing_into_inaccessible_memory() {
         // SAFETY: the arguments reserve two writable anonymous pages.
         let page_size = unsafe { libc::sysconf(libc::_SC_PAGESIZE) };

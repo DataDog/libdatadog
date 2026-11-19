@@ -12,7 +12,6 @@ fn ensure_crypto_provider() {
     let _ = rustls::crypto::ring::default_provider().install_default();
 }
 
-#[cfg_attr(miri, ignore)]
 #[tokio::test]
 async fn test_named_pipe_round_trip() {
     ensure_crypto_provider();

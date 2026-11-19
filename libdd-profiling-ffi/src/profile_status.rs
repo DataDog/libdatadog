@@ -319,12 +319,14 @@ mod tests {
         assert!(status.err.is_null());
     }
 
+    #[libdd_test_macros::miri_test]
     #[test]
     fn test_ffi_drop_null() {
         // Should not crash
         unsafe { ddog_prof_Status_drop(std::ptr::null_mut()) };
     }
 
+    #[libdd_test_macros::miri_test]
     #[test]
     fn test_ffi_drop_ok() {
         let mut status = ProfileStatus::OK;
@@ -333,6 +335,7 @@ mod tests {
         assert!(status.err.is_null());
     }
 
+    #[libdd_test_macros::miri_test]
     #[test]
     fn test_ffi_drop_static() {
         let mut status = ProfileStatus::from(c"static message");
@@ -349,6 +352,7 @@ mod tests {
         assert_eq!(recovered, c"static message");
     }
 
+    #[libdd_test_macros::miri_test]
     #[test]
     fn test_ffi_drop_allocated() {
         let msg = CString::new("allocated message").unwrap();
@@ -366,6 +370,7 @@ mod tests {
         // The allocated memory should have been freed (can't really test this without valgrind)
     }
 
+    #[libdd_test_macros::miri_test]
     #[test]
     fn test_send_sync() {
         // Just check that ProfileStatus implements Send and Sync

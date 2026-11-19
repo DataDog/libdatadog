@@ -107,6 +107,7 @@ impl ProfilesDictionary {
 }
 
 #[cfg(test)]
+#[libdd_test_macros::miri_test]
 mod tests {
     use super::*;
     use crate::profiles::collections::StringRef;

@@ -54,6 +54,7 @@ required-features = [
 harness = false
 
 [dev-dependencies]
+libdd-test-macros = { path = "../libdd-test-macros" }
 # `default-features = false` keeps this edge from force-enabling `owned-context`, so that
 # `--no-default-features --features shared-context` also applies to the test build. Enables
 # `test-utils` for this crate's own integration tests (in particular `thread_exit_autoclean`).

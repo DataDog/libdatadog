@@ -6,7 +6,6 @@ mod common;
 use httpmock::prelude::*;
 
 #[tokio::test]
-#[cfg_attr(miri, ignore)]
 async fn parses_info_response() {
     let server = MockServer::start();
     server.mock(|when, then| {
@@ -33,7 +32,6 @@ async fn parses_info_response() {
 }
 
 #[tokio::test]
-#[cfg_attr(miri, ignore)]
 async fn returns_none_on_404() {
     let server = MockServer::start();
     server.mock(|when, then| {
@@ -46,7 +44,6 @@ async fn returns_none_on_404() {
 }
 
 #[tokio::test]
-#[cfg_attr(miri, ignore)]
 async fn extracts_container_tags_hash_header() {
     let server = MockServer::start();
     server.mock(|when, then| {

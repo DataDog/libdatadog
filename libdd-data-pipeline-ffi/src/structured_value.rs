@@ -228,6 +228,7 @@ pub extern "C" fn ddog_tracer_encoded_value_free(value: Option<Box<TracerEncoded
 }
 
 #[cfg(test)]
+#[libdd_test_macros::miri_test]
 mod tests {
     use super::*;
     use std::mem::MaybeUninit;

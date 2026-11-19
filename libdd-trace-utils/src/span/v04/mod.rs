@@ -550,6 +550,7 @@ mod tests {
         assert_eq!(span.span_events().count(), 1);
     }
 
+    #[libdd_test_macros::miri_test]
     #[test]
     fn skip_serializing_empty_fields_test() {
         let expected = b"\x87\xa7service\xa0\xa4name\xa0\xa8resource\xa0\xa8trace_id\x00\xa7span_id\x00\xa5start\x00\xa8duration\x00";
@@ -558,6 +559,7 @@ mod tests {
         assert_eq!(expected, serialized.as_slice());
     }
 
+    #[libdd_test_macros::miri_test]
     #[test]
     fn serialize_deserialize_test() {
         let span: Span<SliceData<'_>> = Span {
@@ -636,6 +638,7 @@ mod tests {
         }
     }
 
+    #[libdd_test_macros::miri_test]
     #[test]
     fn serialize_event_test() {
         // `expected` is created by transforming the span into bytes

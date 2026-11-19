@@ -63,7 +63,6 @@ fn regenerate_hint() -> String {
 }
 
 #[test]
-#[cfg_attr(miri, ignore)]
 fn tlsdesc_inline_assembly_matches_reference_bytes() {
     let rlib = rlib_path("libdd_otel_thread_ctx");
 

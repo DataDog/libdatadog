@@ -157,6 +157,7 @@ mod tests {
         }
     }
 
+    #[libdd_test_macros::miri_test]
     #[test]
     fn test_function_deduplication() {
         // Create string set for the string data
@@ -197,6 +198,7 @@ mod tests {
         require_sync::<super::ParallelSliceSet<u8>>();
     }
 
+    #[libdd_test_macros::miri_test]
     #[test]
     fn test_function_hashing() {
         let mut string_set = UnsyncStringSet::try_new().unwrap();
@@ -238,6 +240,7 @@ mod tests {
         );
     }
 
+    #[libdd_test_macros::miri_test]
     #[test]
     fn test_function_composition() {
         let mut string_set = UnsyncStringSet::try_new().unwrap();
@@ -261,6 +264,7 @@ mod tests {
         }
     }
 
+    #[libdd_test_macros::miri_test]
     #[test]
     fn test_many_functions() {
         let mut string_set = UnsyncStringSet::try_new().unwrap();
@@ -330,6 +334,7 @@ mod tests {
         }
     }
 
+    #[libdd_test_macros::miri_test]
     #[test]
     fn test_function_edge_cases() {
         let mut string_set = UnsyncStringSet::try_new().unwrap();

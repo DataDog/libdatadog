@@ -181,7 +181,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg_attr(miri, ignore)]
     fn a_reader_sees_an_id_once_it_is_published() {
         let ids = KafkaClusterIds::default();
         let mut reader = reader();
@@ -197,7 +196,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg_attr(miri, ignore)]
     fn a_new_id_replaces_the_old_one_and_a_known_one_is_not_published_again() {
         let ids = KafkaClusterIds::default();
         let mut reader = reader();
@@ -212,7 +210,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg_attr(miri, ignore)]
     fn a_learned_id_is_used_and_reported_once() {
         let mut reader = reader();
         assert!(reader.learn("kafka:9092", "c1"), "news to the sidecar");
@@ -226,7 +223,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg_attr(miri, ignore)]
     fn empty_and_oversized_values_are_ignored() {
         let ids = KafkaClusterIds::default();
         let long = "k".repeat(MAX_VALUE_LEN + 1);
@@ -240,7 +236,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg_attr(miri, ignore)]
     fn clusters_beyond_the_limit_are_not_kept() {
         let ids = KafkaClusterIds::default();
         for i in 0..MAX_CLUSTERS {

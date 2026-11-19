@@ -349,6 +349,7 @@ pub fn to_encoded_byte_len_from_v1<T: TraceData>(payload: &TracerPayload<T>) -> 
 }
 
 #[cfg(test)]
+#[libdd_test_macros::miri_test]
 mod tests {
     //! Regression tests for [`msgpack_const_string_encoding`] across every msgpack string
     //! length-marker boundary (fixstr / str8 / str16), since the length only fits in the

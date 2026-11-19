@@ -96,6 +96,7 @@ impl<T: Item> Dedup<T> for FxIndexSet<T> {
 }
 
 #[cfg(test)]
+#[libdd_test_macros::miri_test]
 mod tests {
     use super::*;
 

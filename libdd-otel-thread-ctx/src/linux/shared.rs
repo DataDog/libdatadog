@@ -113,7 +113,6 @@ mod tests {
     const NO_TRACE_FLAGS: u8 = 0;
 
     #[test]
-    #[cfg_attr(miri, ignore)]
     fn shared_attach_detach_lifecycle() {
         let trace_id = [4u8; 16];
         let span_id = [5u8; 8];
@@ -167,7 +166,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg_attr(miri, ignore)]
     fn shared_attach_replaces_previous() {
         let first: Arc<ThreadContext> = Arc::new(ThreadContext::new(
             [7u8; 16],
@@ -206,7 +204,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg_attr(miri, ignore)]
     fn shared_arc_round_trip() {
         let cell: Arc<ThreadContext> = Arc::new(ThreadContext::default());
         let shared = SharedThreadContext::from(Arc::clone(&cell));
@@ -219,7 +216,6 @@ mod tests {
 
     // Make sure the TLSDESC accessor is indeed providing a thread-local address.
     #[test]
-    #[cfg_attr(miri, ignore)]
     fn tls_slots_are_per_thread() {
         use std::sync::{Arc, Barrier};
 
@@ -295,7 +291,6 @@ mod tests {
     // A single shared context (`Arc<ThreadContext>`) attached on several threads at the same
     // time: every thread must observe the very same record through its own TLS slot.
     #[test]
-    #[cfg_attr(miri, ignore)]
     fn shared_context_attached_on_multiple_threads() {
         use std::sync::Barrier;
 

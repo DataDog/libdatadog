@@ -109,6 +109,7 @@ impl<F: Future> Future for WeakWakerFuture<F> {
 }
 
 #[cfg(test)]
+#[libdd_test_macros::miri_test]
 mod tests {
     use std::future::Future;
     use std::pin::pin;

@@ -28,3 +28,4 @@ libdd-common-ffi = { path = "../libdd-common-ffi", default-features = false, fea
 function_name.workspace = true
 
 [dev-dependencies]
+libdd-test-macros = { path = "../libdd-test-macros" }

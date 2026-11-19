@@ -417,7 +417,6 @@ mod tests {
     /// Sends config, product change, endpoint, flush and extended heartbeat messages through
     /// the FFI and checks each one reaches the worker output.
     #[test]
-    #[cfg_attr(miri, ignore)]
     fn test_handle_end_to_end() {
         unsafe {
             let (handle, f) = start_file_backed_worker();
@@ -561,7 +560,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg_attr(miri, ignore)]
     fn test_add_dependency_preserves_version() {
         unsafe {
             let (handle, f) = start_file_backed_worker();
@@ -619,7 +617,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg_attr(miri, ignore)]
     fn test_add_integration_preserves_version() {
         unsafe {
             let (handle, f) = start_file_backed_worker();
@@ -683,7 +680,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg_attr(miri, ignore)]
     fn test_add_log_preserves_stack_trace() {
         unsafe {
             let (handle, f) = start_file_backed_worker();

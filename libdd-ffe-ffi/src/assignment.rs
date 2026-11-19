@@ -1077,6 +1077,7 @@ mod tests {
         unsafe { crate::evaluation_context::ddog_ffe_evaluation_context_drop(&mut context) };
     }
 
+    #[libdd_test_macros::miri_test]
     #[test]
     fn evaluation_panic_returns_owned_redacted_error() {
         let mut result = catch_assignment_panic(|| panic!("private context value"));
@@ -1092,6 +1093,7 @@ mod tests {
         unsafe { ddog_ffe_assignment_drop(&mut result) };
     }
 
+    #[libdd_test_macros::miri_test]
     #[test]
     fn opt_out_modes_cross_the_ffi_boundary() {
         let wire = ffe::UniversalFlagConfig::from_json(
@@ -1201,6 +1203,7 @@ mod tests {
         assert_eq!(ErrorCode::from(&details), ErrorCode::InvalidContext);
     }
 
+    #[libdd_test_macros::miri_test]
     #[test]
     fn features_are_borrowed_from_the_assignment() {
         let details = assignment_with_features(vec![
@@ -1270,6 +1273,7 @@ mod tests {
         unsafe { ddog_ffe_assignment_drop(&mut handle) };
     }
 
+    #[libdd_test_macros::miri_test]
     #[test]
     fn assignment_without_features_exposes_an_empty_array() {
         let details = assignment_with_features(vec![]);
@@ -1289,6 +1293,7 @@ mod tests {
         unsafe { ddog_ffe_assignment_drop(&mut handle) };
     }
 
+    #[libdd_test_macros::miri_test]
     #[test]
     fn error_result_exposes_an_empty_array() {
         let mut handle = Handle::new(ResolutionDetails::from(

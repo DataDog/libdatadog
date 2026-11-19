@@ -41,6 +41,7 @@ libc_alloc = { workspace = true, optional = true }
 build_common = { path = "../build-common" }
 
 [dev-dependencies]
+libdd-test-macros = { path = "../libdd-test-macros" }
 
 [lints.clippy]
 std_instead_of_alloc = "warn"

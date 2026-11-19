@@ -203,7 +203,6 @@ mod tests {
     use libdd_capabilities_impl::NativeCapabilities;
     use libdd_telemetry::worker::TelemetryWorkerBuilder;
 
-    #[cfg_attr(miri, ignore)]
     #[tokio::test]
     async fn new_metrics_test() {
         let (worker, _) = TelemetryWorkerBuilder::new_fetch_host(

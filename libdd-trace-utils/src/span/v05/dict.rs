@@ -72,6 +72,7 @@ mod tests {
         assert_eq!(dict.map.len(), 1);
     }
 
+    #[libdd_test_macros::miri_test]
     #[test]
     fn get_or_insert_test() {
         let mut dict = SharedDict::default();

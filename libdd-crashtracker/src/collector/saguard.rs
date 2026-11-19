@@ -102,7 +102,6 @@ mod single_threaded_tests {
     use nix::unistd::Pid;
 
     #[test]
-    #[cfg_attr(miri, ignore)]
     fn signal_is_ignored_while_guard_is_active() {
         let _guard =
             SaGuard::<1>::new_with_modes(&[(Signal::SIGURG, SuppressionMode::IgnoreAndBlock)])
@@ -117,7 +116,6 @@ mod single_threaded_tests {
     /// Install a custom handler, create a guard,drop the guard, then send the
     /// signal and verify the custom handler fires
     #[test]
-    #[cfg_attr(miri, ignore)]
     fn original_handler_restored_after_drop() {
         static HANDLER_CALLED: AtomicBool = AtomicBool::new(false);
 
@@ -163,7 +161,6 @@ mod single_threaded_tests {
     }
 
     #[test]
-    #[cfg_attr(miri, ignore)]
     fn multiple_signals_ignored() {
         let _guard = SaGuard::<2>::new_with_modes(&[
             (Signal::SIGURG, SuppressionMode::IgnoreAndBlock),
@@ -177,7 +174,6 @@ mod single_threaded_tests {
     }
 
     #[test]
-    #[cfg_attr(miri, ignore)]
     fn block_only_defers_signal_delivery() -> anyhow::Result<()> {
         static SIGURG_COUNT: AtomicBool = AtomicBool::new(false);
 

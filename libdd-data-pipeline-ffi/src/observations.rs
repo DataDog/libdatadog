@@ -190,7 +190,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg_attr(miri, ignore)]
     fn builder_built_exporter_supports_observed_sends() {
         use crate::trace_exporter::builder::{
             ddog_trace_exporter_builder_build, ddog_trace_exporter_builder_new,
@@ -243,7 +242,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg_attr(miri, ignore)]
     fn observed_send_fills_the_report_and_response_on_success() {
         unsafe {
             let server = MockServer::start();
@@ -279,7 +277,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg_attr(miri, ignore)]
     fn observed_send_fills_the_report_when_the_send_fails() {
         unsafe {
             let server = MockServer::start();

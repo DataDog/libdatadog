@@ -596,6 +596,7 @@ impl<T: TraceData> Serialize for LogSpanV1<'_, T> {
 }
 
 #[cfg(test)]
+#[libdd_test_macros::miri_test]
 mod tests {
     //! Unit tests for the v1::Span → JSON log downgrade encoder. Each test encodes a small
     //! set of `TraceChunk`s via [`super::super::encode_traces_v1`] and parses the single

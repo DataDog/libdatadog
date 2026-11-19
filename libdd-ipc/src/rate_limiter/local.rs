@@ -165,7 +165,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg_attr(miri, ignore)]
     fn test_rate_limiter() {
         set_mock_time(TIME_PER_SECOND);
         let limiter = LocalLimiter::default();
@@ -191,7 +190,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg_attr(miri, ignore)]
     fn test_now_monotonic() {
         let t1 = now();
         assert!(t1 > 0);

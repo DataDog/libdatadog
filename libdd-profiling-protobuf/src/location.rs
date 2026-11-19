@@ -134,6 +134,7 @@ mod tests {
         assert_eq!(roundtrip, roundtrip2);
     }
 
+    #[libdd_test_macros::miri_test]
     #[test]
     fn basic() {
         let location = Location {

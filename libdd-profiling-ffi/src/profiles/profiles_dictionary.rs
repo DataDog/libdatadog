@@ -296,6 +296,7 @@ pub unsafe extern "C" fn ddog_prof_ProfilesDictionary_drop(
 }
 
 #[cfg(test)]
+#[libdd_test_macros::miri_test]
 mod tests {
     use super::*;
     use crate::profiles::utf8::Utf8Option;

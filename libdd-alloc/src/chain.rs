@@ -309,6 +309,7 @@ impl<A: Allocator + Clone> Drop for ChainAllocator<A> {
 }
 
 #[cfg(test)]
+#[libdd_test_macros::miri_test]
 mod tests {
     use super::*;
     use crate::utils::*;

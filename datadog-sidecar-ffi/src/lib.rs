@@ -2119,6 +2119,7 @@ mod tests {
         }
     }
 
+    #[libdd_test_macros::miri_test]
     #[test]
     fn evp_producer_identity_validates_native_input() {
         let identity =
@@ -2154,6 +2155,7 @@ mod tests {
         }
     }
 
+    #[libdd_test_macros::miri_test]
     #[test]
     fn downgrade_v1_builder_to_v04_traces_preserves_all_traces() {
         use crate::span::{
@@ -2193,6 +2195,7 @@ mod tests {
         ddog_free_traces(traces);
     }
 
+    #[libdd_test_macros::miri_test]
     #[test]
     fn downgrade_v1_builder_to_v04_traces_gates_native_span_events() {
         use crate::span::{
@@ -2278,6 +2281,7 @@ mod tests {
         }
     }
 
+    #[libdd_test_macros::miri_test]
     #[test]
     fn ffe_exposure_carries_features_and_tolerates_malformed_input() {
         let mut exposure = ffi_exposure(0, false);
@@ -2309,7 +2313,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg_attr(miri, ignore = "parses a packet-sized input")]
     fn ffe_exposure_keeps_features_exactly_one_packet_long() {
         let at_limit = format!(
             r#"{{"a":"x"{}}}"#,
@@ -2322,6 +2325,7 @@ mod tests {
         assert_eq!(converted.features_json, r#"{"a":"x"}"#);
     }
 
+    #[libdd_test_macros::miri_test]
     #[test]
     fn ffe_flag_evaluation_canonicalizes_features_regardless_of_consent() {
         for consent in [false, true] {
@@ -2345,6 +2349,7 @@ mod tests {
         }
     }
 
+    #[libdd_test_macros::miri_test]
     #[test]
     fn ffe_exposure_carries_a_present_serial_id() {
         let converted = ffe_exposure_from_ffi(&ffi_exposure(4242, true)).unwrap();
@@ -2352,6 +2357,7 @@ mod tests {
         assert_eq!(converted.serial_id, Some(4242));
     }
 
+    #[libdd_test_macros::miri_test]
     #[test]
     fn ffe_exposure_carries_a_zero_serial_id() {
         let converted = ffe_exposure_from_ffi(&ffi_exposure(0, true)).unwrap();
@@ -2359,6 +2365,7 @@ mod tests {
         assert_eq!(converted.serial_id, Some(0));
     }
 
+    #[libdd_test_macros::miri_test]
     #[test]
     fn ffe_exposure_ignores_the_serial_id_value_when_absent() {
         let converted = ffe_exposure_from_ffi(&ffi_exposure(4242, false)).unwrap();
@@ -2366,6 +2373,7 @@ mod tests {
         assert_eq!(converted.serial_id, None);
     }
 
+    #[libdd_test_macros::miri_test]
     #[test]
     fn ffe_flag_evaluation_preserves_service_without_evaluation_context() {
         let event = ffi_flag_evaluation("");
@@ -2380,6 +2388,7 @@ mod tests {
         );
     }
 
+    #[libdd_test_macros::miri_test]
     #[test]
     fn ffe_flag_evaluation_carries_consent_and_sanitizes_errors() {
         for consent in [false, true] {
@@ -2393,6 +2402,7 @@ mod tests {
         }
     }
 
+    #[libdd_test_macros::miri_test]
     #[test]
     fn ffe_flag_evaluation_error_codes_preserve_existing_policy() {
         let long_error = "private-error-canary".repeat(4096);
@@ -2414,6 +2424,7 @@ mod tests {
         }
     }
 
+    #[libdd_test_macros::miri_test]
     #[test]
     fn ffe_flag_evaluation_malformed_optional_fields_preserve_siblings() {
         let invalid = [0xffu8];
@@ -2460,6 +2471,7 @@ mod tests {
         }
     }
 
+    #[libdd_test_macros::miri_test]
     #[test]
     fn ffe_flag_evaluation_rejects_malformed_required_flag() {
         let invalid = [0xffu8];
@@ -2470,6 +2482,7 @@ mod tests {
         assert!(ffe_flag_evaluation_from_ffi(&event, "svc").is_err());
     }
 
+    #[libdd_test_macros::miri_test]
     #[test]
     fn ffe_flag_evaluation_distinguishes_empty_missing_and_invalid_identity() {
         let invalid = [0xffu8];
@@ -2490,6 +2503,7 @@ mod tests {
         }
     }
 
+    #[libdd_test_macros::miri_test]
     #[test]
     fn ffe_flag_evaluation_context_owns_pruned_output_without_changing_input() {
         let original = serde_json::json!({
@@ -2529,6 +2543,7 @@ mod tests {
         assert_eq!(converted, before_normalization);
     }
 
+    #[libdd_test_macros::miri_test]
     #[test]
     fn ffe_flag_evaluation_context_preserves_empty_and_invalid_input_policy() {
         for consent in [false, true] {
@@ -2567,6 +2582,7 @@ mod tests {
         }
     }
 
+    #[libdd_test_macros::miri_test]
     #[test]
     fn ffe_flag_evaluation_keeps_multibyte_context_at_character_limit() {
         let raw =
@@ -2578,6 +2594,7 @@ mod tests {
         assert!(value.get("long").is_none());
     }
 
+    #[libdd_test_macros::miri_test]
     #[test]
     fn ffe_flag_evaluation_prunes_context_field_count_and_long_strings() {
         let mut attrs = serde_json::Map::new();
@@ -2605,6 +2622,7 @@ mod tests {
         assert!(!attrs.contains_key(&format!("field_{MAX_CONTEXT_FIELDS:03}")));
     }
 
+    #[libdd_test_macros::miri_test]
     #[test]
     fn ffe_flag_evaluation_prunes_context_beyond_depth_four() {
         let raw = serde_json::json!({

@@ -779,6 +779,7 @@ pub fn to_encoded_byte_len_from_v1<T: TraceData>(payload: &TracerPayload<T>) -> 
 }
 
 #[cfg(test)]
+#[libdd_test_macros::miri_test]
 mod tests {
     use super::*;
     use crate::span::v04::SpanBytes;
@@ -1306,6 +1307,7 @@ mod tests {
 }
 
 #[cfg(test)]
+#[libdd_test_macros::miri_test]
 mod v1_payload_tests {
     //! Unit tests for the v1::Span encoder (`encode_payload_from_v1`).
     //!

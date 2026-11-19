@@ -96,6 +96,7 @@ libdd-capabilities-impl = { path = "../libdd-capabilities-impl", version = "8.0.
 tokio = { workspace = true, optional = true, features = ["rt", "sync", "time"] }
 
 [dev-dependencies]
+libdd-test-macros = { path = "../libdd-test-macros" }
 futures.workspace = true
 libdd-remote-config = { path = ".", features = ["test"] }
 tempfile.workspace = true

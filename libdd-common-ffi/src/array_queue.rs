@@ -300,6 +300,7 @@ pub unsafe extern "C" fn ddog_ArrayQueue_capacity(queue_ptr: &ArrayQueue) -> Arr
 }
 
 #[cfg(test)]
+#[libdd_test_macros::miri_test]
 mod tests {
     use super::*;
     use bolero::TypeGenerator;

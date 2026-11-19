@@ -36,6 +36,7 @@ libdd-crashtracker = { path = "../libdd-crashtracker", default-features = false,
 libdd-crashtracker-ffi = { path = "../libdd-crashtracker-ffi", default-features = false, features = ["collector", "collector_windows"] }
 
 [dev-dependencies]
+libdd-test-macros = { path = "../libdd-test-macros" }
 build_common = { path = "../build-common", features = ["cbindgen"] }
 cc.workspace = true
 http = { workspace = true, features = ["std"] }

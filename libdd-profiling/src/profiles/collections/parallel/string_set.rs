@@ -113,6 +113,7 @@ mod tests {
     use crate::profiles::collections::parallel::slice_set::N_SHARDS;
     use std::hash::BuildHasher;
 
+    #[libdd_test_macros::miri_test]
     #[test]
     fn test_well_known_strings() {
         let strs: [&str; WELL_KNOWN_STRING_REFS.len()] = [
@@ -135,6 +136,7 @@ mod tests {
         }
     }
 
+    #[libdd_test_macros::miri_test]
     #[test]
     fn test_parallel_set() {
         let set = ParallelStringSet::try_new().unwrap();
@@ -184,6 +186,7 @@ mod tests {
         assert_eq!(&*id.0, &*StringRef::THREAD_NAME.0);
     }
 
+    #[libdd_test_macros::miri_test]
     #[test]
     fn test_hash_distribution() {
         let test_strings: Vec<String> = (0..100).map(|i| format!("test_string_{}", i)).collect();
@@ -205,6 +208,7 @@ mod tests {
         println!("Shard distribution: {:?}", shard_counts);
     }
 
+    #[libdd_test_macros::miri_test]
     #[test]
     fn test_parallel_set_shard_selection() {
         let set = ParallelStringSet::try_new().unwrap();
@@ -256,6 +260,7 @@ mod tests {
         require_sync::<super::ParallelStringSet>();
     }
 
+    #[libdd_test_macros::miri_test]
     #[test]
     fn test_thread_safety() {
         use std::sync::{Arc, Barrier};

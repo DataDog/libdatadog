@@ -1024,6 +1024,7 @@ pub unsafe extern "C" fn ddog_prof_Profile_reset(profile: *mut Profile) -> Profi
 }
 
 #[cfg(test)]
+#[libdd_test_macros::miri_test]
 mod tests {
     use super::super::profiles_dictionary::{
         ddog_prof_ProfilesDictionary_drop, ddog_prof_ProfilesDictionary_insert_function,

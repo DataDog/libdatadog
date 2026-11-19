@@ -944,7 +944,6 @@ pub mod tests {
     }
 
     #[tokio::test]
-    #[cfg_attr(miri, ignore)]
     async fn test_inactive() {
         let server = RemoteConfigServer::spawn();
         let storage = Arc::new(Storage::default());
@@ -979,7 +978,6 @@ pub mod tests {
     }
 
     #[tokio::test]
-    #[cfg_attr(miri, ignore)]
     async fn test_expired_config_status_drops_all_configs() {
         let server = RemoteConfigServer::spawn();
         server.files.lock().unwrap().insert(
@@ -1083,7 +1081,6 @@ pub mod tests {
     }
 
     #[tokio::test]
-    #[cfg_attr(miri, ignore)]
     async fn test_fetch_cache() {
         let server = RemoteConfigServer::spawn();
 
@@ -1289,7 +1286,6 @@ pub mod tests {
     }
 
     #[tokio::test]
-    #[cfg_attr(miri, ignore)]
     async fn test_extra_services_forwarded_in_client_tracer() {
         let server: Arc<RemoteConfigServer> = RemoteConfigServer::spawn();
         server.files.lock().unwrap().insert(
@@ -1389,7 +1385,6 @@ pub mod tests {
     }
 
     #[tokio::test]
-    #[cfg_attr(miri, ignore)]
     async fn test_process_tags_forwarded_in_client_tracer() {
         let server: Arc<RemoteConfigServer> = RemoteConfigServer::spawn();
         server.files.lock().unwrap().insert(
@@ -1441,7 +1436,6 @@ pub mod tests {
     }
 
     #[test]
-    #[cfg_attr(miri, ignore)]
     fn test_capability_encoding() {
         let state = ConfigProductCapabilities::new(vec![], unsafe {
             vec![
@@ -1457,6 +1451,7 @@ pub mod tests {
         );
     }
 
+    #[libdd_test_macros::miri_test]
     #[test]
     fn test_dependent_flag_capability_encoding() {
         let legacy = ConfigProductCapabilities::new(

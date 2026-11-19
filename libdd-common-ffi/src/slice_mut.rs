@@ -214,6 +214,7 @@ impl<'a> From<&'a mut str> for MutSlice<'a, c_char> {
 }
 
 #[cfg(test)]
+#[libdd_test_macros::miri_test]
 mod tests {
     use super::*;
     use core::ptr;

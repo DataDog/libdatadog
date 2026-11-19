@@ -762,6 +762,7 @@ mod tests {
         assert!(chunk.spans[0].is_error());
     }
 
+    #[libdd_test_macros::miri_test]
     #[test]
     fn retain_attributes_sees_each_key_once() {
         let mut span = SpanBytes::default();
@@ -861,6 +862,7 @@ mod tests {
         assert_eq!((span.version(), span.component()), (None, None));
     }
 
+    #[libdd_test_macros::miri_test]
     #[test]
     fn compat_mut_writes_drop_hidden_attributes_of_promoted_tags() {
         let s = |v: &'static str| AttributeValue::String(BytesString::from_static(v));
@@ -886,6 +888,7 @@ mod tests {
         assert_eq!(span.attribute_str("component"), Some("stale"));
     }
 
+    #[libdd_test_macros::miri_test]
     #[test]
     fn compat_mut_hides_attributes_named_like_promoted_tags() {
         let s = |v: &'static str| AttributeValue::String(BytesString::from_static(v));
@@ -1026,6 +1029,7 @@ mod tests {
         libdd_tinybytes::BytesString::from_slice(s.as_bytes()).unwrap()
     }
 
+    #[libdd_test_macros::miri_test]
     #[test]
     fn span_dedup_removes_duplicate_keys_everywhere() {
         let mut span = SpanBytes::default();
@@ -1062,6 +1066,7 @@ mod tests {
         );
     }
 
+    #[libdd_test_macros::miri_test]
     #[test]
     fn trace_chunk_dedup_dedups_chunk_and_span_attributes() {
         let mut chunk = TraceChunkBytes::default();
@@ -1106,6 +1111,7 @@ mod tests {
         }
     }
 
+    #[libdd_test_macros::miri_test]
     #[test]
     fn tracer_payload_dedup_reaches_nested_maps() {
         let mut payload = TracerPayloadBytes {

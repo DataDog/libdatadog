@@ -12,6 +12,7 @@ license.workspace = true
 bench = false
 
 [dev-dependencies]
+libdd-test-macros = { path = "../libdd-test-macros" }
 once_cell = { workspace = true, features = ["std"] }
 pretty_assertions = { workspace = true, default-features = true }
 proptest = { workspace = true, default-features = true }

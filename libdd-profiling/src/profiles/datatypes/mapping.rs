@@ -171,6 +171,7 @@ mod tests {
         hasher.finish()
     }
 
+    #[libdd_test_macros::miri_test]
     #[test]
     fn mapping_id2_equality_and_hash_are_pointer_identity_based() {
         let dict = ProfilesDictionary::try_new().unwrap();

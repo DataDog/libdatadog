@@ -283,6 +283,7 @@ pub fn encode_span<W: RmpWrite, T: TraceData>(
 }
 
 #[cfg(test)]
+#[libdd_test_macros::miri_test]
 mod tests {
     use super::super::to_vec_from_v04;
     use crate::span::BytesData;

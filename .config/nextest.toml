@@ -30,6 +30,12 @@ test-group = 'single-threaded'
 filter = 'package(bin_tests)'
 setup = 'prebuild-bin-tests'
 
+# Selected automatically by `cargo miri nextest` (it sets MIRI_SYSROOT) unless
+# `--profile` is passed. Runs only tests opted in with
+# `#[libdd_test_macros::miri_test]`, which renames them `miri_*` under Miri.
+[profile.default-miri]
+default-filter = 'test(/(^|::)miri_/)'
+
 [profile.ci]
 # Print out output for failing tests as soon as they fail, and also at the end
 # of the run (for easy scrollability).

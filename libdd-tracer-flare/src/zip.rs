@@ -537,6 +537,7 @@ mod tests {
         assert!(matches!(result.unwrap_err(), FlareError::ZipError(_)));
     }
 
+    #[libdd_test_macros::miri_test]
     #[test]
     fn test_generate_payload_fields_headers_and_order() {
         let mut zip_file = tempfile().unwrap();
@@ -600,6 +601,7 @@ mod tests {
         );
     }
 
+    #[libdd_test_macros::miri_test]
     #[test]
     fn test_generate_payload_filename_format() {
         let mut zip_file = tempfile().unwrap();
@@ -639,6 +641,7 @@ mod tests {
         assert!(timestamp.chars().all(|c| c.is_ascii_digit()));
     }
 
+    #[libdd_test_macros::miri_test]
     #[tokio::test]
     async fn test_send_invalid_url_returns_error() {
         let manager = TracerFlareManager::new("http://[::1", "rust");

@@ -475,6 +475,7 @@ fn fuzz_add_sample<'a>(
     }
 }
 
+#[libdd_test_macros::miri_test]
 #[test]
 fn fuzz_failure_001() {
     let sample_types = [];
@@ -525,7 +526,6 @@ fn fuzz_failure_001() {
 
 /// Fuzzes adding a bunch of samples to the profile.
 #[test]
-#[cfg_attr(miri, ignore)]
 fn test_fuzz_add_sample() {
     let sample_types_gen = Vec::<api::SampleType>::produce();
     let samples_gen = Vec::<(Option<Timestamp>, FuzzSample)>::produce();
@@ -566,7 +566,6 @@ fn test_fuzz_add_sample() {
 }
 
 #[test]
-#[cfg_attr(miri, ignore)]
 fn fuzz_add_sample_with_fixed_sample_length() {
     let sample_length_gen = 1..=64usize;
 
@@ -637,6 +636,7 @@ fn fuzz_add_sample_with_fixed_sample_length() {
         });
 }
 
+#[libdd_test_macros::miri_test]
 #[test]
 fn fuzz_add_endpoint() {
     bolero::check!()
@@ -652,6 +652,7 @@ fn fuzz_add_endpoint() {
         });
 }
 
+#[libdd_test_macros::miri_test]
 #[test]
 fn fuzz_add_endpoint_count() {
     bolero::check!()
@@ -693,7 +694,6 @@ impl From<&FuzzOperation> for Operation {
 }
 
 #[test]
-#[cfg_attr(miri, ignore)]
 fn fuzz_api_function_calls() {
     let sample_length_gen = 1..=64usize;
 

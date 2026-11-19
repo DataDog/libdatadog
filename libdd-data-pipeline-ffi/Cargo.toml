@@ -33,6 +33,7 @@ stats-obfuscation = ["libdd-data-pipeline/stats-obfuscation"]
 build_common = { path = "../build-common" }
 
 [dev-dependencies]
+libdd-test-macros = { path = "../libdd-test-macros" }
 httpmock.workspace = true
 rmp-serde.workspace = true
 libdd-trace-utils = { path = "../libdd-trace-utils" }

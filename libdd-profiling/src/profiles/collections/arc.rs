@@ -286,6 +286,7 @@ impl<T> Arc<T> {
 }
 
 #[cfg(test)]
+#[libdd_test_macros::miri_test]
 mod tests {
     use super::*;
 

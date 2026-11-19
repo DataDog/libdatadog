@@ -28,6 +28,7 @@ libdd-regex = { version = "0.1.0", path = "../libdd-regex" }
 tracing.workspace = true
 
 [dev-dependencies]
+libdd-test-macros = { path = "../libdd-test-macros" }
 async-trait.workspace = true
 
 [package.metadata.cargo-machete]

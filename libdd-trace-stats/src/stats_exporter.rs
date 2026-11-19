@@ -878,7 +878,6 @@ mod tests {
     }
 
     #[cfg(feature = "stats-obfuscation")]
-    #[cfg_attr(miri, ignore)]
     #[tokio::test]
     async fn test_agentless_stats_exporter_adds_traces() {
         let server = MockServer::start_async().await;
@@ -1001,7 +1000,6 @@ mod tests {
         concentrator
     }
 
-    #[cfg_attr(miri, ignore)]
     #[tokio::test]
     async fn test_send_stats() {
         let server = MockServer::start_async().await;
@@ -1040,7 +1038,6 @@ mod tests {
     /// `SharedStatsExporter::wrap` returns a strong handle and a weak handle whose
     /// `force_flush` upgrades and sends stats. The weak handle also works behind the
     /// `Weak<dyn FlushableStatsExport>` used by the trace exporter.
-    #[cfg_attr(miri, ignore)]
     #[tokio::test]
     async fn test_shared_stats_exporter_wrap_force_flush() {
         let server = MockServer::start_async().await;
@@ -1097,7 +1094,6 @@ mod tests {
         );
     }
 
-    #[cfg_attr(miri, ignore)]
     #[tokio::test]
     async fn test_send_agentless_stats() {
         use super::AgentlessStatsTarget;
@@ -1154,7 +1150,6 @@ mod tests {
     /// does not retry). A `503` response must trigger `AGENTLESS_STATS_MAX_RETRIES`
     /// additional attempts (3 total: 1 initial + 2 retries) before `send` returns
     /// an error.
-    #[cfg_attr(miri, ignore)]
     #[tokio::test]
     async fn test_send_agentless_stats_fail_retries() {
         use super::AgentlessStatsTarget;
@@ -1211,7 +1206,6 @@ mod tests {
         );
     }
 
-    #[cfg_attr(miri, ignore)]
     #[tokio::test]
     async fn test_send_stats_fail() {
         let server = MockServer::start_async().await;
@@ -1247,7 +1241,6 @@ mod tests {
         );
     }
 
-    #[cfg_attr(miri, ignore)]
     #[test]
     fn test_run() {
         let shared_runtime = ForkSafeRuntime::new().expect("Failed to create runtime");
@@ -1294,7 +1287,6 @@ mod tests {
         );
     }
 
-    #[cfg_attr(miri, ignore)]
     #[test]
     fn test_worker_shutdown() {
         let shared_runtime = ForkSafeRuntime::new().expect("Failed to create runtime");
@@ -1366,7 +1358,6 @@ mod tests {
         );
     }
     #[cfg(feature = "stats-obfuscation")]
-    #[cfg_attr(miri, ignore)]
     #[tokio::test]
     async fn test_send_stats_with_obfuscation_header() {
         use crate::span_concentrator::StatsComputationObfuscationConfig;
@@ -1492,7 +1483,6 @@ mod tests {
 
     /// Verify that when `collapsed_spans == 0` the DogStatsD socket receives nothing.
     #[cfg(feature = "dogstatsd")]
-    #[cfg_attr(miri, ignore)]
     #[tokio::test]
     async fn test_no_emission_when_zero() {
         use std::net;
@@ -1543,7 +1533,6 @@ mod tests {
 
     /// Verify that `COLLAPSED_SPANS_METRIC` is emitted to DogStatsD when spans are collapsed.
     #[cfg(feature = "dogstatsd")]
-    #[cfg_attr(miri, ignore)]
     #[tokio::test]
     async fn test_collapsed_spans_dogstatsd() {
         use std::net;
@@ -1594,7 +1583,6 @@ mod tests {
     /// Verify that `COLLAPSED_SPANS_METRIC` is emitted to DogStatsD when spans are collapsed by
     /// per-key limits.
     #[cfg(feature = "dogstatsd")]
-    #[cfg_attr(miri, ignore)]
     #[tokio::test]
     async fn test_collapsed_spans_per_key_dogstatsd() {
         use std::net;
@@ -1666,7 +1654,6 @@ mod tests {
     /// Verify that `COLLAPSED_SPANS_METRIC` is enqueued to the telemetry worker when spans
     /// are collapsed. This does not verify the actual value of the metric.
     #[cfg(feature = "telemetry")]
-    #[cfg_attr(miri, ignore)]
     #[tokio::test]
     async fn test_collapsed_spans_telemetry() {
         use libdd_telemetry::worker::TelemetryWorkerBuilder;

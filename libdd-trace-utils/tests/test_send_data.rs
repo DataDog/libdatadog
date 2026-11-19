@@ -81,7 +81,6 @@ mod tracing_integration_tests {
         libdd_tinybytes::Bytes::from(encoded_data)
     }
 
-    #[cfg_attr(miri, ignore)]
     #[tokio::test]
     async fn compare_v04_trace_snapshot_test() {
         let relative_snapshot_path = "libdd-trace-utils/tests/snapshots/";
@@ -123,7 +122,6 @@ mod tracing_integration_tests {
         test_agent.assert_snapshot(snapshot_name).await;
     }
 
-    #[cfg_attr(miri, ignore)]
     #[tokio::test]
     async fn compare_v04_trace_meta_struct_snapshot_test() {
         let relative_snapshot_path = "libdd-trace-utils/tests/snapshots/";
@@ -215,7 +213,6 @@ mod tracing_integration_tests {
         test_agent.assert_snapshot(snapshot_name).await;
     }
 
-    #[cfg_attr(miri, ignore)]
     #[tokio::test]
     // It is valid for some tracers to send an empty array of spans to the agent
     async fn send_empty_v04_trace_test() {
@@ -252,7 +249,6 @@ mod tracing_integration_tests {
         assert!(result.last_result.is_ok());
     }
 
-    #[cfg_attr(miri, ignore)]
     #[tokio::test]
     #[cfg(target_os = "linux")]
     // Validate that we can correctly send traces to the agent via UDS
@@ -333,7 +329,6 @@ mod tracing_integration_tests {
         test_agent.assert_snapshot(snapshot_name).await;
     }
 
-    #[cfg_attr(miri, ignore)]
     #[tokio::test]
     async fn test_remote_set_remote_config_data() {
         let snapshot_name = "test_remote_set_remote_config_data";
@@ -530,7 +525,6 @@ mod tracing_integration_tests {
 
     /// End-to-end round-trip: builds a V1 payload directly from `TracerPayload`, encodes it
     /// with `to_vec_from_v1`, POSTs to the test-agent, and asserts the snapshot.
-    #[cfg_attr(miri, ignore)]
     #[tokio::test]
     async fn compare_v1_native_trace_snapshot_test() {
         use libdd_trace_utils::msgpack_encoder::v1::to_vec_from_v1;
@@ -560,7 +554,6 @@ mod tracing_integration_tests {
     ///
     /// Each span carries a span event with array attributes of odd and even length, which
     /// pins the array header count (two msgpack items per element) on both encoders.
-    #[cfg_attr(miri, ignore)]
     #[tokio::test]
     async fn compare_v04_and_v1_encoders_snapshot_test() {
         use libdd_trace_utils::msgpack_encoder::v1::{to_vec_from_v1, to_vec_from_v04};
@@ -798,7 +791,6 @@ mod tracing_integration_tests {
     /// (beyond span event attributes) and `AttributeValue::KeyValueList` once `ddapm-test-agent`
     /// V1 support catches up. See [`make_v1_full_payload`] for the payload builder and the
     /// omitted variants.
-    #[cfg_attr(miri, ignore)]
     #[tokio::test]
     async fn compare_v1_full_payload_snapshot_test() {
         use libdd_trace_utils::msgpack_encoder::v1::to_vec_from_v1;
@@ -828,7 +820,6 @@ mod tracing_integration_tests {
     /// Both encodings are POSTed to `/v0.4/traces` in the same session with distinct
     /// `trace_id`s, and the checked-in snapshot records the two traces side by side. Any
     /// drift in either encoder makes its trace diverge from the canonical decoded form.
-    #[cfg_attr(miri, ignore)]
     #[tokio::test]
     async fn compare_v04_native_and_v1_to_v04_encoders_snapshot_test() {
         use libdd_trace_utils::msgpack_encoder::v04::to_vec_from_v1;

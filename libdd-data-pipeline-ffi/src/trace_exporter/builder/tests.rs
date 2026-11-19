@@ -95,6 +95,7 @@ fn config_constructor_test() {
     }
 }
 
+#[libdd_test_macros::miri_test]
 #[test]
 fn config_compute_stats_bucket_interval() {
     unsafe {
@@ -111,6 +112,7 @@ fn config_compute_stats_bucket_interval() {
     }
 }
 
+#[libdd_test_macros::miri_test]
 #[test]
 fn config_client_computed_stats_enable_only() {
     unsafe {
@@ -127,6 +129,7 @@ fn config_client_computed_stats_enable_only() {
     }
 }
 
+#[libdd_test_macros::miri_test]
 #[test]
 fn config_health_metrics_enable_only() {
     unsafe {
@@ -145,6 +148,7 @@ fn config_health_metrics_enable_only() {
 
 /// Each binding applies exactly the builder method it mirrors, so the configured builder
 /// matches one configured through the Rust API.
+#[libdd_test_macros::miri_test]
 #[test]
 fn builder_flag_and_format_setters() {
     unsafe {
@@ -237,6 +241,7 @@ fn builder_flag_and_format_setters() {
     }
 }
 
+#[libdd_test_macros::miri_test]
 #[test]
 fn builder_tag_and_header_setters() {
     unsafe {
@@ -415,6 +420,7 @@ fn builder_tag_and_header_setters() {
     }
 }
 
+#[libdd_test_macros::miri_test]
 #[test]
 fn config_two_string_setters_are_atomic() {
     type Setter = unsafe extern "C" fn(
@@ -468,6 +474,7 @@ fn config_two_string_setters_are_atomic() {
     }
 }
 
+#[libdd_test_macros::miri_test]
 #[test]
 fn config_protocol_and_json_validation() {
     unsafe {
@@ -497,6 +504,7 @@ fn config_protocol_and_json_validation() {
     }
 }
 
+#[libdd_test_macros::miri_test]
 #[test]
 fn builder_enable_telemetry_sets_only_telemetry_config() {
     unsafe {
@@ -532,6 +540,7 @@ fn builder_enable_telemetry_sets_only_telemetry_config() {
     }
 }
 
+#[libdd_test_macros::miri_test]
 #[test]
 fn builder_set_telemetry_instrumentation_sessions() {
     unsafe {
@@ -572,6 +581,7 @@ fn builder_set_telemetry_instrumentation_sessions() {
     }
 }
 
+#[libdd_test_macros::miri_test]
 #[test]
 fn config_numeric_setters() {
     unsafe {
@@ -669,7 +679,6 @@ fn config_mutable_metadata_test() {
     }
 }
 
-#[cfg_attr(miri, ignore)]
 #[test]
 fn config_shared_runtime_ownership() {
     unsafe {
@@ -700,7 +709,6 @@ fn config_shared_runtime_ownership() {
     }
 }
 
-#[cfg_attr(miri, ignore)]
 #[test]
 fn exporter_constructor_test() {
     unsafe {
@@ -718,7 +726,6 @@ fn exporter_constructor_test() {
     }
 }
 
-#[cfg_attr(miri, ignore)]
 #[test]
 fn exporter_constructor_error_consumes_config() {
     unsafe {
@@ -745,6 +752,7 @@ fn exporter_constructor_error_consumes_config() {
     }
 }
 
+#[libdd_test_macros::miri_test]
 #[test]
 fn exporter_null_arguments() {
     unsafe {
@@ -797,7 +805,6 @@ fn agent_config(url: &str) -> Box<TraceExporterBuilder<ForkSafeRuntime>> {
 }
 
 #[test]
-#[cfg_attr(miri, ignore)]
 fn exporter_send_empty_array_test() {
     // Test added due to ensure the exporter is able to send empty arrays because some tracers
     // (.NET) ping the agent with the aforementioned data type.
@@ -851,7 +858,6 @@ fn exporter_send_empty_array_test() {
 }
 
 #[test]
-#[cfg_attr(miri, ignore)]
 fn exporter_send_telemetry_test() {
     unsafe {
         let server = MockServer::start();

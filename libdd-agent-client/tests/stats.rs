@@ -7,7 +7,6 @@ use bytes::Bytes;
 use httpmock::prelude::*;
 
 #[tokio::test]
-#[cfg_attr(miri, ignore)]
 async fn puts_to_v06_stats() {
     let server = MockServer::start();
     let mock = server.mock(|when, then| {
@@ -24,7 +23,6 @@ async fn puts_to_v06_stats() {
 }
 
 #[tokio::test]
-#[cfg_attr(miri, ignore)]
 async fn sets_msgpack_content_type() {
     let server = MockServer::start();
     let mock = server.mock(|when, then| {

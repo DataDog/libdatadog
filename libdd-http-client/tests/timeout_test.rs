@@ -9,7 +9,6 @@ fn ensure_crypto_provider() {
     let _ = rustls::crypto::ring::default_provider().install_default();
 }
 
-#[cfg_attr(miri, ignore)]
 #[tokio::test]
 async fn test_request_times_out() {
     ensure_crypto_provider();
@@ -33,7 +32,6 @@ async fn test_request_times_out() {
     );
 }
 
-#[cfg_attr(miri, ignore)]
 #[tokio::test]
 async fn test_per_request_timeout_overrides_client() {
     ensure_crypto_provider();
@@ -60,7 +58,6 @@ async fn test_per_request_timeout_overrides_client() {
     );
 }
 
-#[cfg_attr(miri, ignore)]
 #[tokio::test]
 async fn test_connection_refused() {
     ensure_crypto_provider();

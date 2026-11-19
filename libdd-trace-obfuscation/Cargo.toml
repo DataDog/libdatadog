@@ -32,6 +32,7 @@ fips = ["libdd-trace-utils/fips"]
 regex-lite = ["libdd-regex/regex-lite"]
 
 [dev-dependencies]
+libdd-test-macros = { path = "../libdd-test-macros" }
 duplicate = { workspace = true, default-features = true }
 criterion = { workspace = true, features = ["csv_output"] }
 libdd-trace-utils = { path = "../libdd-trace-utils", features = ["test-utils"] }

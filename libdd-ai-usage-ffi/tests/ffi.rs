@@ -49,6 +49,7 @@ fn project(input: &str) -> (Status, Value) {
     (status, json_of(out))
 }
 
+#[libdd_test_macros::miri_test]
 #[test]
 fn project_round_trip() {
     let (status, value) = project(ATTEMPT);
@@ -88,6 +89,7 @@ fn project_round_trip() {
     }));
 }
 
+#[libdd_test_macros::miri_test]
 #[test]
 fn project_rejections_carry_stable_codes() {
     for (input, code) in [
@@ -112,6 +114,7 @@ fn project_rejections_carry_stable_codes() {
     assert_eq!(json_of(out)["error"]["code"], "field_type_invalid");
 }
 
+#[libdd_test_macros::miri_test]
 #[test]
 fn null_pointers_are_internal() {
     // SAFETY: null pointers are checked before anything is read or written.
@@ -147,6 +150,7 @@ fn null_pointers_are_internal() {
     }
 }
 
+#[libdd_test_macros::miri_test]
 #[test]
 fn batch_to_dogstatsd_datagrams() {
     let mut batch = ptr::null_mut();
@@ -228,6 +232,7 @@ fn batch_to_dogstatsd_datagrams() {
     }
 }
 
+#[libdd_test_macros::miri_test]
 #[test]
 fn parse_provider_response_round_trip() {
     let body = r#"{"model": "claude-haiku-4-5", "usage": {"input_tokens": 3, "output_tokens": 1}}"#;
@@ -292,6 +297,7 @@ fn parse_provider_response_round_trip() {
     assert_eq!(json_of(out)["error"]["code"], "value_not_allowed");
 }
 
+#[libdd_test_macros::miri_test]
 #[test]
 fn stream_round_trip() {
     let mut stream = ptr::null_mut();
@@ -341,6 +347,7 @@ fn text_of(call: impl FnOnce(*mut Buffer) -> Status) -> (Status, String) {
     (status, take(out))
 }
 
+#[libdd_test_macros::miri_test]
 #[test]
 fn vocabularies() {
     // SAFETY: valid inputs and outputs.
@@ -397,6 +404,7 @@ fn vocabularies() {
     }
 }
 
+#[libdd_test_macros::miri_test]
 #[test]
 fn provider_ids() {
     let call = |f: unsafe extern "C" fn(*const u8, usize, *mut Buffer) -> Status, input: Value| {
@@ -440,6 +448,7 @@ fn provider_ids() {
     );
 }
 
+#[libdd_test_macros::miri_test]
 #[test]
 fn provider_id_headers() {
     let headers = |provider: &str| {
@@ -490,6 +499,7 @@ fn provider_id_headers() {
     }
 }
 
+#[libdd_test_macros::miri_test]
 #[test]
 fn buffers_release_once() {
     let mut out = empty();
@@ -505,6 +515,7 @@ fn buffers_release_once() {
     assert_eq!(out.len, 0);
 }
 
+#[libdd_test_macros::miri_test]
 #[test]
 fn a_bounded_batch_drops_and_counts() {
     let add = |batch: *const Batch| {
@@ -552,6 +563,7 @@ fn a_bounded_batch_drops_and_counts() {
     }
 }
 
+#[libdd_test_macros::miri_test]
 #[test]
 fn known_error_types_and_metrics() {
     // SAFETY: valid inputs and outputs.
@@ -605,6 +617,7 @@ fn known_error_types_and_metrics() {
     }
 }
 
+#[libdd_test_macros::miri_test]
 #[test]
 fn provider_ids_without_the_provider() {
     let call = |input: Value| {
@@ -632,6 +645,7 @@ fn provider_ids_without_the_provider() {
     );
 }
 
+#[libdd_test_macros::miri_test]
 #[test]
 fn stream_events_split_by_the_caller() {
     let mut stream = ptr::null_mut();
@@ -665,6 +679,7 @@ fn stream_events_split_by_the_caller() {
     }
 }
 
+#[libdd_test_macros::miri_test]
 #[test]
 fn stream_take_reports_and_releases() {
     let format = "openai_chat";
@@ -698,6 +713,7 @@ const BREAKDOWN: &str = r#"{"profile": "trajectory.gen_ai.client.token_breakdown
         "cache_write_input_tokens": 20, "reasoning_output_tokens": 10,
         "observation_point": "gateway"}}"#;
 
+#[libdd_test_macros::miri_test]
 #[test]
 fn a_request_is_added_whole_or_not_at_all() {
     let request = format!("[{ATTEMPT}, {BREAKDOWN}]");
@@ -807,6 +823,7 @@ fn text_out(call: impl FnOnce(*mut Buffer) -> Status) -> (Status, String) {
     (status, take(out))
 }
 
+#[libdd_test_macros::miri_test]
 #[test]
 fn operation_names_cross_the_boundary() {
     // SAFETY: valid inputs and outputs.
@@ -824,6 +841,7 @@ fn operation_names_cross_the_boundary() {
     }
 }
 
+#[libdd_test_macros::miri_test]
 #[test]
 fn a_batch_taken_as_intake_series() {
     let request = format!("[{ATTEMPT}, {BREAKDOWN}]");
@@ -894,6 +912,7 @@ fn a_batch_taken_as_intake_series() {
     }
 }
 
+#[libdd_test_macros::miri_test]
 #[test]
 fn batch_metrics_and_provider_id_header_input() {
     let request = format!("[{ATTEMPT}]");
@@ -944,6 +963,7 @@ fn batch_metrics_and_provider_id_header_input() {
     }
 }
 
+#[libdd_test_macros::miri_test]
 #[test]
 fn inclusive_totals_across_the_boundary() {
     // SAFETY: valid inputs and outputs throughout; the stream is used until
@@ -1001,6 +1021,7 @@ fn inclusive_totals_across_the_boundary() {
     }
 }
 
+#[libdd_test_macros::miri_test]
 #[test]
 fn the_abi_version_is_stated() {
     assert_eq!(ddog_ai_usage_abi_version(), 1);

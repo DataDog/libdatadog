@@ -26,6 +26,7 @@ features = [
 ]
 
 [dev-dependencies]
+libdd-test-macros = { path = "../libdd-test-macros" }
 allocator-api2 = { workspace = true, features = ["alloc"] }
 bolero = { workspace = true, features = ["std"] }
 

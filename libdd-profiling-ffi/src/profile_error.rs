@@ -336,6 +336,7 @@ mod tests {
         }
     }
 
+    #[libdd_test_macros::miri_test]
     #[test]
     fn test_from_io_error_other() {
         // This kind isn't specially handled and hits the Other path.
@@ -349,6 +350,7 @@ mod tests {
         assert_eq!(msg, &kind.to_string());
     }
 
+    #[libdd_test_macros::miri_test]
     #[test]
     fn test_conversion_to_profile_status() {
         let err = ProfileError::AllocError;

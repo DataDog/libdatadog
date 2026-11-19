@@ -397,6 +397,7 @@ mod tests {
 
     /// Span links and span events are flattened into `meta` as agent-compatible JSON under
     /// the `_dd.span_links` and `events` keys.
+    #[libdd_test_macros::miri_test]
     #[test]
     fn from_v04_span_serializes_links_and_events_test() {
         let mut span = base_span();
@@ -467,6 +468,7 @@ mod tests {
 
     /// A link with no tracestate and no attributes serializes only hex `trace_id`/`span_id`,
     /// plus `flags` since it is non-zero.
+    #[libdd_test_macros::miri_test]
     #[test]
     fn span_link_minimal_serialization_test() {
         let links = vec![SpanLink::<BytesData> {
@@ -486,6 +488,7 @@ mod tests {
 
     /// Covers all three [`SPAN_LINK_FLAGS_SET_SENTINEL`] states: unset, kept, and explicitly
     /// dropped.
+    #[libdd_test_macros::miri_test]
     #[test]
     fn span_link_flags_sentinel_bit_masked_test() {
         let kept = vec![SpanLink::<BytesData> {
@@ -517,6 +520,7 @@ mod tests {
     }
 
     /// Multiple links serialize as an ordered JSON array preserving input order.
+    #[libdd_test_macros::miri_test]
     #[test]
     fn span_links_multiple_serialization_test() {
         let links = vec![
@@ -537,6 +541,7 @@ mod tests {
     }
 
     /// A link with tracestate but no attributes emits `tracestate`, omits `attributes`.
+    #[libdd_test_macros::miri_test]
     #[test]
     fn span_link_only_tracestate_serialization_test() {
         let links = vec![SpanLink::<BytesData> {
@@ -551,6 +556,7 @@ mod tests {
     }
 
     /// A link with attributes but no tracestate emits `attributes`, omits `tracestate`.
+    #[libdd_test_macros::miri_test]
     #[test]
     fn span_link_only_attributes_serialization_test() {
         let links = vec![SpanLink::<BytesData> {
@@ -565,6 +571,7 @@ mod tests {
     }
 
     /// Event attributes of every scalar type render as natural JSON.
+    #[libdd_test_macros::miri_test]
     #[test]
     fn span_event_attribute_types_serialization_test() {
         let events = vec![SpanEvent::<BytesData> {
@@ -596,6 +603,7 @@ mod tests {
     }
 
     /// Arrays of non-string scalars serialize as natural JSON arrays.
+    #[libdd_test_macros::miri_test]
     #[test]
     fn span_event_non_string_array_serialization_test() {
         let events = vec![SpanEvent::<BytesData> {
@@ -621,6 +629,7 @@ mod tests {
     /// Event and link attributes are emitted with keys in sorted order (matching Go's
     /// `encoding/json`, used by the agent) so the output is deterministic despite the
     /// `HashMap` source.
+    #[libdd_test_macros::miri_test]
     #[test]
     fn attributes_serialized_in_sorted_key_order_test() {
         let events = vec![SpanEvent::<BytesData> {
@@ -663,6 +672,7 @@ mod tests {
     }
 
     /// An event with an empty attributes map renders `"attributes":{}`.
+    #[libdd_test_macros::miri_test]
     #[test]
     fn span_event_empty_attributes_serialization_test() {
         let events = vec![SpanEvent::<BytesData> {

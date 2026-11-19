@@ -203,6 +203,7 @@ impl UnsyncStringSet {
 }
 
 #[cfg(test)]
+#[libdd_test_macros::miri_test]
 mod tests {
     use super::*;
 

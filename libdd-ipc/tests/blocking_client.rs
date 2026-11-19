@@ -10,7 +10,6 @@ use libdd_ipc::example_interface::{ExampleInterfaceChannel, ExampleServer};
 use libdd_ipc::platform::{FileBackedHandle, ShmHandle};
 
 #[test]
-#[cfg_attr(miri, ignore)]
 fn test_blocking_client() {
     let (conn_server, conn_client) = SeqpacketConn::socketpair().unwrap();
 
@@ -62,7 +61,6 @@ fn shrink_send_buffer(conn: &SeqpacketConn) {
 }
 
 #[test]
-#[cfg_attr(miri, ignore)]
 fn requests_exceeding_the_socket_buffer_arrive_via_shared_memory() {
     let (conn_server, conn_client) = SeqpacketConn::socketpair().unwrap();
     shrink_send_buffer(&conn_client);

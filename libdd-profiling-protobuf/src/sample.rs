@@ -82,6 +82,7 @@ mod tests {
     use bolero::generator::TypeGenerator;
     use prost::Message;
 
+    #[libdd_test_macros::miri_test]
     #[test]
     fn empty() {
         let sample = Sample {

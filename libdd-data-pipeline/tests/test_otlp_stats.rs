@@ -143,7 +143,6 @@ fn bool_attribute_is_true(data_point: &Value, key: &str) -> bool {
 ///
 /// The histogram data point must carry exact count/sum/min/max and the Datadog attributes of
 /// the aggregation key.
-#[cfg_attr(miri, ignore)]
 #[tokio::test]
 async fn test_otlp_stats_flush_on_shutdown_sends_valid_metrics() {
     let mock = MockHttpCapabilities::new();
@@ -274,7 +273,6 @@ async fn test_otlp_stats_flush_on_shutdown_sends_valid_metrics() {
 /// `TraceExporter::flush_client_side_stats` must trigger an immediate forced flush of the OTLP
 /// stats exporter through the `Weak<dyn FlushableStatsExport>` handle stored in
 /// `StatsComputationStatus::Enabled`, without waiting for the periodic worker or shutdown.
-#[cfg_attr(miri, ignore)]
 #[tokio::test]
 async fn test_flush_client_side_stats_sends_otlp_metrics() {
     let mock = MockHttpCapabilities::new();

@@ -33,7 +33,6 @@ impl Oneway for Handler {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-#[cfg_attr(miri, ignore = "requires native IPC sockets")]
 async fn oneway_packets_preserve_order_without_consuming_reply_slots() {
     let (client, server) = SeqpacketConn::socketpair().unwrap();
     let mut handler = Handler {

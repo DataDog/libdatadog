@@ -117,6 +117,7 @@ libc = { workspace = true, optional = true }
 winver = { workspace = true, optional = true }
 
 [dev-dependencies]
+libdd-test-macros = { path = "../libdd-test-macros" }
 assert_no_alloc.workspace = true
 # Examples only call fmt(); ansi/tracing-log/smallvec extras not needed.
 tracing-subscriber = { workspace = true, features = ["fmt"] }

@@ -65,6 +65,7 @@ impl From<Function> for crate::prost_impls::Function {
 }
 
 #[cfg(test)]
+#[libdd_test_macros::miri_test]
 mod tests {
     use super::*;
     use crate::prost_impls;
