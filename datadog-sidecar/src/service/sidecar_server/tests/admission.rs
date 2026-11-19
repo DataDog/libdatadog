@@ -220,6 +220,55 @@ fn old_peer_returns_unavailable() {
 }
 
 #[test]
+fn late_capability_reply_preserves_transport() {
+    let (conn, peer) = SeqpacketConn::socketpair().unwrap();
+    let mut sender = SidecarSender::new(SidecarInterfaceChannel::new(conn));
+    let (release, hold) = std::sync::mpsc::channel();
+    let (sent, arrived) = std::sync::mpsc::channel();
+    let server = std::thread::spawn(move || {
+        let mut buf = [0; 4096];
+        for round in 0..2 {
+            let (len, _) = peer.recv_raw_blocking(&mut buf).unwrap();
+            assert!(matches!(
+                decode::<SidecarInterfaceRequest>(&buf[..len]).unwrap(),
+                SidecarInterfaceRequest::Ping {}
+            ));
+            if round == 0 {
+                hold.recv_timeout(Duration::from_secs(2)).unwrap();
+            }
+            peer.send_raw_blocking(vec![1], &[]).unwrap();
+            if round == 0 {
+                sent.send(()).unwrap();
+            }
+        }
+        let (len, _) = peer.recv_raw_blocking(&mut buf).unwrap();
+        assert!(matches!(
+            decode::<SidecarInterfaceRequest>(&buf[..len]).unwrap(),
+            SidecarInterfaceRequest::AdmitFfeExposureV1 { .. }
+        ));
+        peer.send_raw_blocking(encode(&Admitted), &[]).unwrap();
+    });
+    assert_eq!(
+        sender.admit_ffe_exposure_v1(
+            ffe_context(),
+            ffe_exposure("cold"),
+            true,
+            Instant::now() + Duration::from_millis(10)
+        ),
+        Unavailable
+    );
+    assert!(!sender.channel.0.is_closed());
+    assert_eq!(
+        record(&mut sender, ffe_exposure("waiting"), true),
+        Unavailable
+    );
+    release.send(()).unwrap();
+    arrived.recv_timeout(Duration::from_secs(2)).unwrap();
+    assert_eq!(record(&mut sender, ffe_exposure("ready"), true), Admitted);
+    server.join().unwrap();
+}
+
+#[test]
 fn lost_reply_is_unknown() {
     let (mut sender, peer) = simulated_peer(true, |peer| {
         let mut buf = [0; 4096];
@@ -230,18 +279,27 @@ fn lost_reply_is_unknown() {
         ));
     });
     assert_eq!(record(&mut sender, ffe_exposure("user"), true), Unknown);
-    assert!(sender.channel.0.is_closed());
+    assert_eq!(record(&mut sender, ffe_exposure("next"), true), Unavailable);
     peer.join().unwrap();
 }
 
 #[test]
 fn stalled_peer_respects_deadline() {
     let (release, hold) = std::sync::mpsc::channel::<()>();
+    let (sent, arrived) = std::sync::mpsc::channel();
     let (mut sender, peer) = simulated_peer(true, move |peer| {
         let mut buf = [0; 4096];
         peer.recv_raw_blocking(&mut buf).unwrap();
         peer.send_raw_blocking(encode(&Admitted), &[]).unwrap();
-        let _ = hold.recv_timeout(Duration::from_secs(2));
+        hold.recv_timeout(Duration::from_secs(2)).unwrap();
+        peer.recv_raw_blocking(&mut buf).unwrap();
+        peer.send_raw_blocking(encode(&Repeat), &[]).unwrap();
+        sent.send(()).unwrap();
+        let (len, _) = peer.recv_raw_blocking(&mut buf).unwrap();
+        assert!(
+            matches!(decode::<SidecarInterfaceRequest>(&buf[..len]).unwrap(), SidecarInterfaceRequest::AdmitFfeExposureV1 { event, .. } if event.subject_id == "fresh")
+        );
+        peer.send_raw_blocking(encode(&Admitted), &[]).unwrap();
     });
     assert_eq!(record(&mut sender, ffe_exposure("warm"), false), Admitted);
     let start = Instant::now();
@@ -255,8 +313,14 @@ fn stalled_peer_respects_deadline() {
         Unknown
     );
     assert!(start.elapsed() < Duration::from_millis(100));
-    assert!(sender.channel.0.is_closed());
-    drop(release);
+    assert_eq!(
+        record(&mut sender, ffe_exposure("waiting"), true),
+        Unavailable
+    );
+    release.send(()).unwrap();
+    arrived.recv_timeout(Duration::from_secs(2)).unwrap();
+    sender.channel.0.drain_acks();
+    assert_eq!(record(&mut sender, ffe_exposure("fresh"), true), Admitted);
     peer.join().unwrap();
 }
 

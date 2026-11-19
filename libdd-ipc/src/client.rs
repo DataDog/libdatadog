@@ -31,6 +31,8 @@ pub struct IpcClientConn {
     send_count: u64,
     /// Number of server replies received (acks or typed responses).
     ack_count: u64,
+    // A timed-out request still owns its ordered reply on this stream.
+    abandoned_reply: u64,
     /// Reusable receive buffer.  Sized to hold a maximum payload plus the platform wire overhead
     /// (`HANDLE_SUFFIX_SIZE`), so that messages can be read directly without an intermediate copy.
     recv_buf: Vec<u8>,
@@ -47,6 +49,7 @@ impl IpcClientConn {
             conn,
             send_count: 0,
             ack_count: 0,
+            abandoned_reply: 0,
             recv_buf: vec![0u8; max_message_size() + HANDLE_SUFFIX_SIZE],
             closed: false,
         }
@@ -94,6 +97,9 @@ impl IpcClientConn {
     /// needed and skips the final `WouldBlock` probe when all expected acks have arrived.
     /// On Linux uses `recvmmsg` to batch-receive up to 100 acks per syscall.
     pub fn drain_acks(&mut self) {
+        if self.ack_count < self.abandoned_reply && !self.drain_abandoned_reply() {
+            return;
+        }
         let max = self.outstanding() as usize;
         match self.conn.drain_acks_nonblocking(max) {
             Ok(count) => self.ack_count += count as u64,
@@ -135,7 +141,10 @@ impl IpcClientConn {
         data: Vec<u8>,
         deadline: Instant,
     ) -> Result<Vec<u8>, DeadlineCallError> {
-        if self.closed || Instant::now() >= deadline {
+        if self.closed
+            || (self.ack_count < self.abandoned_reply && !self.drain_abandoned_reply())
+            || Instant::now() >= deadline
+        {
             return Err(DeadlineCallError::NotSent);
         }
         self.try_send(data, &[]).map_err(|_| {
@@ -156,17 +165,40 @@ impl IpcClientConn {
                 Err(e) if e.kind() == io::ErrorKind::WouldBlock => {
                     #[cfg(unix)]
                     if self.conn.wait_for_packet(deadline).is_err() {
-                        break;
+                        self.closed = true;
+                        return Err(DeadlineCallError::Uncertain);
                     }
                     #[cfg(windows)]
                     std::thread::yield_now();
                 }
                 Err(e) if e.kind() == io::ErrorKind::Interrupted => continue,
-                Err(_) => break,
+                Err(_) => {
+                    self.closed = true;
+                    return Err(DeadlineCallError::Uncertain);
+                }
             }
         }
-        self.closed = true;
+        self.abandoned_reply = self.send_count;
         Err(DeadlineCallError::Uncertain)
+    }
+
+    fn drain_abandoned_reply(&mut self) -> bool {
+        // A typed reply can exceed the single-byte buffers used by drain_acks_nonblocking.
+        for _ in 0..64 {
+            match self.conn.try_recv_raw(&mut self.recv_buf) {
+                Ok(_) => self.ack_count += 1,
+                Err(e) if e.kind() == io::ErrorKind::WouldBlock => break,
+                Err(e) if e.kind() == io::ErrorKind::Interrupted => continue,
+                Err(_) => {
+                    self.closed = true;
+                    break;
+                }
+            }
+            if self.ack_count == self.abandoned_reply {
+                return true;
+            }
+        }
+        false
     }
 
     /// Blocking send (no response wait).
