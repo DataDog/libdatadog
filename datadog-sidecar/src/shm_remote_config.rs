@@ -208,10 +208,14 @@ impl RefcountedFile for StoredShmFile {
     }
 }
 
+/// The limiter index published for a live debugging config without a shared slot: readers
+/// limit it within their own process instead. Never a valid slot offset.
+pub const UNSHARED_LIMITER_INDEX: u32 = u32::MAX;
+
 impl<N: NotifyTarget + 'static> ConfigFileStorage<N> {
-    /// No limiter means no rate limiting: either the segment could not be created, which is
-    /// already reported where it happened, or no slot is available right now. The latter is
-    /// retried on the next update of the file.
+    /// No slot means each reader limits on its own: either the segment could not be created,
+    /// which is already reported where it happened, or no slot is available right now - e.g.
+    /// because another sidecar replaced the segment. The latter is retried on the next update.
     fn alloc_live_debugging_limiter(
         &self,
         path: &RemoteConfigPath,
@@ -220,8 +224,8 @@ impl<N: NotifyTarget + 'static> ConfigFileStorage<N> {
         let allocated = limiter.lock_or_panic().alloc_with(SamplingThreshold::reset);
         if allocated.is_none() {
             warn!(
-                "No rate limiter slot available for live debugging config {path}; \
-                 not rate limited (will retry on the next update)"
+                "No shared rate limiter slot available for live debugging config {path}; \
+                 rate limited per process (will retry on the next update)"
             );
         }
         allocated
@@ -346,11 +350,14 @@ impl<N: NotifyTarget + 'static> MultiTargetHandlers<N, Self, NativeCapabilities>
                 serialized.extend_from_slice(path);
             }
             serialized.push(b':');
-            if let Some(ref limiter) = *file.limiter.lock_or_panic() {
-                serialized.extend_from_slice(limiter.index().to_string().as_bytes());
-            } else {
-                serialized.push(b'0');
-            }
+            let index = match *file.limiter.lock_or_panic() {
+                Some(ref limiter) => limiter.index(),
+                None if file.refcount.path.product() == RemoteConfigProduct::LiveDebugging => {
+                    UNSHARED_LIMITER_INDEX
+                }
+                None => 0,
+            };
+            serialized.extend_from_slice(index.to_string().as_bytes());
             serialized.push(b':');
             serialized.extend_from_slice(
                 BASE64_URL_SAFE_NO_PAD
@@ -1501,7 +1508,13 @@ mod tests {
 
         receiver.recv().await;
 
-        if let RemoteConfigUpdate::Add { value, .. } = manager.fetch_update() {
+        if let RemoteConfigUpdate::Add {
+            value,
+            limiter_index,
+        } = manager.fetch_update()
+        {
+            // Without limiter memory, readers must limit on their own rather than not at all.
+            assert_eq!(limiter_index, UNSHARED_LIMITER_INDEX);
             assert_eq!(value.path.config_id(), PATH_LIVE_DEBUGGER.config_id());
             assert_eq!(
                 value.path.product(),
