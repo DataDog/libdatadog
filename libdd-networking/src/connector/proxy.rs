@@ -30,17 +30,13 @@ pub(super) struct HttpProxyConnector {
 }
 
 impl HttpProxyConnector {
-    pub(super) fn new(direct: Connector) -> Self {
+    /// Reuses the direct connector's TLS configuration to avoid loading root certificates again.
+    pub(super) fn new(
+        direct: Connector,
+        #[cfg(feature = "tls-core")] tls_config: Option<rustls::ClientConfig>,
+    ) -> Self {
         #[cfg(feature = "tls-core")]
-        let tls_config = https::build_tls_config().ok();
-        #[cfg(feature = "tls-core")]
-        let proxy_dialer = tls_config.clone().map(|tls_config| {
-            hyper_rustls::HttpsConnectorBuilder::new()
-                .with_tls_config(tls_config)
-                .https_or_http()
-                .enable_http1()
-                .build()
-        });
+        let proxy_dialer = tls_config.clone().map(https::build_https_connector);
         Self {
             matcher: &PROXY_MATCHER,
             #[cfg(feature = "tls-core")]
@@ -133,7 +129,9 @@ mod tests {
                 ))
                 .build()
         });
-        let mut connector = HttpProxyConnector::new(Connector::new_no_proxy());
+        let Connector::Proxy(mut connector) = Connector::new() else {
+            panic!("hyper-proxy should construct a proxy connector");
+        };
         connector.matcher = matcher;
         #[cfg(feature = "tls-core")]
         let tls_available = connector.tls_config.is_some() && connector.proxy_dialer.is_some();
@@ -211,7 +209,9 @@ mod tests {
                 .no("127.0.0.1")
                 .build()
         });
-        let mut connector = HttpProxyConnector::new(Connector::new_no_proxy());
+        let Connector::Proxy(mut connector) = Connector::new() else {
+            panic!("hyper-proxy should construct a proxy connector");
+        };
         connector.matcher = &MATCHER;
         let uri = format!("http://{}/config", listener.local_addr().unwrap())
             .parse()
