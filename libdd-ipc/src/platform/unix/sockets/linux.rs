@@ -211,6 +211,95 @@ mod tests {
         assert_eq!(server.try_recv_raw(&mut buf).expect("recv").0, 10);
         assert_eq!(buf, [8; 10]);
     }
+
+    /// A receiver out of descriptors loses the ones passed to it: that must be told apart from
+    /// the peer closing the connection, and from other truncations.
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn descriptors_dropped_for_lack_of_slots_are_reported() {
+        let (client, server) = SeqpacketConn::socketpair().expect("socketpair");
+        // SAFETY: the child only receives one message and leaves through _exit.
+        match unsafe { libc::fork() } {
+            -1 => panic!("fork failed"),
+            0 => {
+                drop(client);
+                // SAFETY: F_GETFD only probes the descriptor number.
+                let lowest_free = (0..)
+                    .find(|&fd| unsafe { libc::fcntl(fd, libc::F_GETFD) } == -1)
+                    .unwrap_or(0);
+                let mut limit = libc::rlimit {
+                    rlim_cur: 0,
+                    rlim_max: 0,
+                };
+                // SAFETY: getrlimit/setrlimit only read and write `limit`.
+                unsafe {
+                    libc::getrlimit(libc::RLIMIT_NOFILE, &mut limit);
+                    limit.rlim_cur = lowest_free as libc::rlim_t;
+                    libc::setrlimit(libc::RLIMIT_NOFILE, &limit);
+                }
+                let result = server.recv_raw_blocking(&mut [0; 16]);
+                let reported = matches!(&result, Err(e) if crate::descriptors_dropped(e));
+                unsafe { libc::_exit(if reported { 0 } else { 1 }) }
+            }
+            pid => {
+                drop(server);
+                let file = std::fs::File::open("/dev/null").expect("open");
+                client
+                    .send_raw_blocking(vec![1], &[file.as_raw_fd()])
+                    .expect("send");
+                let mut status = 0;
+                // SAFETY: waits for our own child.
+                assert_eq!(unsafe { libc::waitpid(pid, &mut status, 0) }, pid);
+                assert_eq!(
+                    libc::WEXITSTATUS(status),
+                    0,
+                    "the dropped descriptor was not reported as such"
+                );
+            }
+        }
+    }
+
+    /// More descriptors than the receive buffer holds only lose that message, not the sidecar,
+    /// and the ones that did arrive are closed.
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn excess_descriptors_lose_only_their_message_and_do_not_leak() {
+        let (client, server) = SeqpacketConn::socketpair().expect("socketpair");
+        // SAFETY: the child only receives one message and leaves through _exit.
+        match unsafe { libc::fork() } {
+            -1 => panic!("fork failed"),
+            0 => {
+                drop(client);
+                let open = || std::fs::read_dir("/proc/self/fd").map_or(0, |fds| fds.count());
+                let before = open();
+                let result = server.recv_raw_blocking(&mut [0; 16]);
+                let ended_only_the_message = matches!(&result, Err(e)
+                    if e.raw_os_error() == Some(libc::ENOBUFS) && !crate::descriptors_dropped(e));
+                let code = match (ended_only_the_message, open() == before) {
+                    (true, true) => 0,
+                    (false, _) => 1,
+                    (true, false) => 2,
+                };
+                unsafe { libc::_exit(code) }
+            }
+            pid => {
+                drop(server);
+                let files: Vec<_> = (0..=crate::platform::message::MAX_FDS)
+                    .map(|_| std::fs::File::open("/dev/null").expect("open"))
+                    .collect();
+                let fds: Vec<_> = files.iter().map(|file| file.as_raw_fd()).collect();
+                client.send_raw_blocking(vec![1], &fds).expect("send");
+                let mut status = 0;
+                // SAFETY: waits for our own child.
+                assert_eq!(unsafe { libc::waitpid(pid, &mut status, 0) }, pid);
+                assert_eq!(
+                    libc::WEXITSTATUS(status),
+                    0,
+                    "1: not an ENOBUFS of that message alone, 2: the received descriptors leaked"
+                );
+            }
+        }
+    }
 }
 
 #[cfg(test)]

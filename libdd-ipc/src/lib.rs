@@ -32,6 +32,27 @@ pub use client::IpcClientConn;
 #[cfg(target_os = "linux")]
 pub use platform::send_acks_async;
 
+/// The kernel dropped the descriptors passed with a received message (`MSG_CTRUNC`) because the
+/// receiving process had no descriptor slot left. Other truncations, like more descriptors than
+/// the receive buffer holds, report `ENOBUFS` and only lose that message.
+#[derive(Debug)]
+pub struct DescriptorsDropped;
+
+impl std::fmt::Display for DescriptorsDropped {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("the descriptors passed with a message were dropped (MSG_CTRUNC)")
+    }
+}
+
+impl std::error::Error for DescriptorsDropped {}
+
+/// Whether `error` reports a [`DescriptorsDropped`].
+pub fn descriptors_dropped(error: &std::io::Error) -> bool {
+    error
+        .get_ref()
+        .is_some_and(|inner| inner.is::<DescriptorsDropped>())
+}
+
 /// Maximum number of 1-byte acks buffered per connection before a forced flush.
 /// Must match the `MAX_BATCH` limit inside `send_acks_async`.
 pub const ACK_BUFFER_SIZE: u32 = 20;

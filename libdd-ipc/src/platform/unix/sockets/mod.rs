@@ -102,6 +102,44 @@ pub(super) fn sendmsg_raw(
     .map_err(io::Error::from)
 }
 
+/// Whether this process can open no further descriptor.
+fn out_of_descriptor_slots(fd: RawFd) -> bool {
+    // SAFETY: duplicating a live descriptor, and closing the copy, touch nothing else.
+    let copy = unsafe { libc::fcntl(fd, libc::F_DUPFD_CLOEXEC, 0) };
+    if copy >= 0 {
+        unsafe { libc::close(copy) };
+        return false;
+    }
+    // EINVAL: a soft limit of 0, below even the lowest number.
+    matches!(
+        io::Error::last_os_error().raw_os_error(),
+        Some(libc::EMFILE | libc::ENFILE | libc::EINVAL)
+    )
+}
+
+/// Closes the descriptors a truncated message brought, which nix does not hand out.
+fn close_truncated_rights(cmsg_buf: &[u8]) {
+    // SAFETY: the buffer outlives the header, and was zeroed before the kernel filled its
+    // start, so the walk ends at the first header it did not write.
+    unsafe {
+        let mut header: libc::msghdr = std::mem::zeroed();
+        header.msg_control = cmsg_buf.as_ptr() as *mut libc::c_void;
+        header.msg_controllen = cmsg_buf.len() as _;
+        let mut cmsg = libc::CMSG_FIRSTHDR(&header);
+        while !cmsg.is_null() && (*cmsg).cmsg_len as usize >= libc::CMSG_LEN(0) as usize {
+            if (*cmsg).cmsg_level == libc::SOL_SOCKET && (*cmsg).cmsg_type == libc::SCM_RIGHTS {
+                let fds = libc::CMSG_DATA(cmsg).cast::<libc::c_int>();
+                let count = ((*cmsg).cmsg_len as usize - libc::CMSG_LEN(0) as usize)
+                    / size_of::<libc::c_int>();
+                for i in 0..count {
+                    drop(OwnedFd::from_raw_fd(fds.add(i).read_unaligned()));
+                }
+            }
+            cmsg = libc::CMSG_NXTHDR(&header, cmsg);
+        }
+    }
+}
+
 pub(super) fn recvmsg_raw(
     fd: RawFd,
     buf: &mut [u8],
@@ -129,6 +167,16 @@ pub(super) fn recvmsg_raw(
         // 0 bytes means EOF (peer closed connection), not a valid datagram.
         // Legitimate acks are always at least 1 byte.
         return Err(io::Error::from(io::ErrorKind::BrokenPipe));
+    }
+    if msg.flags.contains(MsgFlags::MSG_CTRUNC) {
+        // Probed first: closing the descriptors that did arrive frees slots.
+        let out_of_slots = out_of_descriptor_slots(fd);
+        close_truncated_rights(&cmsg_buf);
+        return Err(if out_of_slots {
+            io::Error::other(crate::DescriptorsDropped)
+        } else {
+            io::Error::from_raw_os_error(libc::ENOBUFS)
+        });
     }
     let mut owned_fds = Vec::new();
     for cmsg in msg.cmsgs().map_err(io::Error::from)? {
