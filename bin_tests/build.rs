@@ -60,12 +60,19 @@ fn main() {
 
         // Export otel_thread_ctx_v1 to the dynamic symbol table (.dynsym).
         //
-        // The OTel thread context spec requires the symbol in .dynsym even for
-        // executables. However, when definition and reference are in the same PIE
-        // executable, both lld and GNU ld relax TLSDESC accesses to TP-relative,
-        // eliminating the symbol name from .dynsym (the TLS allocation survives but
-        // the name doesn't). This only affects this test binary. In production the
-        // publisher is always in a separate .so where names are preserved.
+        // When definition and reference are in the same PIE executable, the linker
+        // relaxes TLSDESC to local-exec and may drop the symbol name from .dynsym.
+        // This happens for statically linked languages like Rust where the TLS
+        // variable and its consumer are in the same final binary. The same issue
+        // applies to production Rust tracers (not just this test binary).
+        //
+        // We use --dynamic-list to export only the specific symbol (instead of
+        // --export-dynamic which exports everything). The assembly anchor provides
+        // a weak definition so the symbol survives linking even without TLSDESC.
+        let otel_dynlist = out_dir.join("otel_thread_ctx.dynlist");
+        std::fs::write(&otel_dynlist, "{ otel_thread_ctx_v1; };\n")
+            .expect("failed to write otel dynlist");
+
         let otel_asm_src = out_dir.join("otel_tls_anchor.s");
         let otel_asm_obj = out_dir.join("otel_tls_anchor.o");
         std::fs::write(
@@ -92,7 +99,10 @@ fn main() {
         }
 
         println!("cargo:rustc-link-arg={}", otel_asm_obj.display());
-        println!("cargo:rustc-link-arg=-Wl,--export-dynamic");
+        println!(
+            "cargo:rustc-link-arg=-Wl,--dynamic-list={}",
+            otel_dynlist.display()
+        );
     }
 }
 
