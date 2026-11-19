@@ -100,6 +100,8 @@ pub extern "C" fn ddog_create_exception_snapshot<'a>(
         timestamp,
         message: None,
         process_tags: None,
+        trace_id: None,
+        span_id: None,
         debugger: DebuggerData::Snapshot(Snapshot {
             captures: Some(Captures {
                 r#return: Some(Capture::default()),
@@ -189,7 +191,21 @@ pub extern "C" fn ddog_create_log_probe_snapshot<'a>(
         } else {
             Some(process_tags.to_utf8_lossy())
         },
+        trace_id: None,
+        span_id: None,
     })
+}
+
+/// Attach the active trace and span to a snapshot, already formatted by the caller.
+/// Both are copied, so they need not outlive the payload.
+#[unsafe(no_mangle)]
+pub extern "C" fn ddog_snapshot_set_trace_correlation(
+    payload: &mut DebuggerPayload,
+    trace_id: CharSlice,
+    span_id: CharSlice,
+) {
+    payload.trace_id = Some(Cow::Owned(trace_id.to_utf8_lossy().into_owned()));
+    payload.span_id = Some(Cow::Owned(span_id.to_utf8_lossy().into_owned()));
 }
 
 #[unsafe(no_mangle)]
@@ -495,6 +511,8 @@ pub extern "C" fn ddog_evaluation_error_snapshot<'a>(
             ..Default::default()
         }),
         process_tags: None,
+        trace_id: None,
+        span_id: None,
     })
 }
 
@@ -576,6 +594,8 @@ pub fn ddog_debugger_diagnostics_create_unboxed<'a>(
         }),
         debugger: DebuggerData::Diagnostics(diagnostics),
         process_tags: None,
+        trace_id: None,
+        span_id: None,
     }
 }
 

@@ -1,7 +1,7 @@
 // Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-use super::local::LocalLimiter;
+use super::local::{LocalLimiter, SamplingThreshold};
 #[cfg(unix)]
 use crate::platform::lock_shm;
 use crate::platform::{FileBackedHandle, MappedMem, NamedShmHandle};
@@ -52,6 +52,8 @@ unsafe impl ShmSafe for AtomicU64 {}
 // SAFETY: an array has no bytes of its own beyond its elements', so it inherits both properties
 // from `T`.
 unsafe impl<T: ShmSafe, const N: usize> ShmSafe for [T; N] {}
+// SAFETY: `#[repr(C)]` and made of atomics only, so every bit pattern is a valid value.
+unsafe impl ShmSafe for SamplingThreshold {}
 
 #[repr(C)]
 #[derive(Default)]
@@ -502,6 +504,15 @@ impl<Inner: ShmSafe> ShmLimiter<Inner> {
             .unwrap_or(0.0)
     }
 
+    pub fn peek(&self, limit: u32, granularity: Duration) -> bool {
+        self.with_limiter(|limiter| limiter.limiter.peek(limit, granularity))
+            .unwrap_or(false)
+    }
+
+    pub fn debit(&self, limit: u32, granularity: Duration) {
+        self.with_limiter(|limiter| limiter.limiter.debit(limit, granularity));
+    }
+
     /// # Safety
     /// Callers MUST NOT do any other operations on this instance if dropping was successful.
     pub unsafe fn drop_if_rc_1(&mut self) -> bool {
@@ -541,6 +552,34 @@ impl<Inner: ShmSafe> ShmLimiter<Inner> {
                 Err(found) => next_free = found,
             }
         }
+    }
+}
+
+impl ShmLimiter<SamplingThreshold> {
+    /// The current sampling threshold; `u64::MAX` (admit every key) if the slot is unusable.
+    pub fn threshold(&self) -> u64 {
+        self.with_data(SamplingThreshold::threshold)
+            .unwrap_or(u64::MAX)
+    }
+
+    /// See [`LocalLimiter::precheck`].
+    pub fn precheck(&self, key: u64, limit: u32, granularity: Duration) -> bool {
+        self.with_limiter(|limiter| {
+            // SAFETY: see `with_data`.
+            let threshold = unsafe { &*limiter.inner.get() };
+            limiter.limiter.precheck(threshold, key, limit, granularity)
+        })
+        .unwrap_or(false)
+    }
+
+    /// See [`LocalLimiter::try_lead`].
+    pub fn try_lead(&self, limit: u32, granularity: Duration) -> bool {
+        self.with_limiter(|limiter| {
+            // SAFETY: see `with_data`.
+            let threshold = unsafe { &*limiter.inner.get() };
+            limiter.limiter.try_lead(threshold, limit, granularity)
+        })
+        .unwrap_or(false)
     }
 }
 

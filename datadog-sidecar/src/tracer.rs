@@ -5,7 +5,7 @@ use crate::service::exception_hash_rate_limiter::ManagedExceptionHashRateLimiter
 use crossbeam_utils::atomic::AtomicCell;
 use http::uri::PathAndQuery;
 use libdd_common::Endpoint;
-use libdd_ipc::rate_limiter::ShmLimiterMemory;
+use libdd_ipc::rate_limiter::{SamplingThreshold, ShmLimiterMemory};
 use libdd_trace_utils::config_utils::trace_intake_url_prefixed;
 use std::borrow::Cow;
 use std::ffi::CString;
@@ -14,8 +14,11 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use tracing::error;
 
+/// Per-probe limiter slots, each carrying its adaptive sampling threshold.
+pub type ProbeLimiterMemory = ShmLimiterMemory<SamplingThreshold>;
+
 pub(crate) struct ShmLimiters {
-    pub probes: Option<Arc<Mutex<ShmLimiterMemory<()>>>>,
+    pub probes: Option<Arc<Mutex<ProbeLimiterMemory>>>,
     pub exceptions: Option<Arc<Mutex<ManagedExceptionHashRateLimiter>>>,
 }
 
@@ -125,7 +128,8 @@ impl Config {
 
 pub fn shm_limiter_path() -> CString {
     #[allow(clippy::unwrap_used)]
-    CString::new(format!("/ddlimiters-{}", crate::shm_namespace())).unwrap()
+    // The suffix versions the slot layout: readers follow replacements by name.
+    CString::new(format!("/ddlimiters2-{}", crate::shm_namespace())).unwrap()
 }
 
 #[cfg(test)]

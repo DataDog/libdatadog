@@ -8,7 +8,7 @@ use datadog_sidecar::service::blocking;
 use datadog_sidecar::service::exception_hash_rate_limiter::ExceptionHashRateLimiter;
 use datadog_sidecar::setup::{MasterListener, connect_to_master};
 use datadog_sidecar::tracer::shm_limiter_path;
-use libdd_ipc::rate_limiter::ShmLimiterMemory;
+use libdd_ipc::rate_limiter::{SamplingThreshold, ShmLimiterMemory};
 use std::time::{Duration, Instant};
 
 #[test]
@@ -21,7 +21,7 @@ fn a_forked_worker_can_start_its_own_listener() {
         .unwrap();
     blocking::ping(&mut parent).unwrap();
     let parent_path = shm_limiter_path();
-    let parent_arena = ShmLimiterMemory::<()>::open(&parent_path).unwrap();
+    let parent_arena = ShmLimiterMemory::<SamplingThreshold>::open(&parent_path).unwrap();
 
     for promote in [false, true] {
         let pid = unsafe { libc::fork() };
@@ -42,7 +42,7 @@ fn a_forked_worker_can_start_its_own_listener() {
 
                 let child_path = shm_limiter_path();
                 assert_ne!(child_path, parent_path);
-                assert!(ShmLimiterMemory::<()>::open(&child_path).is_ok());
+                assert!(ShmLimiterMemory::<SamplingThreshold>::open(&child_path).is_ok());
                 assert!(ExceptionHashRateLimiter::open().is_ok());
                 assert!(!parent_arena.is_retired());
                 drop(child);
@@ -71,7 +71,7 @@ fn a_forked_worker_can_start_its_own_listener() {
         }
         assert!(libc::WIFEXITED(status));
         assert_eq!(libc::WEXITSTATUS(status), 0);
-        assert!(ShmLimiterMemory::<()>::open(&parent_path).is_ok());
+        assert!(ShmLimiterMemory::<SamplingThreshold>::open(&parent_path).is_ok());
         assert!(!parent_arena.is_retired());
         blocking::ping(&mut parent).unwrap();
     }

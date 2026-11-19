@@ -169,6 +169,8 @@ mod tests {
             }),
             message: None,
             process_tags: None,
+            trace_id: None,
+            span_id: None,
         }
     }
 

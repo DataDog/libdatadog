@@ -7,13 +7,14 @@ use publication::{PublicationStore, publish_directory};
 
 use crate::service::{DynamicInstrumentationConfigState, InstanceId};
 use crate::shm_path::keyed_shm_path;
+use crate::tracer::ProbeLimiterMemory;
 use base64::Engine;
 use base64::prelude::BASE64_URL_SAFE_NO_PAD;
 use libdd_capabilities_impl::{HttpClientCapability, NativeCapabilities};
 use libdd_common::{MutexExt, tag::Tag};
 use libdd_ipc::one_way_shared_memory::{OneWayShmReader, OneWayShmWriter, open_named_shm};
 use libdd_ipc::platform::{FileBackedHandle, NamedShmHandle};
-use libdd_ipc::rate_limiter::{ShmLimiter, ShmLimiterMemory};
+use libdd_ipc::rate_limiter::{SamplingThreshold, ShmLimiter};
 use libdd_live_debugger::LiveDebuggingData;
 use libdd_remote_config::config::dynamic::{Configs, parse_json};
 use libdd_remote_config::fetch::{
@@ -185,7 +186,7 @@ struct TargetInfo {
 #[derive(Clone)]
 struct ConfigFileStorage<N: NotifyTarget + 'static> {
     invariants: RemoteConfigInvariants,
-    limiter: Option<Arc<Mutex<ShmLimiterMemory<()>>>>,
+    limiter: Option<Arc<Mutex<ProbeLimiterMemory>>>,
     /// All writers
     writers: Arc<Mutex<HashMap<Arc<Target>, RemoteConfigWriter>>>,
     targets: Arc<Mutex<HashMap<Arc<Target>, TargetInfo>>>,
@@ -197,7 +198,7 @@ struct ConfigFileStorage<N: NotifyTarget + 'static> {
 
 struct StoredShmFile {
     handle: Mutex<Option<NamedShmHandle>>, // just an option to use the handle under lock
-    limiter: Mutex<Option<ShmLimiter<()>>>,
+    limiter: Mutex<Option<ShmLimiter<SamplingThreshold>>>,
     refcount: FileRefcountData,
 }
 
@@ -211,9 +212,12 @@ impl<N: NotifyTarget + 'static> ConfigFileStorage<N> {
     /// No limiter means no rate limiting: either the segment could not be created, which is
     /// already reported where it happened, or no slot is available right now. The latter is
     /// retried on the next update of the file.
-    fn alloc_live_debugging_limiter(&self, path: &RemoteConfigPath) -> Option<ShmLimiter<()>> {
+    fn alloc_live_debugging_limiter(
+        &self,
+        path: &RemoteConfigPath,
+    ) -> Option<ShmLimiter<SamplingThreshold>> {
         let limiter = self.limiter.as_ref()?;
-        let allocated = limiter.lock_or_panic().alloc();
+        let allocated = limiter.lock_or_panic().alloc_with(SamplingThreshold::reset);
         if allocated.is_none() {
             warn!(
                 "No rate limiter slot available for live debugging config {path}; \
@@ -503,7 +507,7 @@ impl<N: NotifyTarget + 'static> ShmRemoteConfigs<N> {
         invariants: ConfigInvariants,
         on_dead: Box<dyn Fn() + Sync + Send>,
         interval: Duration,
-        limiter: Option<Arc<Mutex<ShmLimiterMemory<()>>>>,
+        limiter: Option<Arc<Mutex<ProbeLimiterMemory>>>,
     ) -> Self {
         Self::with_publications(
             invariants,
@@ -518,7 +522,7 @@ impl<N: NotifyTarget + 'static> ShmRemoteConfigs<N> {
         invariants: ConfigInvariants,
         on_dead: Box<dyn Fn() + Sync + Send>,
         interval: Duration,
-        limiter: Option<Arc<Mutex<ShmLimiterMemory<()>>>>,
+        limiter: Option<Arc<Mutex<ProbeLimiterMemory>>>,
         publications: PublicationStore,
     ) -> Self {
         let storage = ConfigFileStorage {
