@@ -720,7 +720,7 @@ dependencies = [
 
 [[package]]
 name = "build_common"
-version = "50.0.0"
+version = "51.0.0"
 dependencies = [
  "cbindgen",
  "serde_json",
@@ -729,7 +729,7 @@ dependencies = [
 
 [[package]]
 name = "builder"
-version = "50.0.0"
+version = "51.0.0"
 dependencies = [
  "anyhow",
  "build_common",
@@ -1367,7 +1367,7 @@ checksum = "d7a1e2f27636f116493b8b860f5546edb47c8d8f8ea73e1d2a20be88e28d1fea"
 
 [[package]]
 name = "datadog-profiling-replayer"
-version = "50.0.0"
+version = "51.0.0"
 dependencies = [
  "anyhow",
  "clap",
@@ -2776,7 +2776,7 @@ checksum = "7581282928bc99698341d1de7590964c28db747c164eaac9409432a3eaed098a"
 
 [[package]]
 name = "libdd-agent-client"
-version = "50.0.0"
+version = "51.0.0"
 dependencies = [
  "bytes",
  "flate2",
@@ -2867,7 +2867,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-common-ffi"
-version = "50.0.0"
+version = "51.0.0"
 dependencies = [
  "anyhow",
  "assert_no_alloc",
@@ -2929,7 +2929,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-crashtracker-ffi"
-version = "50.0.0"
+version = "51.0.0"
 dependencies = [
  "anyhow",
  "build_common",
@@ -3024,7 +3024,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-data-pipeline-ffi"
-version = "50.0.0"
+version = "51.0.0"
 dependencies = [
  "build_common",
  "httpmock",
@@ -3058,7 +3058,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-ddsketch-ffi"
-version = "50.0.0"
+version = "51.0.0"
 dependencies = [
  "build_common",
  "libdd-common-ffi",
@@ -3143,7 +3143,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-ffe-test-suite"
-version = "50.0.0"
+version = "51.0.0"
 dependencies = [
  "chrono",
  "criterion",
@@ -3335,7 +3335,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-log-ffi"
-version = "50.0.0"
+version = "51.0.0"
 dependencies = [
  "build_common",
  "libdd-common-ffi",
@@ -3504,7 +3504,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-profiling-heap-gotter-ffi"
-version = "50.0.0"
+version = "51.0.0"
 dependencies = [
  "anyhow",
  "build_common",
@@ -3615,7 +3615,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-shared-runtime-ffi"
-version = "50.0.0"
+version = "51.0.0"
 dependencies = [
  "async-trait",
  "build_common",
@@ -3668,7 +3668,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-telemetry-ffi"
-version = "50.0.0"
+version = "51.0.0"
 dependencies = [
  "build_common",
  "function_name",
@@ -6064,7 +6064,7 @@ dependencies = [
 
 [[package]]
 name = "symbolizer-ffi"
-version = "50.0.0"
+version = "51.0.0"
 dependencies = [
  "blazesym-c",
  "build_common",
@@ -6520,7 +6520,7 @@ dependencies = [
 
 [[package]]
 name = "tools"
-version = "50.0.0"
+version = "51.0.0"
 dependencies = [
  "anyhow",
  "bytes",
