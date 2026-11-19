@@ -169,6 +169,7 @@ pub enum ExposureVerdict {
     Admitted = 1,
     Repeat = 2,
     Unknown = 3,
+    QueueFull = 4,
 }
 
 #[derive(Debug, Deserialize, Serialize)]

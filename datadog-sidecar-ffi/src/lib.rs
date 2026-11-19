@@ -1142,6 +1142,8 @@ pub const FFE_ADMISSION_UNAVAILABLE: FfeAdmission = 0;
 pub const FFE_ADMISSION_ADMITTED: FfeAdmission = 1;
 pub const FFE_ADMISSION_REPEAT: FfeAdmission = 2;
 pub const FFE_ADMISSION_UNKNOWN: FfeAdmission = 3;
+/// Queue capacity prevented admission. The producer may submit the observation in a batch.
+pub const FFE_ADMISSION_QUEUE_FULL: FfeAdmission = 4;
 
 /// Attempts admission with a local IPC budget capped at 50 ms. An absent transport yields
 /// unavailable.

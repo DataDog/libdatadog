@@ -129,7 +129,7 @@ async fn queue_full_preserves_assignment() {
     let mut b = a.clone();
     b.variant = "b".to_owned();
     assert_eq!(record(&mut worker, a.clone(), true), Admitted);
-    assert_eq!(record(&mut worker, b.clone(), true), Unavailable);
+    assert_eq!(record(&mut worker, b.clone(), true), QueueFull);
     assert_eq!(record(&mut worker, a, true), Repeat);
     assert_eq!(rx.try_recv().unwrap().1.exposures[0].variant, "variant");
     assert_eq!(record(&mut worker, b, true), Admitted);

@@ -21,7 +21,9 @@ use libdd_capabilities_impl::NativeCapabilities;
 pub(crate) use libdd_ffe::telemetry::exposures::ExposureDeduplicator;
 use libdd_ffe::telemetry::exposures::encode_exposure_batch_in_scope;
 use libdd_ffe::telemetry::exposures::{encode_admitted_exposure_batch, is_complete};
+use std::collections::HashMap;
 use std::sync::{Arc, OnceLock};
+use std::time::Duration;
 use tokio::sync::mpsc;
 use tracing::debug;
 
@@ -77,6 +79,43 @@ async fn send_encoded<C: HttpClientCapability + SleepCapability>(
 
 type Job = (EvpTransport, FfeExposureBatch);
 
+const ADMISSION_QUEUE_CAPACITY: usize = 1024;
+const MAX_BATCH_ROWS: usize = 64;
+const COALESCE_WINDOW: Duration = Duration::from_millis(1);
+
+async fn drain_admissions<C: HttpClientCapability + SleepCapability>(
+    client: &C,
+    mut rx: mpsc::Receiver<Job>,
+) {
+    let mut jobs = Vec::with_capacity(MAX_BATCH_ROWS);
+    while rx.recv_many(&mut jobs, MAX_BATCH_ROWS).await > 0 {
+        if jobs.len() < MAX_BATCH_ROWS && !rx.is_closed() {
+            // One timer wake collects a burst while the producers keep serving evaluations.
+            tokio::time::sleep(COALESCE_WINDOW).await;
+            let remaining = MAX_BATCH_ROWS - jobs.len();
+            jobs.extend(std::iter::from_fn(|| rx.try_recv().ok()).take(remaining));
+        }
+        let mut destinations = HashMap::new();
+        let mut batches: Vec<Job> = Vec::new();
+        for (route, mut batch) in jobs.drain(..) {
+            // Workers with equivalent routes and telemetry context share one payload.
+            let key = (
+                route.deduplication_scope().to_owned(),
+                batch.context.clone(),
+            );
+            let i = *destinations.entry(key).or_insert(batches.len());
+            if let Some((_, existing)) = batches.get_mut(i) {
+                existing.exposures.append(&mut batch.exposures);
+            } else {
+                batches.push((route, batch));
+            }
+        }
+        for (route, batch) in batches {
+            send_encoded(client, &route, encode_admitted_exposure_batch(batch)).await;
+        }
+    }
+}
+
 #[derive(Clone, Default)]
 pub(crate) struct AdmissionQueue(Arc<OnceLock<mpsc::Sender<Job>>>);
 
@@ -118,17 +157,14 @@ impl AdmissionQueue {
         match cache.try_record_in_scope(transport.deduplication_scope(), &context, &event, || {
             if deliver {
                 let queue = self.0.get_or_init(|| {
-                    let (tx, mut rx) = mpsc::channel::<Job>(128);
+                    let (tx, rx) = mpsc::channel(ADMISSION_QUEUE_CAPACITY);
                     let client = client.clone();
                     tokio::spawn(async move {
-                        while let Some((route, batch)) = rx.recv().await {
-                            send_encoded(&client, &route, encode_admitted_exposure_batch(batch))
-                                .await;
-                        }
+                        drain_admissions(&client, rx).await;
                     });
                     tx
                 });
-                let permit = queue.try_reserve().map_err(|_| ())?;
+                let permit = queue.try_reserve()?;
                 permit.send((
                     transport.clone(),
                     FfeExposureBatch {
@@ -137,11 +173,12 @@ impl AdmissionQueue {
                     },
                 ));
             }
-            Ok::<_, ()>(())
+            Ok::<_, mpsc::error::TrySendError<()>>(())
         }) {
             Ok(true) => ExposureVerdict::Admitted,
             Ok(false) => ExposureVerdict::Repeat,
-            Err(()) => ExposureVerdict::Unavailable,
+            Err(mpsc::error::TrySendError::Full(())) => ExposureVerdict::QueueFull,
+            Err(mpsc::error::TrySendError::Closed(())) => ExposureVerdict::Unavailable,
         }
     }
 }
@@ -216,6 +253,123 @@ mod tests {
 
         mock.assert_async().await;
         assert_eq!(mock.calls_async().await, 1);
+    }
+
+    #[tokio::test]
+    #[cfg_attr(miri, ignore)]
+    async fn batched_admissions_preserve_routes_contexts_and_order() {
+        let a = MockServer::start_async().await;
+        let b = MockServer::start_async().await;
+        let route = |s: &MockServer| {
+            EvpTransport::agent_only(endpoint_for(s), EVP_SUBDOMAIN_VALUE).unwrap()
+        };
+        let job = |s: &MockServer, service: &str, v: &str| {
+            (
+                route(s),
+                FfeExposureBatch {
+                    context: FfeTelemetryContext {
+                        service: service.into(),
+                        ..context()
+                    },
+                    exposures: vec![exposure("user", "allocation", v)],
+                },
+            )
+        };
+        let expected = |service: &str, variants: &[&str]| {
+            let batch = FfeExposureBatch {
+                context: FfeTelemetryContext {
+                    service: service.into(),
+                    ..context()
+                },
+                exposures: variants
+                    .iter()
+                    .map(|v| exposure("user", "allocation", v))
+                    .collect(),
+            };
+            encode_admitted_exposure_batch(batch).unwrap().unwrap()
+        };
+        let abc = a
+            .mock_async(|when, then| {
+                when.method(httpmock::Method::POST)
+                    .body(expected("svc", &["A", "B", "A", "C"]));
+                then.status(202);
+            })
+            .await;
+        let other = a
+            .mock_async(|when, then| {
+                when.method(httpmock::Method::POST)
+                    .body(expected("other", &["A"]));
+                then.status(202);
+            })
+            .await;
+        let second = b
+            .mock_async(|when, then| {
+                when.method(httpmock::Method::POST)
+                    .body(expected("svc", &["X"]));
+                then.status(202);
+            })
+            .await;
+        let (tx, rx) = mpsc::channel(6);
+        for item in [
+            job(&a, "svc", "A"),
+            job(&b, "svc", "X"),
+            job(&a, "other", "A"),
+            job(&a, "svc", "B"),
+            job(&a, "svc", "A"),
+            job(&a, "svc", "C"),
+        ] {
+            tx.try_send(item).unwrap();
+        }
+        drop(tx);
+        drain_admissions(&NativeCapabilities::new_client(), rx).await;
+        abc.assert_calls_async(1).await;
+        other.assert_calls_async(1).await;
+        second.assert_calls_async(1).await;
+    }
+
+    #[tokio::test]
+    #[cfg_attr(miri, ignore)]
+    async fn full_queue_drains_in_capped_batches_and_accepts_next_assignment() {
+        let server = MockServer::start_async().await;
+        let posts = server
+            .mock_async(|when, then| {
+                when.method(httpmock::Method::POST).path(EVP_EXPOSURES_PATH);
+                then.status(202);
+            })
+            .await;
+        let client = NativeCapabilities::new_client();
+        let route = EvpTransport::agent_only(endpoint_for(&server), EVP_SUBDOMAIN_VALUE).unwrap();
+        let cache = ExposureDeduplicator::new(256);
+        let (queue, rx) = AdmissionQueue::capture(MAX_BATCH_ROWS + 1);
+        let observe = |variant: usize| {
+            queue.admit(
+                &client,
+                &route,
+                &cache,
+                context(),
+                exposure("u", "alloc", &variant.to_string()),
+                true,
+            )
+        };
+        for i in 0..=MAX_BATCH_ROWS {
+            assert_eq!(observe(i), ExposureVerdict::Admitted);
+        }
+        assert_eq!(observe(MAX_BATCH_ROWS + 1), ExposureVerdict::QueueFull);
+        assert_eq!(observe(MAX_BATCH_ROWS), ExposureVerdict::Repeat);
+        let consumer = tokio::spawn(async move {
+            drain_admissions(&NativeCapabilities::new_client(), rx).await;
+        });
+        tokio::time::timeout(Duration::from_secs(3), async {
+            while posts.calls_async().await < 2 {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .unwrap();
+        assert_eq!(observe(MAX_BATCH_ROWS + 1), ExposureVerdict::Admitted);
+        drop(queue);
+        consumer.await.unwrap();
+        posts.assert_calls_async(3).await;
     }
 
     #[tokio::test]
