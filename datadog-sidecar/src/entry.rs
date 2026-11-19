@@ -255,8 +255,8 @@ where
         // Dropping the listener closes it, which frees its name for a fresh listener.
         _ = descriptors_dropped.notified() => Err(io::Error::other(libdd_ipc::DescriptorsDropped)),
     };
-    // The listener can also exit on a signal or an error. Its cancellation callback
-    // must not run later against a closed (and potentially reused) listener handle.
+    // The listener can also end on a signal or an error: an idle check left running would only
+    // log a stray "No active connections" later.
     idle_shutdown.abort();
     let failed = listener_result.is_err();
     if let Err(e) = &listener_result {

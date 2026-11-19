@@ -74,14 +74,27 @@ pub extern "C" fn ddog_daemon_entry_point(trampoline_data: &TrampolineData) {
             // Convert to async listener (also sets non-blocking mode).
             let async_listener = seqpacket_listener.into_async_listener()?;
 
-            // shutdown to gracefully dequeue, and immediately relinquish ownership of the socket
-            // while shutting down
+            // Tells the accept loop to stop: it then shuts its own listener down, which hands the
+            // name over at once while the sidecar drains.
             let shutdown = Arc::new(Notify::new());
+            // Watched for the whole process lifetime: tokio never uninstalls its handler, so a
+            // SIGTERM arriving once the accept loop is over would be swallowed.
+            let mut termsig = signal(SignalKind::terminate())?;
+            tokio::spawn({
+                let shutdown = shutdown.clone();
+                async move {
+                    if termsig.recv().await.is_some() {
+                        info!("Received SIGTERM, shutting down");
+                        shutdown.notify_one();
+                        crate::entry::exit_after_deadline("SIGTERM");
+                    }
+                }
+            });
+            // Only notify: the loop stops listening on its own fd, which a callback running
+            // after the loop ended would find closed, or reused by another file.
             let cancel = {
-                let listener_fd = async_listener.as_raw_fd();
                 let shutdown = shutdown.clone();
                 move || {
-                    stop_listening(listener_fd);
                     // notify_one, not notify_waiters: it leaves a permit behind if the loop is
                     // between iterations, so the cancellation cannot be missed.
                     shutdown.notify_one();
@@ -119,14 +132,8 @@ async fn accept_socket_loop(
     handler: Box<dyn Fn(SeqpacketConn)>,
     shutdown: Arc<Notify>,
 ) -> io::Result<()> {
-    #[allow(clippy::unwrap_used)]
-    let mut termsig = signal(SignalKind::terminate()).unwrap();
     loop {
         select! {
-            _ = termsig.recv() => {
-                stop_listening(async_listener.as_raw_fd());
-                break;
-            }
             _ = shutdown.notified() => {
                 stop_listening(async_listener.as_raw_fd());
                 break;
@@ -736,6 +743,57 @@ mod tests {
         let transport = sidecar.transport.as_mut().unwrap();
         crate::service::blocking::ping(transport).expect("the other client is still served");
         assert!(!sidecar.name_is_free(), "the sidecar released its name");
+    }
+
+    /// SIGTERM must end the sidecar within its deadline even while a client stays connected,
+    /// like a CLI worker outside the service being stopped: it used to wait for that client.
+    #[test]
+    #[cfg(target_os = "linux")]
+    #[cfg_attr(miri, ignore)]
+    fn sigterm_ends_the_sidecar_despite_a_connected_client() {
+        let Some(mut sidecar) =
+            TestSidecar::start("sigterm_ends_the_sidecar_despite_a_connected_client", None)
+        else {
+            return;
+        };
+        let sent = Instant::now();
+        assert_eq!(
+            unsafe { libc::kill(sidecar.pid() as i32, libc::SIGTERM) },
+            0
+        );
+        let status = sidecar.wait(std::time::Duration::from_secs(30));
+        let elapsed = sent.elapsed();
+        // Ended by the deadline, not before: the drain itself still waits for the client.
+        assert_eq!(
+            status.and_then(|status| status.code()),
+            Some(1),
+            "the sidecar still runs {elapsed:?} after SIGTERM, or ended otherwise"
+        );
+        let deadline = crate::entry::SHUTDOWN_DEADLINE;
+        assert!(
+            elapsed >= deadline && elapsed < deadline + std::time::Duration::from_secs(5),
+            "exited {elapsed:?} after SIGTERM, the deadline being {deadline:?}"
+        );
+    }
+
+    /// Without clients, SIGTERM ends the sidecar through its normal shutdown, which flushes.
+    #[test]
+    #[cfg(target_os = "linux")]
+    #[cfg_attr(miri, ignore)]
+    fn sigterm_without_clients_shuts_the_sidecar_down_normally() {
+        let Some(mut sidecar) = TestSidecar::start(
+            "sigterm_without_clients_shuts_the_sidecar_down_normally",
+            None,
+        ) else {
+            return;
+        };
+        drop(sidecar.transport.take());
+        assert_eq!(
+            unsafe { libc::kill(sidecar.pid() as i32, libc::SIGTERM) },
+            0
+        );
+        let status = sidecar.wait(std::time::Duration::from_secs(5));
+        assert_eq!(status.and_then(|status| status.code()), Some(0));
     }
 
     /// Isolate the process-wide namespace change from other tests.
