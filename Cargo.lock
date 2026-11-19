@@ -2906,6 +2906,8 @@ dependencies = [
  "libdd-networking",
  "libdd-process-utils",
  "libdd-telemetry",
+ "libdd-trace-model",
+ "libdd-trace-utils",
  "nix 0.29.0",
  "num-derive",
  "num-traits",
