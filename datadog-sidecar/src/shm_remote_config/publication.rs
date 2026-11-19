@@ -275,6 +275,7 @@ mod tests {
                 version: "test".into(),
                 poll_interval: Duration::from_secs(30),
                 request_timeout: Duration::from_secs(1),
+                service: None,
             },
             agent_endpoint: libdd_common::Endpoint::default(),
             target: Arc::new(Target::new(

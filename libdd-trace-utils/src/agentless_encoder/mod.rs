@@ -198,7 +198,7 @@ fn encode_trace<T: TraceData>(
         )?;
     }
     drop(mutable_metadata);
-    if let Some(container_id) = libdd_common::entity_id::get_container_id() {
+    if let Some(container_id) = libdd_host_identity::entity_id::get_container_id() {
         serialize_fixed_entry(bytes, &mut first, br#""containerID":"#, container_id)?;
     }
 
@@ -699,7 +699,7 @@ fn encode_trace_v1<T: TraceData, S: Serializer>(
     metadata: &TracerMetadata,
     client_side_stats: bool,
 ) -> Result<S::Ok, S::Error> {
-    let container_id = libdd_common::entity_id::get_container_id();
+    let container_id = libdd_host_identity::entity_id::get_container_id();
     let mutable_metadata = metadata.mutable_metadata.load();
     let len = 2 // hostname + spans
         + usize::from(!metadata.env.is_empty())
