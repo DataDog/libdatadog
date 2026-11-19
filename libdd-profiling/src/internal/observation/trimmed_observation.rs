@@ -122,6 +122,7 @@ impl Drop for TrimmedObservation {
 }
 
 #[cfg(test)]
+#[libdd_test_macros::miri_test]
 mod tests {
     use super::*;
     use bolero::TypeGenerator;

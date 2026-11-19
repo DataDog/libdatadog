@@ -124,6 +124,7 @@ unsafe impl<T: hash::Hash + Eq + 'static, const N: usize> Send for ParallelSet<T
 unsafe impl<T: hash::Hash + Eq + 'static, const N: usize> Sync for ParallelSet<T, N> {}
 
 #[cfg(test)]
+#[libdd_test_macros::miri_test]
 mod tests {
     use super::*;
     use proptest::prelude::*;

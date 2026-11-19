@@ -295,7 +295,6 @@ mod tests {
     use libdd_capabilities_impl::NativeCapabilities;
 
     #[tokio::test]
-    #[cfg_attr(miri, ignore)]
     async fn updates_identity_without_resetting_client_state() {
         let server = RemoteConfigServer::spawn();
         let target = Target::new(

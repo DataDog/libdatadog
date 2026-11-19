@@ -966,7 +966,6 @@ mod tests {
     static RT_ID_3: &str = "0125dff8-d9a7-4fd3-a0c2-0ca3b12816a1";
 
     #[tokio::test]
-    #[cfg_attr(miri, ignore)]
     async fn test_multi_fetcher() {
         let server = RemoteConfigServer::spawn();
         let (on_dead, on_dead_completer) = ManualFuture::new();
@@ -1161,7 +1160,6 @@ mod tests {
     /// A removed target's listing names its files until expired() clears it; the files must
     /// outlive that, and be released afterwards.
     #[tokio::test]
-    #[cfg_attr(miri, ignore)]
     async fn removed_target_releases_files_after_clearing_its_listing() {
         let server = RemoteConfigServer::spawn();
         let (on_dead, on_dead_completer) = ManualFuture::new();
@@ -1222,7 +1220,6 @@ mod tests {
     /// its files even though its run future is dropped rather than polled to completion.
     #[cfg(unix)]
     #[tokio::test(flavor = "multi_thread")]
-    #[cfg_attr(miri, ignore)]
     async fn fd_leak_remove_at_elapsed() {
         let (before, after, dead) = fd_scenario(FdRemoval::RemoveAtElapsed, 10_000_000).await;
         assert_eq!(before, 1);
@@ -1234,7 +1231,6 @@ mod tests {
     /// cancellation; repeat enough times to hit the unlucky interleaving.
     #[cfg(unix)]
     #[tokio::test(flavor = "multi_thread")]
-    #[cfg_attr(miri, ignore)]
     async fn fd_leak_delete_then_shutdown_repeated() {
         const RUNS: usize = 30;
         let mut leaked = 0;

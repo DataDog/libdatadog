@@ -1021,7 +1021,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[cfg_attr(miri, ignore)]
     async fn new_client_opening_an_old_directory_is_notified_by_its_replacement() {
         let invariants: RemoteConfigInvariants = ConfigInvariants {
             language: "php".to_string(),
@@ -1098,7 +1097,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[cfg_attr(miri, ignore)]
     async fn test_shm_updates() {
         let server = RemoteConfigServer::spawn();
 
@@ -1408,7 +1406,6 @@ mod tests {
     /// removal then races with shutdown(); before the fix the target's run future could be dropped
     /// unpolled, leaking the stored files. Repeated to hit the race on a multi-threaded runtime.
     #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-    #[cfg_attr(miri, ignore)]
     #[cfg(target_os = "linux")]
     async fn test_shm_fds_closed_when_runtime_leaves_then_shutdown() {
         for iteration in 0..200 {
@@ -1445,7 +1442,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[cfg_attr(miri, ignore)]
     async fn test_live_debugger_config_parsed() {
         use libdd_live_debugger::LiveDebuggingData;
 
@@ -1520,7 +1516,6 @@ mod tests {
     /// Identical config files and limiter indices still refer to a new arena after restart.
     #[test]
     #[cfg(unix)]
-    #[cfg_attr(miri, ignore)]
     fn a_replaced_directory_is_reapplied_even_when_identical() {
         const CHILD: &str = "DD_TEST_RC_MASTER_CHANGE";
         if std::env::var_os(CHILD).is_none() {

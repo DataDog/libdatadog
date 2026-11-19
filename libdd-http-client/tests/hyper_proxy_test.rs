@@ -63,7 +63,6 @@ async fn spawn_fake_connect_proxy() -> (std::net::SocketAddr, Arc<AtomicBool>) {
     (addr, hit)
 }
 
-#[cfg_attr(miri, ignore)]
 #[tokio::test]
 async fn test_https_request_is_routed_through_https_proxy() {
     ensure_crypto_provider();

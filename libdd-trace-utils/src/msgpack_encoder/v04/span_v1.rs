@@ -1031,6 +1031,7 @@ mod tests {
         }
     }
 
+    #[libdd_test_macros::miri_test]
     #[test]
     fn basic_span_writes_required_v04_fields() {
         let payload = minimal_payload([0u8; 16], minimal_span());
@@ -1096,6 +1097,7 @@ mod tests {
         assert_eq!(map_get(meta, "http.method").unwrap().as_str(), Some("GET"));
     }
 
+    #[libdd_test_macros::miri_test]
     #[test]
     fn attribute_sharing_a_promoted_key_name_is_kept_when_the_dedicated_field_is_unset() {
         let mut attrs: VecMap<BytesString, AttributeValueBytes> = VecMap::new();
@@ -1121,6 +1123,7 @@ mod tests {
         assert_eq!(meta.as_map().expect("meta must be a map").len(), 4);
     }
 
+    #[libdd_test_macros::miri_test]
     #[test]
     fn tid_attribute_is_never_emitted_from_the_attribute_map() {
         // A user-set `_dd.p.tid` attribute is dropped on every span: the local root carries the
@@ -1186,6 +1189,7 @@ mod tests {
         assert_eq!(a0_count, 1, "duplicate \"a.0\" key written to the wire");
     }
 
+    #[libdd_test_macros::miri_test]
     #[test]
     fn span_kind_unspecified_is_not_emitted() {
         // Unspecified (no `span.kind` set) is implied by the absence of `meta["span.kind"]`.
@@ -1195,6 +1199,7 @@ mod tests {
         assert!(map_get(&traces[0][0], "meta").is_none());
     }
 
+    #[libdd_test_macros::miri_test]
     #[test]
     fn span_kind_explicit_internal_is_emitted() {
         let span = SpanBytes {
@@ -1209,6 +1214,7 @@ mod tests {
         );
     }
 
+    #[libdd_test_macros::miri_test]
     #[test]
     fn span_kind_unspecified_with_preserved_string_attribute_round_trips() {
         // A non-standard kind (e.g. "process") collapses to Unspecified at ingestion but survives
@@ -1240,6 +1246,7 @@ mod tests {
         );
     }
 
+    #[libdd_test_macros::miri_test]
     #[test]
     fn span_kind_known_value_ignores_stray_span_kind_attribute() {
         // A recognized kind always wins over any (unexpected) `span.kind` attribute — the
@@ -1258,6 +1265,7 @@ mod tests {
         assert_eq!(map_get(meta, "span.kind").unwrap().as_str(), Some("server"));
     }
 
+    #[libdd_test_macros::miri_test]
     #[test]
     fn trace_id_128_bit_splits_into_low_field_and_high_meta() {
         // trace_id = 0x_DEADBEEF__CAFEBABE_DEADBEEF__CAFEBABE  (high | low)
@@ -1280,6 +1288,7 @@ mod tests {
         );
     }
 
+    #[libdd_test_macros::miri_test]
     #[test]
     fn trace_id_high_zero_omits_dd_p_tid() {
         // When the upper 64 bits are zero, `_dd.p.tid` must be absent so v0.4 consumers don't
@@ -1291,6 +1300,7 @@ mod tests {
         assert!(map_get(&traces[0][0], "meta").is_none());
     }
 
+    #[libdd_test_macros::miri_test]
     #[test]
     fn error_true_emits_one_false_omits_field() {
         let payload_err = minimal_payload(
@@ -1367,6 +1377,7 @@ mod tests {
         assert_eq!(map_get(metrics, "status").unwrap().as_f64(), Some(200.0));
     }
 
+    #[libdd_test_macros::miri_test]
     #[test]
     fn bytes_attribute_routes_to_meta_struct_as_msgpack_bin() {
         let mut attrs: VecMap<BytesString, AttributeValueBytes> = VecMap::new();
@@ -1392,6 +1403,7 @@ mod tests {
         );
     }
 
+    #[libdd_test_macros::miri_test]
     #[test]
     fn list_attribute_is_flattened_into_dotted_meta_and_metrics_keys() {
         let mut attrs: VecMap<BytesString, AttributeValueBytes> = VecMap::new();
@@ -1422,6 +1434,7 @@ mod tests {
         assert_eq!(map_get(meta, "ids.2").unwrap().as_str(), Some("three"));
     }
 
+    #[libdd_test_macros::miri_test]
     #[test]
     fn keyvalue_attribute_is_flattened_into_dotted_meta_and_metrics_keys() {
         let mut inner_kv: VecMap<BytesString, AttributeValueBytes> = VecMap::new();
@@ -1454,6 +1467,7 @@ mod tests {
         assert_eq!(map_get(meta, "user.active").unwrap().as_str(), Some("true"));
     }
 
+    #[libdd_test_macros::miri_test]
     #[test]
     fn nested_keyvalue_and_list_recurse_into_dotted_keys() {
         // Build: {"outer": KeyValue { "items": List [String "a", KeyValue {"k": Int 1}] }}
@@ -1507,6 +1521,7 @@ mod tests {
         encode_and_decode(&payload)[0][0].clone()
     }
 
+    #[libdd_test_macros::miri_test]
     #[test]
     fn nested_empty_string_list_leaf_is_kept_in_meta() {
         let span = encode_single_attr(
@@ -1521,6 +1536,7 @@ mod tests {
         assert_eq!(map_get(meta, "l.1").unwrap().as_str(), Some(""));
     }
 
+    #[libdd_test_macros::miri_test]
     #[test]
     fn nested_numeric_string_member_key_flattens_into_dotted_meta_key() {
         let mut m: VecMap<BytesString, AttributeValueBytes> = VecMap::new();
@@ -1531,6 +1547,7 @@ mod tests {
         assert!(map_get(&span, "metrics").is_none_or(|m| map_get(m, "m.5").is_none()));
     }
 
+    #[libdd_test_macros::miri_test]
     #[test]
     fn nested_zero_float_leaf_stays_in_metrics() {
         let mut deep: VecMap<BytesString, AttributeValueBytes> = VecMap::new();
@@ -1543,6 +1560,7 @@ mod tests {
         assert!(map_get(&span, "meta").is_none_or(|m| map_get(m, "mm.deep.x").is_none()));
     }
 
+    #[libdd_test_macros::miri_test]
     #[test]
     fn nested_attributes_downgrade_to_the_same_dotted_keys_after_dedup() {
         // m = { bar: ["1", { key: "2" }, ""], "5": "v" }
@@ -1663,6 +1681,7 @@ mod tests {
             .unwrap_or_default()
     }
 
+    #[libdd_test_macros::miri_test]
     #[test]
     fn root_composite_attribute_is_msgpack_encoded_into_meta_struct() {
         let frame = kv(vec![
@@ -1712,6 +1731,7 @@ mod tests {
         assert!(map_get(span, "metrics").is_none());
     }
 
+    #[libdd_test_macros::miri_test]
     #[test]
     fn dotted_keys_below_a_root_go_to_meta_struct() {
         let traces = encode_and_decode(&span_with_attrs(vec![
@@ -1757,6 +1777,7 @@ mod tests {
         assert!(map_get(span, "meta").is_none());
     }
 
+    #[libdd_test_macros::miri_test]
     #[test]
     fn every_meta_struct_root_is_recognized() {
         let roots = [
@@ -1790,6 +1811,7 @@ mod tests {
         assert!(map_get(span, "metrics").is_none());
     }
 
+    #[libdd_test_macros::miri_test]
     #[test]
     fn look_alike_keys_are_flattened() {
         let traces = encode_and_decode(&span_with_attrs(vec![
@@ -1819,6 +1841,7 @@ mod tests {
         assert_eq!(map_get(metrics, "appsecx.x").unwrap().as_f64(), Some(1.0));
     }
 
+    #[libdd_test_macros::miri_test]
     #[test]
     fn scalars_under_roots_stay_in_meta_and_metrics() {
         let traces = encode_and_decode(&span_with_attrs(vec![
@@ -1841,6 +1864,7 @@ mod tests {
         );
     }
 
+    #[libdd_test_macros::miri_test]
     #[test]
     fn appsec_events_and_fingerprint_children_are_split_into_meta() {
         let appsec = kv(vec![
@@ -1889,6 +1913,7 @@ mod tests {
         assert_eq!(meta_keys(span).len(), 2);
     }
 
+    #[libdd_test_macros::miri_test]
     #[test]
     fn appsec_with_only_meta_subtree_children_has_no_meta_struct_entry() {
         let traces = encode_and_decode(&span_with_attrs(vec![(
@@ -1907,6 +1932,7 @@ mod tests {
         );
     }
 
+    #[libdd_test_macros::miri_test]
     #[test]
     fn empty_root_map_is_kept_in_meta_struct() {
         let traces = encode_and_decode(&span_with_attrs(vec![("appsec", kv(vec![]))]));
@@ -1916,6 +1942,7 @@ mod tests {
         );
     }
 
+    #[libdd_test_macros::miri_test]
     #[test]
     fn composites_below_meta_subtrees_are_flattened() {
         let traces = encode_and_decode(&span_with_attrs(vec![
@@ -1946,6 +1973,7 @@ mod tests {
         );
     }
 
+    #[libdd_test_macros::miri_test]
     #[test]
     fn json_suffixed_keys_are_never_routed_to_meta_struct() {
         let traces = encode_and_decode(&span_with_attrs(vec![
@@ -1973,6 +2001,7 @@ mod tests {
         );
     }
 
+    #[libdd_test_macros::miri_test]
     #[test]
     fn nested_bytes_in_a_flattened_composite_are_base64_in_meta() {
         let traces = encode_and_decode(&span_with_attrs(vec![(
@@ -1988,6 +2017,7 @@ mod tests {
         assert_eq!(map_get(meta, "blob.raw").unwrap().as_str(), Some("3q0="));
     }
 
+    #[libdd_test_macros::miri_test]
     #[test]
     fn meta_struct_integers_use_the_narrowest_msgpack_encoding() {
         let traces = encode_and_decode(&span_with_attrs(vec![(
@@ -2004,6 +2034,7 @@ mod tests {
         );
     }
 
+    #[libdd_test_macros::miri_test]
     #[test]
     fn root_composites_from_chunk_and_payload_attributes_keep_precedence() {
         let mut payload_attrs: VecMap<BytesString, AttributeValueBytes> = VecMap::new();
@@ -2037,6 +2068,7 @@ mod tests {
         assert_eq!(ms.len(), 3);
     }
 
+    #[libdd_test_macros::miri_test]
     #[test]
     fn meta_struct_composites_keep_the_encoded_length_exact_and_decode_as_v04() {
         let payload = span_with_attrs(vec![
@@ -2079,6 +2111,7 @@ mod tests {
         );
     }
 
+    #[libdd_test_macros::miri_test]
     #[test]
     fn chunk_origin_priority_and_sampling_mechanism_propagate_to_span() {
         let chunk_attrs: VecMap<BytesString, AttributeValueBytes> = VecMap::new();
@@ -2115,6 +2148,7 @@ mod tests {
         );
     }
 
+    #[libdd_test_macros::miri_test]
     #[test]
     fn trace_level_tags_only_on_local_root_not_children() {
         // _dd.p.tid / _dd.origin / _dd.p.dm / _sampling_priority_v1 are trace-level in v0.4 and
@@ -2189,6 +2223,7 @@ mod tests {
         }
     }
 
+    #[libdd_test_macros::miri_test]
     #[test]
     fn trace_level_tags_land_on_top_level_span_with_remote_parent() {
         // Distributed trace: the local root has a non-zero parent_id (remote parent) but is
@@ -2239,6 +2274,7 @@ mod tests {
         assert_eq!(map_get(root_meta, "_dd.p.dm").unwrap().as_str(), Some("-3"));
     }
 
+    #[libdd_test_macros::miri_test]
     #[test]
     fn trace_level_tags_land_on_remote_parent_root_not_first_span() {
         // Inferred proxy: the web span is listed first but its parent (the inferred span, whose
@@ -2278,6 +2314,7 @@ mod tests {
         );
     }
 
+    #[libdd_test_macros::miri_test]
     #[test]
     fn trace_level_tags_land_on_the_parentless_root_not_an_earlier_orphan() {
         // Like the agent's GetRoot, a span with parent_id 0 is the root even when an orphan (its
@@ -2324,6 +2361,7 @@ mod tests {
         );
     }
 
+    #[libdd_test_macros::miri_test]
     #[test]
     fn sampling_mechanism_zero_encodes_as_negative_zero() {
         let payload = TracerPayloadBytes {
@@ -2344,6 +2382,7 @@ mod tests {
         );
     }
 
+    #[libdd_test_macros::miri_test]
     #[test]
     fn chunk_attributes_are_propagated_to_every_span_in_chunk() {
         let mut chunk_attrs: VecMap<BytesString, AttributeValueBytes> = VecMap::new();
@@ -2410,6 +2449,7 @@ mod tests {
         assert_eq!(map_get(meta, "env").unwrap().as_str(), Some("staging"));
     }
 
+    #[libdd_test_macros::miri_test]
     #[test]
     fn payload_attributes_are_propagated_with_lowest_precedence() {
         let mut payload_attrs: VecMap<BytesString, AttributeValueBytes> = VecMap::new();
@@ -2494,6 +2534,7 @@ mod tests {
         payload
     }
 
+    #[libdd_test_macros::miri_test]
     #[test]
     fn payload_process_tags_land_on_the_first_span_of_each_chunk_only() {
         let traces = encode_and_decode(&process_tags_payload(false));
@@ -2521,6 +2562,7 @@ mod tests {
         );
     }
 
+    #[libdd_test_macros::miri_test]
     #[test]
     fn payload_git_metadata_lands_on_the_local_root_only() {
         let mut payload_attrs: VecMap<BytesString, AttributeValueBytes> = VecMap::new();
@@ -2554,6 +2596,7 @@ mod tests {
         );
     }
 
+    #[libdd_test_macros::miri_test]
     #[test]
     fn payload_hostname_lands_on_the_local_root_only() {
         let mut root = SpanBytes {
@@ -2588,6 +2631,7 @@ mod tests {
         );
     }
 
+    #[libdd_test_macros::miri_test]
     #[test]
     fn dropped_trace_does_not_affect_priority() {
         // `dropped_trace` is agent-owned: the agent overwrites it from its own priority-driven
@@ -2611,6 +2655,7 @@ mod tests {
         }
     }
 
+    #[libdd_test_macros::miri_test]
     #[test]
     fn empty_payload_encodes_as_empty_top_level_array() {
         let payload = TracerPayloadBytes::default();
@@ -2618,6 +2663,7 @@ mod tests {
         assert!(traces.is_empty());
     }
 
+    #[libdd_test_macros::miri_test]
     #[test]
     fn multiple_chunks_become_multiple_traces() {
         let payload = TracerPayloadBytes {
@@ -2657,6 +2703,7 @@ mod tests {
             .unwrap()[idx]
     }
 
+    #[libdd_test_macros::miri_test]
     #[test]
     fn span_link_is_encoded_as_native_v04_span_links() {
         let mut link_tid = [0u8; 16];
@@ -2708,6 +2755,7 @@ mod tests {
         assert_eq!(map_get(attrs, "link.count").unwrap().as_str(), Some("5"));
     }
 
+    #[libdd_test_macros::miri_test]
     #[test]
     fn span_link_omits_unset_optional_fields() {
         let mut link_tid = [0u8; 16];
@@ -2737,6 +2785,7 @@ mod tests {
         assert_eq!(keys, ["span_id", "trace_id"]);
     }
 
+    #[libdd_test_macros::miri_test]
     #[test]
     fn span_event_attributes_fall_back_to_legacy_events_meta_json() {
         let mut event_attrs: VecMap<BytesString, AttributeValueBytes> = VecMap::new();
@@ -2774,6 +2823,7 @@ mod tests {
         );
     }
 
+    #[libdd_test_macros::miri_test]
     #[test]
     fn span_link_nested_attr_downgrades_to_json_string() {
         // v0.4 link attributes are strings: a native nested value carries its JSON string.
@@ -2808,6 +2858,7 @@ mod tests {
         assert_eq!(json_meta(attrs, "obj"), serde_json::json!({"a": 1}));
     }
 
+    #[libdd_test_macros::miri_test]
     #[test]
     fn span_event_nested_attr_in_legacy_events_meta_keeps_native_json_arrays() {
         // Unlike links (String → String), event attributes keep native JSON types in the legacy
@@ -2852,6 +2903,7 @@ mod tests {
         );
     }
 
+    #[libdd_test_macros::miri_test]
     #[test]
     fn legacy_events_meta_wins_over_an_events_attribute() {
         let mut attrs: VecMap<BytesString, AttributeValueBytes> = VecMap::new();
@@ -2895,6 +2947,7 @@ mod tests {
         );
     }
 
+    #[libdd_test_macros::miri_test]
     #[test]
     fn span_event_attributes_are_downgraded_to_v04_anyvalue_shape() {
         let mut event_attrs: VecMap<BytesString, AttributeValueBytes> = VecMap::new();
@@ -2954,6 +3007,7 @@ mod tests {
         assert_eq!(map_get(ratio, "double_value").unwrap().as_f64(), Some(0.75));
     }
 
+    #[libdd_test_macros::miri_test]
     #[test]
     fn span_event_nested_attributes_flatten_to_dotted_keys() {
         // v0.4 event attributes can't nest: map members and the elements of arrays holding

@@ -6,7 +6,6 @@ use libdd_ipc::rate_limiter::now;
 use std::time::Instant;
 
 #[test]
-#[cfg_attr(miri, ignore)]
 fn clock_uses_nanoseconds() {
     let started = Instant::now();
     let before = now();

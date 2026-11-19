@@ -151,6 +151,15 @@ workspace MSRV). Run it locally the same way:
 - FIPS (US government cloud) builds: aws-lc-rs via `fips` feature flag
 - Windows FIPS requires env var: `AWS_LC_FIPS_SYS_NO_ASM=1`
 
+### Miri
+The Miri CI job (`miri.yml`) runs only tests opted in with `#[libdd_test_macros::miri_test]`, on a test function or an inline test module (usage rules in the macro's docs, `libdd-test-macros/src/lib.rs`). Every other test is skipped under Miri without any marker; `#[cfg_attr(miri, ignore)]` is only needed to exclude a test inside a marked module. The selection is nextest's `[profile.default-miri]` filter in `.config/nextest.toml`, so plain `cargo miri test` ignores it. Run what CI runs with:
+
+```bash
+MIRIFLAGS=-Zmiri-disable-isolation cargo +$(awk -F'"' '/^nightly[[:space:]]*=/ {print $2}' ci-toolchain.toml) miri nextest run -p <crate>
+```
+
+A test is opted in only if it transitively exercises workspace `unsafe`/FFI with memory-safety surface (raw pointers, mmap/shm, signal handlers, `extern "C"` entry points) or hand-rolled byte-level encode/decode into buffers (wire formats, msgpack). **Most tests do not** — pure safe-Rust logic cannot UB, dependency-side codecs (prost, rmp_serde, serde_json), scalar libc syscalls, and anything Miri can't run (fork, poll, native IPC, foreign code) stay unmarked. Default to unmarked; every opted-in test costs every Miri run. A qualifying test that is prohibitively slow under Miri stays unmarked with a `// Not opted into Miri: prohibitively slow under Miri (<reason>)` comment.
+
 ### Commit Messages
 PR titles and commits must follow **Conventional Commits**: `<type>([scope]): <description>`  
 Common types: `feat`, `fix`, `docs`, `refactor`, `perf`, `test`, `build`, `ci`, `chore`  

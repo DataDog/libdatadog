@@ -500,7 +500,6 @@ mod tests {
     /// `fallocate`, where sizing a segment is an `ftruncate` that could just as well shrink one.
     /// A fresh segment is the only kind that path may ever size.
     #[test]
-    #[cfg_attr(miri, ignore)]
     fn replacement_through_the_filesystem_and_ftruncate_fallbacks() {
         FORCE_FALLBACKS.with(|forced| forced.set(true));
         let path = CString::new(format!("/ddtest-fallback-{}", std::process::id())).unwrap();

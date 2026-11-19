@@ -41,7 +41,6 @@ fn manager(registration: &CdnRegistration) -> RemoteConfigManager {
 }
 
 #[test]
-#[cfg_attr(miri, ignore = "requires native IPC sockets")]
 fn cdn_registration_does_not_wait_for_sidecar_reply() {
     let (_server, client) = SeqpacketConn::socketpair().unwrap();
     let mut transport = SidecarTransport::from(client);
@@ -59,7 +58,6 @@ fn cdn_registration_does_not_wait_for_sidecar_reply() {
 }
 
 #[tokio::test]
-#[cfg_attr(miri, ignore = "requires native IPC sockets")]
 async fn cdn_thread_mode_rejects_subscriptions_without_http() {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let config = registration(&format!("http://{}/config", listener.local_addr().unwrap()));
@@ -77,7 +75,6 @@ async fn cdn_thread_mode_rejects_subscriptions_without_http() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[cfg_attr(miri, ignore = "requires native HTTP, IPC and shared memory")]
 async fn cdn_http_ipc_delivers_through_ordinary_rc_and_deduplicates() {
     let http = httpmock::MockServer::start_async().await;
     let mock = http.mock_async(|when, then| {
@@ -137,7 +134,6 @@ async fn cdn_http_ipc_delivers_through_ordinary_rc_and_deduplicates() {
 }
 
 #[test]
-#[cfg_attr(miri, ignore = "requires an actual listener thread and native IPC")]
 fn real_thread_listener_does_not_start_cdn_http() {
     let http = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
     http.set_nonblocking(true).unwrap();
@@ -165,7 +161,6 @@ fn real_thread_listener_does_not_start_cdn_http() {
 }
 
 #[tokio::test]
-#[cfg_attr(miri, ignore = "requires native HTTP and shared memory")]
 async fn shared_cdn_poller_cancels_only_after_last_connection() {
     let store = crate::shm_remote_config::publication::PublicationStore::default();
     let configs = super::super::ffe_config::CdnConfigs::default();
@@ -183,7 +178,6 @@ async fn shared_cdn_poller_cancels_only_after_last_connection() {
 }
 
 #[test]
-#[cfg_attr(miri, ignore = "requires process signals and native shared memory")]
 fn cdn_notifications_share_the_published_view_and_require_an_active_opted_in_application() {
     // Isolate process-global signal and in-process callback setup from other tests.
     const CHILD: &str = "LIBDATADOG_CDN_NOTIFY_TEST_CHILD";
@@ -278,7 +272,6 @@ fn cdn_notifications_share_the_published_view_and_require_an_active_opted_in_app
 }
 
 #[tokio::test]
-#[cfg_attr(miri, ignore = "requires native HTTP and shared memory")]
 async fn crucible_c03_last_subscriber_cancels_http() {
     use tokio::io::AsyncReadExt;
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -377,7 +370,6 @@ impl Drop for RestoreFileLimit {
 
 #[tokio::test]
 #[cfg(target_os = "linux")]
-#[cfg_attr(miri, ignore = "requires native HTTP and resource limits")]
 async fn crucible_c08_registration_recovers_after_fd_pressure() {
     if isolate_registration_test("crucible_c08_registration_recovers_after_fd_pressure") {
         return;
@@ -445,7 +437,6 @@ async fn crucible_c08_registration_recovers_after_fd_pressure() {
 
 #[tokio::test]
 #[cfg(target_os = "linux")]
-#[cfg_attr(miri, ignore = "requires native HTTP and resource limits")]
 async fn cdn_pending_registration_cancels_on_clear_replacement_disconnect_and_shutdown() {
     if isolate_registration_test(
         "cdn_pending_registration_cancels_on_clear_replacement_disconnect_and_shutdown",
@@ -511,7 +502,6 @@ async fn cdn_pending_registration_cancels_on_clear_replacement_disconnect_and_sh
 }
 
 #[tokio::test]
-#[cfg_attr(miri, ignore = "requires native HTTP and IPC")]
 async fn cdn_invalid_registration_is_terminal() {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let mut r = registration(&format!("http://{}/config", listener.local_addr().unwrap()));

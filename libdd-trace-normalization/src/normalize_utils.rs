@@ -328,6 +328,7 @@ mod tests {
         [test_normalize_invalid_string] ["&***"]                            ["unnamed_operation"];
         [test_normalize_invalid_prefix] ["&&&&&&&_test-name-"]              ["test_name"];
     )]
+    #[libdd_test_macros::miri_test]
     #[test]
     fn test_name() {
         let mut val = input.to_owned();
@@ -342,6 +343,7 @@ mod tests {
         [test_normalize_long_service]   ["Too$Long$.".repeat(20).as_str()]  ["too_long_.".repeat(10)];
         [test_normalize_dash_service]   ["bad&service"]                     ["bad_service"];
     )]
+    #[libdd_test_macros::miri_test]
     #[test]
     fn test_name() {
         let mut val = input.to_owned();
@@ -393,6 +395,7 @@ mod tests {
             ["a00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000_0"]
            ;
     )]
+    #[libdd_test_macros::miri_test]
     #[test]
     fn test_name() {
         let mut v = input.to_owned();

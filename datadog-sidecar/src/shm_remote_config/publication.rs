@@ -307,7 +307,6 @@ mod tests {
         assert!(matches!(m.fetch_update(), RemoteConfigUpdate::None));
     }
     #[test]
-    #[cfg_attr(miri, ignore = "requires native shared memory and timed waits")]
     fn ordinary_rc_waits_do_not_spin_with_or_without_a_source() {
         fn assert_waits(manager: &mut RemoteConfigManager) {
             // Consume any initial generation edge before checking the idle wait.
@@ -331,7 +330,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg_attr(miri, ignore = "requires native shared memory")]
     fn ordinary_rc_retains_flags_during_failure_and_writer_replacement() {
         let r = registration();
         let store = PublicationStore::default();
@@ -352,7 +350,6 @@ mod tests {
         assert_add(&mut m);
     }
     #[test]
-    #[cfg_attr(miri, ignore = "requires native shared memory")]
     fn credentials_select_another_directory_and_identical_bytes_do_not_notify() {
         let r = registration();
         let store = PublicationStore::default();
@@ -396,7 +393,6 @@ mod tests {
         assert!(matches!(other.fetch_update(), RemoteConfigUpdate::None));
     }
     #[test]
-    #[cfg_attr(miri, ignore = "requires native shared memory")]
     fn writer_reconciles_agent_ffe_and_preserves_other_products() {
         let r = registration();
         let store = PublicationStore::default();
@@ -452,7 +448,6 @@ mod tests {
         );
     }
     #[test]
-    #[cfg_attr(miri, ignore = "requires native shared memory")]
     fn retained_agent_file_is_parseable_after_caller_releases_it() {
         use libdd_remote_config::config::dynamic::DynamicConfigFile;
         let r = registration();
@@ -513,7 +508,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg_attr(miri, ignore = "requires native shared memory")]
     fn crucible_c07_expiring_absent_agent_keeps_retained_cdn() {
         let r = registration();
         let store = PublicationStore::default();
@@ -538,7 +532,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg_attr(miri, ignore = "requires native shared memory")]
     fn crucible_c11_late_notification_respects_sentinel() {
         let r = registration();
         let store = PublicationStore::default();

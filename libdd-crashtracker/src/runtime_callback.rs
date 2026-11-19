@@ -336,6 +336,7 @@ unsafe fn emit_frame_as_json(
 }
 
 #[cfg(all(test, unix))]
+#[libdd_test_macros::miri_test]
 mod tests {
     use super::*;
     use std::sync::Mutex;

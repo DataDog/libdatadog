@@ -172,7 +172,6 @@ mod tests {
         }
     }
 
-    #[cfg_attr(all(miri, target_os = "macos"), ignore)]
     #[tokio::test]
     async fn test_bookkeeper() {
         let bookkeeper = DebuggerDiagnosticsBookkeeper::start();

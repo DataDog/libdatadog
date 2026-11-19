@@ -9,7 +9,6 @@ fn ensure_crypto_provider() {
     let _ = rustls::crypto::ring::default_provider().install_default();
 }
 
-#[cfg_attr(miri, ignore)]
 #[tokio::test]
 async fn test_retries_on_503() {
     ensure_crypto_provider();
@@ -45,7 +44,6 @@ async fn test_retries_on_503() {
     mock.assert_calls_async(3).await;
 }
 
-#[cfg_attr(miri, ignore)]
 #[tokio::test]
 async fn test_retries_on_404() {
     ensure_crypto_provider();
@@ -81,7 +79,6 @@ async fn test_retries_on_404() {
     mock.assert_calls_async(3).await;
 }
 
-#[cfg_attr(miri, ignore)]
 #[tokio::test]
 async fn test_no_retry_when_not_configured() {
     ensure_crypto_provider();
@@ -105,7 +102,6 @@ async fn test_no_retry_when_not_configured() {
     mock.assert_calls_async(1).await;
 }
 
-#[cfg_attr(miri, ignore)]
 #[tokio::test]
 async fn test_succeeds_after_transient_failure() {
     ensure_crypto_provider();
@@ -144,7 +140,6 @@ async fn test_succeeds_after_transient_failure() {
     fail_mock.assert_calls_async(4).await;
 }
 
-#[cfg_attr(miri, ignore)]
 #[tokio::test]
 async fn test_retries_on_connection_error() {
     ensure_crypto_provider();
@@ -167,7 +162,6 @@ async fn test_retries_on_connection_error() {
     assert!(result.is_err());
 }
 
-#[cfg_attr(miri, ignore)]
 #[tokio::test]
 async fn test_backoff_increases() {
     ensure_crypto_provider();

@@ -484,7 +484,6 @@ mod tests {
 
     /// A drained table goes out as one gzipped msgpack POST to the agent's DSM endpoint.
     #[tokio::test]
-    #[cfg_attr(miri, ignore)]
     async fn a_drained_table_is_posted_gzipped_to_the_agent() {
         use flate2::read::GzDecoder;
         use httpmock::prelude::*;

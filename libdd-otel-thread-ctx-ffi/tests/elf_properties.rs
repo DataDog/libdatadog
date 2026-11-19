@@ -25,7 +25,6 @@
 use libdd_otel_thread_ctx::test_utils::artifacts::{artifact_path, check_readable};
 
 #[test]
-#[cfg_attr(miri, ignore)]
 fn otel_thread_ctx_v1_tls_properties() {
     let path = artifact_path("liblibdd_otel_thread_ctx_ffi.so");
     check_readable(&path);

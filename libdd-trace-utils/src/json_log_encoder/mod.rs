@@ -245,6 +245,7 @@ fn flush_line(out: &mut impl Write, line: &mut Vec<u8>) -> std::io::Result<()> {
 // conversions below are genuine `&str -> Cow` conversions required to compile. clippy on
 // the CI target nonetheless reports them as `useless_conversion` to `&str` (a false positive
 // not reproduced on all hosts); allow it here rather than dropping the necessary `.into()`.
+#[libdd_test_macros::miri_test]
 #[allow(clippy::useless_conversion)]
 mod tests {
     use super::*;

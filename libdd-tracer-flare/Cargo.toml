@@ -31,6 +31,7 @@ libdd-capabilities-impl = { version = "8.0.0", path = "../libdd-capabilities-imp
 bench = false
 
 [dev-dependencies]
+libdd-test-macros = { path = "../libdd-test-macros" }
 libdd-remote-config = { path = "../libdd-remote-config", features = ["test"] }
 httpmock.workspace = true
 libdd-trace-utils = { path = "../libdd-trace-utils", features = ["test-utils"] }

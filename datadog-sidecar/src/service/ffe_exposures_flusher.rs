@@ -98,7 +98,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[cfg_attr(miri, ignore)]
     async fn posts_to_evp_proxy() {
         let server = MockServer::start_async().await;
         let mock = server
@@ -131,7 +130,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[cfg_attr(miri, ignore)]
     async fn deduplicates_exposures_across_connections() {
         use crate::service::{ConnectionSession, InstanceId};
 
@@ -166,7 +164,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[cfg_attr(miri, ignore)]
     async fn non_2xx_does_not_panic() {
         let server = MockServer::start_async().await;
         let _mock = server
@@ -191,7 +188,6 @@ mod tests {
         .await;
     }
 
-    #[cfg_attr(miri, ignore)] // tokio executor park/wake overhead is prohibitively slow under Miri
     #[tokio::test]
     async fn timeout_returns_without_waiting_for_http_response() {
         let endpoint = Endpoint {

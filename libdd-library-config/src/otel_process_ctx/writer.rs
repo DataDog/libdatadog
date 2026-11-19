@@ -347,7 +347,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg_attr(miri, ignore)]
     fn successful_update_republishes_mapping() {
         let mut handle = ProcessContextHandleGen::<TestHeaderMemory, TestClock>::publish(vec![1])
             .expect("initial publication should succeed");

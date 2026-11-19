@@ -735,7 +735,6 @@ mod tests {
     /// the end of the mapping, and bumping the generation first would leave readers waiting on
     /// a write that never lands. What was published before stays published.
     #[test]
-    #[cfg_attr(miri, ignore)]
     fn an_oversized_payload_is_refused_and_the_previous_one_stays() {
         let path = test_path("big");
         let writer = OneWayShmWriter::<NamedShmHandle>::new(path.clone()).unwrap();
@@ -764,7 +763,6 @@ mod tests {
     /// be read - too large for the segment, or large enough to overflow the header arithmetic -
     /// must come back as a failed read rather than an index past the mapping.
     #[test]
-    #[cfg_attr(miri, ignore)]
     fn a_forged_payload_size_does_not_take_the_reader_past_the_mapping() {
         let path = test_path("forged");
         let writer = OneWayShmWriter::<NamedShmHandle>::new(path.clone()).unwrap();
@@ -805,7 +803,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg_attr(miri, ignore)]
     fn reconnect_retires_only_a_mapping_from_another_name() {
         let old_path = test_path("old-name");
         let new_path = test_path("new-name");
@@ -863,7 +860,6 @@ mod tests {
 
     #[test]
     #[cfg(all(unix, not(target_os = "macos")))]
-    #[cfg_attr(miri, ignore)]
     fn failed_detachment_does_not_retire_shared_memory() {
         let old_path = test_path("detach-failure");
         let new_path = test_path("detach-retry");
@@ -886,7 +882,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg_attr(miri, ignore)]
     fn generation_is_seeded_once_then_incremented() {
         let path = test_path("clock");
         let writer = OneWayShmWriter::<NamedShmHandle>::new(path.clone()).unwrap();
@@ -908,7 +903,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg_attr(miri, ignore)]
     fn replacement_generation_ignores_the_predecessors_counter() {
         let path = test_path("ahead");
         let old = OneWayShmWriter::<NamedShmHandle>::new(path.clone()).unwrap();
@@ -932,7 +926,6 @@ mod tests {
 
     /// Readers also accept replacements from writers using the old per-segment counter.
     #[test]
-    #[cfg_attr(miri, ignore)]
     fn an_existing_reader_follows_a_replacement_with_a_lower_generation() {
         let path = test_path("follow");
         let old_writer = OneWayShmWriter::<NamedShmHandle>::new(path.clone()).unwrap();
@@ -973,7 +966,6 @@ mod tests {
 
     /// A segment change counts as new data even if a writer reuses the old generation.
     #[test]
-    #[cfg_attr(miri, ignore)]
     fn a_replacement_with_an_equal_generation_is_taken() {
         let path = test_path("equal");
         let old_writer = OneWayShmWriter::<NamedShmHandle>::new(path.clone()).unwrap();
@@ -994,7 +986,6 @@ mod tests {
     /// The old owner is only retired once its replacement holds a payload: readers moving over
     /// find something to use immediately, and never trade their last payload for nothing.
     #[test]
-    #[cfg_attr(miri, ignore)]
     fn retirement_waits_for_the_first_publication() {
         let path = test_path("notify-last");
         let old_writer = OneWayShmWriter::<NamedShmHandle>::new(path.clone()).unwrap();
@@ -1033,7 +1024,6 @@ mod tests {
     /// `clear_reader` exists for "the segment may have been replaced": what it reopens must be
     /// taken at face value, not compared against the old segment's counter.
     #[test]
-    #[cfg_attr(miri, ignore)]
     fn clear_reader_takes_the_reopened_segment_whatever_its_generation() {
         let path = test_path("clear");
         let old_writer = OneWayShmWriter::<NamedShmHandle>::new(path.clone()).unwrap();
@@ -1063,7 +1053,6 @@ mod tests {
     /// A retired segment stays retired: its former writer must not bump the counter back into
     /// an even, "stable" value, which readers would take for a valid payload.
     #[test]
-    #[cfg_attr(miri, ignore)]
     fn a_retired_segment_is_not_written_back_into_service() {
         let path = test_path("no-resurrect");
         let old_writer = OneWayShmWriter::<NamedShmHandle>::new(path.clone()).unwrap();
@@ -1086,7 +1075,6 @@ mod tests {
     /// A writer going away for good ends its segment, so its readers do not wait on it forever:
     /// they pick up whoever publishes under the name next, keeping the last payload meanwhile.
     #[test]
-    #[cfg_attr(miri, ignore)]
     fn a_dropped_writer_ends_its_segment() {
         let path = test_path("evicted");
         let writer = OneWayShmWriter::<NamedShmHandle>::new(path.clone()).unwrap();
@@ -1127,7 +1115,6 @@ mod tests {
     /// fetched, telemetry for a client going away - must have that final, empty payload seen,
     /// rather than readers keeping what was there before.
     #[test]
-    #[cfg_attr(miri, ignore)]
     fn the_final_payload_of_an_ended_segment_is_read() {
         let path = test_path("cleared");
         let writer = OneWayShmWriter::<NamedShmHandle>::new(path.clone()).unwrap();
@@ -1145,7 +1132,6 @@ mod tests {
     /// A segment that was replaced is not read from any more - its writer may have died halfway
     /// through a payload - not even when its successor has gone away too.
     #[test]
-    #[cfg_attr(miri, ignore)]
     fn a_retired_payload_is_never_read() {
         let path = test_path("torn");
         let old_writer = OneWayShmWriter::<NamedShmHandle>::new(path.clone()).unwrap();
@@ -1174,7 +1160,6 @@ mod tests {
     /// Dropping an owner that was already replaced must neither remove the successor's name nor
     /// retire the successor.
     #[test]
-    #[cfg_attr(miri, ignore)]
     fn a_late_old_owner_leaves_its_successor_alone() {
         let path = test_path("late");
         let old_writer = OneWayShmWriter::<NamedShmHandle>::new(path.clone()).unwrap();
@@ -1195,7 +1180,6 @@ mod tests {
 
     #[test]
     #[cfg(unix)]
-    #[cfg_attr(miri, ignore)]
     fn dropping_an_inherited_writer_does_not_retire_its_predecessor() {
         let path = test_path("fork-drop");
         let old = OneWayShmWriter::<NamedShmHandle>::new(path.clone()).unwrap();
@@ -1227,7 +1211,6 @@ mod tests {
     /// A writer that died mid-write leaves an odd counter behind forever. Its replacement must
     /// still be found by the readers stuck on it.
     #[test]
-    #[cfg_attr(miri, ignore)]
     fn readers_of_a_writer_killed_mid_write_follow_the_replacement() {
         let path = test_path("killed");
         let old_writer = OneWayShmWriter::<NamedShmHandle>::new(path.clone()).unwrap();
@@ -1259,7 +1242,6 @@ mod tests {
     /// A waiter must not sleep out its timeout on a segment that was retired: retirement wakes
     /// it, and the next wait finds the replacement.
     #[test]
-    #[cfg_attr(miri, ignore)]
     fn wait_for_change_follows_retirement() {
         let path = test_path("wait");
         let old_writer = OneWayShmWriter::<NamedShmHandle>::new(path.clone()).unwrap();
@@ -1289,7 +1271,6 @@ mod tests {
         target_os = "linux",
         target_endian = "little"
     ))]
-    #[cfg_attr(miri, ignore)]
     fn retirement_wakes_a_blocked_waiter() {
         let path = test_path("futex");
         let old_writer = OneWayShmWriter::<NamedShmHandle>::new(path.clone()).unwrap();
@@ -1317,7 +1298,6 @@ mod tests {
     /// A segment nothing was published into yet has nothing to report: taking it for an empty
     /// payload would make consumers clear what they have.
     #[test]
-    #[cfg_attr(miri, ignore)]
     fn an_unwritten_segment_is_not_a_change() {
         let path = test_path("unwritten");
         let writer = OneWayShmWriter::<NamedShmHandle>::new(path.clone()).unwrap();
@@ -1335,7 +1315,6 @@ mod tests {
     /// bookkeeping - but it must still leave the successor's name alone.
     #[test]
     #[cfg(unix)]
-    #[cfg_attr(miri, ignore)]
     fn an_owner_replaced_from_another_process_leaves_the_name() {
         use std::io::{Read, Write};
         use std::os::unix::net::UnixStream;

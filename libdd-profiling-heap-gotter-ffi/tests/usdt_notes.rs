@@ -35,7 +35,6 @@ fn cdylib_path() -> PathBuf {
 /// `ddheap:alloc` is unconditional: every build samples allocations, so its
 /// note must always be present exactly once.
 #[test]
-#[cfg_attr(miri, ignore)]
 fn ddheap_alloc_probe_has_one_note() {
     let path = cdylib_path();
     libdd_profiling_heap_sampler::usdt_check::check_usdt_probes_in(&path, &["alloc"]).unwrap();
@@ -46,7 +45,6 @@ fn ddheap_alloc_probe_has_one_note() {
 /// runs, and only asserts the note is present, in builds that opt in.
 #[cfg(feature = "live-heap")]
 #[test]
-#[cfg_attr(miri, ignore)]
 fn ddheap_free_probe_has_one_note() {
     let path = cdylib_path();
     libdd_profiling_heap_sampler::usdt_check::check_usdt_probes_in(&path, &["free"]).unwrap();

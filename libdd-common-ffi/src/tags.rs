@@ -68,6 +68,7 @@ pub unsafe extern "C" fn ddog_Vec_Tag_parse(string: CharSlice) -> ParseTagsResul
 }
 
 #[cfg(test)]
+#[libdd_test_macros::miri_test]
 mod tests {
     use crate::tags::*;
 

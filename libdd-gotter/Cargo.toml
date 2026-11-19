@@ -18,4 +18,5 @@ bench = false
 libc.workspace = true
 
 [dev-dependencies]
+libdd-test-macros = { path = "../libdd-test-macros" }
 tempfile.workspace = true

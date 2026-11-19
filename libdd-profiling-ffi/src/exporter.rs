@@ -585,9 +585,6 @@ mod tests {
     }
 
     #[test]
-    // This test invokes an external function SecTrustSettingsCopyCertificates
-    // which Miri cannot evaluate.
-    #[cfg_attr(miri, ignore)]
     fn profile_exporter_new_and_delete() {
         let tags = vec![tag!("host", "localhost")].into();
 
@@ -606,9 +603,6 @@ mod tests {
     }
 
     #[test]
-    // This test invokes an external function SecTrustSettingsCopyCertificates
-    // which Miri cannot evaluate.
-    #[cfg_attr(miri, ignore)]
     fn test_send_blocking() {
         let mut exporter = unsafe {
             ddog_prof_Exporter_new(
@@ -650,9 +644,6 @@ mod tests {
     }
 
     #[test]
-    // This test invokes an external function SecTrustSettingsCopyCertificates
-    // which Miri cannot evaluate.
-    #[cfg_attr(miri, ignore)]
     fn test_exporter_manager_new_and_drop() {
         let mut exporter = unsafe {
             ddog_prof_Exporter_new(
@@ -673,9 +664,6 @@ mod tests {
     }
 
     #[test]
-    // This test invokes an external function SecTrustSettingsCopyCertificates
-    // which Miri cannot evaluate.
-    #[cfg_attr(miri, ignore)]
     fn test_exporter_manager_queue_and_abort() {
         let mut exporter = unsafe {
             ddog_prof_Exporter_new(
@@ -713,9 +701,6 @@ mod tests {
     }
 
     #[test]
-    // This test invokes an external function SecTrustSettingsCopyCertificates
-    // which Miri cannot evaluate.
-    #[cfg_attr(miri, ignore)]
     fn test_exporter_manager_fork_workflow() {
         let mut exporter = unsafe {
             ddog_prof_Exporter_new(
@@ -740,9 +725,6 @@ mod tests {
     }
 
     #[test]
-    // This test invokes an external function SecTrustSettingsCopyCertificates
-    // which Miri cannot evaluate.
-    #[cfg_attr(miri, ignore)]
     fn test_send_blocking_with_metadata() {
         let mut exporter = unsafe {
             ddog_prof_Exporter_new(

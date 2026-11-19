@@ -196,6 +196,7 @@ mod tests {
     use super::*;
     use libdd_library_config::tracer_metadata::ThreadLocalMetadata;
 
+    #[libdd_test_macros::miri_test]
     #[test]
     fn include_otel_thread_context_rejects_null() {
         let result =
@@ -205,6 +206,7 @@ mod tests {
         assert!(error.to_string().contains("null pointer"), "{error}");
     }
 
+    #[libdd_test_macros::miri_test]
     #[test]
     fn include_otel_thread_context_preserves_existing_metadata() {
         unsafe {
@@ -231,7 +233,6 @@ mod tests {
     }
     #[cfg(target_os = "linux")]
     #[test]
-    #[cfg_attr(miri, ignore)]
     fn included_thread_context_metadata_is_published() {
         use libdd_library_config::otel_process_ctx::{ProcessContextSelfReader, unpublish};
         use std::os::fd::{FromRawFd, OwnedFd};

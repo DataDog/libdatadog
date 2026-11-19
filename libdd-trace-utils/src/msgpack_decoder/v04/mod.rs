@@ -153,6 +153,7 @@ pub fn from_buffer<T: DeserializableTraceData>(
 }
 
 #[cfg(test)]
+#[libdd_test_macros::miri_test]
 mod tests {
     use super::*;
     use crate::test_utils::{create_test_json_span, create_test_no_alloc_span};

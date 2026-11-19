@@ -93,7 +93,6 @@ mod single_threaded_tests {
     use crate::{assert_child_exit, fork::set_default_child_panic_handler, getpid};
 
     #[test]
-    #[cfg_attr(miri, ignore)]
     #[cfg_attr(coverage_nightly, ignore)] // this fails on nightly coverage
     fn test_fork_subprocess() {
         let (mut sock_a, sock_b) = UnixStream::pair().unwrap();
@@ -135,7 +134,6 @@ mod single_threaded_tests {
         use crate::{assert_child_exit, fork::set_default_child_panic_handler};
 
         #[test]
-        #[cfg_attr(miri, ignore)]
         fn test_fork_trigger_error() {
             let pid = unsafe {
                 super::super::fork_fn((), |_| {

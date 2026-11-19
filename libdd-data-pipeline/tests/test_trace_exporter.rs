@@ -101,7 +101,6 @@ mod tracing_integration_tests {
         rmp_serde::to_vec(&traces).unwrap()
     }
 
-    #[cfg_attr(miri, ignore)]
     #[tokio::test]
     async fn compare_v04_trace_snapshot_test() {
         let relative_snapshot_path = "libdd-data-pipeline/tests/snapshots/";
@@ -155,7 +154,6 @@ mod tracing_integration_tests {
         test_agent.assert_snapshot(snapshot_name).await;
     }
 
-    #[cfg_attr(miri, ignore)]
     #[tokio::test]
     async fn compare_v04_to_v05_trace_snapshot_test() {
         let relative_snapshot_path = "libdd-data-pipeline/tests/snapshots/";
@@ -203,7 +201,6 @@ mod tracing_integration_tests {
         test_agent.assert_snapshot(snapshot_name).await;
     }
 
-    #[cfg_attr(miri, ignore)]
     #[tokio::test]
     async fn compare_v05_trace_snapshot_test() {
         let relative_snapshot_path = "libdd-data-pipeline/tests/snapshots/";
@@ -284,7 +281,6 @@ mod tracing_integration_tests {
         rmp_serde::to_vec_named(&vec![vec![root_span, child_span]]).unwrap()
     }
 
-    #[cfg_attr(miri, ignore)]
     #[tokio::test]
     async fn compare_v04_to_v1_trace_snapshot_test() {
         let relative_snapshot_path = "libdd-data-pipeline/tests/snapshots/";
@@ -336,7 +332,6 @@ mod tracing_integration_tests {
         test_agent.assert_snapshot(snapshot_name).await;
     }
 
-    #[cfg_attr(miri, ignore)]
     #[cfg(target_os = "linux")]
     #[tokio::test]
     // Validate that we can correctly send traces to the agent via UDS.

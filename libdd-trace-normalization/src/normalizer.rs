@@ -152,6 +152,7 @@ mod tests {
         }
     }
 
+    #[libdd_test_macros::miri_test]
     #[test]
     fn test_normalize_name_passes() {
         let mut test_span = new_test_span();
@@ -160,6 +161,7 @@ mod tests {
         assert_eq!(before_name, test_span.name);
     }
 
+    #[libdd_test_macros::miri_test]
     #[test]
     fn test_normalize_empty_name() {
         let mut test_span = new_test_span();
@@ -168,6 +170,7 @@ mod tests {
         assert_eq!(test_span.name, DEFAULT_SPAN_NAME);
     }
 
+    #[libdd_test_macros::miri_test]
     #[test]
     fn test_normalize_long_name() {
         let mut test_span = new_test_span();
@@ -176,6 +179,7 @@ mod tests {
         assert!(test_span.name.len() == normalize_utils::MAX_NAME_LEN);
     }
 
+    #[libdd_test_macros::miri_test]
     #[test]
     fn test_normalize_name_no_alphanumeric() {
         let mut test_span = new_test_span();
@@ -184,6 +188,7 @@ mod tests {
         assert_eq!(test_span.name, DEFAULT_SPAN_NAME);
     }
 
+    #[libdd_test_macros::miri_test]
     #[test]
     fn test_normalize_name_for_metrics() {
         let expected_names = HashMap::from([
@@ -205,6 +210,7 @@ mod tests {
         }
     }
 
+    #[libdd_test_macros::miri_test]
     #[test]
     fn test_normalize_resource_passes() {
         let mut test_span = new_test_span();
@@ -213,6 +219,7 @@ mod tests {
         assert_eq!(before_resource, test_span.resource);
     }
 
+    #[libdd_test_macros::miri_test]
     #[test]
     fn test_normalize_empty_resource() {
         let mut test_span = new_test_span();
@@ -221,6 +228,7 @@ mod tests {
         assert_eq!(test_span.resource, test_span.name);
     }
 
+    #[libdd_test_macros::miri_test]
     #[test]
     fn test_normalize_trace_id_passes() {
         let mut test_span = new_test_span();
@@ -236,6 +244,7 @@ mod tests {
         assert!(normalizer::normalize_span(&mut test_span).is_err());
     }
 
+    #[libdd_test_macros::miri_test]
     #[test]
     fn test_normalize_component_to_name() {
         let mut test_span = new_test_span();
@@ -247,6 +256,7 @@ mod tests {
     // TODO: Add a unit test for testing Component2Name, one that is
     //       implemented within the normalize function.
 
+    #[libdd_test_macros::miri_test]
     #[test]
     fn test_normalize_span_id_passes() {
         let mut test_span = new_test_span();
@@ -262,6 +272,7 @@ mod tests {
         assert!(normalizer::normalize_span(&mut test_span).is_err());
     }
 
+    #[libdd_test_macros::miri_test]
     #[test]
     fn test_normalize_start_passes() {
         let mut test_span = new_test_span();
@@ -274,6 +285,7 @@ mod tests {
         SystemTime::UNIX_EPOCH.elapsed().unwrap().as_nanos() as i64
     }
 
+    #[libdd_test_macros::miri_test]
     #[test]
     fn test_normalize_start_too_small() {
         let mut test_span = new_test_span();
@@ -286,6 +298,7 @@ mod tests {
         assert!(test_span.start <= get_current_time());
     }
 
+    #[libdd_test_macros::miri_test]
     #[test]
     fn test_normalize_start_too_small_with_large_duration() {
         let mut test_span = new_test_span();
@@ -300,6 +313,7 @@ mod tests {
         // time
     }
 
+    #[libdd_test_macros::miri_test]
     #[test]
     fn test_normalize_duration_passes() {
         let mut test_span = new_test_span();
@@ -309,6 +323,7 @@ mod tests {
         assert_eq!(before_duration, test_span.duration);
     }
 
+    #[libdd_test_macros::miri_test]
     #[test]
     fn test_normalize_empty_duration() {
         let mut test_span = new_test_span();
@@ -318,6 +333,7 @@ mod tests {
         assert_eq!(test_span.duration, 0);
     }
 
+    #[libdd_test_macros::miri_test]
     #[test]
     fn test_normalize_negative_duration() {
         let mut test_span = new_test_span();
@@ -327,6 +343,7 @@ mod tests {
         assert_eq!(test_span.duration, 0);
     }
 
+    #[libdd_test_macros::miri_test]
     #[test]
     fn test_normalize_large_duration() {
         let mut test_span = new_test_span();
@@ -336,6 +353,7 @@ mod tests {
         assert_eq!(test_span.duration, 0);
     }
 
+    #[libdd_test_macros::miri_test]
     #[test]
     fn test_normalize_error_passes() {
         let mut test_span = new_test_span();
@@ -345,6 +363,7 @@ mod tests {
         assert_eq!(before_error, test_span.error);
     }
 
+    #[libdd_test_macros::miri_test]
     #[test]
     fn test_normalize_metrics_passes() {
         let mut test_span = new_test_span();
@@ -354,6 +373,7 @@ mod tests {
         assert_eq!(before_metrics, test_span.metrics);
     }
 
+    #[libdd_test_macros::miri_test]
     #[test]
     fn test_normalize_meta_passes() {
         let mut test_span = new_test_span();
@@ -363,6 +383,7 @@ mod tests {
         assert_eq!(before_meta, test_span.meta);
     }
 
+    #[libdd_test_macros::miri_test]
     #[test]
     fn test_normalize_parent_id_passes() {
         let mut test_span = new_test_span();
@@ -372,6 +393,7 @@ mod tests {
         assert_eq!(before_parent_id, test_span.parent_id);
     }
 
+    #[libdd_test_macros::miri_test]
     #[test]
     fn test_normalize_type_passes() {
         let mut test_span = new_test_span();
@@ -381,6 +403,7 @@ mod tests {
         assert_eq!(before_type, test_span.r#type);
     }
 
+    #[libdd_test_macros::miri_test]
     #[test]
     fn test_normalize_type_too_long() {
         let mut test_span = new_test_span();
@@ -390,6 +413,7 @@ mod tests {
         assert_eq!(test_span.r#type.len(), MAX_TYPE_LEN);
     }
 
+    #[libdd_test_macros::miri_test]
     #[test]
     fn test_normalize_service_tag() {
         let mut test_span = new_test_span();
@@ -399,6 +423,7 @@ mod tests {
         assert_eq!(test_span.service, "retargeting_api-staging");
     }
 
+    #[libdd_test_macros::miri_test]
     #[test]
     fn test_normalize_env() {
         let mut test_span = new_test_span();
@@ -410,6 +435,7 @@ mod tests {
         assert_eq!("development", test_span.meta.get("env").unwrap());
     }
 
+    #[libdd_test_macros::miri_test]
     #[test]
     fn test_special_zipkin_root_span() {
         let mut test_span = new_test_span();
@@ -439,6 +465,7 @@ mod tests {
         );
     }
 
+    #[libdd_test_macros::miri_test]
     #[test]
     fn test_normalize_trace_trace_id_mismatch() {
         let mut span_1 = new_test_span();
@@ -457,6 +484,7 @@ mod tests {
         );
     }
 
+    #[libdd_test_macros::miri_test]
     #[test]
     fn test_normalize_trace_invalid_span_name() {
         let span_1 = new_test_span();
@@ -468,6 +496,7 @@ mod tests {
         assert_eq!(trace[1].name, DEFAULT_SPAN_NAME);
     }
 
+    #[libdd_test_macros::miri_test]
     #[test]
     fn test_normalize_trace() {
         let span_1 = new_test_span();

@@ -33,7 +33,6 @@ pub unsafe extern "C" fn ddog_crasht_demangle(
 }
 
 #[test]
-#[cfg_attr(miri, ignore)]
 fn test_demangle() {
     // It appears that Miri might change the behavior of symbolic_common::Name::demangle, so we
     // don't run this test under Miri.
@@ -56,6 +55,8 @@ fn test_demangle() {
     );
 }
 
+#[cfg(test)]
+#[libdd_test_macros::miri_test]
 #[test]
 fn test_demangle_fails() {
     let test_string = "_ZNSt28__fdf";

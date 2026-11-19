@@ -290,7 +290,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[cfg_attr(miri, ignore = "requires native HTTP")]
     async fn every_poll_sends_the_service_in_dd_service() {
         let server = httpmock::MockServer::start_async().await;
         let first = server
@@ -319,7 +318,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[cfg_attr(miri, ignore = "requires native HTTP")]
     async fn a_service_is_sent_normalized_in_dd_service() {
         for (service, normalized_name) in [
             ("My Service", "my_service"),
@@ -378,7 +376,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[cfg_attr(miri, ignore = "requires native HTTP")]
     async fn a_non_ascii_service_is_sent_as_utf8_and_fetching_continues() {
         for service in ["café-api", "支付"] {
             let (base_url, received) = raw_server();
@@ -395,7 +392,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[cfg_attr(miri, ignore = "requires native HTTP")]
     async fn a_missing_service_omits_dd_service_and_keeps_fetching() {
         for service in [None, Some("")] {
             let server = httpmock::MockServer::start_async().await;
@@ -415,7 +411,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[cfg_attr(miri, ignore = "requires native HTTP")]
     async fn a_service_without_a_normalized_name_omits_dd_service_and_keeps_fetching() {
         // `___` becomes the normalizer fallback `unnamed-service`.
         for service in ["___", "!!!"] {

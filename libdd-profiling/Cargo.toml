@@ -76,6 +76,7 @@ zstd.workspace = true
 zrip = { workspace = true, features = ["frame"] }
 
 [dev-dependencies]
+libdd-test-macros = { path = "../libdd-test-macros" }
 bolero = { workspace = true, features = ["std"] }
 criterion.workspace = true
 libdd-process-utils = { version = "1.0.0", path = "../libdd-process-utils" }

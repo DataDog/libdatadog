@@ -89,6 +89,7 @@ getrandom = { workspace = true, features = ["js"] }
 zrip = { workspace = true, features = ["frame"], optional = true }
 
 [dev-dependencies]
+libdd-test-macros = { path = "../libdd-test-macros" }
 libdd-capabilities-impl = { version = "8.0.0", path = "../libdd-capabilities-impl" }
 tools = { path = "../tools", default-features = false, features = ["bench-utils"] }
 bolero = { workspace = true, features = ["std"] }

@@ -49,6 +49,7 @@ members = [
   "libdd-process-utils",
   "libdd-telemetry",
   "libdd-telemetry-ffi",
+  "libdd-test-macros",
   "tools",
   "tools/sidecar_mockgen",
   "spawn_worker",

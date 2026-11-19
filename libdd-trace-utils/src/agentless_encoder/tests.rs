@@ -44,7 +44,6 @@ fn expected_payload_with_span(span: &str) -> String {
     format!(r#"{{"traces":[{{"hostname":""{container},"spans":[{span}]}}]}}"#)
 }
 
-#[cfg_attr(miri, ignore)] // serde_json/rmp_serde overhead is prohibitively slow under Miri
 #[test]
 fn fixed_json_structure_preserves_minimal_and_optional_metadata_bytes() {
     let payload = encode_payload::<BytesData>(&[], &TracerMetadata::default(), true).unwrap();
@@ -73,7 +72,6 @@ fn fixed_json_structure_preserves_minimal_and_optional_metadata_bytes() {
     assert_eq!(traces, expected.as_bytes());
 }
 
-#[cfg_attr(miri, ignore)] // serde_json/rmp_serde overhead is prohibitively slow under Miri
 #[test]
 fn span_preserves_escaped_dynamic_values_ids_and_metrics_bytes() {
     let mut span: Span<BytesData> = Span {
@@ -105,7 +103,6 @@ fn span_preserves_escaped_dynamic_values_ids_and_metrics_bytes() {
     assert_eq!(str::from_utf8(&encoded), Ok(expected.as_str()));
 }
 
-#[cfg_attr(miri, ignore)] // serde_json/rmp_serde overhead is prohibitively slow under Miri
 #[test]
 fn defensive_dedup_preserves_last_meta_and_metric_values() {
     let span: Span<BytesData> = Span {
@@ -130,7 +127,6 @@ fn defensive_dedup_preserves_last_meta_and_metric_values() {
     assert_eq!(str::from_utf8(&encoded), Ok(expected.as_str()));
 }
 
-#[cfg_attr(miri, ignore)] // serde_json/rmp_serde overhead is prohibitively slow under Miri
 #[test]
 fn existing_synthetic_meta_and_root_metric_values_win() {
     let mut span: Span<BytesData> = Span {
@@ -160,7 +156,6 @@ fn existing_synthetic_meta_and_root_metric_values_win() {
     assert_eq!(str::from_utf8(&encoded), Ok(expected.as_str()));
 }
 
-#[cfg_attr(miri, ignore)] // serde_json/rmp_serde overhead is prohibitively slow under Miri
 #[test]
 fn span_links_and_events_preserve_nested_serde_json_bytes() {
     let link = SpanLink::<BytesData> {
@@ -198,7 +193,6 @@ fn span_links_and_events_preserve_nested_serde_json_bytes() {
     assert_eq!(str::from_utf8(&encoded), Ok(expected.as_str()));
 }
 
-#[cfg_attr(miri, ignore)] // serde_json/rmp_serde overhead is prohibitively slow under Miri
 #[test]
 fn meta_struct_preserves_exact_bytes_and_propagates_malformed_values() {
     #[derive(serde::Serialize)]
@@ -232,7 +226,6 @@ fn meta_struct_preserves_exact_bytes_and_propagates_malformed_values() {
     assert!(error.is_data(), "unexpected error category: {error}");
 }
 
-#[cfg_attr(miri, ignore)] // serde_json/rmp_serde overhead is prohibitively slow under Miri
 #[test]
 fn runtime_id_updates_propagate_through_the_metadata_handle() {
     fn mk_span() -> Span<BytesData> {
@@ -262,7 +255,6 @@ fn runtime_id_updates_propagate_through_the_metadata_handle() {
     assert_eq!(v["traces"][0]["runtimeID"], "rt-2");
 }
 
-#[cfg_attr(miri, ignore)] // serde_json/rmp_serde overhead is prohibitively slow under Miri
 #[test]
 fn top_level_payload_shape_and_metadata() {
     let span: Span<BytesData> = Span {
@@ -314,7 +306,6 @@ fn top_level_payload_shape_and_metadata() {
     assert_eq!(meta["_dd.compute_stats"], "1");
 }
 
-#[cfg_attr(miri, ignore)] // serde_json/rmp_serde overhead is prohibitively slow under Miri
 #[test]
 fn resource_defaults_to_name_when_empty() {
     let span: Span<BytesData> = Span {
@@ -334,7 +325,6 @@ fn resource_defaults_to_name_when_empty() {
     assert_eq!(s["resource"], "op");
 }
 
-#[cfg_attr(miri, ignore)] // serde_json/rmp_serde overhead is prohibitively slow under Miri
 #[test]
 fn keeps_existing_dd_p_tid_in_meta() {
     // When the tracer already supplies `_dd.p.tid`, the encoder must pass it
@@ -363,7 +353,6 @@ fn keeps_existing_dd_p_tid_in_meta() {
     assert_eq!(meta["some.tag"], "kept");
 }
 
-#[cfg_attr(miri, ignore)] // serde_json/rmp_serde overhead is prohibitively slow under Miri
 #[test]
 fn ids_preserve_fixed_width_lowercase_wire_format_at_numeric_edges() {
     let link = SpanLink::<BytesData> {
@@ -399,7 +388,6 @@ fn ids_preserve_fixed_width_lowercase_wire_format_at_numeric_edges() {
     );
 }
 
-#[cfg_attr(miri, ignore)] // serde_json/rmp_serde overhead is prohibitively slow under Miri
 #[test]
 fn span_links_serialised_into_meta_as_json_string() {
     // Span links are JSON-stringified and stored in meta["_dd.span_links"];
@@ -446,7 +434,6 @@ fn span_links_serialised_into_meta_as_json_string() {
     assert_eq!(link_obj["tracestate"], "dd=s:1");
 }
 
-#[cfg_attr(miri, ignore)] // serde_json/rmp_serde overhead is prohibitively slow under Miri
 #[test]
 fn span_link_flags_sentinel_bit_masked() {
     // The internal "explicitly set" sentinel (bit 31) must never appear in the
@@ -491,7 +478,6 @@ fn span_link_flags_sentinel_bit_masked() {
     );
 }
 
-#[cfg_attr(miri, ignore)] // serde_json/rmp_serde overhead is prohibitively slow under Miri
 #[test]
 fn span_events_serialised_into_meta_as_json_string() {
     // Span events are JSON-stringified and stored in meta["events"];
@@ -530,7 +516,6 @@ fn span_events_serialised_into_meta_as_json_string() {
     assert_eq!(evt["attributes"]["exception.message"], "timeout");
 }
 
-#[cfg_attr(miri, ignore)] // serde_json/rmp_serde overhead is prohibitively slow under Miri
 #[test]
 fn top_level_only_for_first_span_when_parent_in_other_service() {
     // Trace with two spans, parent in different service.
@@ -590,7 +575,6 @@ fn top_level_only_for_first_span_when_parent_in_other_service() {
     assert!(spans[2]["meta"].get("_dd.compute_stats").is_none());
 }
 
-#[cfg_attr(miri, ignore)] // serde_json/rmp_serde overhead is prohibitively slow under Miri
 #[test]
 fn meta_struct_msgpack_values_are_inlined_as_json_objects() {
     // `meta_struct` values are msgpack-encoded objects in memory. On the
@@ -648,7 +632,6 @@ fn meta_struct_msgpack_values_are_inlined_as_json_objects() {
     assert_eq!(inlined["list"], serde_json::json!([1, 2, 3]));
 }
 
-#[cfg_attr(miri, ignore)] // serde_json/rmp_serde overhead is prohibitively slow under Miri
 #[test]
 fn meta_struct_field_omitted_when_empty() {
     // No meta_struct entries -> the field is not emitted at all.
@@ -667,7 +650,6 @@ fn meta_struct_field_omitted_when_empty() {
     assert!(s.get("meta_struct").is_none());
 }
 
-#[cfg_attr(miri, ignore)] // serde_json/rmp_serde overhead is prohibitively slow under Miri
 #[test]
 fn client_side_stats_omits_marker_when_local_stats_enabled() {
     // When the caller is computing and exporting stats locally (agentless stats

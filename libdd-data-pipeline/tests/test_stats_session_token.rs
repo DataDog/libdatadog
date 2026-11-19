@@ -84,13 +84,11 @@ async fn assert_stats_session_token(token: Option<&str>) {
     unmatched_stats.assert_calls(0);
 }
 
-#[cfg_attr(miri, ignore = "httpmock retains detached server threads")]
 #[tokio::test]
 async fn stats_requests_include_test_session_token() {
     assert_stats_session_token(Some("background-worker-session")).await;
 }
 
-#[cfg_attr(miri, ignore = "httpmock retains detached server threads")]
 #[tokio::test]
 async fn stats_requests_omit_unconfigured_test_session_token() {
     assert_stats_session_token(None).await;

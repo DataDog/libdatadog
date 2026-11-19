@@ -330,7 +330,6 @@ mod tests {
     const NO_TRACE_FLAGS: u8 = 0;
 
     #[test]
-    #[cfg_attr(miri, ignore)]
     fn tls_lifecycle_basic() {
         let trace_id = [1u8; 16];
         let span_id = [2u8; 8];
@@ -366,7 +365,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg_attr(miri, ignore)]
     fn raw_tls_pointer_read() {
         let trace_id = [1u8; 16];
         let span_id = [2u8; 8];
@@ -389,7 +387,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg_attr(miri, ignore)]
     fn update_record_in_place() {
         let trace_id1 = [1u8; 16];
         let span_id1 = [0x01, 0x12, 0x23, 0x34, 0x45, 0x56, 0x67, 0x78];
@@ -440,7 +437,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg_attr(miri, ignore)]
     fn update_and_attach_replaces_current_context() {
         OwnedThreadContext::new([0u8; 16], [0u8; 8], 0x11, [0u8; 8], &[]).attach();
         let previous_ptr = read_tls_context_ptr();
@@ -484,7 +480,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg_attr(miri, ignore)]
     fn update_and_attach_updates_current_context_in_place() {
         let target =
             OwnedThreadContext::new([1u8; 16], [1u8; 8], 0x11, [1u8; 8], &[]).into_opaque_ptr();
@@ -540,7 +535,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg_attr(miri, ignore)]
     fn update_and_attach_attaches_to_empty_tls() {
         assert!(read_tls_context_ptr().is_null());
 
@@ -588,7 +582,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg_attr(miri, ignore)]
     fn explicit_detach_nulls_tls() {
         OwnedThreadContext::new([0u8; 16], [0u8; 8], NO_TRACE_FLAGS, [0u8; 8], &[]).attach();
         assert!(!read_tls_context_ptr().is_null());
@@ -603,7 +596,6 @@ mod tests {
 
     // Make sure the TLSDESC accessor is indeed providing a thread-local address.
     #[test]
-    #[cfg_attr(miri, ignore)]
     fn tls_slots_are_per_thread() {
         use std::sync::{Arc, Barrier};
 

@@ -39,6 +39,7 @@ wait-timeout = { workspace = true, optional = true }
 windows-sys = { workspace = true, optional = true, features = ["Win32_Foundation", "Win32_System_Diagnostics_ToolHelp"] }
 
 [dev-dependencies]
+libdd-test-macros = { path = "../libdd-test-macros" }
 tokio = { workspace = true, features = ["rt", "macros"] }
 
 [features]

@@ -138,6 +138,7 @@ pub fn insert_str(
 mod tests {
     use super::*;
 
+    #[libdd_test_macros::miri_test]
     #[test]
     fn test_utf8_option_assume_valid() {
         let bytes = b"hello world";
@@ -146,6 +147,7 @@ mod tests {
         assert!(matches!(result, Cow::Borrowed(_)));
     }
 
+    #[libdd_test_macros::miri_test]
     #[test]
     fn test_utf8_option_validate_valid() {
         let bytes = b"hello world";
@@ -154,6 +156,7 @@ mod tests {
         assert!(matches!(result, Cow::Borrowed(_)));
     }
 
+    #[libdd_test_macros::miri_test]
     #[test]
     fn test_utf8_option_validate_invalid() {
         let bytes = b"hello \xFF world";
@@ -165,6 +168,7 @@ mod tests {
         }
     }
 
+    #[libdd_test_macros::miri_test]
     #[test]
     fn test_utf8_option_convert_lossy_valid() {
         let bytes = b"hello world";
@@ -173,6 +177,7 @@ mod tests {
         assert!(matches!(result, Cow::Borrowed(_)));
     }
 
+    #[libdd_test_macros::miri_test]
     #[test]
     fn test_utf8_option_convert_lossy_invalid() {
         let bytes = b"hello \xFF world";
@@ -181,6 +186,7 @@ mod tests {
         assert!(matches!(result, Cow::Owned(_)));
     }
 
+    #[libdd_test_macros::miri_test]
     #[test]
     fn test_utf8_option_convert_lossy_multiple_invalid() {
         let bytes = b"\xFF\xFE valid \x80";
@@ -188,6 +194,7 @@ mod tests {
         assert_eq!(result, "\u{FFFD}\u{FFFD} valid \u{FFFD}");
     }
 
+    #[libdd_test_macros::miri_test]
     #[test]
     fn test_try_from_utf8_lossy_valid() {
         let result = try_from_utf8_lossy(b"valid utf8").unwrap();
@@ -195,6 +202,7 @@ mod tests {
         assert!(matches!(result, Cow::Borrowed(_)));
     }
 
+    #[libdd_test_macros::miri_test]
     #[test]
     fn test_try_from_utf8_lossy_invalid_single() {
         let result = try_from_utf8_lossy(b"test\xFFstring").unwrap();
@@ -202,6 +210,7 @@ mod tests {
         assert!(matches!(result, Cow::Owned(_)));
     }
 
+    #[libdd_test_macros::miri_test]
     #[test]
     fn test_try_from_utf8_lossy_invalid_multiple() {
         let result = try_from_utf8_lossy(b"\xC3\x28 \xFF test").unwrap();
@@ -210,6 +219,7 @@ mod tests {
         assert!(result.contains("test"));
     }
 
+    #[libdd_test_macros::miri_test]
     #[test]
     fn test_try_from_utf8_lossy_empty() {
         let result = try_from_utf8_lossy(b"").unwrap();
@@ -217,6 +227,7 @@ mod tests {
         assert!(matches!(result, Cow::Borrowed(_)));
     }
 
+    #[libdd_test_macros::miri_test]
     #[test]
     fn test_try_from_utf8_lossy_all_valid_emoji() {
         let bytes = "Hello 👋 World 🌍".as_bytes();

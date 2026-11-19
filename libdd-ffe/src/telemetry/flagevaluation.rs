@@ -2139,7 +2139,6 @@ mod tests {
         assert!(coalescer.finish_flush_cycle());
     }
 
-    #[cfg_attr(miri, ignore)] // large cap-boundary fixture is prohibitively slow under Miri
     #[test]
     fn coalescer_degrades_after_per_flag_cap() {
         let coalescer = FlagEvaluationEvpCoalescer::<String>::default();

@@ -237,6 +237,7 @@ mod tests {
         assert_eq!(headers.get(DATADOG_TRACE_COUNT).unwrap(), "2");
     }
 
+    #[libdd_test_macros::miri_test]
     #[test]
     fn test_serialize_payload_v04() {
         let serializer = TraceSerializer::new();
@@ -273,6 +274,7 @@ mod tests {
         assert_eq!(original_span.error, deserialized_span.error);
     }
 
+    #[libdd_test_macros::miri_test]
     #[test]
     fn test_serialize_payload_v05() {
         let serializer = TraceSerializer::new();
@@ -309,6 +311,7 @@ mod tests {
         assert_eq!(original_span.error, deserialized_span.error);
     }
 
+    #[libdd_test_macros::miri_test]
     #[test]
     fn test_prepare_traces_payload_v04() {
         let serializer = TraceSerializer::new();
@@ -358,6 +361,7 @@ mod tests {
         assert!(!prepared.headers.is_empty());
     }
 
+    #[libdd_test_macros::miri_test]
     #[test]
     fn test_prepare_traces_payload_with_agent_version() {
         let agent_version = AgentResponsePayloadVersion::new();
@@ -379,6 +383,7 @@ mod tests {
         assert!(prepared.headers.contains_key(DATADOG_RATES_PAYLOAD_VERSION));
     }
 
+    #[libdd_test_macros::miri_test]
     #[test]
     fn test_prepare_traces_payload_empty_traces() {
         let serializer = TraceSerializer::new();

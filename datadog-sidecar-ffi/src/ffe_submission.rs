@@ -378,6 +378,7 @@ mod tests {
         serde_json::from_str(event.context.as_ref().unwrap().evaluation.as_ref().unwrap()).unwrap()
     }
 
+    #[libdd_test_macros::miri_test]
     #[test]
     fn oversized_identity_degrades_without_losing_evaluation_dimensions() {
         let oversized = "private-canary".repeat(libdd_ipc::max_message_size() / 14 + 1);
@@ -409,6 +410,7 @@ mod tests {
         }
     }
 
+    #[libdd_test_macros::miri_test]
     #[test]
     fn combined_input_size_degrades_before_copying_identity_or_context() {
         // The key itself fits; adding retained metadata exceeds the ceiling.
@@ -434,6 +436,7 @@ mod tests {
         assert_eq!(captured.evaluation_count, 1);
     }
 
+    #[libdd_test_macros::miri_test]
     #[test]
     fn oversized_retained_dimension_still_rejects_the_observation() {
         let oversized = "x".repeat(libdd_ipc::max_message_size() + 1);
@@ -445,6 +448,7 @@ mod tests {
         ));
     }
 
+    #[libdd_test_macros::miri_test]
     #[test]
     fn scalar_types_and_verbatim_values_are_captured_without_legacy_json() {
         let mut attrs = vec![
@@ -468,6 +472,7 @@ mod tests {
         assert!(row.observe_full_evaluation_data);
     }
 
+    #[libdd_test_macros::miri_test]
     #[test]
     fn protected_capture_ignores_context_and_its_error_state() {
         let mut attribute = attr("invalid", "private-context-canary");
@@ -489,6 +494,7 @@ mod tests {
         );
     }
 
+    #[libdd_test_macros::miri_test]
     #[test]
     fn malformed_slice_is_ignored_when_protected_and_recovers_when_consented() {
         // Emulate a malformed C descriptor. try_as_slice must reject its null
@@ -518,6 +524,7 @@ mod tests {
         }
     }
 
+    #[libdd_test_macros::miri_test]
     #[test]
     fn only_first_256_entries_are_inspected_even_when_one_is_rejected() {
         let names: Vec<_> = (0..257).map(|i| format!("field{i}")).collect();
@@ -584,6 +591,7 @@ mod tests {
         }
     }
 
+    #[libdd_test_macros::miri_test]
     #[test]
     fn unicode_limits_skip_instead_of_truncating() {
         let exact = "é".repeat(256);
@@ -606,6 +614,7 @@ mod tests {
         assert!(row.field_omissions.contains_context(Reason::MaxValueLength));
     }
 
+    #[libdd_test_macros::miri_test]
     #[test]
     fn bad_scalars_are_omitted_without_losing_healthy_fields() {
         let invalid = [0xffu8];
@@ -623,6 +632,7 @@ mod tests {
         assert!(row.field_omissions.contains_context(Reason::SnapshotError));
     }
 
+    #[libdd_test_macros::miri_test]
     #[test]
     fn caller_snapshot_failure_keeps_evaluation_without_context() {
         let row = convert(
@@ -652,6 +662,7 @@ mod tests {
         );
     }
 
+    #[libdd_test_macros::miri_test]
     #[test]
     fn invalid_original_identity_is_not_legitimized_by_coercion() {
         let row = convert(
@@ -678,6 +689,7 @@ mod tests {
         assert!(!row.field_omissions.targeting_key_invalid);
     }
 
+    #[libdd_test_macros::miri_test]
     #[test]
     fn invalid_optional_text_and_private_errors_do_not_drop_the_event() {
         let invalid = [0xffu8];
@@ -702,6 +714,7 @@ mod tests {
         }
     }
 
+    #[libdd_test_macros::miri_test]
     #[test]
     fn error_capture_preserves_canonical_codes_and_sanitizes_malformed_input() {
         let mut source = event(false);
@@ -735,6 +748,7 @@ mod tests {
         }
     }
 
+    #[libdd_test_macros::miri_test]
     #[test]
     fn captured_context_needs_no_further_pruning() {
         let over = "é".repeat(257);
@@ -780,6 +794,7 @@ mod tests {
         }
     }
 
+    #[libdd_test_macros::miri_test]
     #[test]
     fn malformed_or_oversized_features_are_omitted_without_rejecting() {
         let invalid = [0xffu8];
@@ -797,6 +812,7 @@ mod tests {
         }
     }
 
+    #[libdd_test_macros::miri_test]
     #[test]
     fn aggregated_input_is_rejected() {
         let mut source = event(false);
@@ -810,6 +826,7 @@ mod tests {
         assert_eq!(result.unwrap_err(), FfeSubmissionStatus::InvalidInput);
     }
 
+    #[libdd_test_macros::miri_test]
     #[test]
     fn oversized_identifiers_reject_but_ignored_error_and_context_do_not() {
         let huge = "x".repeat(libdd_ipc::max_message_size() + 1);
@@ -832,7 +849,6 @@ mod tests {
 
     #[test]
     #[cfg(unix)]
-    #[cfg_attr(miri, ignore)]
     fn ffi_owns_the_accepted_snapshot() {
         let (conn, peer) = libdd_ipc::SeqpacketConn::socketpair().unwrap();
         let mut transport = SidecarTransport::from(conn);

@@ -130,7 +130,6 @@ async fn serve_origin(config: Arc<ServerConfig>) -> (String, JoinHandle<()>) {
 }
 
 #[test]
-#[cfg_attr(miri, ignore)]
 fn reqwest_backend_enforces_distrust() {
     // This integration-test process contains one test. Configure the platform
     // roots through `SSL_CERT_FILE` before any client or async task is created.

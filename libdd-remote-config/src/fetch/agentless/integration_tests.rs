@@ -352,7 +352,6 @@ fn config_snapshot_version(f: &AgentlessFetcher<MockHttp>) -> Option<u64> {
 /// (unchanged) top-targets must still converge. Before the fix the wipe drops
 /// the top-targets and `update()` is stuck; the cache re-serves them.
 #[tokio::test]
-#[cfg_attr(miri, ignore)]
 async fn test_root_rotation_without_top_targets_still_converges() {
     let config_key = new_key();
     let director_key = new_key();
@@ -427,7 +426,6 @@ async fn test_root_rotation_without_top_targets_still_converges() {
 /// re-verifies from the embedded root — no stuck from a partially-advanced
 /// trusted DB.
 #[tokio::test]
-#[cfg_attr(miri, ignore)]
 async fn test_apply_error_resets_and_recovers() {
     let config_key = new_key();
     let director_key = new_key();
@@ -658,7 +656,6 @@ fn dc_update(
 /// same-chain fresh join of the recovery poll is routed through the normal
 /// `apply()` path without requiring the pin.
 #[tokio::test]
-#[cfg_attr(miri, ignore)]
 async fn test_same_chain_rejoins_without_org_uuid_pin() {
     let config_key = new_key();
     let director_key = new_key();
@@ -732,7 +729,6 @@ async fn test_same_chain_rejoins_without_org_uuid_pin() {
 }
 
 #[tokio::test]
-#[cfg_attr(miri, ignore)]
 async fn test_dc_switch_recovers_from_embedded_root() {
     let shared_config_key = new_key();
     let shared_director_key = new_key();
@@ -835,7 +831,6 @@ async fn test_dc_switch_recovers_from_embedded_root() {
 /// difference identifies a genuine DC switch (like the datadog-agent fix,
 /// which does not compare versions either).
 #[tokio::test]
-#[cfg_attr(miri, ignore)]
 async fn test_dc_switch_to_lower_root_version_accepted() {
     let shared_config_key = new_key();
     let shared_director_key = new_key();
@@ -925,7 +920,6 @@ async fn test_dc_switch_to_lower_root_version_accepted() {
 /// chains are abandoned must reject it, and the fetcher must keep working on
 /// DC B.
 #[tokio::test]
-#[cfg_attr(miri, ignore)]
 async fn test_dc_switch_replay_of_abandoned_chain_rejected() {
     let shared_config_key = new_key();
     let shared_director_key = new_key();
@@ -1054,7 +1048,6 @@ async fn test_dc_switch_replay_of_abandoned_chain_rejected() {
 /// kept rotating while we were away, so its chain sits ABOVE the floor
 /// recorded when it was abandoned. Only replays below the floor are rejected.
 #[tokio::test]
-#[cfg_attr(miri, ignore)]
 async fn test_dc_switch_back_to_advanced_previous_dc_accepted() {
     let shared_config_key = new_key();
     let shared_director_key = new_key();
@@ -1173,7 +1166,6 @@ async fn test_dc_switch_back_to_advanced_previous_dc_accepted() {
 /// cannot be latched: the fresh-join root chain fails verification from the
 /// embedded root and the fetcher stays failed at the embedded root.
 #[tokio::test]
-#[cfg_attr(miri, ignore)]
 async fn test_dc_switch_untrusted_chain_stays_failed() {
     let shared_config_key = new_key();
     let shared_director_key = new_key();
@@ -1223,7 +1215,6 @@ async fn test_dc_switch_untrusted_chain_stays_failed() {
 /// /org endpoint reports must be rejected: the recovery re-verifies the whole
 /// state, including the org pin, and does not latch the new DC.
 #[tokio::test]
-#[cfg_attr(miri, ignore)]
 async fn test_dc_switch_org_mismatch_rejected() {
     let shared_config_key = new_key();
     let shared_director_key = new_key();
@@ -1388,7 +1379,6 @@ async fn build_director_with_targets(
 /// consults it to drop unparseable/unknown-product targets before they reach
 /// `active_targets`, so `collect_handles` never sees a path it can't serve.
 #[tokio::test]
-#[cfg_attr(miri, ignore)]
 async fn test_unknown_product_target_is_not_stuck_known_targets() {
     let config_key = new_key();
     let product_key = new_key();
@@ -1492,7 +1482,6 @@ fn delegated_response(
 /// director assert an arbitrary sha512 digest config never authorized — so the
 /// whole `apply()` must now fail.
 #[tokio::test]
-#[cfg_attr(miri, ignore)]
 async fn test_director_hash_superset_is_rejected() {
     let config_key = new_key();
     let product_key = new_key();
@@ -1585,7 +1574,6 @@ async fn matched_pair(
 /// no longer hash to what the director signed. Same length — so the length
 /// check passes and the hash check is the one that fires.
 #[tokio::test]
-#[cfg_attr(miri, ignore)]
 async fn test_tampered_target_bytes_are_rejected() {
     let path = "datadog/2/APM_TRACING/cfgid/config";
     let content: &[u8] = b"apm config payload";
@@ -1630,7 +1618,6 @@ async fn test_tampered_target_bytes_are_rejected() {
 /// Because the length check runs before the hash check in `fetch_target`,
 /// this is the specific error we expect — not a hash mismatch.
 #[tokio::test]
-#[cfg_attr(miri, ignore)]
 async fn test_target_length_mismatch_is_rejected() {
     let path = "datadog/2/APM_TRACING/cfgid/config";
     let content: &[u8] = b"apm config payload";
@@ -1671,7 +1658,6 @@ async fn test_target_length_mismatch_is_rejected() {
 /// delegation. `verify_director_against_config` must reject the whole apply
 /// before we ever hit the byte-level checks.
 #[tokio::test]
-#[cfg_attr(miri, ignore)]
 async fn test_director_target_not_in_config_delegations_is_rejected() {
     let config_key = new_key();
     let product_key = new_key();
@@ -1732,7 +1718,6 @@ async fn test_director_target_not_in_config_delegations_is_rejected() {
 /// with different sizes). `verify_director_against_config` compares length
 /// first, so this is the error we expect — not a hash mismatch.
 #[tokio::test]
-#[cfg_attr(miri, ignore)]
 async fn test_director_config_length_disagreement_is_rejected() {
     let config_key = new_key();
     let product_key = new_key();
@@ -1799,7 +1784,6 @@ async fn test_director_config_length_disagreement_is_rejected() {
 /// where the algorithm SET differs; this one exercises the equal-cardinality
 /// value-disagreement path.
 #[tokio::test]
-#[cfg_attr(miri, ignore)]
 async fn test_director_config_hash_value_disagreement_is_rejected() {
     let config_key = new_key();
     let product_key = new_key();
@@ -1916,7 +1900,6 @@ fn config_snapshot_with_org_uuid_keys(
 /// UUID that the snapshot pins, so the fetch converges and exactly one org
 /// request was issued.
 #[tokio::test]
-#[cfg_attr(miri, ignore)]
 async fn test_org_uuid_match_via_concurrent_prefetch() {
     let config_key = new_key();
     let director_key = new_key();
@@ -1957,7 +1940,6 @@ async fn test_org_uuid_match_via_concurrent_prefetch() {
 /// Mismatching org UUID must fail the poll AND reset the fetcher, so a
 /// subsequent poll reports the clean (embedded) versions.
 #[tokio::test]
-#[cfg_attr(miri, ignore)]
 async fn test_org_uuid_mismatch_fails_and_resets() {
     let config_key = new_key();
     let director_key = new_key();
@@ -2008,7 +1990,6 @@ async fn test_org_uuid_mismatch_fails_and_resets() {
 /// config trusted-root version), forcing a fresh /api/v0.1/org fetch on the
 /// next poll.
 #[tokio::test]
-#[cfg_attr(miri, ignore)]
 async fn test_org_uuid_refetched_on_root_rotation() {
     let config_key = new_key();
     let director_key = new_key();

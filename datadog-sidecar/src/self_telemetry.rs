@@ -445,7 +445,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[cfg_attr(miri, ignore)]
     async fn context_omissions_emit_weighted_metric_with_reason() {
         let http = MockServer::start_async().await;
         let metric = http

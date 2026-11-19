@@ -1404,6 +1404,7 @@ pub unsafe extern "C" fn ddog_ai_usage_buffer_drop(buffer: *mut Buffer) {
 }
 
 #[cfg(test)]
+#[libdd_test_macros::miri_test]
 mod tests {
     use super::*;
 

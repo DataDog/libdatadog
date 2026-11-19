@@ -9,7 +9,6 @@ fn ensure_crypto_provider() {
     let _ = rustls::crypto::ring::default_provider().install_default();
 }
 
-#[cfg_attr(miri, ignore)]
 #[tokio::test]
 async fn test_multipart_upload() {
     ensure_crypto_provider();
@@ -41,7 +40,6 @@ async fn test_multipart_upload() {
     mock.assert_async().await;
 }
 
-#[cfg_attr(miri, ignore)]
 #[tokio::test]
 async fn test_multipart_sets_content_type() {
     ensure_crypto_provider();

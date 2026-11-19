@@ -192,6 +192,7 @@ mod tests {
         assert_eq!(s.allocations, 0);
     }
 
+    #[libdd_test_macros::miri_test]
     #[test]
     fn alloc_increments_both_counters() {
         let a = ReportingAllocator::new(System);
@@ -203,6 +204,7 @@ mod tests {
         unsafe { a.dealloc(ptr, layout) };
     }
 
+    #[libdd_test_macros::miri_test]
     #[test]
     fn dealloc_does_not_change_counters() {
         let a = ReportingAllocator::new(System);
@@ -214,6 +216,7 @@ mod tests {
         assert_eq!(a.stats().allocations, 1);
     }
 
+    #[libdd_test_macros::miri_test]
     #[test]
     fn multiple_allocs_accumulate() {
         let a = ReportingAllocator::new(System);
@@ -238,6 +241,7 @@ mod tests {
         assert_eq!(m.add(&100, &200), 300);
     }
 
+    #[libdd_test_macros::miri_test]
     #[test]
     fn measurement_start_end_tracks_delta() {
         let m = AllocatedBytesMeasurement(Cell::new(false), &SHARED);

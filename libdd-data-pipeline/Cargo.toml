@@ -77,6 +77,7 @@ harness = false
 path = "benches/trace_buffer.rs"
 
 [dev-dependencies]
+libdd-test-macros = { path = "../libdd-test-macros" }
 libdd-capabilities-impl = { version = "8.0.0", path = "../libdd-capabilities-impl" }
 libdd-log = { path = "../libdd-log" }
 libdd-shared-runtime = { version = "7.0.0", path = "../libdd-shared-runtime" }

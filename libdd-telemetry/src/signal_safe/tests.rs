@@ -13,6 +13,7 @@ use crate::data::{
 use crate::data::{Application, Host};
 
 #[cfg(feature = "std")]
+#[libdd_test_macros::miri_test]
 #[test]
 fn encoding_matches_the_owned_serde_model() {
     let tags = ["component:signal-safe", "standalone", "escaped:\"yes\"\n"];
@@ -90,6 +91,7 @@ fn encoding_matches_the_owned_serde_model() {
     assert_eq!(actual, serde_json::to_value(expected).unwrap());
 }
 
+#[libdd_test_macros::miri_test]
 #[test]
 fn reports_a_small_buffer() {
     let application = Application::default();

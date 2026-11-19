@@ -165,6 +165,7 @@ pub unsafe extern "C" fn ddog_trace_exporter_error_free(error: Option<Box<Export
 }
 
 #[cfg(test)]
+#[libdd_test_macros::miri_test]
 mod tests {
     use super::*;
     use std::ffi::CStr;

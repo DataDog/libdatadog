@@ -348,6 +348,7 @@ mod tests {
     use core::ffi::c_char;
     use core::ptr;
 
+    #[libdd_test_macros::miri_test]
     #[test]
     fn slice_from_into_slice() {
         let raw: &[u8] = b"_ZN9wikipedia7article6formatE";
@@ -357,6 +358,7 @@ mod tests {
         assert_eq!(converted, raw);
     }
 
+    #[libdd_test_macros::miri_test]
     #[test]
     fn string_try_to_utf8() {
         let raw: &[u8] = b"_ZN9wikipedia7article6formatE";
@@ -369,6 +371,7 @@ mod tests {
         assert_eq!(expected, result.unwrap())
     }
 
+    #[libdd_test_macros::miri_test]
     #[test]
     fn string_from_c_char() {
         let raw: &[u8] = b"_ZN9wikipedia7article6formatE";
@@ -381,6 +384,7 @@ mod tests {
         assert_eq!(expected, result.unwrap())
     }
 
+    #[libdd_test_macros::miri_test]
     #[test]
     fn char_slice_from_bytes() {
         let raw: &[u8] = b"_ZN9wikipedia7article6formatE";
@@ -546,6 +550,7 @@ mod tests {
         ));
     }
 
+    #[libdd_test_macros::miri_test]
     #[test]
     fn test_try_as_bytes_u8_slice() {
         let data: &[u8] = b"test data";
@@ -555,6 +560,7 @@ mod tests {
         assert_eq!(result.unwrap(), data);
     }
 
+    #[libdd_test_macros::miri_test]
     #[test]
     fn test_try_as_bytes_i8_slice() {
         let data: &[i8] = &[72, 101, 108, 108, 111]; // "Hello" in i8
@@ -564,6 +570,7 @@ mod tests {
         assert_eq!(result.unwrap(), b"Hello");
     }
 
+    #[libdd_test_macros::miri_test]
     #[test]
     fn test_try_as_bytes_char_slice_error_propagation() {
         let null_nonzero: Slice<c_char> = Slice {

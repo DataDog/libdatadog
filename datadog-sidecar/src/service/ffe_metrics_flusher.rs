@@ -114,7 +114,6 @@ mod tests {
 
     /// POST hits the configured OTLP metrics path with application/x-protobuf.
     #[tokio::test]
-    #[cfg_attr(miri, ignore)]
     async fn posts_protobuf_to_configured_endpoint() {
         let server = MockServer::start_async().await;
         let mock = server
@@ -146,7 +145,6 @@ mod tests {
 
     /// Non-2xx responses are logged and dropped; no panic, no retry.
     #[tokio::test]
-    #[cfg_attr(miri, ignore)]
     async fn non_2xx_does_not_panic() {
         let server = MockServer::start_async().await;
         let _mock = server
@@ -170,7 +168,6 @@ mod tests {
         .await;
     }
 
-    #[cfg_attr(miri, ignore)] // tokio executor park/wake overhead is prohibitively slow under Miri
     #[tokio::test]
     async fn timeout_returns_without_waiting_for_http_response() {
         let ep = Endpoint {

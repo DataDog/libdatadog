@@ -232,7 +232,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg_attr(miri, ignore)]
     fn test_trigger_sigpipe() {
         use std::mem;
         use std::thread;

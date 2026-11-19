@@ -304,6 +304,7 @@ mod tests {
         assert!(shared_runtime.is_ok());
     }
 
+    #[libdd_test_macros::miri_test]
     #[test]
     fn test_spawn_worker() {
         let shared_runtime = ForkSafeRuntime::new().unwrap();
@@ -321,6 +322,7 @@ mod tests {
         );
     }
 
+    #[libdd_test_macros::miri_test]
     #[test]
     fn test_worker_handle_stop() {
         let rt = tokio::runtime::Runtime::new().unwrap();
@@ -349,6 +351,7 @@ mod tests {
         assert_eq!(last, -1);
     }
 
+    #[libdd_test_macros::miri_test]
     #[test]
     fn test_before_and_after_fork_parent() {
         let shared_runtime = ForkSafeRuntime::new().unwrap();
@@ -377,6 +380,7 @@ mod tests {
         );
     }
 
+    #[libdd_test_macros::miri_test]
     #[test]
     fn test_after_fork_child() {
         let shared_runtime = ForkSafeRuntime::new().unwrap();
@@ -405,6 +409,7 @@ mod tests {
         );
     }
 
+    #[libdd_test_macros::miri_test]
     #[test]
     fn test_shutdown() {
         let shared_runtime = ForkSafeRuntime::new().unwrap();
@@ -427,6 +432,7 @@ mod tests {
         assert_eq!(last, -1);
     }
 
+    #[libdd_test_macros::miri_test]
     #[test]
     fn test_after_fork_child_drops_worker_not_restart_on_fork() {
         let shared_runtime = ForkSafeRuntime::new().unwrap();
@@ -451,6 +457,7 @@ mod tests {
         );
     }
 
+    #[libdd_test_macros::miri_test]
     #[test]
     fn test_set_fork_restart_drops_worker_without_shutdown() {
         let shared_runtime = ForkSafeRuntime::new().unwrap();
@@ -477,6 +484,7 @@ mod tests {
 
     /// A single `PausableWorker` in `InvalidState` must
     /// not abort the whole restart loop in `after_fork_parent`
+    #[libdd_test_macros::miri_test]
     #[test]
     fn after_fork_parent_skips_invalid_state_workers() {
         let runtime = ForkSafeRuntime::new().unwrap();
@@ -530,6 +538,7 @@ mod tests {
     }
 
     // A flush requested between `before_fork` and `after_fork_parent` runs only after the restart.
+    #[libdd_test_macros::miri_test]
     #[test]
     fn test_flush_during_fork_window() {
         let shared_runtime = ForkSafeRuntime::new().unwrap();
@@ -552,6 +561,7 @@ mod tests {
     }
 
     // Repeated fork cycles leave the worker running.
+    #[libdd_test_macros::miri_test]
     #[test]
     fn test_repeated_fork_cycles_keep_running() {
         let shared_runtime = ForkSafeRuntime::new().unwrap();
@@ -569,6 +579,7 @@ mod tests {
     }
 
     // Flushing a stopped worker returns `AlreadyStopped`.
+    #[libdd_test_macros::miri_test]
     #[test]
     fn test_flush_after_stop() {
         let shared_runtime = ForkSafeRuntime::new().unwrap();

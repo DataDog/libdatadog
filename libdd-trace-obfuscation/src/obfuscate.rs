@@ -755,7 +755,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg_attr(miri, ignore)]
     fn test_replace_span_tags() {
         let mut span = test_utils::create_test_span(111, 222, 0, 1, true);
         span.meta
@@ -905,6 +904,7 @@ mod tests {
 }
 
 #[cfg(test)]
+#[libdd_test_macros::miri_test]
 mod v04_tests {
     use super::{obfuscate_v04_span, tests::UNOBFUSCATABLE_SQL};
     use crate::obfuscation_config::{
@@ -1214,6 +1214,7 @@ mod v04_tests {
 }
 
 #[cfg(test)]
+#[libdd_test_macros::miri_test]
 mod v1_tests {
     use super::{obfuscate_v1_chunk_attributes, obfuscate_v1_span};
     use crate::obfuscation_config::{

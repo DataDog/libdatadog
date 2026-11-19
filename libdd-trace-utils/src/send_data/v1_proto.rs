@@ -506,6 +506,7 @@ mod tests {
 
     /// The protobuf path must agree with what the msgpack path delivers: converting a payload
     /// directly gives the same result as converting it after a V1 msgpack round trip.
+    #[libdd_test_macros::miri_test]
     #[test]
     fn matches_msgpack_round_trip() {
         let original = sample_payload(false);

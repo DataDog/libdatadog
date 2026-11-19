@@ -476,7 +476,6 @@ pub mod tests {
     /// next fetch. Until then a target's listing keeps naming the version it has, so that version
     /// must stay intact when another target receives the new one.
     #[tokio::test]
-    #[cfg_attr(miri, ignore)]
     async fn new_version_leaves_other_targets_their_file() {
         let server = RemoteConfigServer::spawn();
         let both = vec![DUMMY_TARGET.clone(), OTHER_TARGET.clone()];
@@ -534,7 +533,6 @@ pub mod tests {
     /// because another target fetched the new version meanwhile. That state belongs to the old
     /// version: the new one must not be reported with it.
     #[tokio::test]
-    #[cfg_attr(miri, ignore)]
     async fn late_apply_state_of_old_version_is_not_reported_for_new_one() {
         let server = RemoteConfigServer::spawn();
         let both = vec![DUMMY_TARGET.clone(), OTHER_TARGET.clone()];
@@ -610,7 +608,6 @@ pub mod tests {
     /// until the listing replacing it has been delivered, whether the path got a new version or
     /// was removed, and at shutdown until on_finish() withdrew the listing.
     #[tokio::test]
-    #[cfg_attr(miri, ignore)]
     async fn previous_files_outlive_the_delivery_of_new_ones() {
         let server = RemoteConfigServer::spawn();
         let storage = RcFileStorage::default();
@@ -740,7 +737,6 @@ pub mod tests {
     }
 
     #[tokio::test]
-    #[cfg_attr(miri, ignore)]
     async fn test_single_fetcher() {
         let server = RemoteConfigServer::spawn();
         let storage = RcFileStorage::default();
@@ -807,7 +803,6 @@ pub mod tests {
     }
 
     #[tokio::test]
-    #[cfg_attr(miri, ignore)]
     async fn test_parallel_fetchers() {
         let server = RemoteConfigServer::spawn();
         let storage = RcFileStorage::default();

@@ -125,6 +125,7 @@ impl From<SetId<Function>> for FunctionId2 {
 }
 
 #[cfg(test)]
+#[libdd_test_macros::miri_test]
 mod tests {
     use super::*;
     use crate::profiles::datatypes::ProfilesDictionary;

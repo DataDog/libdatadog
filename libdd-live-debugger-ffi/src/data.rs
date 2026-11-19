@@ -377,6 +377,7 @@ pub extern "C" fn ddog_capture_defaults() -> CaptureConfiguration {
 }
 
 #[cfg(test)]
+#[libdd_test_macros::miri_test]
 mod tests {
     use super::Probe;
     use libdd_live_debugger::debugger_defs::ProbeMetadata;

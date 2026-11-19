@@ -122,6 +122,7 @@ pub unsafe extern "C" fn ddog_mutable_metadata_set_identity(
 }
 
 #[cfg(test)]
+#[libdd_test_macros::miri_test]
 mod tests {
     use super::*;
     use alloc::string::ToString;

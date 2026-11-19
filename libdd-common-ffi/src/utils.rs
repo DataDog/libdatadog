@@ -114,6 +114,7 @@ mod tests {
     #[global_allocator]
     static ALLOCATOR: AllocDisabler = AllocDisabler;
 
+    #[libdd_test_macros::miri_test]
     #[test]
     fn test_handle_panic_error_fallback_does_not_allocate() {
         let mut error_result_buffer: [core::ffi::c_char; 100] = [0; 100];

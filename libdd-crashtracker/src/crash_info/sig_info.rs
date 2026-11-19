@@ -130,7 +130,6 @@ mod unix {
     }
 
     #[cfg(test)]
-    #[cfg_attr(miri, ignore)]
     #[test]
     fn test_si_code() {
         // standard values differ between oses, but it seems like segv match

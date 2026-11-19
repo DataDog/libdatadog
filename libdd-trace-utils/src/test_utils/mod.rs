@@ -381,7 +381,6 @@ pub fn create_test_json_span(
 /// use httpmock::MockServer;
 /// use libdd_trace_utils::test_utils::poll_for_mock_hit;
 ///
-/// #[cfg_attr(miri, ignore)]
 /// async fn test_with_poll() {
 ///     let server = MockServer::start();
 ///

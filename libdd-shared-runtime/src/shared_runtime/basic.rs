@@ -195,6 +195,7 @@ mod tests {
         )
     }
 
+    #[libdd_test_macros::miri_test]
     #[test]
     fn test_new_lib_built_runtime_spawn_worker_runs() {
         let shared_runtime = BasicRuntime::new().expect("BasicRuntime::new");
@@ -210,6 +211,7 @@ mod tests {
         );
     }
 
+    #[libdd_test_macros::miri_test]
     #[test]
     fn test_with_worker_threads_spawn_worker_runs() {
         let shared_runtime =
@@ -226,6 +228,7 @@ mod tests {
         );
     }
 
+    #[libdd_test_macros::miri_test]
     #[test]
     fn test_spawn_worker_ignores_restart_on_fork() {
         let rt = new_outer_runtime();
@@ -244,6 +247,7 @@ mod tests {
         );
     }
 
+    #[libdd_test_macros::miri_test]
     #[test]
     fn test_from_handle_spawn_worker_runs() {
         let rt = new_outer_runtime();
@@ -260,6 +264,7 @@ mod tests {
         );
     }
 
+    #[libdd_test_macros::miri_test]
     #[test]
     fn test_shutdown_async_stops_workers_only() {
         let rt = new_outer_runtime();
@@ -349,6 +354,7 @@ mod tests {
         assert!(matches!(err, BlockOnTimeoutError::Io(_)));
     }
 
+    #[libdd_test_macros::miri_test]
     #[test]
     fn test_keeps_runtime_alive_after_caller_drops() {
         let rt = new_outer_runtime();
@@ -369,6 +375,7 @@ mod tests {
     }
 
     // `WorkerHandle::flush` runs the worker flush and its token resolves.
+    #[libdd_test_macros::miri_test]
     #[test]
     fn test_worker_handle_flush() {
         let shared_runtime = BasicRuntime::new().expect("BasicRuntime::new");

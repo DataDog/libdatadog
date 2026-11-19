@@ -86,6 +86,7 @@ mod encode_tests {
         (vec![vec![span]], resource_info)
     }
 
+    #[libdd_test_macros::miri_test]
     #[test]
     fn json_and_protobuf_carry_same_span() {
         // Decisive guard: JSON and protobuf are encoded from the *same* prost IR, so the two

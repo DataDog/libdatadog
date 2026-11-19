@@ -7,7 +7,6 @@ use libdd_ipc::platform::{FileBackedHandle, ShmHandle};
 
 #[test]
 #[cfg(unix)]
-#[cfg_attr(miri, ignore = "requires native IPC, shared memory, and exec")]
 fn returned_handle_does_not_survive_exec() {
     use libdd_ipc::platform::{OwnedFileHandle, PlatformHandle};
     use std::os::fd::AsRawFd;
@@ -50,7 +49,6 @@ fn returned_handle_does_not_survive_exec() {
 
 #[test]
 #[cfg(unix)]
-#[cfg_attr(miri, ignore = "requires native descriptor access after exec")]
 fn exec_mapping_child() {
     let Ok(fd) = std::env::var("DD_IPC_EXEC_FD") else {
         return;

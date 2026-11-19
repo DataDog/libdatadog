@@ -1191,7 +1191,6 @@ mod tests {
 
     #[tokio::test]
     #[allow(clippy::type_complexity)]
-    #[cfg_attr(all(miri, target_os = "macos"), ignore)]
     async fn test_get_v05_traces_from_request_body() {
         let data: (
             Vec<String>,
@@ -1273,7 +1272,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[cfg_attr(miri, ignore)]
     async fn test_get_traces_from_request_body() {
         let pairs = vec![
             (
@@ -1350,7 +1348,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[cfg_attr(miri, ignore)]
     async fn test_get_traces_from_request_body_with_span_links() {
         let trace_input = json!([[{
             "service": "test-service",

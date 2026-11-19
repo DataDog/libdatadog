@@ -154,7 +154,6 @@ mod tests {
     /// Only the pages a message is written to become resident, so a thread that only ever
     /// receives small messages doesn't pay for a buffer sized for the largest one.
     #[test]
-    #[cfg_attr(miri, ignore)]
     fn small_messages_leave_the_buffer_unresident() {
         std::thread::spawn(|| {
             let (ptr, len) = with_recv_buf(|buf| {
@@ -172,7 +171,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg_attr(miri, ignore)]
     fn large_messages_do_not_stay_resident() {
         let len = 4 * 1024 * 1024;
         let mut buf = RecvBuf::new(len).unwrap();
@@ -200,7 +198,6 @@ mod tests {
     /// does not reliably merge back, if the release ended where the message did.
     #[test]
     #[cfg(target_os = "macos")]
-    #[cfg_attr(miri, ignore)]
     fn releases_do_not_fragment_the_mapping() {
         let len = 8 * 1024 * 1024;
         let mut buf = RecvBuf::new(len).unwrap();

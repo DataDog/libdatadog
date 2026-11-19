@@ -229,6 +229,7 @@ pub(crate) fn install_assert_hook() {
 }
 
 #[cfg(test)]
+#[libdd_test_macros::miri_test]
 mod tests {
     use super::*;
 

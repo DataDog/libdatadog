@@ -400,6 +400,7 @@ pub fn read_tls_pointer_untyped() -> *const u8 {
 }
 
 #[cfg(test)]
+#[libdd_test_macros::miri_test]
 mod tests {
     use super::ThreadContextRecord;
 

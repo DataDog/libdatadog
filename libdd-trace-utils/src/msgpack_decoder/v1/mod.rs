@@ -435,6 +435,7 @@ where
 }
 
 #[cfg(test)]
+#[libdd_test_macros::miri_test]
 mod tests {
     use super::*;
     use crate::msgpack_encoder::v1::to_vec_from_v1;

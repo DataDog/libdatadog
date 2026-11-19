@@ -62,6 +62,7 @@ unsafe impl Value for i64 {
 }
 
 #[cfg(test)]
+#[libdd_test_macros::miri_test]
 mod tests {
     use super::*;
 

@@ -51,6 +51,7 @@ fn one_span(
     (b, chunk, span)
 }
 
+#[libdd_test_macros::miri_test]
 #[test]
 fn builds_span_with_promoted_and_typed_attributes() {
     let (b, _, span) = one_span(0x0123456789abcdef);
@@ -84,6 +85,7 @@ fn builds_span_with_promoted_and_typed_attributes() {
     assert!(contains(&encoded, &[0x10, 0x02]));
 }
 
+#[libdd_test_macros::miri_test]
 #[test]
 fn new_span_has_unspecified_kind() {
     // A span without `span.kind` goes out as 0 on V1, as Go and Java send it.
@@ -94,6 +96,7 @@ fn new_span_has_unspecified_kind() {
     assert_eq!(decoded.chunks[0].spans[0].span_kind as u32, 0);
 }
 
+#[libdd_test_macros::miri_test]
 #[test]
 fn getters_round_trip_setters() {
     let mut b = ddog_v1_new_builder();
@@ -242,6 +245,7 @@ fn getters_round_trip_setters() {
     ddog_v1_free_builder(b);
 }
 
+#[libdd_test_macros::miri_test]
 #[test]
 fn nested_attributes_round_trip() {
     let (b, _, span) = one_span(1);
@@ -313,6 +317,7 @@ fn nested_attributes_round_trip() {
     }
 }
 
+#[libdd_test_macros::miri_test]
 #[test]
 fn an_overwritten_key_is_encoded_once_with_the_last_value() {
     let (b, _, span) = one_span(1);
@@ -332,6 +337,7 @@ fn an_overwritten_key_is_encoded_once_with_the_last_value() {
     assert!(!contains(&encoded, b"first-value"));
 }
 
+#[libdd_test_macros::miri_test]
 #[test]
 fn span_refetched_by_index_after_sibling_pushes() {
     let mut b = ddog_v1_new_builder();
@@ -365,6 +371,7 @@ fn span_refetched_by_index_after_sibling_pushes() {
     }
 }
 
+#[libdd_test_macros::miri_test]
 #[test]
 fn encoder_streams_repeated_string_once() {
     // "shared" used as service in two chunks must appear as raw bytes exactly once on the
@@ -390,6 +397,7 @@ fn encoder_streams_repeated_string_once() {
     );
 }
 
+#[libdd_test_macros::miri_test]
 #[test]
 fn builds_links_and_events() {
     let (b, _, span) = one_span(1);
@@ -429,6 +437,7 @@ fn builds_links_and_events() {
     assert!(contains(&encoded, &expected_link_tid));
 }
 
+#[libdd_test_macros::miri_test]
 #[test]
 fn chunk_level_fields_encoded() {
     let (b, chunk, span) = one_span(1);
@@ -445,6 +454,7 @@ fn chunk_level_fields_encoded() {
     assert!(contains(&encoded, &[0x07, 0x04]));
 }
 
+#[libdd_test_macros::miri_test]
 #[test]
 fn populate_metadata_sets_container_id_and_fields() {
     let (mut b, _, span) = one_span(1);
@@ -483,6 +493,7 @@ fn populate_metadata_sets_container_id_and_fields() {
     }
 }
 
+#[libdd_test_macros::miri_test]
 #[test]
 fn transfer_span_attr_copies_and_optionally_deletes() {
     let (b, chunk, root) = one_span(1);
@@ -542,6 +553,7 @@ fn transfer_span_attr_copies_and_optionally_deletes() {
     }
 }
 
+#[libdd_test_macros::miri_test]
 #[test]
 fn attributes_handle_stays_valid_across_element_calls() {
     // As the tracer does: take the handles once, then interleave setters and sibling pushes.
@@ -567,6 +579,7 @@ fn attributes_handle_stays_valid_across_element_calls() {
     drop(b);
 }
 
+#[libdd_test_macros::miri_test]
 #[test]
 fn freeing_a_populated_builder_releases_everything() {
     // Miri's leak checker is the assertion: nothing built here is sent.
@@ -583,6 +596,7 @@ fn freeing_a_populated_builder_releases_everything() {
     ddog_v1_free_builder(b);
 }
 
+#[libdd_test_macros::miri_test]
 #[test]
 fn deep_mixed_nest_builds_at_any_capacity() {
     // [ { inner: [1, b"raw", []], empty: {} }, "tail" ], built with capacity 0 (forcing regrowth)
@@ -641,6 +655,7 @@ fn deep_mixed_nest_builds_at_any_capacity() {
     }
 }
 
+#[libdd_test_macros::miri_test]
 #[test]
 fn literal_key_adders_store_typed_values() {
     let (_b, _, span) = one_span(1);
@@ -657,6 +672,7 @@ fn literal_key_adders_store_typed_values() {
     }
 }
 
+#[libdd_test_macros::miri_test]
 #[test]
 fn span_debug_log_renders_readable_string() {
     let (_b, chunk, span) = one_span(0xdead);

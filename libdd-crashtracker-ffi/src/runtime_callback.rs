@@ -195,6 +195,7 @@ pub unsafe extern "C" fn ddog_crasht_get_registered_callback_type() -> *const st
 }
 
 #[cfg(all(test, unix))]
+#[libdd_test_macros::miri_test]
 mod tests {
     use super::*;
     use libdd_crashtracker::clear_runtime_callback;

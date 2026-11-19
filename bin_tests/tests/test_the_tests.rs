@@ -8,7 +8,6 @@ use std::{fs, process};
 use bin_tests::{ArtifactType, ArtifactsBuild, BuildProfile, fetch_built_artifacts};
 
 #[test]
-#[cfg_attr(miri, ignore)]
 fn test_the_tests_debug() {
     test_the_tests_inner(BuildProfile::Debug);
 }

@@ -23,5 +23,6 @@ prost = { workspace = true, default-features = true, optional = true }
 bolero = { workspace = true, optional = true }
 
 [dev-dependencies]
+libdd-test-macros = { path = "../libdd-test-macros" }
 bolero = { workspace = true, features = ["std"] }
 libdd-profiling-protobuf = { path = ".", features = ["bolero", "prost_impls"] }

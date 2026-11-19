@@ -581,6 +581,7 @@ mod tests {
         }
     }
 
+    #[libdd_test_macros::miri_test]
     #[test]
     fn test_register_panic_hook() {
         assert!(PREVIOUS_PANIC_HOOK.load(SeqCst).is_null());
@@ -591,6 +592,7 @@ mod tests {
         assert!(!PREVIOUS_PANIC_HOOK.load(SeqCst).is_null());
     }
 
+    #[libdd_test_macros::miri_test]
     #[test]
     fn test_panic_message_storage_and_retrieval() {
         // Test that panic messages can be stored and retrieved via atomic pointer
@@ -611,6 +613,7 @@ mod tests {
         }
     }
 
+    #[libdd_test_macros::miri_test]
     #[test]
     fn test_panic_message_null_handling() {
         // Test that null message pointers are handled correctly
@@ -624,6 +627,7 @@ mod tests {
         assert!(old_ptr.is_null());
     }
 
+    #[libdd_test_macros::miri_test]
     #[test]
     fn test_panic_message_replacement() {
         // Test that replacing an existing message cleans up the old one
@@ -648,6 +652,7 @@ mod tests {
         }
     }
 
+    #[libdd_test_macros::miri_test]
     #[test]
     fn test_metadata_update_atomic() {
         // Test that metadata updates are atomic
@@ -727,12 +732,14 @@ mod tests {
 
     // take_metadata_ptr
 
+    #[libdd_test_macros::miri_test]
     #[test]
     fn test_take_metadata_ptr_returns_null_when_unset() {
         clear_metadata();
         assert!(take_metadata_ptr().is_null());
     }
 
+    #[libdd_test_macros::miri_test]
     #[test]
     fn test_take_metadata_ptr_takes_value_and_leaves_null() {
         clear_metadata();
@@ -748,6 +755,7 @@ mod tests {
         unsafe { drop(Box::from_raw(ptr)) };
     }
 
+    #[libdd_test_macros::miri_test]
     #[test]
     fn test_take_metadata_ptr_preserves_data() {
         clear_metadata();
@@ -770,12 +778,14 @@ mod tests {
 
     // take_config_ptr
 
+    #[libdd_test_macros::miri_test]
     #[test]
     fn test_take_config_ptr_returns_null_when_unset() {
         clear_config();
         assert!(take_config_ptr().is_null());
     }
 
+    #[libdd_test_macros::miri_test]
     #[test]
     fn test_take_config_ptr_takes_value_and_leaves_null() {
         clear_config();
@@ -792,12 +802,14 @@ mod tests {
 
     // take_metadata
 
+    #[libdd_test_macros::miri_test]
     #[test]
     fn test_take_metadata_returns_none_when_unset() {
         clear_metadata();
         assert!(take_metadata().is_none());
     }
 
+    #[libdd_test_macros::miri_test]
     #[test]
     fn test_take_metadata_returns_value_and_leaves_none() {
         clear_metadata();
@@ -816,12 +828,14 @@ mod tests {
 
     // take_config
 
+    #[libdd_test_macros::miri_test]
     #[test]
     fn test_take_config_returns_none_when_unset() {
         clear_config();
         assert!(take_config().is_none());
     }
 
+    #[libdd_test_macros::miri_test]
     #[test]
     fn test_take_config_returns_value_and_leaves_none() {
         clear_config();

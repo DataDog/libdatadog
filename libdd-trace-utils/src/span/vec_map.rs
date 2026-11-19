@@ -602,6 +602,7 @@ mod tests {
         assert_eq!(map.len(), 4);
     }
 
+    #[libdd_test_macros::miri_test]
     #[test]
     fn value_map_mut_traversals_drop_shadowed_duplicates() {
         let mut map = with_duplicates();
@@ -726,6 +727,7 @@ mod tests {
         assert!(!m.is_deduped());
     }
 
+    #[libdd_test_macros::miri_test]
     #[test]
     fn dedup_sets_flag() {
         let mut m = VecMap::new();
@@ -735,6 +737,7 @@ mod tests {
         assert!(m.is_deduped());
     }
 
+    #[libdd_test_macros::miri_test]
     #[test]
     fn dedup_on_empty_map() {
         let mut m: VecMap<String, i32> = VecMap::new();
@@ -743,6 +746,7 @@ mod tests {
         assert!(m.is_empty());
     }
 
+    #[libdd_test_macros::miri_test]
     #[test]
     fn dedup_no_duplicates() {
         let mut m = VecMap::new();
@@ -756,6 +760,7 @@ mod tests {
         assert_eq!(m.get("c"), Some(&3));
     }
 
+    #[libdd_test_macros::miri_test]
     #[test]
     fn dedup_keeps_last_value() {
         let mut m = VecMap::new();
@@ -770,6 +775,7 @@ mod tests {
         assert_eq!(m.get("b"), Some(&20));
     }
 
+    #[libdd_test_macros::miri_test]
     #[test]
     fn dedup_is_idempotent() {
         let mut m = VecMap::new();
@@ -784,6 +790,7 @@ mod tests {
         assert_eq!(m.get("a"), Some(&2));
     }
 
+    #[libdd_test_macros::miri_test]
     #[test]
     fn insert_dirties_dedup_flag() {
         let mut m = VecMap::new();
@@ -795,6 +802,7 @@ mod tests {
         assert!(!m.is_deduped());
     }
 
+    #[libdd_test_macros::miri_test]
     #[test]
     fn extend_dirties_dedup_flag() {
         let mut m = VecMap::new();
@@ -806,6 +814,7 @@ mod tests {
         assert!(!m.is_deduped());
     }
 
+    #[libdd_test_macros::miri_test]
     #[test]
     fn iter_mut_dirties_dedup_flag() {
         let mut m = VecMap::new();
@@ -820,6 +829,7 @@ mod tests {
         assert!(!m.is_deduped());
     }
 
+    #[libdd_test_macros::miri_test]
     #[test]
     fn deduped_vec_map_borrowed_iter_and_len() {
         let mut m = VecMap::new();
@@ -852,6 +862,7 @@ mod tests {
         assert_eq!(items[&"b"], &3);
     }
 
+    #[libdd_test_macros::miri_test]
     #[test]
     fn deduped_vec_map_iter_exact_size() {
         let mut m = VecMap::new();
@@ -875,6 +886,7 @@ mod tests {
         assert_eq!(d.iter().count(), 0);
     }
 
+    #[libdd_test_macros::miri_test]
     #[test]
     fn dedup_at_stack_threshold_boundary() {
         // `dedup` uses a stack-resident scratch allocator whose buffer fits ~32
@@ -899,6 +911,7 @@ mod tests {
         }
     }
 
+    #[libdd_test_macros::miri_test]
     #[test]
     fn dedup_does_not_require_clone() {
         #[derive(Debug, PartialEq, Eq, Hash)]

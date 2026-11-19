@@ -93,6 +93,32 @@ jobs:
           # Override rust-toolchain.toml so miri runs on the dated nightly
           # (miri is nightly-only) instead of the workspace MSRV.
           RUSTUP_TOOLCHAIN: ${{ steps.nightly-version.outputs.version }}
-        run: MIRIFLAGS="-Zmiri-disable-isolation" cargo miri nextest run ${{ needs.setup.outputs.crates }} --partition count:${{ matrix.partition }}/5 --no-tests=pass
+        # Which tests run is decided by `[profile.default-miri]` in
+        # .config/nextest.toml, which nextest picks because no `--profile` is
+        # given. Passing `--profile` here would drop that selection.
+        run: |
+          set -o pipefail
+          MIRIFLAGS="-Zmiri-disable-isolation" cargo miri nextest run ${{ needs.setup.outputs.crates }} --partition count:${{ matrix.partition }}/5 --no-tests=pass 2>&1 | tee "$RUNNER_TEMP/miri.log"
       # We need to disable isolation because
       # "unsupported operation: `clock_gettime` with `REALTIME` clocks not available when isolation is enabled"
+      # A broken selection fails silently (`--no-tests=pass`), so full-workspace
+      # runs check that the profile filter was applied and still selects a
+      # plausible number of tests. PR runs cover a subset of crates, where zero
+      # selected tests is legitimate.
+      - name: Check the Miri test selection
+        if: ${{ needs.setup.outputs.crates == '--workspace' }}
+        env:
+          # Per partition; roughly half of what the partitions ran when set.
+          MIN_TESTS: 80
+        run: |
+          line=$(sed -E 's/\x1b\[[0-9;]*m//g' "$RUNNER_TEMP/miri.log" | grep -m1 -E '^\s*Starting [0-9]+ tests? across' || true)
+          echo "$line"
+          if ! grep -q 'via profile.default-miri.default-filter' <<<"$line"; then
+            echo "::error::The default-miri test filter was not applied; Miri ran every test."
+            exit 1
+          fi
+          count=$(awk '{print $2}' <<<"$line")
+          if (( count < MIN_TESTS )); then
+            echo "::error::Only $count tests selected for Miri in this partition (expected at least $MIN_TESTS)."
+            exit 1
+          fi
