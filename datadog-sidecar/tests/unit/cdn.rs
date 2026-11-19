@@ -19,6 +19,7 @@ fn registration(url: &str) -> CdnRegistration {
             version: "test".into(),
             poll_interval: Duration::from_millis(50),
             request_timeout: Duration::from_secs(1),
+            service: None,
         },
         agent_endpoint: libdd_common::Endpoint::default(),
         target: Arc::new(Target::new(
@@ -80,12 +81,13 @@ async fn cdn_thread_mode_rejects_subscriptions_without_http() {
 async fn cdn_http_ipc_delivers_through_ordinary_rc_and_deduplicates() {
     let http = httpmock::MockServer::start_async().await;
     let mock = http.mock_async(|when, then| {
-        when.method("GET").path("/config");
+        when.method("GET").path("/config").header("DD-Service", "checkout");
         then.status(200).json_body(serde_json::json!({"data":{"type":"universal-flag-configuration","attributes":{
             "format":"SERVER","createdAt":"2026-11-06T00:00:00Z","environment":{"name":"test"},"flags":{}
         }}}));
     }).await;
-    let registration = registration(&http.url("/config"));
+    let mut registration = registration(&http.url("/config"));
+    registration.config.service = Some("checkout".into());
     let (connection, client) = SeqpacketConn::socketpair().unwrap();
     let server = SidecarServer::default().with_cdn_fetching(true);
     let task = tokio::spawn(server.accept_connection(connection));

@@ -29,17 +29,13 @@ use std::sync::Mutex;
 use std::{ptr, slice};
 
 use libdd_ai_usage::{
-    Attributes, DOGSTATSD_MAX_LINE_BYTES, DOGSTATSD_UDP_MAX_PAYLOAD, DOGSTATSD_UDS_MAX_PAYLOAD,
-    ERROR_TYPE_API, ErrorCode, Json, MetricBatch, MetricError, PROVIDER_ID_HEADERS, Profile,
-    ProviderResponse, SeriesType, StreamOutcome, UsageFormat, UsageStream, bedrock_arn_account,
-    classify_error, classify_known_error, datadog_series, datadog_tag_value, gen_ai_provider_name,
-    is_deployment_value, is_person_identifier, is_service_tier, operation_name_for,
-    pack_dogstatsd_joined, parse_provider_body, project_result, provider_id_attributes,
-    retain_metrics, with_deployment_attributes_json,
-};
-use libdd_ai_usage::{
-    Document, DocumentError, GatewayRequestObservation, Issues, Observation,
-    ProviderAttemptObservation, ProviderStreamingObservation, TokenBreakdownObservation,
+    DOGSTATSD_MAX_LINE_BYTES, DOGSTATSD_UDP_MAX_PAYLOAD, DOGSTATSD_UDS_MAX_PAYLOAD,
+    DatadogProjection, Document, ErrorCode, Issues, Json, MetricBatch, MetricError, ProviderReport,
+    ProviderResponse, RequestDocument, StreamOutcome, UsageFormat, UsageStream, classify_error,
+    classify_known_error, datadog_tag_value, gen_ai_provider_name, is_deployment_value,
+    is_person_identifier, is_service_tier, known_metrics, metric_list_from_json,
+    operation_name_for, pack_dogstatsd_joined, parse_provider_body, provider_id_headers,
+    provider_ids_from_json, split_constant_tags,
 };
 use serde_json::{Value, json};
 
@@ -253,11 +249,7 @@ unsafe fn write_count(out: *mut usize, count: usize) {
 /// Comma-separated `key:value` tags, empty ones dropped.
 fn constant_tags_of(tags: Option<&str>) -> Result<Vec<&str>, Failure> {
     let tags = tags.ok_or(Failure::Internal("constant_tags is not UTF-8"))?;
-    Ok(tags
-        .split(',')
-        .map(str::trim)
-        .filter(|tag| !tag.is_empty())
-        .collect())
+    Ok(split_constant_tags(tags))
 }
 
 enum Failure {
@@ -275,17 +267,15 @@ fn invalid(message: impl Into<String>) -> Failure {
     Failure::Rejected(MetricError::new(ErrorCode::FieldTypeInvalid, message))
 }
 
+/// A value of the core crate as the JSON this interface writes.
+fn to_json(value: Result<Value, serde_json::Error>) -> Result<Value, Failure> {
+    value.map_err(|_| Failure::Internal("the output could not be written"))
+}
+
 fn parse_document(input: Option<&[u8]>) -> Result<Json, Failure> {
     let input = input.ok_or(Failure::Internal("the input is null"))?;
     let text = std::str::from_utf8(input).map_err(|_| invalid("the input is not UTF-8"))?;
     Json::parse(text).map_err(|error| invalid(error.to_string()))
-}
-
-/// The projection a request document asks for: `profile`, `observation`,
-/// optional `deployment_attributes`, and an optional `metrics` list that
-/// keeps only those metrics.
-fn projection_of(document: &Json) -> Result<(Profile, libdd_ai_usage::Projection), Failure> {
-    projection_with(document, &BatchSettings::default())
 }
 
 /// The metric list a batch applies to every document that does not state
@@ -293,56 +283,6 @@ fn projection_of(document: &Json) -> Result<(Profile, libdd_ai_usage::Projection
 #[derive(Default)]
 struct BatchSettings {
     metrics: Option<Vec<String>>,
-}
-
-/// [`projection_of`], with `defaults` for what the document leaves out.
-fn projection_with(
-    document: &Json,
-    defaults: &BatchSettings,
-) -> Result<(Profile, libdd_ai_usage::Projection), Failure> {
-    let id = document
-        .get("profile")
-        .and_then(Json::as_str)
-        .ok_or_else(|| MetricError::new(ErrorCode::RequiredFieldMissing, "profile is required"))?;
-    let profile = Profile::from_id(id).ok_or_else(|| {
-        MetricError::new(
-            ErrorCode::ProfileInvalid,
-            format!("unsupported profile: {id}"),
-        )
-    })?;
-    let observation = document.get(profile.input_key()).unwrap_or(&Json::Null);
-    let projection = project_result(profile, observation)?;
-    let deployment = document.get("deployment_attributes").unwrap_or(&Json::Null);
-    let mut projection = with_deployment_attributes_json(projection, deployment)?;
-    match document.get("metrics") {
-        None | Some(Json::Null) => {
-            if let Some(names) = &defaults.metrics {
-                retain_metrics(&mut projection, names);
-            }
-        }
-        Some(Json::Array(names)) => {
-            let names = names
-                .iter()
-                .map(|name| {
-                    name.as_str()
-                        .ok_or_else(|| invalid("metrics must be strings"))
-                })
-                .collect::<Result<Vec<&str>, Failure>>()?;
-            retain_metrics(&mut projection, &names);
-        }
-        Some(_) => return Err(invalid("metrics must be an array of strings")),
-    }
-    Ok((profile, projection))
-}
-
-fn issues(projection: &libdd_ai_usage::Projection) -> Value {
-    json!(
-        projection
-            .issues
-            .iter()
-            .map(|issue| issue.as_str())
-            .collect::<Vec<_>>()
-    )
 }
 
 /// Project the request document `input[..input_len]` into its Datadog API
@@ -374,27 +314,8 @@ pub unsafe extern "C" fn ddog_ai_usage_project(
         json_call(out, || {
             catch_unwind(AssertUnwindSafe(|| {
                 let document = parse_document(bytes(input, input_len))?;
-                let (profile, projection) = projection_of(&document)?;
-                let series =
-                    datadog_series(profile, &projection.points, &projection.resource, false)?;
-                Ok(json!({
-                    "series": series
-                        .iter()
-                        .map(|s| {
-                            let mut series = json!({
-                                "name": s.name,
-                                "type": s.series_type.as_str(),
-                                "value": s.value,
-                                "tags": s.tags,
-                            });
-                            if let Some(interval) = s.interval {
-                                series["interval"] = json!(interval);
-                            }
-                            series
-                        })
-                        .collect::<Vec<_>>(),
-                    "issues": issues(&projection),
-                }))
+                let projection = DatadogProjection::from_request_json(&document)?;
+                to_json(serde_json::to_value(&projection))
             }))
             .unwrap_or(Err(Failure::Internal("the projection panicked")))
         })
@@ -458,142 +379,21 @@ pub unsafe extern "C" fn ddog_ai_usage_batch_add_request(
         let batch = unsafe { batch.as_ref() }.ok_or(Failure::Internal("the batch is null"))?;
         // SAFETY: forwarded from the caller.
         let request = parse_document(unsafe { bytes(input, input_len) })?;
-        let documents = request
-            .as_array()
-            .ok_or_else(|| invalid("a request must be an array of documents"))?;
+        // Decoded before the batch is locked; projected once it is.
+        let decoded = RequestDocument::from_request_json(&request)?;
         let defaults = batch_metrics(batch)?;
         let defaults: Option<Vec<&str>> = defaults
             .as_ref()
             .map(|names| names.iter().map(String::as_str).collect());
-        let mut decoded = Vec::with_capacity(documents.len());
-        for (at, document) in documents.iter().enumerate() {
-            match decode_document(document) {
-                Ok(document) => decoded.push(document),
-                Err(failure) => {
-                    // An earlier document that is rejected is the one reported.
-                    let earlier = request_documents(&decoded, defaults.as_deref());
-                    if let Err(error) = MetricBatch::new().try_add_request(&earlier) {
-                        return Err(document_failure(error));
-                    }
-                    return Err(match failure {
-                        Failure::Rejected(error) => Failure::Rejected(MetricError::new(
-                            error.code(),
-                            format!("document {at}: {}", error.message()),
-                        )),
-                        internal => internal,
-                    });
-                }
-            }
-        }
-        let documents = request_documents(&decoded, defaults.as_deref());
+        let documents: Vec<Document<'_>> = decoded
+            .iter()
+            .map(|document| document.document(defaults.as_deref()))
+            .collect();
         add_documents(batch, &documents)
     }))
     .unwrap_or(Err(Failure::Internal("adding to the batch panicked")));
     // SAFETY: forwarded from the caller.
     unsafe { added_status(result, out) }
-}
-
-/// An observation decoded from a request document. A request holds a few,
-/// so they are not boxed.
-#[allow(clippy::large_enum_variant)]
-enum OwnedObservation {
-    Attempt(ProviderAttemptObservation),
-    Streaming(ProviderStreamingObservation),
-    Breakdown(TokenBreakdownObservation),
-    Gateway(GatewayRequestObservation),
-}
-
-impl OwnedObservation {
-    fn as_ref(&self) -> Observation<'_> {
-        match self {
-            OwnedObservation::Attempt(o) => Observation::ProviderAttempt(o),
-            OwnedObservation::Streaming(o) => Observation::ProviderStreaming(o),
-            OwnedObservation::Breakdown(o) => Observation::TokenBreakdown(o),
-            OwnedObservation::Gateway(o) => Observation::GatewayRequest(o),
-        }
-    }
-}
-
-/// A request document decoded: its observation, its deployment attributes,
-/// and the metrics it keeps (`None`: the batch's list).
-struct DecodedDocument<'j> {
-    observation: OwnedObservation,
-    deployment: Vec<(&'j str, Option<&'j str>)>,
-    metrics: Option<Vec<&'j str>>,
-}
-
-fn decode_document(document: &Json) -> Result<DecodedDocument<'_>, Failure> {
-    let id = document
-        .get("profile")
-        .and_then(Json::as_str)
-        .ok_or_else(|| MetricError::new(ErrorCode::RequiredFieldMissing, "profile is required"))?;
-    let profile = Profile::from_id(id).ok_or_else(|| {
-        MetricError::new(
-            ErrorCode::ProfileInvalid,
-            format!("unsupported profile: {id}"),
-        )
-    })?;
-    let input = document.get(profile.input_key()).unwrap_or(&Json::Null);
-    let observation = match profile {
-        Profile::ProviderAttempt => {
-            OwnedObservation::Attempt(ProviderAttemptObservation::from_json(input)?)
-        }
-        Profile::ProviderStreaming => {
-            OwnedObservation::Streaming(ProviderStreamingObservation::from_json(input)?)
-        }
-        Profile::TokenBreakdown => {
-            OwnedObservation::Breakdown(TokenBreakdownObservation::from_json(input)?)
-        }
-        Profile::GatewayRequest => {
-            OwnedObservation::Gateway(GatewayRequestObservation::from_json(input)?)
-        }
-    };
-    let deployment = match document.get("deployment_attributes") {
-        None | Some(Json::Null) => Vec::new(),
-        Some(Json::Object(members)) => members
-            .iter()
-            .filter(|(_, value)| !value.is_null())
-            .map(|(name, value)| (name.as_str(), value.as_str()))
-            .collect(),
-        Some(_) => {
-            return Err(Failure::Rejected(MetricError::new(
-                ErrorCode::FieldTypeInvalid,
-                "deployment attributes must be an object",
-            )));
-        }
-    };
-    let metrics = match document.get("metrics") {
-        None | Some(Json::Null) => None,
-        Some(Json::Array(names)) => Some(
-            names
-                .iter()
-                .map(|name| {
-                    name.as_str()
-                        .ok_or_else(|| invalid("metrics must be strings"))
-                })
-                .collect::<Result<Vec<&str>, Failure>>()?,
-        ),
-        Some(_) => return Err(invalid("metrics must be an array of strings")),
-    };
-    Ok(DecodedDocument {
-        observation,
-        deployment,
-        metrics,
-    })
-}
-
-fn request_documents<'d>(
-    decoded: &'d [DecodedDocument<'_>],
-    defaults: Option<&'d [&'d str]>,
-) -> Vec<Document<'d>> {
-    decoded
-        .iter()
-        .map(|document| Document {
-            observation: document.observation.as_ref(),
-            deployment_attributes: &document.deployment,
-            metrics: document.metrics.as_deref().or(defaults),
-        })
-        .collect()
 }
 
 /// The metric list a batch applies to documents that state none.
@@ -606,13 +406,6 @@ fn batch_metrics(batch: &Batch) -> Result<Option<Vec<String>>, Failure> {
         .clone())
 }
 
-fn document_failure(error: DocumentError) -> Failure {
-    Failure::Rejected(MetricError::new(
-        error.error.code(),
-        format!("document {}: {}", error.document, error.error.message()),
-    ))
-}
-
 /// Add a request's documents to `batch`: their issues and whether they were
 /// added.
 fn add_documents(
@@ -623,7 +416,9 @@ fn add_documents(
         .inner
         .lock()
         .map_err(|_| Failure::Internal("the batch is poisoned"))?;
-    let (added, issues) = inner.try_add_request(documents).map_err(document_failure)?;
+    let (added, issues) = inner
+        .try_add_request(documents)
+        .map_err(|error| Failure::Rejected(error.into()))?;
     Ok((issues, added))
 }
 
@@ -688,20 +483,9 @@ pub unsafe extern "C" fn ddog_ai_usage_batch_set_metrics(
                 let metrics = if input_len == 0 {
                     None
                 } else {
-                    match parse_document(bytes(input, input_len))? {
-                        Json::Null => None,
-                        Json::Array(names) => Some(
-                            names
-                                .iter()
-                                .map(|name| {
-                                    name.as_str()
-                                        .map(str::to_string)
-                                        .ok_or_else(|| invalid("metrics must be strings"))
-                                })
-                                .collect::<Result<Vec<String>, Failure>>()?,
-                        ),
-                        _ => return Err(invalid("metrics must be an array of strings")),
-                    }
+                    let names = parse_document(bytes(input, input_len))?;
+                    metric_list_from_json(&names)?
+                        .map(|names| names.into_iter().map(str::to_string).collect())
                 };
                 batch
                     .settings
@@ -853,28 +637,6 @@ pub unsafe extern "C" fn ddog_ai_usage_batch_dropped(batch: *const Batch) -> u64
     .unwrap_or(0)
 }
 
-/// Standard base64 with padding, for binary values inside JSON output.
-fn base64(bytes: &[u8]) -> String {
-    const ALPHABET: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-    let mut out = String::with_capacity(bytes.len().div_ceil(3) * 4);
-    for chunk in bytes.chunks(3) {
-        let b = [
-            chunk[0],
-            chunk.get(1).copied().unwrap_or(0),
-            chunk.get(2).copied().unwrap_or(0),
-        ];
-        let n = (u32::from(b[0]) << 16) | (u32::from(b[1]) << 8) | u32::from(b[2]);
-        for (i, shift) in [18, 12, 6, 0].into_iter().enumerate() {
-            if i <= chunk.len() {
-                out.push(char::from(ALPHABET[((n >> shift) & 63) as usize]));
-            } else {
-                out.push('=');
-            }
-        }
-    }
-    out
-}
-
 /// Tag every series [`ddog_ai_usage_batch_take_intake`] takes from `batch`
 /// with this writer's `host.name` (`host[..host_len]`, normalized as Datadog
 /// stores a tag value; empty leaves it out) and `process.pid` (`pid`), so
@@ -942,37 +704,16 @@ pub unsafe extern "C" fn ddog_ai_usage_batch_take_intake(
                 let batch = batch
                     .as_ref()
                     .ok_or(Failure::Internal("the batch is null"))?;
-                let now = if now_unix_seconds == 0 {
-                    std::time::SystemTime::now()
-                        .duration_since(std::time::UNIX_EPOCH)
-                        .map_or(0, |elapsed| {
-                            i64::try_from(elapsed.as_secs()).unwrap_or(i64::MAX)
-                        })
-                } else {
-                    now_unix_seconds
-                };
-                let taken = batch
+                let mut inner = batch
                     .inner
                     .lock()
-                    .map_err(|_| Failure::Internal("the batch is poisoned"))?
-                    .take_intake(now)?;
-                Ok(json!({
-                    "timestamp": taken.timestamp,
-                    "interval": taken.interval,
-                    "dropped": taken.dropped,
-                    "series": taken.rates.iter().map(|s| json!({
-                        "metric": s.metric,
-                        "type": SeriesType::Rate.as_str(),
-                        "interval": taken.interval,
-                        "tags": s.tags,
-                        "value": s.value,
-                    })).collect::<Vec<_>>(),
-                    "distributions": taken.sketches.iter().map(|s| json!({
-                        "metric": s.metric,
-                        "tags": s.tags,
-                        "sketch": base64(&s.sketch.encode_sparse()),
-                    })).collect::<Vec<_>>(),
-                }))
+                    .map_err(|_| Failure::Internal("the batch is poisoned"))?;
+                let taken = if now_unix_seconds == 0 {
+                    inner.take_intake_now()?
+                } else {
+                    inner.take_intake(now_unix_seconds)?
+                };
+                to_json(serde_json::to_value(&taken))
             }))
             .unwrap_or(Err(Failure::Internal("taking the batch panicked")))
         })
@@ -998,41 +739,19 @@ pub unsafe extern "C" fn ddog_ai_usage_batch_drop(batch: *mut Batch) {
 
 fn format_of(name: Option<&str>) -> Result<UsageFormat, Failure> {
     let name = name.ok_or(Failure::Internal("format is not UTF-8"))?;
-    let name = if name.is_empty() { "auto" } else { name };
-    UsageFormat::from_name(name).ok_or_else(|| {
-        Failure::Rejected(MetricError::new(
-            ErrorCode::ValueNotAllowed,
-            format!("unknown usage format: {name}"),
-        ))
-    })
+    Ok(UsageFormat::parse(name)?)
 }
 
-/// A provider response as JSON: the observation's usage members, the model
-/// and tier named, how the stream ended, and its `error.type`.
-fn response_value(
-    response: &ProviderResponse,
-    outcome: StreamOutcome,
-    error_name: Option<&str>,
+/// What a provider response or stream reported, as JSON.
+fn report_value(
+    (response, outcome, error_name): (ProviderResponse, StreamOutcome, Option<String>),
     inclusive: bool,
-) -> Value {
-    // A failure that names no cause is `api_error`.
-    let error_type = (outcome == StreamOutcome::Failed)
-        .then(|| classify_error(error_name, None).unwrap_or(ERROR_TYPE_API));
-    json!({
-        "usage": if inclusive {
-            response.usage.as_ref().map(|usage| usage.inclusive())
-        } else {
-            response.usage.clone()
-        },
-        "response_model": response.response_model,
-        "service_tier": response.service_tier,
-        "outcome": outcome.as_str(),
-        "error_name": error_name,
-        "error_type": error_type,
-        "error_code": response.error.as_ref().and_then(|e| e.code.as_deref()),
-        "error_message": response.error.as_ref().and_then(|e| e.message.as_deref()),
-        "issues": response.issues,
-    })
+) -> Result<Value, Failure> {
+    let report = ProviderReport {
+        inclusive_totals: inclusive,
+        ..ProviderReport::new(response, outcome, error_name)
+    };
+    to_json(serde_json::to_value(&report))
 }
 
 /// Read a whole provider response body (`body[..body_len]`: a JSON
@@ -1102,13 +821,7 @@ pub unsafe extern "C" fn ddog_ai_usage_parse_provider_response_with(
                 let inclusive = options_of(options)?;
                 let format = format_of(text(format, format_len))?;
                 let body = bytes(body, body_len).ok_or(Failure::Internal("the body is null"))?;
-                let (response, outcome, error) = parse_provider_body(format, body, embeddings);
-                Ok(response_value(
-                    &response,
-                    outcome,
-                    error.as_deref(),
-                    inclusive,
-                ))
+                report_value(parse_provider_body(format, body, embeddings), inclusive)
             }))
             .unwrap_or(Err(Failure::Internal("reading the response panicked")))
         })
@@ -1278,13 +991,7 @@ pub unsafe extern "C" fn ddog_ai_usage_stream_take(
         json_call(out, move || {
             catch_unwind(AssertUnwindSafe(move || {
                 let inclusive = stream.inclusive;
-                let (response, outcome, error) = stream.inner.finish();
-                Ok(response_value(
-                    &response,
-                    outcome,
-                    error.as_deref(),
-                    inclusive,
-                ))
+                report_value(stream.inner.finish(), inclusive)
             }))
             .unwrap_or(Err(Failure::Internal("reading the stream panicked")))
         })
@@ -1496,21 +1203,7 @@ pub unsafe extern "C" fn ddog_ai_usage_known_metrics(
             catch_unwind(AssertUnwindSafe(|| {
                 let id =
                     text(profile, profile_len).ok_or(Failure::Internal("profile is not UTF-8"))?;
-                let profiles = if id.is_empty() {
-                    Profile::ALL.to_vec()
-                } else {
-                    vec![Profile::from_id(id).ok_or_else(|| {
-                        MetricError::new(
-                            ErrorCode::ProfileInvalid,
-                            format!("unsupported profile: {id}"),
-                        )
-                    })?]
-                };
-                let names: Vec<&str> = profiles
-                    .iter()
-                    .flat_map(|profile| profile.metric_names().iter().copied())
-                    .collect();
-                Ok(json!(names))
+                Ok(json!(known_metrics(id)?))
             }))
             .unwrap_or(Err(Failure::Internal("listing the metrics panicked")))
         })
@@ -1582,13 +1275,7 @@ pub unsafe extern "C" fn ddog_ai_usage_provider_id_headers(
                     }
                     _ => raw,
                 };
-                let mut headers: Vec<&str> = Vec::new();
-                for (name, _, header) in PROVIDER_ID_HEADERS {
-                    if (provider.is_empty() || provider == name) && !headers.contains(&header) {
-                        headers.push(header);
-                    }
-                }
-                Ok(json!(headers))
+                Ok(json!(provider_id_headers(provider)))
             }))
             .unwrap_or(Err(Failure::Internal("listing the headers panicked")))
         })
@@ -1623,53 +1310,7 @@ pub unsafe extern "C" fn ddog_ai_usage_provider_ids(
         json_call(out, || {
             catch_unwind(AssertUnwindSafe(|| {
                 let document = parse_document(bytes(input, input_len))?;
-                let provider = document
-                    .get("provider_name")
-                    .and_then(Json::as_str)
-                    .unwrap_or_default();
-                let headers: Vec<(String, &str)> = document
-                    .get("headers")
-                    .and_then(Json::as_object)
-                    .map(|headers| {
-                        headers
-                            .iter()
-                            .filter_map(|(name, value)| {
-                                Some((name.to_ascii_lowercase(), value.as_str()?))
-                            })
-                            .collect()
-                    })
-                    .unwrap_or_default();
-                let mut attributes: Attributes = provider_id_attributes(provider, |name| {
-                    headers
-                        .iter()
-                        .find(|(header, _)| header == name)
-                        .map(|(_, value)| *value)
-                });
-                if provider.is_empty() || provider == "aws.bedrock" {
-                    let account = document
-                        .get("models")
-                        .and_then(Json::as_array)
-                        .unwrap_or_default()
-                        .iter()
-                        .filter_map(Json::as_str)
-                        .find_map(bedrock_arn_account);
-                    if let Some(account) = account {
-                        attributes
-                            .entry("trajectory.request.provider_account_id".to_string())
-                            .or_insert_with(|| account.to_string());
-                    }
-                }
-                // The Vertex AI project a URL bills, when no header named one.
-                if let Some(project) = document
-                    .get("upstream_url")
-                    .and_then(Json::as_str)
-                    .and_then(libdd_ai_usage::vertex_project_id)
-                {
-                    attributes
-                        .entry("trajectory.request.project_id".to_string())
-                        .or_insert_with(|| project.to_string());
-                }
-                Ok(json!(attributes))
+                Ok(json!(provider_ids_from_json(&document)))
             }))
             .unwrap_or(Err(Failure::Internal("reading the ids panicked")))
         })

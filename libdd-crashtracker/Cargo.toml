@@ -35,7 +35,7 @@ generate-unit-test-files = []
 # Enables benchmark functionality
 benchmarking = ["generate-unit-test-files"]
 # Enables reading OTel thread context from the crashing process
-otel-thread-ctx = ["dep:libdd-otel-thread-ctx"]
+otel-thread-ctx = []
 # Enables C++ bindings via cxx
 cxx = ["dep:cxx", "dep:cxx-build"]
 
@@ -46,9 +46,9 @@ blazesym = { workspace = true, default-features = true }
 page_size.workspace = true
 
 [target.'cfg(target_os = "linux")'.dependencies]
+goblin = { workspace = true, features = ["std", "elf64", "elf32", "endian_fd"] }
 libdd-gotter = { version = "1.1.0", path = "../libdd-gotter" }
 libdd-libunwind-sys.workspace = true
-libdd-otel-thread-ctx = { version = "2.0.0", path = "../libdd-otel-thread-ctx", default-features = false, features = ["owned-context"], optional = true }
 
 [dependencies]
 anyhow.workspace = true

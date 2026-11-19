@@ -14,6 +14,7 @@
 //! second.
 
 use libdd_ddsketch::DDSketch;
+use serde::{Serialize, Serializer};
 
 use crate::MetricBatch;
 use crate::datadog::{DATADOG_RATE_INTERVAL_SECS, DatadogSeries, SeriesType, datadog_tag_value};
@@ -206,6 +207,13 @@ pub struct SketchSeries {
 }
 
 /// What [`MetricBatch::take_intake`] took.
+///
+/// Serialized as a writer submits it: `{"distributions": [{"metric",
+/// "sketch", "tags"}], "dropped", "interval", "series": [{"interval",
+/// "metric", "tags", "type", "value"}], "timestamp"}`. `series` are the
+/// [`IntakeTake::rates`], each `"type": "rate"` with the take's `interval`;
+/// `distributions` the [`IntakeTake::sketches`], `sketch` being the standard
+/// base64 (with padding) of [`Sketch::encode_sparse`].
 #[derive(Debug, Clone, PartialEq)]
 pub struct IntakeTake {
     /// The second every point is stamped at.
@@ -216,6 +224,97 @@ pub struct IntakeTake {
     pub sketches: Vec<SketchSeries>,
     /// Observations the batch dropped since the last take.
     pub dropped: u64,
+}
+
+/// Standard base64 with padding, for binary values inside JSON output.
+fn base64(bytes: &[u8]) -> String {
+    const ALPHABET: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    let mut out = String::with_capacity(bytes.len().div_ceil(3) * 4);
+    for chunk in bytes.chunks(3) {
+        let b = [
+            chunk[0],
+            chunk.get(1).copied().unwrap_or(0),
+            chunk.get(2).copied().unwrap_or(0),
+        ];
+        let n = (u32::from(b[0]) << 16) | (u32::from(b[1]) << 8) | u32::from(b[2]);
+        for (i, shift) in [18, 12, 6, 0].into_iter().enumerate() {
+            if i <= chunk.len() {
+                out.push(char::from(ALPHABET[((n >> shift) & 63) as usize]));
+            } else {
+                out.push('=');
+            }
+        }
+    }
+    out
+}
+
+/// A [`RateSeries`] as [`IntakeTake`] serializes it.
+#[derive(Serialize)]
+struct RatePoint<'a> {
+    interval: u32,
+    metric: &'a str,
+    tags: &'a [String],
+    #[serde(rename = "type")]
+    series_type: &'static str,
+    value: f64,
+}
+
+/// A [`SketchSeries`] as [`IntakeTake`] serializes it.
+#[derive(Serialize)]
+struct SketchPoint<'a> {
+    metric: &'a str,
+    sketch: String,
+    tags: &'a [String],
+}
+
+#[derive(Serialize)]
+struct IntakeBody<'a> {
+    distributions: Vec<SketchPoint<'a>>,
+    dropped: u64,
+    interval: u32,
+    series: Vec<RatePoint<'a>>,
+    timestamp: i64,
+}
+
+impl Serialize for IntakeTake {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        IntakeBody {
+            distributions: self
+                .sketches
+                .iter()
+                .map(|s| SketchPoint {
+                    metric: &s.metric,
+                    sketch: base64(&s.sketch.encode_sparse()),
+                    tags: &s.tags,
+                })
+                .collect(),
+            dropped: self.dropped,
+            interval: self.interval,
+            series: self
+                .rates
+                .iter()
+                .map(|s| RatePoint {
+                    interval: self.interval,
+                    metric: &s.metric,
+                    tags: &s.tags,
+                    series_type: SeriesType::Rate.as_str(),
+                    value: s.value,
+                })
+                .collect(),
+            timestamp: self.timestamp,
+        }
+        .serialize(serializer)
+    }
+}
+
+/// The system clock's current Unix second: 0 before 1970, `i64::MAX` past
+/// its range.
+fn unix_seconds_now() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |elapsed| {
+            i64::try_from(elapsed.as_secs()).unwrap_or(i64::MAX)
+        })
 }
 
 impl MetricBatch {
@@ -231,6 +330,12 @@ impl MetricBatch {
         }
         tags.push(format!("process.pid:{pid}"));
         self.writer_tags = tags;
+    }
+
+    /// [`MetricBatch::take_intake`] at the system clock's current second.
+    /// The one call of this crate that reads the clock.
+    pub fn take_intake_now(&mut self) -> Result<IntakeTake, MetricError> {
+        self.take_intake(unix_seconds_now())
     }
 
     /// Take every point, leaving the batch empty, as metrics intake takes it
@@ -298,6 +403,60 @@ impl MetricBatch {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn base64_is_standard_and_padded() {
+        assert_eq!(base64(b""), "");
+        assert_eq!(base64(b"f"), "Zg==");
+        assert_eq!(base64(b"fo"), "Zm8=");
+        assert_eq!(base64(b"foo"), "Zm9v");
+        assert_eq!(base64(b"foob"), "Zm9vYg==");
+        assert_eq!(base64(&[0xff, 0xfe, 0x00]), "//4A");
+    }
+
+    #[test]
+    fn a_take_serializes_as_submitted() {
+        let sketch = Sketch::of(&[1.0]).unwrap();
+        let take = IntakeTake {
+            timestamp: 1_700_000_000,
+            interval: DATADOG_RATE_INTERVAL_SECS,
+            rates: vec![RateSeries {
+                metric: "c".to_string(),
+                tags: vec!["a:b".to_string()],
+                value: 0.5,
+            }],
+            sketches: vec![SketchSeries {
+                metric: "d".to_string(),
+                tags: vec![],
+                sketch: sketch.clone(),
+            }],
+            dropped: 2,
+        };
+        let text = serde_json::to_string(&take).unwrap();
+        assert_eq!(
+            text,
+            format!(
+                concat!(
+                    r#"{{"distributions":[{{"metric":"d","sketch":"{}","tags":[]}}],"#,
+                    r#""dropped":2,"interval":10,"#,
+                    r#""series":[{{"interval":10,"metric":"c","tags":["a:b"],"type":"rate","value":0.5}}],"#,
+                    r#""timestamp":1700000000}}"#
+                ),
+                base64(&sketch.encode_sparse())
+            )
+        );
+        // Keys are written sorted, as a `serde_json::Value` writes them.
+        assert_eq!(serde_json::to_value(&take).unwrap().to_string(), text);
+    }
+
+    #[test]
+    fn a_take_now_reads_the_clock() {
+        let mut batch = MetricBatch::new();
+        let taken = batch.take_intake_now().unwrap();
+        assert!(taken.timestamp > 1_700_000_000);
+        // The next take is stamped later, whatever the clock says.
+        assert!(batch.take_intake(0).unwrap().timestamp > taken.timestamp);
+    }
 
     #[test]
     fn keys_follow_intake() {

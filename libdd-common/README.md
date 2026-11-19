@@ -4,21 +4,17 @@ Common utilities and foundational components shared across Datadog telemetry lib
 
 ## Overview
 
-`libdd-common` provides shared functionality used across multiple Datadog Rust libraries including entity ID detection and tag handling.
+`libdd-common` provides shared functionality used across multiple Datadog Rust libraries including endpoint handling and tag handling.
 
 ## Features
 
-- **Entity ID Detection**: Automatic container ID and entity ID detection from cgroups, Docker, Kubernetes, and Azure App Services
 - **Tag Management**: Compile-time validated tags with the `tag!` macro
 - **Datadog Headers**: Standard Datadog HTTP headers and constants
 
 ## Modules
 
-- `azure_app_services`: Azure App Services integration
-- `entity_id`: Container and entity ID detection
 - `error`: Common error types
 - `header`: Datadog HTTP headers
-- `machine_id`: Stable host machine ID as a hyphenated UUID, cached for the process lifetime
 - `multipart`: Multipart form data construction
 - `mutable_metadata`: Tracer metadata updatable after startup (runtime ID, process tags, session ancestry)
 - `tag`: Tag creation and validation
@@ -38,21 +34,10 @@ use libdd_common::tag::Tag;
 let tag2 = Tag::new("env", "production")?;
 ```
 
-### Entity ID detection
-
-```rust
-use libdd_common::entity_id;
-
-if let Some(container_id) = entity_id::get_container_id() {
-    println!("Running in container: {}", container_id);
-}
-```
-
 ## Features Flags
 
 - `std` (default): Enable the standard-library-dependent utilities
 - `alloc`: Enable allocation-backed tag creation and parsing without `std`
-- `cgroup_testing`: Enable cgroup stubbing for testing
 
 `TagParser` and `TagValidationError` are available without feature flags. To use the allocation-backed
 `Tag` from a `no_std` crate:

@@ -36,6 +36,7 @@ pub(crate) use sidecar_server::SidecarServer;
 pub(crate) use sidecar_interface::SidecarInterface;
 
 pub mod agent_info;
+mod agent_version;
 mod application;
 pub mod blocking;
 mod connection_session;

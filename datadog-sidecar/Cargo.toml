@@ -32,6 +32,7 @@ libdd-telemetry = { path = "../libdd-telemetry", features = ["tracing"] }
 libdd-data-pipeline = { path = "../libdd-data-pipeline" }
 libdd-trace-utils = { path = "../libdd-trace-utils" }
 libdd-trace-model = { path = "../libdd-trace-model" }
+libdd-trace-normalization = { path = "../libdd-trace-normalization" }
 libdd-trace-stats = { path = "../libdd-trace-stats", features = ["telemetry", "dogstatsd"] }
 libdd-remote-config = { path = "../libdd-remote-config" }
 libdd-live-debugger = { path = "../libdd-live-debugger" }
@@ -57,6 +58,7 @@ serde_json.workspace = true
 base64 = { workspace = true, features = ["std"] }
 spawn_worker = { path = "../spawn_worker" }
 zwohash = { workspace = true, default-features = true }
+semver.workspace = true
 sha2 = { workspace = true, features = ["std"] }
 tokio = { workspace = true, features = ["fs", "sync", "io-util", "signal", "rt-multi-thread", "time"] }
 tokio-util = { workspace = true, features = ["codec"] }

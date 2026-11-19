@@ -18,13 +18,15 @@
 use std::collections::BTreeMap;
 
 use serde::Serialize;
+use serde::ser::{SerializeStruct, Serializer};
 
+use crate::error_type::{ERROR_TYPE_API, classify_error};
 use crate::json::{Json, Prune};
 use crate::number::MAX_SAFE_INTEGER;
 use crate::observation::{
     ProviderAttemptObservation, TokenBreakdownObservation, is_context_band, is_identifier,
 };
-use crate::point::Attributes;
+use crate::point::{Attributes, ErrorCode, MetricError};
 use crate::usage::ReportedUsage;
 
 /// Provider names that differ from their OpenTelemetry well-known
@@ -165,6 +167,19 @@ impl UsageFormat {
 
     pub fn from_name(name: &str) -> Option<UsageFormat> {
         UsageFormat::ALL.into_iter().find(|f| f.as_str() == name)
+    }
+
+    /// The format a binding names: [`UsageFormat::from_name`], an empty
+    /// name being [`UsageFormat::Auto`]. An unknown name is
+    /// `value_not_allowed`.
+    pub fn parse(name: &str) -> Result<UsageFormat, MetricError> {
+        let name = if name.is_empty() { "auto" } else { name };
+        UsageFormat::from_name(name).ok_or_else(|| {
+            MetricError::new(
+                ErrorCode::ValueNotAllowed,
+                format!("unknown usage format: {name}"),
+            )
+        })
     }
 }
 
@@ -1641,6 +1656,81 @@ pub fn parse_provider_body(
     stream.finish()
 }
 
+/// Everything a provider response or stream reported, as a binding hands it
+/// to its caller: what [`parse_provider_body`] and [`UsageStream::finish`]
+/// return, with the `error.type` of a failure.
+///
+/// Serialized as `{"error_code", "error_message", "error_name",
+/// "error_type", "issues", "outcome", "response_model", "service_tier",
+/// "usage"}`: `usage` holds the members to merge into an observation (with
+/// inclusive totals when [`ProviderReport::inclusive_totals`] is set), or
+/// `null`; `error_code` and `error_message` are the provider's own
+/// ([`ProviderError`]); `outcome` is [`StreamOutcome::as_str`]; `issues` says
+/// why something reported was not kept ([`SERVICE_TIER_DROPPED`],
+/// [`RESPONSE_MODEL_DROPPED`]). Every member is present, `null` when unset.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ProviderReport {
+    pub response: ProviderResponse,
+    pub outcome: StreamOutcome,
+    /// The provider's name for the failure a stream reported (see
+    /// [`UsageStream::error_name`]).
+    pub error_name: Option<String>,
+    /// Report usage with inclusive totals ([`ProviderUsage::inclusive`]).
+    pub inclusive_totals: bool,
+}
+
+impl ProviderReport {
+    /// The report of what [`parse_provider_body`] or [`UsageStream::finish`]
+    /// returned, its usage as the provider stated it.
+    pub fn new(
+        response: ProviderResponse,
+        outcome: StreamOutcome,
+        error_name: Option<String>,
+    ) -> Self {
+        ProviderReport {
+            response,
+            outcome,
+            error_name,
+            inclusive_totals: false,
+        }
+    }
+
+    /// The usage to merge into an observation: with inclusive totals when
+    /// [`ProviderReport::inclusive_totals`] is set.
+    pub fn usage(&self) -> Option<ProviderUsage> {
+        if self.inclusive_totals {
+            self.response.usage.as_ref().map(ProviderUsage::inclusive)
+        } else {
+            self.response.usage.clone()
+        }
+    }
+
+    /// The `error.type` of a failed response or stream
+    /// ([`StreamOutcome::Failed`]), [`ERROR_TYPE_API`] when its error names
+    /// no cause; `None` when it did not fail.
+    pub fn error_type(&self) -> Option<&'static str> {
+        (self.outcome == StreamOutcome::Failed)
+            .then(|| classify_error(self.error_name.as_deref(), None).unwrap_or(ERROR_TYPE_API))
+    }
+}
+
+impl Serialize for ProviderReport {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        let error = self.response.error.as_ref();
+        let mut out = serializer.serialize_struct("ProviderReport", 9)?;
+        out.serialize_field("error_code", &error.and_then(|e| e.code.as_deref()))?;
+        out.serialize_field("error_message", &error.and_then(|e| e.message.as_deref()))?;
+        out.serialize_field("error_name", &self.error_name)?;
+        out.serialize_field("error_type", &self.error_type())?;
+        out.serialize_field("issues", &self.response.issues)?;
+        out.serialize_field("outcome", self.outcome.as_str())?;
+        out.serialize_field("response_model", &self.response.response_model)?;
+        out.serialize_field("service_tier", &self.response.service_tier)?;
+        out.serialize_field("usage", &self.usage())?;
+        out.end()
+    }
+}
+
 /// The longest account, project or key id kept.
 const MAX_ID_LENGTH: usize = 128;
 
@@ -1731,6 +1821,89 @@ pub fn bedrock_arn_account(model: &str) -> Option<&str> {
     None
 }
 
+/// The lower-case names of the response headers [`provider_id_attributes`]
+/// reads for the provider `provider_name` (a `gen_ai.provider.name`), each
+/// once, in [`PROVIDER_ID_HEADERS`] order, so a gateway fetches exactly
+/// those. An empty name lists every provider's; a provider whose ids come
+/// from no header has none.
+pub fn provider_id_headers(provider_name: &str) -> Vec<&'static str> {
+    let mut headers: Vec<&'static str> = Vec::new();
+    for (name, _, header) in PROVIDER_ID_HEADERS {
+        if (provider_name.is_empty() || provider_name == name) && !headers.contains(&header) {
+            headers.push(header);
+        }
+    }
+    headers
+}
+
+/// The deployment attributes a provider's response names:
+/// `trajectory.request.provider_account_id` and
+/// `trajectory.request.project_id` from its `headers` (matched by their
+/// lower-case name, the first of a name in iteration order winning), as
+/// [`provider_id_attributes`] reads them; for `aws.bedrock` the account the
+/// first of `models` with a Bedrock ARN names ([`bedrock_arn_account`]) when
+/// no header named one; and the Vertex AI project `upstream_url` names
+/// ([`vertex_project_id`]) when no header named one. Without a
+/// `provider_name` (empty), every known header and the model ARNs are
+/// tried.
+pub fn provider_ids<'a>(
+    provider_name: &str,
+    headers: impl IntoIterator<Item = (&'a str, &'a str)>,
+    models: impl IntoIterator<Item = &'a str>,
+    upstream_url: Option<&str>,
+) -> Attributes {
+    let headers: Vec<(String, &str)> = headers
+        .into_iter()
+        .map(|(name, value)| (name.to_ascii_lowercase(), value))
+        .collect();
+    let mut attributes = provider_id_attributes(provider_name, |name| {
+        headers
+            .iter()
+            .find(|(header, _)| header == name)
+            .map(|(_, value)| *value)
+    });
+    if (provider_name.is_empty() || provider_name == "aws.bedrock")
+        && let Some(account) = models.into_iter().find_map(bedrock_arn_account)
+    {
+        attributes
+            .entry("trajectory.request.provider_account_id".to_string())
+            .or_insert_with(|| account.to_string());
+    }
+    // The Vertex AI project a URL bills, when no header named one.
+    if let Some(project) = upstream_url.and_then(vertex_project_id) {
+        attributes
+            .entry("trajectory.request.project_id".to_string())
+            .or_insert_with(|| project.to_string());
+    }
+    attributes
+}
+
+/// [`provider_ids`] of a JSON document `{"provider_name": "anthropic",
+/// "headers": {"anthropic-organization-id": "..."}, "models": ["arn:..."],
+/// "upstream_url": "https://...aiplatform.googleapis.com/v1/projects/{p}/..."}`.
+/// Every member is optional; a header, model or URL that is not a string is
+/// ignored.
+pub fn provider_ids_from_json(document: &Json) -> Attributes {
+    let provider = document
+        .get("provider_name")
+        .and_then(Json::as_str)
+        .unwrap_or_default();
+    let headers = document
+        .get("headers")
+        .and_then(Json::as_object)
+        .into_iter()
+        .flatten()
+        .filter_map(|(name, value)| Some((name.as_str(), value.as_str()?)));
+    let models = document
+        .get("models")
+        .and_then(Json::as_array)
+        .unwrap_or_default()
+        .iter()
+        .filter_map(Json::as_str);
+    let upstream_url = document.get("upstream_url").and_then(Json::as_str);
+    provider_ids(provider, headers, models, upstream_url)
+}
+
 /// Whether `value` names a person: an email address,
 /// `^[^@\s]+@[^@\s]+\.[^@\s]+$`. `user.id` is only ever a person; a service
 /// or a credential is named by `trajectory.gateway.key.alias` instead.
@@ -1750,6 +1923,151 @@ pub fn is_person_identifier(value: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn formats_are_parsed_as_bindings_name_them() {
+        assert_eq!(UsageFormat::parse(""), Ok(UsageFormat::Auto));
+        assert_eq!(UsageFormat::parse("anthropic"), Ok(UsageFormat::Anthropic));
+        let error = UsageFormat::parse("nope").unwrap_err();
+        assert_eq!(error.code(), ErrorCode::ValueNotAllowed);
+        assert_eq!(error.message(), "unknown usage format: nope");
+    }
+
+    #[test]
+    fn a_report_serializes_every_member() {
+        let report = ProviderReport::new(ProviderResponse::default(), StreamOutcome::Open, None);
+        assert_eq!(report.error_type(), None);
+        assert_eq!(
+            serde_json::to_string(&report).unwrap(),
+            concat!(
+                r#"{"error_code":null,"error_message":null,"error_name":null,"error_type":null,"#,
+                r#""issues":[],"outcome":"open","response_model":null,"service_tier":null,"usage":null}"#
+            )
+        );
+    }
+
+    #[test]
+    fn a_failure_without_a_cause_is_an_api_error() {
+        let failed = |name: Option<&str>| {
+            ProviderReport::new(
+                ProviderResponse::default(),
+                StreamOutcome::Failed,
+                name.map(str::to_string),
+            )
+            .error_type()
+        };
+        assert_eq!(failed(None), Some(ERROR_TYPE_API));
+        assert_eq!(
+            failed(Some("rate_limit_error")),
+            Some(crate::ERROR_TYPE_RATE_LIMIT)
+        );
+        let completed = ProviderReport::new(
+            ProviderResponse::default(),
+            StreamOutcome::Completed,
+            Some("rate_limit_error".to_string()),
+        );
+        assert_eq!(completed.error_type(), None);
+    }
+
+    #[test]
+    fn a_report_reads_a_body_with_inclusive_totals() {
+        let body = br#"{"model": "claude-x", "usage": {"input_tokens": 10, "output_tokens": 2,
+            "cache_read_input_tokens": 5}, "error": {"type": "overloaded_error", "message": "a\u0001b"}}"#;
+        let (response, outcome, error) = parse_provider_body(UsageFormat::Anthropic, body, false);
+        let mut report = ProviderReport::new(response, outcome, error);
+        let exclusive = report.usage().unwrap();
+        assert_eq!(exclusive.input_tokens, Some(10));
+        report.inclusive_totals = true;
+        let inclusive = report.usage().unwrap();
+        assert_eq!(inclusive.input_tokens, Some(15));
+        assert_eq!(inclusive.input_basis, Some(INCLUDES_CACHE));
+        let value = serde_json::to_value(&report).unwrap();
+        assert_eq!(value["usage"]["input_tokens"], 15);
+        assert_eq!(value["response_model"], "claude-x");
+        assert_eq!(value["outcome"], report.outcome.as_str());
+        assert_eq!(
+            value["error_message"],
+            serde_json::json!(report.response.error.as_ref().unwrap().message)
+        );
+        assert_eq!(serde_json::json!(report.error_type()), value["error_type"]);
+    }
+
+    #[test]
+    fn id_headers_per_provider() {
+        assert_eq!(
+            provider_id_headers(""),
+            [
+                "anthropic-organization-id",
+                "openai-organization",
+                "openai-project"
+            ]
+        );
+        assert_eq!(
+            provider_id_headers("openai"),
+            ["openai-organization", "openai-project"]
+        );
+        assert!(provider_id_headers("aws.bedrock").is_empty());
+        assert!(provider_id_headers("OpenAI").is_empty());
+    }
+
+    #[test]
+    fn ids_from_headers_arns_and_urls() {
+        const ACCOUNT: &str = "trajectory.request.provider_account_id";
+        const PROJECT: &str = "trajectory.request.project_id";
+        // Header names are matched in lower case; the first of a name wins.
+        let ids = provider_ids(
+            "openai",
+            [
+                ("OpenAI-Organization", " org-a "),
+                ("OpenAI-Project", "upper"),
+                ("openai-project", "lower"),
+            ],
+            [],
+            None,
+        );
+        assert_eq!(ids.get(ACCOUNT).map(String::as_str), Some("org-a"));
+        assert_eq!(ids.get(PROJECT).map(String::as_str), Some("upper"));
+        // Bedrock's account comes from a model ARN.
+        let arn = "arn:aws:bedrock:us-east-1:123456789012:inference-profile/p";
+        let ids = provider_ids("aws.bedrock", [], ["x", arn], None);
+        assert_eq!(ids.get(ACCOUNT).map(String::as_str), Some("123456789012"));
+        assert!(provider_ids("openai", [], [arn], None).is_empty());
+        // Without a provider, every header and the ARNs are tried; a header wins.
+        let ids = provider_ids("", [("anthropic-organization-id", "a")], [arn], None);
+        assert_eq!(ids.get(ACCOUNT).map(String::as_str), Some("a"));
+        // The Vertex AI project of a URL, unless a header named one.
+        let url = "https://us-central1-aiplatform.googleapis.com/v1/projects/my-proj/locations/x";
+        let ids = provider_ids("gcp.vertex_ai", [], [], Some(url));
+        assert_eq!(ids.get(PROJECT).map(String::as_str), Some("my-proj"));
+        let ids = provider_ids("openai", [("openai-project", "hdr")], [], Some(url));
+        assert_eq!(ids.get(PROJECT).map(String::as_str), Some("hdr"));
+        assert!(provider_ids("", [], [], Some("https://example.com/v1/projects/p")).is_empty());
+    }
+
+    #[test]
+    fn ids_from_a_json_document() {
+        let document = Json::parse(
+            r#"{"provider_name": "aws.bedrock", "headers": {"x": 5},
+                "models": [5, "foo/arn:aws-us-gov:bedrock:us-gov-west-1:210987654321:x/y"],
+                "upstream_url": "https://aiplatform.googleapis.com/v1/projects/p1/x"}"#,
+        )
+        .unwrap();
+        let ids = provider_ids_from_json(&document);
+        assert_eq!(
+            ids.get("trajectory.request.provider_account_id")
+                .map(String::as_str),
+            Some("210987654321")
+        );
+        assert_eq!(
+            ids.get("trajectory.request.project_id").map(String::as_str),
+            Some("p1")
+        );
+        let ids = provider_ids_from_json(
+            &Json::parse(r#"{"provider_name": 5, "headers": [1]}"#).unwrap(),
+        );
+        assert!(ids.is_empty());
+        assert!(provider_ids_from_json(&Json::parse("[]").unwrap()).is_empty());
+    }
 
     fn cut(text: &str) -> String {
         String::from_utf8(cut_strings(text.as_bytes())).unwrap()

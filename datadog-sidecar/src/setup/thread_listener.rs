@@ -382,6 +382,7 @@ fn run_listener(
         authorizer,
         drain_only_own_process: true,
         enable_cdn_fetching: false,
+        allow_liveness_watch: false,
     };
 
     let runtime = tokio::runtime::Builder::new_current_thread()

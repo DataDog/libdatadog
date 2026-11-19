@@ -11,17 +11,11 @@
 extern crate alloc;
 
 #[cfg(feature = "std")]
-pub mod azure_app_services;
-#[cfg(feature = "std")]
 mod endpoint;
-#[cfg(feature = "std")]
-pub mod entity_id;
 #[cfg(feature = "std")]
 pub mod error;
 #[cfg(feature = "std")]
 mod lock_ext;
-#[cfg(feature = "std")]
-pub mod machine_id;
 #[cfg(feature = "std")]
 pub mod multipart;
 #[cfg(feature = "std")]

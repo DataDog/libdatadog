@@ -48,6 +48,7 @@ test = ["hyper/server", "hyper-util"]
 anyhow.workspace = true
 bytes = { workspace = true, features = ["std"], optional = true }
 libdd-common = { path = "../libdd-common", version = "9.0.0", default-features = false, features = ["std"] }
+libdd-host-identity = { version = "1.0.0", path = "../libdd-host-identity" }
 libdd-networking = { path = "../libdd-networking", version = "1.0.0", default-features = false, optional = true }
 libdd-regex = { path = "../libdd-regex", version = "0.1.0" }
 libdd-capabilities = { path = "../libdd-capabilities", version = "4.0.1" }
@@ -97,6 +98,10 @@ tokio = { workspace = true, optional = true, features = ["rt", "sync", "time"] }
 [dev-dependencies]
 futures.workspace = true
 libdd-remote-config = { path = ".", features = ["test"] }
+tempfile.workspace = true
+
+[target.'cfg(unix)'.dev-dependencies]
+libc.workspace = true
 
 [lib]
 bench = false
