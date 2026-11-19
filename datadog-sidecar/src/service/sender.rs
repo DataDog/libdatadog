@@ -486,18 +486,14 @@ impl SidecarSender {
             return ExposureVerdict::Unavailable;
         }
         if self.ffe_admission_v1.is_none() {
-            // Stats is a stable request understood by older sidecars.
             let Ok(bytes) = self
                 .channel
                 .0
-                .call_until(encode(&SidecarInterfaceRequest::Stats {}), deadline)
+                .call_until(encode(&SidecarInterfaceRequest::Ping {}), deadline)
             else {
                 return ExposureVerdict::Unavailable;
             };
-            let supported = decode::<String>(&bytes)
-                .ok()
-                .and_then(|s| serde_json::from_str::<serde_json::Value>(&s).ok())
-                .is_some_and(|v| v["ffe_admission_v1"].as_bool() == Some(true));
+            let supported = matches!(bytes.as_slice(), [caps] if caps & super::FFE_ADMISSION_V1_CAPABILITY != 0);
             self.ffe_admission_v1 = Some(supported);
         }
         if self.ffe_admission_v1 != Some(true) {
@@ -521,7 +517,10 @@ impl SidecarSender {
 
     pub fn ping(&mut self) -> io::Result<()> {
         self.drain_outbox_blocking()?;
-        self.channel.call_ping()
+        self.channel.call_ping().map(|_| ()).map_err(|e| match e {
+            libdd_ipc::codec::DecodeError::Io(e) => e,
+            e => io::Error::new(io::ErrorKind::InvalidData, e),
+        })
     }
 
     pub fn dump(&mut self) -> Result<String, libdd_ipc::codec::DecodeError> {

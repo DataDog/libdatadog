@@ -335,9 +335,8 @@ pub trait SidecarInterface {
         client_init: bool,
     ) -> (Vec<u8>, bool);
 
-    /// Sends a ping to the service.
-    #[blocking]
-    async fn ping();
+    /// Returns capability bits. Legacy sidecars acknowledge this opcode with a zero byte.
+    async fn ping() -> u8;
 
     /// Dumps the current state of the service.
     ///

@@ -160,6 +160,8 @@ pub struct ApplicationConfig {
     pub dynamic_instrumentation_state: DynamicInstrumentationConfigState,
 }
 
+pub(crate) const FFE_ADMISSION_V1_CAPABILITY: u8 = 1;
+
 #[repr(u32)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize, Serialize)]
 pub enum ExposureVerdict {

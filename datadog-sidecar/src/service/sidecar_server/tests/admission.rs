@@ -146,14 +146,10 @@ fn simulated_peer(
         let (len, _) = peer.recv_raw_blocking(&mut buf).unwrap();
         assert!(matches!(
             decode::<SidecarInterfaceRequest>(&buf[..len]).unwrap(),
-            SidecarInterfaceRequest::Stats {}
+            SidecarInterfaceRequest::Ping {}
         ));
-        let caps = if supported {
-            r#"{"ffe_admission_v1":true}"#
-        } else {
-            "{}"
-        };
-        peer.send_raw_blocking(encode(&caps), &[]).unwrap();
+        peer.send_raw_blocking(vec![u8::from(supported)], &[])
+            .unwrap();
         after_probe(peer);
     });
     (

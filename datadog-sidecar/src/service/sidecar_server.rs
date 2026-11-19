@@ -80,8 +80,6 @@ use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct SidecarStats {
-    #[serde(default)]
-    ffe_admission_v1: bool,
     trace_flusher: TraceFlusherStats,
     active_connections: u32,
     active_telemetry_clients: u32,
@@ -929,7 +927,6 @@ impl SidecarServer {
         let connection_stats = &self.connection_stats;
 
         SidecarStats {
-            ffe_admission_v1: true,
             trace_flusher: self.trace_flusher.stats(),
             active_connections: connection_stats.connections.load(Ordering::Relaxed),
             active_telemetry_clients,
@@ -1595,7 +1592,9 @@ impl SidecarInterface for ConnectionSidecarHandler {
         )
     }
 
-    async fn ping(&mut self) {}
+    async fn ping(&mut self) -> u8 {
+        super::FFE_ADMISSION_V1_CAPABILITY
+    }
 
     async fn dump(&mut self) -> String {
         crate::dump::dump().await
