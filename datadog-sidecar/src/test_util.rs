@@ -25,3 +25,19 @@ pub(crate) fn rerun(test: &str) -> Command {
         .stderr(Stdio::null());
     command
 }
+
+/// Sets the soft RLIMIT_NOFILE of this process, returning the previous one.
+pub(crate) fn set_soft_nofile(soft: libc::rlim_t) -> libc::rlim_t {
+    let mut limit = libc::rlimit {
+        rlim_cur: 0,
+        rlim_max: 0,
+    };
+    // SAFETY: getrlimit and setrlimit only read and write `limit`.
+    unsafe {
+        assert_eq!(libc::getrlimit(libc::RLIMIT_NOFILE, &mut limit), 0);
+        let previous = limit.rlim_cur;
+        limit.rlim_cur = soft;
+        assert_eq!(libc::setrlimit(libc::RLIMIT_NOFILE, &limit), 0);
+        previous
+    }
+}

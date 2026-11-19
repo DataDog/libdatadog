@@ -16,6 +16,8 @@ pub mod config;
 pub mod crashtracker;
 mod dump;
 pub mod entry;
+#[cfg(target_os = "linux")]
+mod fd_limits;
 #[cfg(feature = "tracing")]
 pub mod log;
 mod self_telemetry;

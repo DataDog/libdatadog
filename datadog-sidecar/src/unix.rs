@@ -41,6 +41,9 @@ pub extern "C" fn ddog_daemon_entry_point(trampoline_data: &TrampolineData) {
     }
 
     #[cfg(target_os = "linux")]
+    crate::fd_limits::raise_open_files_limit();
+
+    #[cfg(target_os = "linux")]
     let _ = prctl::set_name("dd-ipc-helper");
 
     #[cfg(target_os = "linux")]
@@ -328,13 +331,15 @@ mod tests {
     struct TestSidecar {
         process: std::process::Child,
         transport: Option<crate::service::blocking::SidecarTransport>,
+        log: std::path::PathBuf,
     }
 
     #[cfg(target_os = "linux")]
     impl TestSidecar {
-        /// The sidecar of `test` (its name in this module), or `None` in the sidecar process
-        /// itself, which has then served as the sidecar and never returns.
-        fn start(test: &str) -> Option<Self> {
+        /// The sidecar of `test` (its name in this module), started with `soft_nofile` as its
+        /// soft descriptor limit if given, or `None` in the sidecar process itself, which has
+        /// then served as the sidecar and never returns.
+        fn start(test: &str, soft_nofile: Option<libc::rlim_t>) -> Option<Self> {
             use std::time::Duration;
 
             let test = format!("unix::tests::{test}");
@@ -347,11 +352,22 @@ mod tests {
                 std::process::id(),
                 STARTED.fetch_add(1, Ordering::Relaxed)
             );
+            let log = std::env::temp_dir().join(format!("{}.log", name.replace('/', "-")));
             let mut command = crate::test_util::rerun(&test);
-            command.env(TEST_SIDECAR_LISTENER, &name);
+            command
+                .env(TEST_SIDECAR_LISTENER, &name)
+                .env(
+                    "_DD_DEBUG_SIDECAR_LOG_METHOD",
+                    format!("file://{}", log.display()),
+                )
+                .env("_DD_DEBUG_SIDECAR_LOG_LEVEL", "info");
+            if let Some(soft) = soft_nofile {
+                command.env(TEST_SIDECAR_SOFT_NOFILE, soft.to_string());
+            }
             let mut sidecar = TestSidecar {
                 process: command.spawn().unwrap(),
                 transport: None,
+                log,
             };
             let started = Instant::now();
             let conn = loop {
@@ -378,6 +394,12 @@ mod tests {
 
         /// Runs the entry point of a spawned sidecar, on the listener it would be passed.
         fn serve() -> ! {
+            if let Some(soft) = std::env::var(TEST_SIDECAR_SOFT_NOFILE)
+                .ok()
+                .and_then(|soft| soft.parse().ok())
+            {
+                crate::test_util::set_soft_nofile(soft);
+            }
             let name = std::env::var(TEST_SIDECAR_LISTENER).unwrap();
             let listener = SeqpacketListener::bind_abstract(name.as_bytes()).unwrap();
             // The SHM names are kept to this process.
@@ -400,6 +422,10 @@ mod tests {
         fn pid(&self) -> u32 {
             self.process.id()
         }
+
+        fn log(&self) -> String {
+            std::fs::read_to_string(&self.log).unwrap_or_default()
+        }
     }
 
     #[cfg(target_os = "linux")]
@@ -408,11 +434,14 @@ mod tests {
             drop(self.transport.take());
             let _ = self.process.kill();
             let _ = self.process.wait();
+            let _ = std::fs::remove_file(&self.log);
         }
     }
 
     #[cfg(target_os = "linux")]
     const TEST_SIDECAR_LISTENER: &str = "_DD_TEST_SIDECAR_LISTENER";
+    #[cfg(target_os = "linux")]
+    const TEST_SIDECAR_SOFT_NOFILE: &str = "_DD_TEST_SIDECAR_SOFT_NOFILE";
 
     /// A queued payload must not hold the descriptor of its shared memory: payloads queue up
     /// while the agent is slow, and the sidecar ran out of descriptors.
@@ -428,7 +457,8 @@ mod tests {
         use libdd_trace_utils::trace_utils::TracerHeaderTags;
         use std::time::Duration;
 
-        let Some(mut sidecar) = TestSidecar::start("queued_shm_traces_hold_no_descriptors") else {
+        let Some(mut sidecar) = TestSidecar::start("queued_shm_traces_hold_no_descriptors", None)
+        else {
             return;
         };
         const PAYLOADS: usize = 64;
@@ -476,6 +506,32 @@ mod tests {
         assert!(
             after < before + PAYLOADS / 4,
             "{PAYLOADS} queued payloads took the sidecar from {before} to {after} descriptors"
+        );
+    }
+
+    /// The sidecar serves all clients, so it must not keep the soft descriptor limit of the one
+    /// that spawned it, which is often 1024.
+    #[test]
+    #[cfg(target_os = "linux")]
+    #[cfg_attr(miri, ignore)]
+    fn the_sidecar_lifts_its_soft_open_files_limit() {
+        let Some(sidecar) =
+            TestSidecar::start("the_sidecar_lifts_its_soft_open_files_limit", Some(256))
+        else {
+            return;
+        };
+        let limits = std::fs::read_to_string(format!("/proc/{}/limits", sidecar.pid())).unwrap();
+        let line = limits
+            .lines()
+            .find(|line| line.starts_with("Max open files"))
+            .unwrap();
+        let fields: Vec<_> = line.split_whitespace().collect();
+        assert_eq!(fields[3], fields[4], "the soft limit was kept: {line}");
+        let log = sidecar.log();
+        assert!(
+            log.contains("At startup, RLIMIT_NOFILE soft=256 hard=")
+                && log.contains("Raised the RLIMIT_NOFILE soft limit from 256 to "),
+            "the limits were not logged: {log}"
         );
     }
 
