@@ -135,6 +135,10 @@ fn bench_iter<
 /// (recycling spans and chunk shells on drop). Throughput is reported per span.
 fn enqueue_dequeue<M: Measurement + MeasurementName + 'static>(c: &mut Criterion<M>) {
     let mut group = c.benchmark_group(format!("span_pool_v1/{}", M::name()));
+    // The allocation side's sampling is deliberately tiny and deterministic; don't touch it.
+    if M::name() == "wall_time" {
+        group.sample_size(100);
+    }
     for &(num_chunks, spans_per_chunk) in CONFIGS {
         let total = num_chunks * spans_per_chunk;
         let pool = SpanPoolV1::<BytesData>::with_capacity(POOL_CAPACITY);
