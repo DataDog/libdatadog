@@ -47,7 +47,7 @@ pub unsafe extern "C" fn ddog_http_cancel_token_cancel(
     catch_panic!(
         match token {
             Some(token) => {
-                let first = !token.claimed.swap(true, Ordering::AcqRel);
+                let first = !token.claimed.swap(true, Ordering::Relaxed);
                 token.token.cancel();
                 first
             }
