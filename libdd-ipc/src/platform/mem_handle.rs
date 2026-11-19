@@ -17,7 +17,6 @@ pub struct ShmHandle {
 }
 
 #[derive(Debug)]
-#[allow(dead_code)]
 pub struct AnonHandle {
     pub(crate) size: usize,
 }

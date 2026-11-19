@@ -22,6 +22,8 @@ mod self_telemetry;
 pub mod setup;
 mod shm_path;
 pub mod shm_remote_config;
+#[cfg(all(test, target_os = "linux"))]
+mod test_util;
 pub mod tracer;
 mod watchdog;
 

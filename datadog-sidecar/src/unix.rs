@@ -319,6 +319,166 @@ pub extern "C" fn ddog_crashtracker_entry_point(_trampoline_data: &TrampolineDat
 mod tests {
     use super::*;
 
+    /// A sidecar in a process of its own, and a client connected to it.
+    ///
+    /// The process re-runs the calling test, which turns into the sidecar in [`Self::serve`].
+    /// The spawn trampoline cannot load the entry point from a test executable (glibc refuses to
+    /// `dlopen` a PIE), and a mere fork would inherit the descriptors of concurrent tests.
+    #[cfg(target_os = "linux")]
+    struct TestSidecar {
+        process: std::process::Child,
+        transport: Option<crate::service::blocking::SidecarTransport>,
+    }
+
+    #[cfg(target_os = "linux")]
+    impl TestSidecar {
+        /// The sidecar of `test` (its name in this module), or `None` in the sidecar process
+        /// itself, which has then served as the sidecar and never returns.
+        fn start(test: &str) -> Option<Self> {
+            use std::time::Duration;
+
+            let test = format!("unix::tests::{test}");
+            if crate::test_util::is_rerun(&test) {
+                Self::serve();
+            }
+            static STARTED: AtomicU32 = AtomicU32::new(0);
+            let name = format!(
+                "libdatadog/test-sidecar.{}.{}.sock",
+                std::process::id(),
+                STARTED.fetch_add(1, Ordering::Relaxed)
+            );
+            let mut command = crate::test_util::rerun(&test);
+            command.env(TEST_SIDECAR_LISTENER, &name);
+            let mut sidecar = TestSidecar {
+                process: command.spawn().unwrap(),
+                transport: None,
+            };
+            let started = Instant::now();
+            let conn = loop {
+                match SeqpacketConn::connect_abstract(name.as_bytes()) {
+                    Ok(conn) => break conn,
+                    Err(e) => {
+                        assert!(
+                            sidecar.process.try_wait().unwrap().is_none()
+                                && started.elapsed() < Duration::from_secs(10),
+                            "the sidecar did not start listening: {e}"
+                        );
+                        std::thread::sleep(Duration::from_millis(10));
+                    }
+                }
+            };
+            let mut transport = crate::service::blocking::SidecarTransport::from(conn);
+            transport
+                .set_read_timeout(Some(Duration::from_secs(10)))
+                .unwrap();
+            crate::service::blocking::ping(&mut transport).expect("the sidecar answers");
+            sidecar.transport = Some(transport);
+            Some(sidecar)
+        }
+
+        /// Runs the entry point of a spawned sidecar, on the listener it would be passed.
+        fn serve() -> ! {
+            let name = std::env::var(TEST_SIDECAR_LISTENER).unwrap();
+            let listener = SeqpacketListener::bind_abstract(name.as_bytes()).unwrap();
+            // The SHM names are kept to this process.
+            unsafe {
+                std::env::set_var(
+                    "__DD_INTERNAL_PASSED_FD",
+                    listener.into_raw_fd().to_string(),
+                )
+            };
+            use_thread_sidecar_shm_namespace(Some(std::process::id()));
+            ddog_daemon_entry_point(&TrampolineData {
+                argc: 0,
+                argv: std::ptr::null(),
+                dependency_paths: std::ptr::null(),
+            });
+            // Bypass the test harness: the exit status is the entry point's.
+            unsafe { libc::_exit(0) }
+        }
+
+        fn pid(&self) -> u32 {
+            self.process.id()
+        }
+    }
+
+    #[cfg(target_os = "linux")]
+    impl Drop for TestSidecar {
+        fn drop(&mut self) {
+            drop(self.transport.take());
+            let _ = self.process.kill();
+            let _ = self.process.wait();
+        }
+    }
+
+    #[cfg(target_os = "linux")]
+    const TEST_SIDECAR_LISTENER: &str = "_DD_TEST_SIDECAR_LISTENER";
+
+    /// A queued payload must not hold the descriptor of its shared memory: payloads queue up
+    /// while the agent is slow, and the sidecar ran out of descriptors.
+    #[test]
+    #[cfg(target_os = "linux")]
+    #[cfg_attr(miri, ignore)]
+    fn queued_shm_traces_hold_no_descriptors() {
+        use crate::service::{InstanceId, SerializedTracerHeaderTags, SessionConfig, blocking};
+        use libdd_common::Endpoint;
+        use libdd_ipc::platform::{FileBackedHandle, ShmHandle};
+        use libdd_trace_utils::msgpack_encoder::v04::to_vec_from_v04;
+        use libdd_trace_utils::test_utils::create_test_no_alloc_span;
+        use libdd_trace_utils::trace_utils::TracerHeaderTags;
+        use std::time::Duration;
+
+        let Some(mut sidecar) = TestSidecar::start("queued_shm_traces_hold_no_descriptors") else {
+            return;
+        };
+        const PAYLOADS: usize = 64;
+        // Accepts connections and never answers them, so the payloads stay queued.
+        let agent = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let url = format!("http://{}/", agent.local_addr().unwrap());
+        std::thread::spawn(move || agent.incoming().collect::<Vec<_>>());
+
+        let open_fds = |pid| {
+            std::fs::read_dir(format!("/proc/{pid}/fd"))
+                .unwrap()
+                .count()
+        };
+        let pid = sidecar.pid();
+        let transport = sidecar.transport.as_mut().unwrap();
+        blocking::set_connection_config(
+            transport,
+            InstanceId::new("session", "runtime"),
+            SessionConfig {
+                endpoint: Endpoint {
+                    url: url.parse().unwrap(),
+                    ..Endpoint::default()
+                },
+                flush_interval: Duration::from_millis(100),
+                ..SessionConfig::for_test()
+            },
+        )
+        .unwrap();
+        let payload = to_vec_from_v04(&[vec![create_test_no_alloc_span(1, 2, 0, 3, true)]]);
+        let before = open_fds(pid);
+        for _ in 0..PAYLOADS {
+            let mut mapped = ShmHandle::new(payload.len()).unwrap().map().unwrap();
+            mapped.as_slice_mut()[..payload.len()].copy_from_slice(&payload);
+            let headers = SerializedTracerHeaderTags::try_from(TracerHeaderTags {
+                lang: "php",
+                ..Default::default()
+            })
+            .unwrap();
+            blocking::send_trace_v04_shm(transport, mapped.into(), payload.len(), headers).unwrap();
+        }
+        blocking::ping(transport).unwrap();
+        // Each payload is mapped by a task of its own.
+        std::thread::sleep(Duration::from_secs(1));
+        let after = open_fds(pid);
+        assert!(
+            after < before + PAYLOADS / 4,
+            "{PAYLOADS} queued payloads took the sidecar from {before} to {after} descriptors"
+        );
+    }
+
     /// Isolate the process-wide namespace change from other tests.
     #[test]
     #[cfg_attr(miri, ignore)]

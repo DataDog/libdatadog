@@ -1329,7 +1329,8 @@ impl SidecarInterface for ConnectionSidecarHandler {
         match handle.map() {
             Ok(mapped) => {
                 if let Some(app) = self.application.app.as_mut() {
-                    session.send_debugger_data(app, debugger_type, mapped);
+                    // Detached like trace payloads: it may wait for a slow agent too.
+                    session.send_debugger_data(app, debugger_type, mapped.into_detached());
                 } else {
                     warn!(
                         "No application for {:?} - skipping live debugger data",
