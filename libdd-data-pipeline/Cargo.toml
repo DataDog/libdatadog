@@ -96,6 +96,7 @@ serde_ignored.workspace = true
 
 [target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
 h2.workspace = true
+hyper = { workspace = true, features = ["server", "http1"] }
 zstd.workspace = true
 
 [target.'cfg(target_arch = "wasm32")'.dev-dependencies]
