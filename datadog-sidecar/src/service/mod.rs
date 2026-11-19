@@ -160,6 +160,15 @@ pub struct ApplicationConfig {
     pub dynamic_instrumentation_state: DynamicInstrumentationConfigState,
 }
 
+#[repr(u32)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize, Serialize)]
+pub enum ExposureVerdict {
+    Unavailable = 0,
+    Admitted = 1,
+    Repeat = 2,
+    Unknown = 3,
+}
+
 #[derive(Debug, Deserialize, Serialize)]
 pub enum SidecarAction {
     Telemetry(TelemetryActions),

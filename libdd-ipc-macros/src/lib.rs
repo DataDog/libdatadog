@@ -31,6 +31,7 @@ struct MethodInfo {
     variant: Ident,
     is_blocking: bool,
     is_oneway: bool,
+    oversized_after: bool,
     return_type: Option<Box<Type>>,
     params: Vec<ParamInfo>,
     handle_param_indices: Vec<usize>,
@@ -113,6 +114,7 @@ fn collect_methods(item: &ItemTrait) -> Vec<MethodInfo> {
             variant,
             is_blocking,
             is_oneway,
+            oversized_after: has_attr(&func.attrs, "oversized_after"),
             return_type,
             params,
             handle_param_indices,
@@ -129,6 +131,15 @@ fn has_client_request(methods: &[MethodInfo]) -> bool {
         .iter()
         .flat_map(|method| &method.params)
         .any(|param| param.client_ty.is_some())
+}
+
+// Serde uses declaration order for bincode discriminants, including the shared-memory envelope.
+fn split_at_oversized<'a, T>(methods: &[MethodInfo], variants: &'a [T]) -> (&'a [T], &'a [T]) {
+    let index = methods
+        .iter()
+        .position(|method| method.oversized_after)
+        .map_or(methods.len(), |i| i + 1);
+    variants.split_at(index)
 }
 
 fn gen_request_enum(enum_name: &Ident, methods: &[MethodInfo]) -> proc_macro2::TokenStream {
@@ -154,6 +165,7 @@ fn gen_request_enum(enum_name: &Ident, methods: &[MethodInfo]) -> proc_macro2::T
         })
         .collect();
 
+    let (variants, extensions) = split_at_oversized(methods, &variants);
     quote! {
         #[derive(::serde::Serialize, ::serde::Deserialize, Debug)]
         pub enum #enum_name {
@@ -164,6 +176,7 @@ fn gen_request_enum(enum_name: &Ident, methods: &[MethodInfo]) -> proc_macro2::T
                 shm: libdd_ipc::platform::ShmHandle,
                 len: usize,
             },
+            #(#extensions,)*
         }
         #response_predicate
 
@@ -223,6 +236,7 @@ fn gen_client_request_enum(enum_name: &Ident, methods: &[MethodInfo]) -> proc_ma
         })
         .collect();
 
+    let (variants, extensions) = split_at_oversized(methods, &variants);
     quote! {
         #[derive(::serde::Serialize, Debug)]
         pub enum #enum_name<'request> {
@@ -233,6 +247,7 @@ fn gen_client_request_enum(enum_name: &Ident, methods: &[MethodInfo]) -> proc_ma
                 shm: libdd_ipc::platform::ShmHandle,
                 len: usize,
             },
+            #(#extensions,)*
         }
         #response_predicate
 

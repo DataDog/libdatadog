@@ -316,6 +316,29 @@ impl SeqpacketConn {
         }
     }
 
+    pub(crate) fn wait_for_packet(&self, deadline: std::time::Instant) -> io::Result<()> {
+        let ms = deadline
+            .saturating_duration_since(std::time::Instant::now())
+            .as_millis();
+        let mut pollfd = libc::pollfd {
+            fd: self.inner.as_raw_fd(),
+            events: libc::POLLIN,
+            revents: 0,
+        };
+        // A signal returns control to the caller to recompute the remaining budget.
+        let result = unsafe { libc::poll(&mut pollfd, 1, i32::try_from(ms).unwrap_or(i32::MAX)) };
+        if result < 0 {
+            let error = io::Error::last_os_error();
+            if error.kind() != io::ErrorKind::Interrupted {
+                return Err(error);
+            }
+        }
+        if ms == 0 && result == 0 {
+            std::thread::yield_now();
+        }
+        Ok(())
+    }
+
     /// Non-blocking receive. Returns `Err(WouldBlock)` if no message available.
     pub fn try_recv_raw(&self, buf: &mut [u8]) -> io::Result<(usize, Vec<OwnedFd>)> {
         recvmsg_raw(self.inner.as_raw_fd(), buf, MsgFlags::empty())

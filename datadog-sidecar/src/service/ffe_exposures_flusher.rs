@@ -9,16 +9,20 @@
 //! compatible local v4-before-v2 route, requiring both EVP identity headers,
 //! and otherwise uses authenticated direct intake.
 
-use crate::service::FfeExposureBatch;
 #[cfg(test)]
 use crate::service::evp_proxy::{
     EVENT_PLATFORM_INTAKE_SUBDOMAIN as EVP_SUBDOMAIN_VALUE,
     SUBDOMAIN_HEADER as EVP_SUBDOMAIN_HEADER,
 };
 use crate::service::evp_transport::EvpTransport;
+use crate::service::{ExposureVerdict, FfeExposure, FfeExposureBatch, FfeTelemetryContext};
 use libdd_capabilities::{HttpClientCapability, SleepCapability};
+use libdd_capabilities_impl::NativeCapabilities;
 pub(crate) use libdd_ffe::telemetry::exposures::ExposureDeduplicator;
 use libdd_ffe::telemetry::exposures::encode_exposure_batch_in_scope;
+use libdd_ffe::telemetry::exposures::{encode_admitted_exposure_batch, is_complete};
+use std::sync::{Arc, OnceLock};
+use tokio::sync::mpsc;
 use tracing::debug;
 
 /// Historical Agent-only EVP v2 path for Feature Flags exposure intake.
@@ -38,7 +42,20 @@ pub(crate) async fn send_batch<C: HttpClientCapability + SleepCapability>(
     batch: FfeExposureBatch,
 ) {
     let deduplication_scope = transport.deduplication_scope();
-    let payload = match encode_exposure_batch_in_scope(deduplicator, deduplication_scope, batch) {
+    send_encoded(
+        client,
+        transport,
+        encode_exposure_batch_in_scope(deduplicator, deduplication_scope, batch),
+    )
+    .await;
+}
+
+async fn send_encoded<C: HttpClientCapability + SleepCapability>(
+    client: &C,
+    transport: &EvpTransport,
+    encoded: Result<Option<String>, serde_json::Error>,
+) {
+    let payload = match encoded {
         Ok(Some(payload)) => payload,
         Ok(None) => return,
         Err(e) => {
@@ -56,6 +73,77 @@ pub(crate) async fn send_batch<C: HttpClientCapability + SleepCapability>(
             "exposure batch",
         )
         .await;
+}
+
+type Job = (EvpTransport, FfeExposureBatch);
+
+#[derive(Clone, Default)]
+pub(crate) struct AdmissionQueue(Arc<OnceLock<mpsc::Sender<Job>>>);
+
+impl AdmissionQueue {
+    #[cfg(test)]
+    pub(super) fn capture(capacity: usize) -> (Self, mpsc::Receiver<Job>) {
+        let (sender, receiver) = mpsc::channel(capacity);
+        (Self(Arc::new(OnceLock::from(sender))), receiver)
+    }
+
+    pub(crate) fn admit(
+        &self,
+        client: &NativeCapabilities,
+        transport: &EvpTransport,
+        cache: &ExposureDeduplicator,
+        context: FfeTelemetryContext,
+        event: FfeExposure,
+        deliver: bool,
+    ) -> ExposureVerdict {
+        if !is_complete(&event)
+            || [
+                &context.service,
+                &context.env,
+                &context.version,
+                &event.flag_key,
+                &event.subject_id,
+                &event.allocation_key,
+                &event.variant,
+                &event.features_json,
+                &event.subject_attributes_json,
+            ]
+            .iter()
+            .map(|s| s.len())
+            .sum::<usize>()
+                > 65536
+        {
+            return ExposureVerdict::Unavailable;
+        }
+        match cache.try_record_in_scope(transport.deduplication_scope(), &context, &event, || {
+            if deliver {
+                let queue = self.0.get_or_init(|| {
+                    let (tx, mut rx) = mpsc::channel::<Job>(128);
+                    let client = client.clone();
+                    tokio::spawn(async move {
+                        while let Some((route, batch)) = rx.recv().await {
+                            send_encoded(&client, &route, encode_admitted_exposure_batch(batch))
+                                .await;
+                        }
+                    });
+                    tx
+                });
+                let permit = queue.try_reserve().map_err(|_| ())?;
+                permit.send((
+                    transport.clone(),
+                    FfeExposureBatch {
+                        context: context.clone(),
+                        exposures: vec![event.clone()],
+                    },
+                ));
+            }
+            Ok::<_, ()>(())
+        }) {
+            Ok(true) => ExposureVerdict::Admitted,
+            Ok(false) => ExposureVerdict::Repeat,
+            Err(()) => ExposureVerdict::Unavailable,
+        }
+    }
 }
 
 #[cfg(test)]

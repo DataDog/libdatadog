@@ -11,7 +11,13 @@ use std::os::unix::io::{OwnedFd, RawFd};
 use std::os::windows::io::{OwnedHandle as OwnedFd, RawHandle as RawFd};
 
 use std::io;
-use std::time::Duration;
+use std::time::{Duration, Instant};
+
+#[derive(Debug, PartialEq, Eq)]
+pub enum DeadlineCallError {
+    NotSent,
+    Uncertain,
+}
 use tracing::{trace, warn};
 
 /// Client-side state for a single IPC connection.
@@ -121,6 +127,46 @@ impl IpcClientConn {
                 Err(e)
             }
         }
+    }
+
+    /// Sends once and waits for its ordered reply up to an absolute deadline.
+    pub fn call_until(
+        &mut self,
+        data: Vec<u8>,
+        deadline: Instant,
+    ) -> Result<Vec<u8>, DeadlineCallError> {
+        if self.closed || Instant::now() >= deadline {
+            return Err(DeadlineCallError::NotSent);
+        }
+        self.try_send(data, &[]).map_err(|_| {
+            if self.closed {
+                DeadlineCallError::Uncertain
+            } else {
+                DeadlineCallError::NotSent
+            }
+        })?;
+        while Instant::now() < deadline {
+            match self.conn.try_recv_raw(&mut self.recv_buf) {
+                Ok((len, _)) => {
+                    self.ack_count += 1;
+                    if self.ack_count == self.send_count {
+                        return Ok(self.recv_buf[..len].to_vec());
+                    }
+                }
+                Err(e) if e.kind() == io::ErrorKind::WouldBlock => {
+                    #[cfg(unix)]
+                    if self.conn.wait_for_packet(deadline).is_err() {
+                        break;
+                    }
+                    #[cfg(windows)]
+                    std::thread::yield_now();
+                }
+                Err(e) if e.kind() == io::ErrorKind::Interrupted => continue,
+                Err(_) => break,
+            }
+        }
+        self.closed = true;
+        Err(DeadlineCallError::Uncertain)
     }
 
     /// Blocking send (no response wait).

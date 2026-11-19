@@ -80,6 +80,8 @@ use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct SidecarStats {
+    #[serde(default)]
+    ffe_admission_v1: bool,
     trace_flusher: TraceFlusherStats,
     active_connections: u32,
     active_telemetry_clients: u32,
@@ -135,6 +137,7 @@ pub struct SidecarServer {
     pub(crate) ffe_http_client: NativeCapabilities,
     /// Sidecar-owned exposure cache, shared across sessions/connections.
     pub(crate) ffe_exposure_deduplicator: ffe_exposures_flusher::ExposureDeduplicator,
+    ffe_admission_queue: ffe_exposures_flusher::AdmissionQueue,
     /// AppSec lifecycle and active backend, when supplied by the embedding application.
     #[cfg(unix)]
     appsec: Option<Arc<AppSecManager>>,
@@ -926,6 +929,7 @@ impl SidecarServer {
         let connection_stats = &self.connection_stats;
 
         SidecarStats {
+            ffe_admission_v1: true,
             trace_flusher: self.trace_flusher.stats(),
             active_connections: connection_stats.connections.load(Ordering::Relaxed),
             active_telemetry_clients,
@@ -1570,6 +1574,27 @@ impl SidecarInterface for ConnectionSidecarHandler {
         });
     }
 
+    async fn admit_ffe_exposure_v1(
+        &mut self,
+        context: crate::service::FfeTelemetryContext,
+        event: crate::service::FfeExposure,
+        deliver: bool,
+    ) -> crate::service::ExposureVerdict {
+        let Some(transport) = self.session.load().as_ref().and_then(|session| {
+            session.get_evp_transport(evp_proxy::EVENT_PLATFORM_INTAKE_SUBDOMAIN)
+        }) else {
+            return crate::service::ExposureVerdict::Unavailable;
+        };
+        self.server.ffe_admission_queue.admit(
+            &self.server.ffe_http_client,
+            &transport,
+            &self.server.ffe_exposure_deduplicator,
+            context,
+            event,
+            deliver,
+        )
+    }
+
     async fn ping(&mut self) {}
 
     async fn dump(&mut self) -> String {
@@ -1642,6 +1667,8 @@ mod cdn_tests;
 
 #[cfg(test)]
 mod tests {
+    #[cfg(unix)]
+    mod admission;
     use super::*;
     use crate::service::evp_proxy;
     use crate::service::{

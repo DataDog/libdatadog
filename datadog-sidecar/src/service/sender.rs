@@ -105,6 +105,16 @@ struct ConnectionState {
 }
 
 impl ConnectionState {
+    fn has_pending(&self) -> bool {
+        self.connection_config.pending
+            || self.evp_transports.pending
+            || self.process_tags.pending
+            || self.user_service_defined.pending
+            || self.test_session_token.pending
+            || self.application.pending
+            || self.cdn.pending
+    }
+
     /// Offers the pending messages to `submit`, in the order they must be sent in: the
     /// configuration first, the application last. Stops at the first message `submit` refuses,
     /// which stays pending with all following ones. Returns whether everything was sent.
@@ -187,6 +197,7 @@ impl ConnectionState {
 pub struct SidecarSender {
     pub channel: SidecarInterfaceChannel,
     state: ConnectionState,
+    ffe_admission_v1: Option<bool>,
     /// Maximum allowed outstanding (sent-but-not-acked) messages before state drain is skipped
     /// and fire-and-forget sends are blocked.
     pub max_outstanding: u64,
@@ -202,6 +213,7 @@ impl SidecarSender {
         Self {
             channel,
             state: ConnectionState::default(),
+            ffe_admission_v1: None,
             max_outstanding: 100,
             enqueue_actions_counter: 0,
             metric_registrations: HashMap::new(),
@@ -456,6 +468,55 @@ impl SidecarSender {
     pub fn flush(&mut self, options: SidecarFlushOptions) -> io::Result<()> {
         self.drain_outbox_blocking()?;
         self.channel.call_flush(options)
+    }
+
+    pub fn admit_ffe_exposure_v1(
+        &mut self,
+        context: crate::service::FfeTelemetryContext,
+        mut event: crate::service::FfeExposure,
+        deliver: bool,
+        deadline: std::time::Instant,
+    ) -> crate::service::ExposureVerdict {
+        use crate::service::ExposureVerdict;
+        use libdd_ipc::codec::{decode, encode};
+        if std::time::Instant::now() >= deadline
+            || self.channel.0.is_closed()
+            || self.state.has_pending()
+        {
+            return ExposureVerdict::Unavailable;
+        }
+        if self.ffe_admission_v1.is_none() {
+            // Stats is a stable request understood by older sidecars.
+            let Ok(bytes) = self
+                .channel
+                .0
+                .call_until(encode(&SidecarInterfaceRequest::Stats {}), deadline)
+            else {
+                return ExposureVerdict::Unavailable;
+            };
+            let supported = decode::<String>(&bytes)
+                .ok()
+                .and_then(|s| serde_json::from_str::<serde_json::Value>(&s).ok())
+                .is_some_and(|v| v["ffe_admission_v1"].as_bool() == Some(true));
+            self.ffe_admission_v1 = Some(supported);
+        }
+        if self.ffe_admission_v1 != Some(true) {
+            return ExposureVerdict::Unavailable;
+        }
+        if !deliver {
+            event.subject_attributes_json.clear();
+            event.features_json.clear();
+        }
+        let data = encode(&SidecarInterfaceRequest::AdmitFfeExposureV1 {
+            context,
+            event,
+            deliver,
+        });
+        match self.channel.0.call_until(data, deadline) {
+            Ok(bytes) => decode(&bytes).unwrap_or(ExposureVerdict::Unknown),
+            Err(libdd_ipc::client::DeadlineCallError::NotSent) => ExposureVerdict::Unavailable,
+            Err(libdd_ipc::client::DeadlineCallError::Uncertain) => ExposureVerdict::Unknown,
+        }
     }
 
     pub fn ping(&mut self) -> io::Result<()> {

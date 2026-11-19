@@ -1044,6 +1044,7 @@ pub unsafe extern "C" fn ddog_sidecar_session_set_evp_transport(
 
 #[repr(C)]
 /// C representation of a Feature Flags exposure event.
+#[derive(Clone, Copy)]
 pub struct FfeExposure<'a> {
     pub timestamp_ms: u64,
     pub flag_key: CharSlice<'a>,
@@ -1134,6 +1135,78 @@ pub unsafe extern "C" fn ddog_sidecar_send_ffe_exposure_batch(
             "ddog_sidecar_send_ffe_exposure_batch",
         ))
     })
+}
+
+pub type FfeAdmission = u32;
+pub const FFE_ADMISSION_UNAVAILABLE: FfeAdmission = 0;
+pub const FFE_ADMISSION_ADMITTED: FfeAdmission = 1;
+pub const FFE_ADMISSION_REPEAT: FfeAdmission = 2;
+pub const FFE_ADMISSION_UNKNOWN: FfeAdmission = 3;
+
+/// Attempts admission with a local IPC budget capped at 50 ms. An absent transport yields
+/// unavailable.
+///
+/// # Safety
+/// A populated transport slot must point to a live, exclusively borrowed transport. Supply writable
+/// storage for `out`.
+#[unsafe(no_mangle)]
+// allow(ffi-panic-boundary): This crate uses the sidecar's abort-on-panic ABI.
+pub unsafe extern "C" fn ddog_sidecar_ffe_admit_v1(
+    transport: *mut *mut SidecarTransport,
+    context: &FfeTelemetryContext<'_>,
+    exposure: &FfeExposure<'_>,
+    deliver: bool,
+    budget_us: u32,
+    out: *mut FfeAdmission,
+) -> MaybeError {
+    let out = try_c!(
+        unsafe { out.cast::<std::mem::MaybeUninit<FfeAdmission>>().as_mut() }
+            .ok_or("missing exposure admission output")
+    );
+    out.write(FFE_ADMISSION_UNAVAILABLE);
+    let Some(transport) = (unsafe { transport.as_ref().and_then(|slot| (*slot).as_mut()) }) else {
+        return MaybeError::None;
+    };
+    let deadline = std::time::Instant::now()
+        + std::time::Duration::from_micros(u64::from(budget_us.min(50_000)));
+    let mut size = 0usize;
+    for len in [
+        context.service.len(),
+        context.env.len(),
+        context.version.len(),
+        exposure.flag_key.len(),
+        exposure.subject_id.len(),
+        exposure.allocation_key.len(),
+        exposure.variant.len(),
+        if deliver {
+            exposure.subject_attributes_json.len()
+        } else {
+            0
+        },
+        if deliver {
+            exposure.features_json.len()
+        } else {
+            0
+        },
+    ] {
+        size = size.saturating_add(len);
+    }
+    if size > 65536 || budget_us == 0 {
+        return MaybeError::None;
+    }
+    let context = try_c!(ffe_context_from_ffi(context));
+    let mut fields = *exposure;
+    if !deliver {
+        fields.subject_attributes_json = CharSlice::empty();
+        fields.features_json = CharSlice::empty();
+    }
+    let event = try_c!(ffe_exposure_from_ffi(&fields));
+    out.write(
+        transport
+            .inner
+            .admit_ffe_exposure_v1(context, event, deliver, deadline) as FfeAdmission,
+    );
+    MaybeError::None
 }
 
 fn ddog_sidecar_send_ffe_exposure_batch_impl(

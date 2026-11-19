@@ -20,6 +20,12 @@ int main(void) {
       const ddog_FfeTelemetryContext *, const ddog_FfeFlagEvaluation *,
       ddog_Slice_FfeScalarAttribute, const ddog_FfeSnapshotState *) =
       ddog_sidecar_try_submit_ffe_flag_evaluation;
-  return status != DDOG_FFE_SUBMISSION_STATUS_UNAVAILABLE || attributes.len != 1 ||
+  _Static_assert(sizeof(ddog_FfeAdmission) == sizeof(uint32_t), "admission status ABI");
+  ddog_FfeExposure exposure = { 0 };
+  ddog_FfeAdmission admission = UINT32_MAX;
+  ddog_SidecarTransport *transport = NULL;
+  ddog_MaybeError result = ddog_sidecar_ffe_admit_v1(&transport, &context, &exposure, true, 100, &admission);
+  ddog_MaybeError_drop(result);
+  return admission != ddog_FFE_ADMISSION_UNAVAILABLE || status != DDOG_FFE_SUBMISSION_STATUS_UNAVAILABLE || attributes.len != 1 ||
       snapshot.snapshot_error || submit == NULL;
 }

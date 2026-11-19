@@ -369,7 +369,14 @@ pub trait SidecarInterface {
     /// Queue CDN configuration for this connection. No acknowledgement or returned handle:
     /// readers open the ordinary RC directory immediately using registration.invariants().
     /// Replay after reconnect. In-process listeners reject this to keep CDN HTTP out of PHP.
+    #[oversized_after]
     async fn set_cdn_configuration(config: Option<crate::shm_remote_config::CdnRegistration>);
+
+    async fn admit_ffe_exposure_v1(
+        context: crate::service::FfeTelemetryContext,
+        event: crate::service::FfeExposure,
+        deliver: bool,
+    ) -> crate::service::ExposureVerdict;
 }
 
 #[cfg(test)]

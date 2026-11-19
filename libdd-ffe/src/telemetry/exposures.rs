@@ -84,8 +84,23 @@ impl ExposureDeduplicator {
         context: &FfeTelemetryContext,
         exposure: &FfeExposure,
     ) -> bool {
+        self.try_record_in_scope(scope, context, exposure, || {
+            Ok::<_, std::convert::Infallible>(())
+        })
+        .unwrap_or_else(|never| match never {})
+    }
+
+    /// Publishes a changed assignment under the cache lock. A failed publication preserves the
+    /// prior value.
+    pub fn try_record_in_scope<E>(
+        &self,
+        scope: &str,
+        context: &FfeTelemetryContext,
+        exposure: &FfeExposure,
+        publish: impl FnOnce() -> Result<(), E>,
+    ) -> Result<bool, E> {
         let Some(cache) = &self.cache else {
-            return true;
+            return publish().map(|()| true);
         };
 
         let key = ExposureCacheKey {
@@ -104,11 +119,12 @@ impl ExposureDeduplicator {
 
         let mut cache = cache.lock().unwrap_or_else(|e| e.into_inner());
         if cache.get(&key).is_some_and(|cached| cached == &value) {
-            return false;
+            return Ok(false);
         }
 
+        publish()?;
         cache.put(key, value);
-        true
+        Ok(true)
     }
 }
 
@@ -143,11 +159,20 @@ pub fn encode_exposure_batch_in_scope(
     scope: &str,
     batch: FfeExposureBatch,
 ) -> Result<Option<String>, serde_json::Error> {
+    let mut batch = batch;
+    batch.exposures.retain(|event| {
+        is_complete(event) && deduplicator.should_send_in_scope(scope, &batch.context, event)
+    });
+    encode_admitted_exposure_batch(batch)
+}
+
+/// Serializes exposures already admitted by the shared authority.
+pub fn encode_admitted_exposure_batch(
+    batch: FfeExposureBatch,
+) -> Result<Option<String>, serde_json::Error> {
     let exposures = batch
         .exposures
         .into_iter()
-        .filter(is_complete)
-        .filter(|exposure| deduplicator.should_send_in_scope(scope, &batch.context, exposure))
         .map(ExposureEvent::from)
         .collect::<Vec<_>>();
 
@@ -162,7 +187,7 @@ pub fn encode_exposure_batch_in_scope(
     serde_json::to_string(&payload).map(Some)
 }
 
-fn is_complete(exposure: &FfeExposure) -> bool {
+pub fn is_complete(exposure: &FfeExposure) -> bool {
     // `subject_id` is intentionally not required here; empty targeting keys
     // are valid evaluation inputs and must not suppress exposure logging.
     !exposure.flag_key.is_empty()
