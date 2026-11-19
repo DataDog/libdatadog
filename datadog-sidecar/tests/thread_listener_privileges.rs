@@ -118,6 +118,7 @@ fn thread_listener_authentication_and_restart() {
                 MainLoopConfig {
                     enable_ctrl_c_handler: false,
                     init_shm_eagerly: false,
+                    exit_on_failure: false,
                     ..Default::default()
                 },
             ))

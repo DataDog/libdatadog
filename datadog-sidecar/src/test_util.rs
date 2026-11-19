@@ -41,3 +41,11 @@ pub(crate) fn set_soft_nofile(soft: libc::rlim_t) -> libc::rlim_t {
         previous
     }
 }
+
+/// The lowest descriptor number free in this process.
+pub(crate) fn lowest_free_fd() -> std::os::fd::RawFd {
+    // SAFETY: F_GETFD only probes the descriptor number.
+    (0..)
+        .find(|&fd| unsafe { libc::fcntl(fd, libc::F_GETFD) } == -1)
+        .unwrap_or(0)
+}

@@ -105,7 +105,7 @@ pub extern "C" fn ddog_daemon_entry_point(trampoline_data: &TrampolineData) {
     )
 }
 
-fn stop_listening(listener_fd: RawFd) {
+pub(crate) fn stop_listening(listener_fd: RawFd) {
     // We need to drop O_NONBLOCK, as accept() on a shutdown socket will just give
     // EAGAIN instead of EINVAL
     #[allow(clippy::unwrap_used)]
@@ -146,15 +146,20 @@ async fn accept_socket_loop(
                                 warn!("IPC accept: oversized datagram discarded (EMSGSIZE)");
                             }
                             Ok(Err(e)) => {
-                                error!("IPC accept error: {e}");
-                                break;
+                                // Out of descriptors, or otherwise unable to accept: main_loop
+                                // hands the name and the clients over to a fresh sidecar.
+                                stop_listening(async_listener.as_raw_fd());
+                                return Err(io::Error::new(
+                                    e.kind(),
+                                    format!("IPC accept error: {e}"),
+                                ));
                             }
                             Err(_would_block) => continue,
                         }
                     }
                     Err(e) => {
-                        error!("IPC listener error: {e}");
-                        break;
+                        stop_listening(async_listener.as_raw_fd());
+                        return Err(io::Error::new(e.kind(), format!("IPC listener error: {e}")));
                     }
                 }
             }
@@ -337,6 +342,7 @@ mod tests {
         process: std::process::Child,
         transport: Option<crate::service::blocking::SidecarTransport>,
         log: std::path::PathBuf,
+        name: String,
     }
 
     #[cfg(target_os = "linux")]
@@ -373,6 +379,7 @@ mod tests {
                 process: command.spawn().unwrap(),
                 transport: None,
                 log,
+                name: name.clone(),
             };
             let started = Instant::now();
             let conn = loop {
@@ -441,6 +448,45 @@ mod tests {
 
         fn log(&self) -> String {
             std::fs::read_to_string(&self.log).unwrap_or_default()
+        }
+
+        fn wait(&mut self, timeout: std::time::Duration) -> Option<std::process::ExitStatus> {
+            let started = Instant::now();
+            loop {
+                if let Some(status) = self.process.try_wait().unwrap() {
+                    return Some(status);
+                }
+                if started.elapsed() >= timeout {
+                    return None;
+                }
+                std::thread::sleep(std::time::Duration::from_millis(20));
+            }
+        }
+
+        /// No descriptor can be opened in the sidecar from now on; the open ones still work.
+        fn exhaust_descriptors(&self) {
+            let pid = self.pid() as libc::pid_t;
+            let mut limit = libc::rlimit {
+                rlim_cur: 0,
+                rlim_max: 0,
+            };
+            // SAFETY: prlimit only reads and writes `limit`.
+            unsafe {
+                assert_eq!(
+                    libc::prlimit(pid, libc::RLIMIT_NOFILE, std::ptr::null(), &mut limit),
+                    0
+                );
+                limit.rlim_cur = 0;
+                assert_eq!(
+                    libc::prlimit(pid, libc::RLIMIT_NOFILE, &limit, std::ptr::null_mut()),
+                    0
+                );
+            }
+        }
+
+        /// Whether a fresh sidecar could take the name over.
+        fn name_is_free(&self) -> bool {
+            SeqpacketListener::bind_abstract(self.name.as_bytes()).is_ok()
         }
     }
 
@@ -583,6 +629,113 @@ mod tests {
             inherited.is_empty(),
             "sockets inherited on exec: {inherited:?}"
         );
+    }
+
+    /// A sidecar out of descriptors must not linger, held by its clients: it frees its name,
+    /// closes its clients so that they reconnect to a fresh sidecar, and exits well before the
+    /// shutdown deadline.
+    #[test]
+    #[cfg(target_os = "linux")]
+    #[cfg_attr(miri, ignore)]
+    fn a_sidecar_failing_to_accept_hands_its_clients_over() {
+        let Some(mut sidecar) =
+            TestSidecar::start("a_sidecar_failing_to_accept_hands_its_clients_over", None)
+        else {
+            return;
+        };
+        sidecar.exhaust_descriptors();
+        // Queued, but there is no descriptor left to accept it with.
+        let _queued = SeqpacketConn::connect_abstract(sidecar.name.as_bytes()).unwrap();
+        let status = sidecar.wait(std::time::Duration::from_secs(5));
+        assert_eq!(
+            status.and_then(|status| status.code()),
+            Some(0),
+            "the sidecar still runs, or hit the deadline: {status:?}"
+        );
+        assert!(
+            sidecar.name_is_free(),
+            "a fresh sidecar cannot take the name"
+        );
+        let log = sidecar.log();
+        assert!(
+            log.contains("IPC accept error:")
+                && log.contains("open_fds=")
+                && log.contains("RLIMIT_NOFILE soft=0 hard="),
+            "the exhaustion was not reported: {log}"
+        );
+    }
+
+    /// Descriptors dropped on receive for lack of slots mean the same: the sidecar must hand all
+    /// its clients over, not just lose that connection.
+    #[test]
+    #[cfg(target_os = "linux")]
+    #[cfg_attr(miri, ignore)]
+    fn a_sidecar_dropping_passed_descriptors_hands_its_clients_over() {
+        use crate::service::{SerializedTracerHeaderTags, blocking};
+        use libdd_ipc::platform::ShmHandle;
+        use libdd_trace_utils::trace_utils::TracerHeaderTags;
+
+        let Some(mut sidecar) = TestSidecar::start(
+            "a_sidecar_dropping_passed_descriptors_hands_its_clients_over",
+            None,
+        ) else {
+            return;
+        };
+        // accept() fails with EMFILE once at the limit even with nothing queued: let the accept
+        // loop settle first, so that the receive is what runs into the limit.
+        std::thread::sleep(std::time::Duration::from_millis(200));
+        sidecar.exhaust_descriptors();
+        let headers = SerializedTracerHeaderTags::try_from(TracerHeaderTags {
+            lang: "php",
+            ..Default::default()
+        })
+        .unwrap();
+        let shm = ShmHandle::new(4096).unwrap();
+        let transport = sidecar.transport.as_mut().unwrap();
+        blocking::send_trace_v04_shm(transport, shm, 4096, headers).unwrap();
+        let status = sidecar.wait(std::time::Duration::from_secs(5));
+        assert_eq!(
+            status.and_then(|status| status.code()),
+            Some(0),
+            "the sidecar still runs, or hit the deadline: {status:?}"
+        );
+        assert!(
+            sidecar.name_is_free(),
+            "a fresh sidecar cannot take the name"
+        );
+        let log = sidecar.log();
+        assert!(
+            log.contains("IPC receive error:") && log.contains("open_fds="),
+            "the dropped descriptors were not reported: {log}"
+        );
+    }
+
+    /// A message with more descriptors than a receive takes is that client's problem: only its
+    /// connection ends, the sidecar keeps serving the others.
+    #[test]
+    #[cfg(target_os = "linux")]
+    #[cfg_attr(miri, ignore)]
+    fn a_message_with_too_many_descriptors_ends_only_its_connection() {
+        let Some(mut sidecar) = TestSidecar::start(
+            "a_message_with_too_many_descriptors_ends_only_its_connection",
+            None,
+        ) else {
+            return;
+        };
+        let files: Vec<_> = (0..64)
+            .map(|_| std::fs::File::open("/dev/null").unwrap())
+            .collect();
+        let fds: Vec<_> = files.iter().map(|file| file.as_raw_fd()).collect();
+        let other = SeqpacketConn::connect_abstract(sidecar.name.as_bytes()).unwrap();
+        other.send_raw_blocking(vec![0; 16], &fds).unwrap();
+        assert!(
+            sidecar.wait(std::time::Duration::from_secs(2)).is_none(),
+            "the sidecar shut down: {}",
+            sidecar.log()
+        );
+        let transport = sidecar.transport.as_mut().unwrap();
+        crate::service::blocking::ping(transport).expect("the other client is still served");
+        assert!(!sidecar.name_is_free(), "the sidecar released its name");
     }
 
     /// Isolate the process-wide namespace change from other tests.

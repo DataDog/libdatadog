@@ -16,8 +16,9 @@ use std::{
     },
     time::{Duration, Instant},
 };
-use tokio::sync::{mpsc, oneshot};
+use tokio::sync::{Notify, mpsc, oneshot};
 use tokio::time::Instant as TokioInstant;
+use tokio_util::sync::CancellationToken;
 
 use crate::auth::{ConnectionAuthorizer, Decision};
 use crate::service::SidecarServer;
@@ -30,6 +31,37 @@ use crate::self_telemetry::self_telemetry;
 use crate::service::{init_telemetry_sender, telemetry_action_receiver_task};
 use crate::watchdog::Watchdog;
 use crate::{ddog_daemon_entry_point, setup_daemon_process};
+
+/// How long a sidecar may take to shut down once it must exit: draining waits for every client,
+/// including ones not stopped along with the sidecar, like CLI workers.
+pub(crate) const SHUTDOWN_DEADLINE: Duration = Duration::from_secs(10);
+
+/// Flush budget once the listener failed: short, as the usual cause of a full descriptor table,
+/// a stalled agent, would otherwise keep the dying sidecar around.
+const FAILED_FLUSH_TIMEOUT: Duration = Duration::from_secs(5);
+
+/// Exits the process after [`SHUTDOWN_DEADLINE`] unless it ends by itself first. A plain thread,
+/// so that it fires even if the runtime is stuck.
+pub(crate) fn exit_after_deadline(cause: &'static str) {
+    let spawned = std::thread::Builder::new()
+        .name("ddog-shutdown-deadline".to_owned())
+        .spawn(move || {
+            std::thread::sleep(SHUTDOWN_DEADLINE);
+            tracing::warn!(
+                "Shutdown still incomplete {SHUTDOWN_DEADLINE:?} after {cause}, exiting"
+            );
+            // _exit: atexit handlers would race the threads still running.
+            #[cfg(unix)]
+            unsafe {
+                libc::_exit(1)
+            }
+            #[cfg(not(unix))]
+            std::process::exit(1)
+        });
+    if let Err(e) = spawned {
+        tracing::error!("Could not arm the shutdown deadline: {e}");
+    }
+}
 
 /// Configuration for main_loop behavior
 pub struct MainLoopConfig {
@@ -54,6 +86,10 @@ pub struct MainLoopConfig {
     /// In-process listeners must disable this: worker-supplied descriptors would otherwise
     /// accumulate in the potentially privileged host's shared file descriptor table.
     pub allow_liveness_watch: bool,
+    /// Whether a listener failure, e.g. out of descriptors, ends the process: it then arms the
+    /// shutdown deadline. Either way the clients are closed rather than drained. In-process
+    /// listeners must keep their host process alive.
+    pub exit_on_failure: bool,
 }
 
 impl Default for MainLoopConfig {
@@ -66,6 +102,7 @@ impl Default for MainLoopConfig {
             drain_only_own_process: false,
             enable_cdn_fetching: true,
             allow_liveness_watch: true,
+            exit_on_failure: true,
         }
     }
 }
@@ -83,6 +120,7 @@ where
     let connections = Arc::new(ConnectionActivity::default());
     let config = Config::get();
     let max_idle_linger_time = config.idle_linger_time;
+    crate::fd_limits::prepare_diagnostics();
 
     let idle_shutdown = tokio::spawn({
         let cancel = cancel.clone();
@@ -157,9 +195,14 @@ where
     let drain_only_own_process = loop_config.drain_only_own_process;
     #[cfg(unix)]
     let defer_shm_init = !loop_config.init_shm_eagerly;
-    let listener_result = listener(Box::new({
+    // Closed on failure rather than drained, so that they reconnect to a fresh listener.
+    let close_clients = CancellationToken::new();
+    let descriptors_dropped = Arc::new(Notify::new());
+    let accept = listener(Box::new({
         let shutdown_complete_tx = shutdown_complete_tx.clone();
         let server = server.clone();
+        let close_clients = close_clients.clone();
+        let descriptors_dropped = descriptors_dropped.clone();
         move |socket| {
             let peer = match socket.peer_credentials() {
                 Ok(peer) => peer,
@@ -189,35 +232,75 @@ where
             // ones are done.
             let shutdown_complete_tx = (!drain_only_own_process || peer.pid == std::process::id())
                 .then(|| shutdown_complete_tx.clone());
+            let close_clients = close_clients.clone();
+            let descriptors_dropped = descriptors_dropped.clone();
             tokio::spawn(async move {
-                server.accept_connection(socket).await;
+                let ended_by = tokio::select! {
+                    ended_by = server.accept_connection(socket) => ended_by,
+                    _ = close_clients.cancelled() => None,
+                };
                 drop(connection);
                 tracing::info!("connection closed");
+                if ended_by.is_some_and(|e| libdd_ipc::descriptors_dropped(&e)) {
+                    descriptors_dropped.notify_one();
+                }
 
                 // Once all tx/senders are dropped the receiver will complete
                 drop(shutdown_complete_tx);
             });
         }
-    }))
-    .await;
+    }));
+    let listener_result = tokio::select! {
+        result = accept => result,
+        // Dropping the listener closes it, which frees its name for a fresh listener.
+        _ = descriptors_dropped.notified() => Err(io::Error::other(libdd_ipc::DescriptorsDropped)),
+    };
     // The listener can also exit on a signal or an error. Its cancellation callback
     // must not run later against a closed (and potentially reused) listener handle.
     idle_shutdown.abort();
-    listener_result?;
+    let failed = listener_result.is_err();
+    if let Err(e) = &listener_result {
+        if loop_config.exit_on_failure {
+            exit_after_deadline("the listener failed");
+        }
+        close_clients.cancel();
+        // After the handover: scanning the descriptors takes a while with a raised limit.
+        let outcome = if loop_config.exit_on_failure {
+            "this sidecar shuts down, its clients reconnect to a fresh one"
+        } else {
+            "the listener closes, its clients reconnect"
+        };
+        let kind = if libdd_ipc::descriptors_dropped(e) {
+            "IPC receive error: "
+        } else {
+            ""
+        };
+        crate::fd_limits::report_exhaustion(format_args!("{kind}{e}; {outcome}"));
+    }
 
     // Wait for the drained connections independently of the watchdog. Outgoing work can
     // still hold substantial memory after the listener and the last client have closed.
     drop(shutdown_complete_tx);
     shutdown_complete_rx.recv().await;
 
-    server.shutdown();
-    _ = server.trace_flusher.join().await;
-    #[cfg(unix)]
-    server.shutdown_appsec().await;
-    drop(watchdog_shutdown_tx);
-    _ = telemetry_handle.await;
+    let flush = async {
+        server.shutdown();
+        _ = server.trace_flusher.join().await;
+        #[cfg(unix)]
+        server.shutdown_appsec().await;
+        drop(watchdog_shutdown_tx);
+        _ = telemetry_handle.await;
+    };
+    if !failed {
+        flush.await;
+    } else if tokio::time::timeout(FAILED_FLUSH_TIMEOUT, flush)
+        .await
+        .is_err()
+    {
+        tracing::warn!("Flush incomplete {FAILED_FLUSH_TIMEOUT:?} after the listener failed");
+    }
 
-    Ok(())
+    listener_result
 }
 
 struct ConnectionActivity {

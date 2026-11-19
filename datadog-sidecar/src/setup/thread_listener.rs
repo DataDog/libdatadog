@@ -3,7 +3,8 @@
 
 use std::io;
 #[cfg(unix)]
-use std::os::unix::io::RawFd;
+use std::os::unix::io::{AsRawFd, RawFd};
+use std::sync::atomic::{AtomicI32, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::thread::{self, JoinHandle};
 use tokio::io::unix::AsyncFd;
@@ -132,9 +133,10 @@ pub(crate) fn initialize_worker(peer: &PeerCredentials) {
 pub struct MasterListener {
     shutdown_tx: Option<oneshot::Sender<()>>,
     thread_handle: Option<JoinHandle<()>>,
-    /// Used by `clear_inherited_state()` to avoid forks keeping the socket open
+    /// Used by `clear_inherited_state()` to avoid forks keeping the socket open. -1 once the
+    /// listener thread released it, after which the number may belong to another file.
     #[cfg(unix)]
-    listener_fd: RawFd,
+    listener_fd: Arc<AtomicI32>,
     /// Files to remove on an orderly shutdown, as reported by the liaison. Empty where the
     /// transport leaves nothing on disk, which is every platform but macOS today.
     bound_files: Vec<std::path::PathBuf>,
@@ -169,8 +171,15 @@ impl MasterListener {
             .lock()
             .map_err(|e| io::Error::other(format!("Failed to acquire listener lock: {}", e)))?;
 
-        if listener_guard.is_some() {
-            return Err(io::Error::other("Master listener is already running"));
+        if let Some(master) = listener_guard.as_ref() {
+            // A listener that failed released its descriptor: a new one may take over.
+            if master.owner_pid != pid || master.listener_fd.load(Ordering::Relaxed) >= 0 {
+                return Err(io::Error::other("Master listener is already running"));
+            }
+            if let Some(released) = listener_guard.take() {
+                // Before binding: the new listener uses the same paths.
+                reap(&released.bound_files);
+            }
         }
 
         #[cfg(target_os = "linux")]
@@ -184,7 +193,8 @@ impl MasterListener {
         let bound_files = liaison.into_bound_files();
 
         #[cfg(unix)]
-        let listener_fd = listener.as_raw_fd();
+        let listener_fd = Arc::new(AtomicI32::new(listener.as_raw_fd()));
+        let released = listener_fd.clone();
 
         let (shutdown_tx, shutdown_rx) = oneshot::channel();
 
@@ -192,7 +202,7 @@ impl MasterListener {
         let thread_handle = thread::Builder::new()
             .name(format!("ddtrace-sidecar-listener-{}", pid))
             .spawn(move || {
-                if let Err(e) = run_listener(listener, config, shutdown_rx) {
+                if let Err(e) = run_listener(listener, config, shutdown_rx, released) {
                     error!("Listener thread error: {}", e);
                 }
             })
@@ -251,9 +261,10 @@ impl MasterListener {
     pub fn is_active() -> bool {
         let listener_mutex = MASTER_LISTENER.get_or_init(|| Mutex::new(None));
         if let Ok(listener_guard) = listener_mutex.lock() {
-            listener_guard
-                .as_ref()
-                .is_some_and(|master| master.owner_pid == std::process::id())
+            listener_guard.as_ref().is_some_and(|master| {
+                master.owner_pid == std::process::id()
+                    && master.listener_fd.load(Ordering::Relaxed) >= 0
+            })
         } else {
             false
         }
@@ -312,8 +323,11 @@ impl MasterListener {
                 // thread (which does not exist here) still owns in the parent's own
                 // fd table. Closing it here only drops this process's reference and
                 // has no effect on the parent.
-                unsafe {
-                    libc::close(master.listener_fd);
+                let listener_fd = master.listener_fd.load(Ordering::Relaxed);
+                if listener_fd >= 0 {
+                    unsafe {
+                        libc::close(listener_fd);
+                    }
                 }
             }
             #[cfg(not(unix))]
@@ -327,12 +341,32 @@ impl MasterListener {
     }
 }
 
-/// Accept connections in a loop for thread mode.
+/// Releases the listener before it closes, whichever way the loop ends, including main_loop
+/// dropping it: forked workers then leave its reused number alone, and a new listener may start.
+struct ReleaseListener {
+    listener_fd: RawFd,
+    registered: Arc<AtomicI32>,
+}
+
+impl Drop for ReleaseListener {
+    fn drop(&mut self) {
+        crate::unix::stop_listening(self.listener_fd);
+        self.registered.store(-1, Ordering::Relaxed);
+    }
+}
+
+/// Accept connections in a loop for thread mode. A failure never ends the host process: the
+/// listener is released instead, so that workers reconnect.
 async fn accept_socket_loop_thread(
     async_listener: AsyncFd<SeqpacketListener>,
     handler: Box<dyn Fn(SeqpacketConn)>,
     mut shutdown_rx: oneshot::Receiver<()>,
+    registered: Arc<AtomicI32>,
 ) -> io::Result<()> {
+    let _release = ReleaseListener {
+        listener_fd: async_listener.as_raw_fd(),
+        registered,
+    };
     loop {
         tokio::select! {
             _ = &mut shutdown_rx => {
@@ -347,15 +381,16 @@ async fn accept_socket_loop_thread(
                                 handler(conn);
                             }
                             Ok(Err(e)) => {
-                                error!("Failed to accept worker connection: {}", e);
-                                break;
+                                return Err(io::Error::new(
+                                    e.kind(),
+                                    format!("Failed to accept worker connection: {e}"),
+                                ));
                             }
                             Err(_would_block) => continue,
                         }
                     }
                     Err(e) => {
-                        error!("IPC listener error: {}", e);
-                        break;
+                        return Err(io::Error::new(e.kind(), format!("IPC listener error: {e}")));
                     }
                 }
             }
@@ -370,6 +405,7 @@ fn run_listener(
     listener: SeqpacketListener,
     _config: Config,
     shutdown_rx: oneshot::Receiver<()>,
+    registered: Arc<AtomicI32>,
 ) -> io::Result<()> {
     info!("Listener thread running, entering IPC server loop");
 
@@ -383,6 +419,7 @@ fn run_listener(
         drain_only_own_process: true,
         enable_cdn_fetching: false,
         allow_liveness_watch: false,
+        exit_on_failure: false,
     };
 
     let runtime = tokio::runtime::Builder::new_current_thread()
@@ -397,7 +434,9 @@ fn run_listener(
         .block_on(async {
             let async_listener = listener.into_async_listener()?;
             crate::entry::main_loop(
-                move |handler| accept_socket_loop_thread(async_listener, handler, shutdown_rx),
+                move |handler| {
+                    accept_socket_loop_thread(async_listener, handler, shutdown_rx, registered)
+                },
                 Arc::new(cancel),
                 loop_config,
             )
@@ -425,4 +464,148 @@ pub fn connect_to_master(pid: i32) -> io::Result<Box<SidecarTransport>> {
     crate::use_thread_sidecar_shm_namespace(Some(pid as u32));
     info!("Successfully connected to master listener");
     Ok(Box::new(SidecarTransport::from(conn)))
+}
+
+#[cfg(all(test, target_os = "linux"))]
+mod tests {
+    use super::*;
+    use crate::test_util::{is_rerun, lowest_free_fd, rerun, set_soft_nofile};
+    use std::time::{Duration, Instant};
+
+    const TEST: &str =
+        "setup::thread_listener::tests::a_failed_thread_listener_releases_clients_and_registration";
+
+    /// An in-process listener out of descriptors must never end its host, a PHP-FPM master. It
+    /// closes its clients, releases its registration so that a new listener can start, and
+    /// forked workers must leave alone the descriptor now reusing its number.
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn a_failed_thread_listener_releases_clients_and_registration() {
+        use std::io::{BufRead, BufReader};
+
+        if is_rerun(TEST) {
+            host_a_failing_listener();
+        }
+        let mut host = rerun(TEST)
+            .stdout(std::process::Stdio::piped())
+            .spawn()
+            .unwrap();
+        let pid = host.id();
+        std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_secs(60));
+            // SAFETY: only signals the host, should it hang.
+            unsafe { libc::kill(pid as libc::pid_t, libc::SIGKILL) };
+        });
+        let mut lines = BufReader::new(host.stdout.take().unwrap())
+            .lines()
+            .map_while(Result::ok);
+        assert!(
+            lines.by_ref().any(|line| line == "READY"),
+            "the listener host did not start"
+        );
+        let name = AbstractUnixSocketLiaison::ipc_for_pid(pid);
+        // Queued, but the listener has no descriptor left to accept it with.
+        let _queued =
+            SeqpacketConn::connect_abstract(name.path().as_os_str().as_encoded_bytes()).unwrap();
+        let result = lines.find(|line| line.starts_with("closed="));
+        let status = host.wait().unwrap();
+        assert_eq!(
+            result.as_deref(),
+            Some("closed=true released=true fd_kept_in_forks=true restarted=true"),
+            "host status {status:?}"
+        );
+        assert_eq!(status.code(), Some(0), "the host process did not stay up");
+    }
+
+    /// The re-run test process: a PHP-FPM master with a listener that runs out of descriptors.
+    fn host_a_failing_listener() -> ! {
+        let say = |line: &str| {
+            let line = format!("{line}\n");
+            // SAFETY: writes a live buffer to stdout, which needs no new descriptor.
+            unsafe { libc::write(1, line.as_ptr().cast(), line.len()) };
+        };
+        let pid = std::process::id();
+        let config = crate::config::FromEnv::config();
+        MasterListener::start(config.clone()).unwrap();
+        let listener_fd = MASTER_LISTENER
+            .get()
+            .and_then(|master| {
+                master
+                    .lock()
+                    .ok()?
+                    .as_ref()?
+                    .listener_fd
+                    .load(Ordering::Relaxed)
+                    .into()
+            })
+            .unwrap();
+        let mut transport = connect_to_master(pid as i32).unwrap();
+        transport
+            .set_read_timeout(Some(Duration::from_secs(10)))
+            .unwrap();
+        crate::service::blocking::ping(&mut transport).unwrap();
+
+        // No free slot below the limit, which poll() needs to be above zero.
+        let soft = set_soft_nofile(lowest_free_fd() as libc::rlim_t);
+        say("READY");
+        let ready = Instant::now();
+        let fd = transport.as_raw_fd();
+        let mut closed = false;
+        while !closed && ready.elapsed() < Duration::from_secs(15) {
+            let mut pfd = libc::pollfd {
+                fd,
+                events: libc::POLLIN,
+                revents: 0,
+            };
+            // SAFETY: poll and recv only access `pfd` and a live buffer.
+            unsafe {
+                if libc::poll(&mut pfd, 1, 200) > 0 {
+                    let mut byte = 0u8;
+                    let n = libc::recv(fd, (&raw mut byte).cast(), 1, libc::MSG_DONTWAIT);
+                    closed = n == 0
+                        || (n < 0
+                            && io::Error::last_os_error().kind() != io::ErrorKind::WouldBlock);
+                }
+            }
+        }
+        set_soft_nofile(soft);
+        // Past the deadline a subprocess sidecar exits by: this host must not.
+        std::thread::sleep(
+            (crate::entry::SHUTDOWN_DEADLINE + Duration::from_secs(1))
+                .saturating_sub(ready.elapsed()),
+        );
+
+        let released = !MasterListener::is_active();
+        // The number of the closed listener, now another file.
+        let file = std::fs::File::open("/dev/null").unwrap();
+        // SAFETY: the old number is free; dup2 makes it refer to /dev/null.
+        assert_eq!(
+            unsafe { libc::dup2(file.as_raw_fd(), listener_fd) },
+            listener_fd
+        );
+        // SAFETY: the forked child only clears the inherited state, probes and leaves.
+        let fd_kept_in_forks = match unsafe { libc::fork() } {
+            0 => unsafe {
+                let _ = MasterListener::clear_inherited_state();
+                libc::_exit(if libc::fcntl(listener_fd, libc::F_GETFD) == -1 {
+                    1
+                } else {
+                    0
+                })
+            },
+            child => {
+                let mut status = 0;
+                // SAFETY: waits for our own child.
+                unsafe { libc::waitpid(child, &mut status, 0) };
+                libc::WIFEXITED(status) && libc::WEXITSTATUS(status) == 0
+            }
+        };
+        let restarted = MasterListener::start(config).is_ok();
+        say(&format!(
+            "closed={closed} released={released} fd_kept_in_forks={fd_kept_in_forks} \
+             restarted={restarted}"
+        ));
+        // Bypass the test harness, and any listener thread left.
+        unsafe { libc::_exit(0) }
+    }
 }
