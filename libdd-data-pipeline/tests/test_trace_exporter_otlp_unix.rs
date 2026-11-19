@@ -30,12 +30,13 @@ async fn check_http_export(protocol: OtlpProtocol, content_type: &'static str) {
     let path = directory.path().join("otel.sock");
     let listener = UnixListener::bind(&path).unwrap();
     let server = tokio::spawn(async move {
-        for (protocol, content_type, resource_field) in [
-            (protocol, content_type, "resourceSpans"),
+        for (protocol, content_type, resource_field, request_path) in [
+            (protocol, content_type, "resourceSpans", "/v1/traces"),
             (
                 OtlpProtocol::HttpJson,
                 "application/json",
                 "resourceMetrics",
+                "/v1/metrics",
             ),
         ] {
             let (socket, _) = listener.accept().await.unwrap();
@@ -45,7 +46,7 @@ async fn check_http_export(protocol: OtlpProtocol, content_type: &'static str) {
                     TokioIo::new(socket),
                     service_fn(move |request: Request<Incoming>| async move {
                         assert_eq!(request.method(), "POST");
-                        assert_eq!(request.uri().path(), "/");
+                        assert_eq!(request.uri().path(), request_path);
                         assert_eq!(request.headers()["content-type"], content_type);
                         let body = request.into_body().collect().await.unwrap().to_bytes();
                         match protocol {

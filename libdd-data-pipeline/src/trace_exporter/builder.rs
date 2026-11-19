@@ -491,7 +491,7 @@ impl<R: SharedRuntime> TraceExporterBuilder<R> {
     /// auxiliary endpoints (e.g. agent info / stats).
     ///
     /// On Unix, all protocols also support `unix:///absolute/path/to/socket`.
-    /// HTTP sends to `/` on that socket; the socket path is not a request path.
+    /// HTTP sends to `/v1/traces` on that socket; the socket path is not a request path.
     ///
     /// Example: `set_otlp_endpoint("http://localhost:4318/v1/traces")`
     pub fn set_otlp_endpoint(&mut self, url: &str) -> &mut Self {
