@@ -50,6 +50,7 @@ fn authority(
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[cfg_attr(miri, ignore = "requires native sequenced-packet sockets")]
 async fn assignment_cycles() {
     for field in ["allocation", "variant", "serial"] {
         let (server, mut rx) = authority(4, 4);
@@ -86,6 +87,7 @@ async fn assignment_cycles() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[cfg_attr(miri, ignore = "requires native sequenced-packet sockets")]
 async fn concurrent_first_observations() {
     let (server, mut rx) = authority(1, 8);
     let barrier = Arc::new(Barrier::new(8));
@@ -107,6 +109,7 @@ async fn concurrent_first_observations() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[cfg_attr(miri, ignore = "requires native sequenced-packet sockets")]
 async fn logging_off_and_eviction() {
     let (server, mut rx) = authority(1, 1);
     let mut worker = client(server);
@@ -122,6 +125,7 @@ async fn logging_off_and_eviction() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[cfg_attr(miri, ignore = "requires native sequenced-packet sockets")]
 async fn queue_full_preserves_assignment() {
     let (server, mut rx) = authority(4, 1);
     let mut worker = client(server);
@@ -159,6 +163,7 @@ fn simulated_peer(
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "creates a native shared-memory handle")]
 fn legacy_oversized_opcode() {
     let envelope = SidecarInterfaceRequest::_Oversized {
         shm: libdd_ipc::platform::ShmHandle::new(4096).unwrap(),
@@ -168,6 +173,7 @@ fn legacy_oversized_opcode() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[cfg_attr(miri, ignore = "requires native sequenced-packet sockets")]
 async fn admitted_event_reaches_http() {
     let http = MockServer::start_async().await;
     let mock = http
@@ -204,6 +210,7 @@ async fn admitted_event_reaches_http() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "requires native sequenced-packet sockets")]
 fn old_peer_returns_unavailable() {
     let (done, wait) = std::sync::mpsc::channel();
     let (mut sender, peer) = simulated_peer(false, move |peer| {
@@ -220,6 +227,7 @@ fn old_peer_returns_unavailable() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "requires native sequenced-packet sockets")]
 fn late_capability_reply_preserves_transport() {
     let (conn, peer) = SeqpacketConn::socketpair().unwrap();
     let mut sender = SidecarSender::new(SidecarInterfaceChannel::new(conn));
@@ -269,6 +277,7 @@ fn late_capability_reply_preserves_transport() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "requires native sequenced-packet sockets")]
 fn lost_reply_is_unknown() {
     let (mut sender, peer) = simulated_peer(true, |peer| {
         let mut buf = [0; 4096];
@@ -284,6 +293,7 @@ fn lost_reply_is_unknown() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "requires native sequenced-packet sockets")]
 fn stalled_peer_respects_deadline() {
     let (release, hold) = std::sync::mpsc::channel::<()>();
     let (sent, arrived) = std::sync::mpsc::channel();

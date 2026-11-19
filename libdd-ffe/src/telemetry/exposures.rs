@@ -351,6 +351,21 @@ mod tests {
     }
 
     #[test]
+    fn failed_publication_preserves_the_last_admitted_assignment() {
+        let cache = ExposureDeduplicator::new(1);
+        let ctx = context();
+        let a = exposure("user", "alloc", "a");
+        let b = exposure("user", "alloc", "b");
+        assert!(cache.should_send_in_scope("scope", &ctx, &a));
+        assert_eq!(
+            cache.try_record_in_scope("scope", &ctx, &b, || Err(())),
+            Err(())
+        );
+        assert!(!cache.should_send_in_scope("scope", &ctx, &a));
+        assert!(cache.should_send_in_scope("scope", &ctx, &b));
+    }
+
+    #[test]
     fn deduplication_is_partitioned_by_producer_scope() {
         let deduplicator = ExposureDeduplicator::new(4);
         let make_batch = || FfeExposureBatch {
