@@ -262,19 +262,30 @@ impl<N: NotifyTarget + 'static> FileStorage for ConfigFileStorage<N> {
     }
 }
 
+#[cfg(target_os = "macos")]
+fn macos_config_segment_name(
+    namespace: impl std::fmt::Display,
+    version: u64,
+    path: &RemoteConfigPath,
+) -> String {
+    // Darwin limits POSIX SHM names to 31 bytes, including the namespace and file version.
+    let digest = Sha224::digest(format!("{namespace}-{version}-{path}"));
+    format!("/ddrc-{}", BASE64_URL_SAFE_NO_PAD.encode(&digest[..18]))
+}
+
 fn store_shm(
     version: u64,
     path: &RemoteConfigPath,
     file: Vec<u8>,
 ) -> anyhow::Result<NamedShmHandle> {
-    let name = format!("ddrc{}-{}", crate::shm_namespace(), version,);
-    // as much signal as possible to be collision free
-    let hashed_path = BASE64_URL_SAFE_NO_PAD.encode(Sha224::digest(path.to_string()));
     #[cfg(target_os = "macos")]
-    let sliced_path = &hashed_path[..30usize.saturating_sub(name.len()).min(hashed_path.len())];
+    let name = macos_config_segment_name(crate::shm_namespace(), version, path);
     #[cfg(not(target_os = "macos"))]
-    let sliced_path = &hashed_path;
-    let name = format!("/{name}-{sliced_path}");
+    let name = format!(
+        "/ddrc{}-{version}-{}",
+        crate::shm_namespace(),
+        BASE64_URL_SAFE_NO_PAD.encode(Sha224::digest(path.to_string()))
+    );
     let len = file.len();
     #[cfg(windows)]
     let len = len + 4;
@@ -972,6 +983,26 @@ mod tests {
         assert_ne!(agent_path, second_cdn_path);
         assert_ne!(first_cdn_path, second_cdn_path);
         assert_eq!(invariants.config, config);
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn config_segment_names_fit_full_width_identifiers() {
+        let namespace = "t4294967295";
+        let name = macos_config_segment_name(namespace, u64::MAX, &PATH_FIRST);
+        assert!(name.len() <= 31);
+        assert_ne!(
+            name,
+            macos_config_segment_name(namespace, u64::MAX, &PATH_SECOND)
+        );
+        assert_ne!(
+            name,
+            macos_config_segment_name(namespace, u64::MAX - 1, &PATH_FIRST)
+        );
+        assert_ne!(
+            name,
+            macos_config_segment_name("4294967295", u64::MAX, &PATH_FIRST)
+        );
     }
 
     #[test]

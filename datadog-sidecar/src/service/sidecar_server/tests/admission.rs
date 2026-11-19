@@ -309,7 +309,19 @@ async fn local_admission_latency() {
     let mut worker = SidecarSender::new(SidecarInterfaceChannel::new(
         SeqpacketConn::connect(path).unwrap(),
     ));
-    assert_eq!(record(&mut worker, ffe_exposure("warm"), true), Admitted);
+    sample_latency(&mut worker);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[ignore = "local IPC latency measurement"]
+async fn thread_admission_latency() {
+    let (server, mut rx) = authority(65536, 128);
+    tokio::spawn(async move { while rx.recv().await.is_some() {} });
+    sample_latency(&mut client(server));
+}
+
+fn sample_latency(worker: &mut SidecarSender) {
+    assert_eq!(record(worker, ffe_exposure("warm"), true), Admitted);
     for repeats in [true, false] {
         let mut durations = Vec::with_capacity(10000);
         for i in 0..10000 {
@@ -319,7 +331,7 @@ async fn local_admission_latency() {
             } else {
                 i.to_string()
             };
-            let status = record(&mut worker, ffe_exposure(&key), true);
+            let status = record(worker, ffe_exposure(&key), true);
             durations.push(start.elapsed());
             assert_eq!(status, if repeats { Repeat } else { Admitted });
         }

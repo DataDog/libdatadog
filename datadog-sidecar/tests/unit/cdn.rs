@@ -139,6 +139,9 @@ async fn cdn_http_ipc_delivers_through_ordinary_rc_and_deduplicates() {
 #[test]
 #[cfg_attr(miri, ignore = "requires an actual listener thread and native IPC")]
 fn real_thread_listener_does_not_start_cdn_http() {
+    if isolate_registration_test("real_thread_listener_does_not_start_cdn_http") {
+        return;
+    }
     let http = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
     http.set_nonblocking(true).unwrap();
     let mut config = crate::config::FromEnv::config();
@@ -322,9 +325,7 @@ async fn crucible_c03_last_subscriber_cancels_http() {
     drop(replacement);
 }
 
-// Resource limits are process-global. Isolate these cases even under cargo test,
-// which otherwise runs unrelated tests in this process concurrently.
-#[cfg(target_os = "linux")]
+// The listener namespace and resource limits belong to the process.
 fn isolate_registration_test(name: &str) -> bool {
     const CHILD: &str = "LIBDATADOG_CDN_RETRY_TEST_CHILD";
     if std::env::var(CHILD).as_deref() == Ok(name) {
