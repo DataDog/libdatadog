@@ -33,10 +33,7 @@ fn authority(
     capacity: usize,
 ) -> (
     SidecarServer,
-    tokio::sync::mpsc::Receiver<(
-        crate::service::evp_transport::EvpTransport,
-        FfeExposureBatch,
-    )>,
+    tokio::sync::mpsc::Receiver<ffe_exposures_flusher::Job>,
 ) {
     let (queue, rx) = ffe_exposures_flusher::AdmissionQueue::capture(capacity);
     (
@@ -73,7 +70,7 @@ async fn assignment_cycles() {
         ];
         assert_eq!(verdicts, [Admitted, Admitted, Admitted, Repeat], "{field}");
         for expected in [a.clone(), b, a] {
-            let (_, batch) = rx.try_recv().unwrap();
+            let (_, batch, _) = rx.try_recv().unwrap();
             assert_eq!(batch.exposures.len(), 1);
             let event = &batch.exposures[0];
             assert_eq!(
@@ -216,6 +213,13 @@ fn simulated_peer(
     supported: bool,
     after_probe: impl FnOnce(SeqpacketConn) + Send + 'static,
 ) -> (SidecarSender, std::thread::JoinHandle<()>) {
+    simulated_peer_with_caps(u8::from(supported), after_probe)
+}
+
+fn simulated_peer_with_caps(
+    caps: u8,
+    after_probe: impl FnOnce(SeqpacketConn) + Send + 'static,
+) -> (SidecarSender, std::thread::JoinHandle<()>) {
     let (client, peer) = SeqpacketConn::socketpair().unwrap();
     let handle = std::thread::spawn(move || {
         let mut buf = [0; 4096];
@@ -224,14 +228,95 @@ fn simulated_peer(
             decode::<SidecarInterfaceRequest>(&buf[..len]).unwrap(),
             SidecarInterfaceRequest::Ping {}
         ));
-        peer.send_raw_blocking(vec![u8::from(supported)], &[])
-            .unwrap();
+        peer.send_raw_blocking(vec![caps], &[]).unwrap();
         after_probe(peer);
     });
     (
         SidecarSender::new(SidecarInterfaceChannel::new(client)),
         handle,
     )
+}
+
+fn submit(
+    sender: &mut SidecarSender,
+    rows: &[FfeExposure],
+) -> (crate::service::ffe_deferred::ChunkOutcome, u32) {
+    sender.submit_deferred_chunk(
+        ffe_context(),
+        rows.iter().cloned().map(Some),
+        Instant::now() + Duration::from_secs(5),
+    )
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[cfg_attr(
+    miri,
+    ignore = "requires native sequenced-packet sockets and shared memory"
+)]
+async fn wire_sized_chunks_remain_ordered_while_admission_is_full() {
+    use crate::service::ffe_deferred::ChunkOutcome::Confirmed;
+    let (server, mut rx) = authority(8, 1);
+    let mut sender = client(server);
+    assert_eq!(record(&mut sender, ffe_exposure("seed"), true), Admitted);
+    let mut rows: Vec<_> = (0..66)
+        .map(|i| {
+            let mut row = ffe_exposure("subject");
+            row.subject_attributes_json = format!(r#"{{"blob":"{}"}}"#, "x".repeat(70 * 1024));
+            row.variant = i.to_string();
+            row
+        })
+        .collect();
+    rows.push(ffe_exposure("sentinel"));
+    let mut n = 0;
+    let mut chunks = 0;
+    while n < rows.len() {
+        let (outcome, count) = submit(&mut sender, &rows[n..]);
+        assert_eq!(outcome, Confirmed);
+        assert!(count > 0);
+        n += count as usize;
+        chunks += 1;
+    }
+    assert!(chunks >= 2);
+    let _seed = rx.try_recv().unwrap();
+    let mut observed = Vec::new();
+    while let Ok((_, batch, _)) = rx.try_recv() {
+        observed.extend(batch.exposures);
+    }
+    assert_eq!(observed, rows);
+    assert_eq!(record(&mut sender, ffe_exposure("sentinel"), true), Repeat);
+}
+
+#[test]
+#[cfg_attr(miri, ignore = "requires native sequenced-packet sockets")]
+fn deferred_outcome_tracks_only_the_attempted_prefix() {
+    use crate::service::ffe_deferred::ChunkOutcome::*;
+    for (caps, reply, expected) in [
+        (0, Some(false), (LegacySubmitted, 2)),
+        (3, Some(false), (Refused, 0)),
+        (3, None, (Unknown, 2)),
+    ] {
+        let (mut sender, peer) = simulated_peer_with_caps(caps, move |peer| {
+            let mut buf = [0; 4096];
+            let (len, _) = peer.recv_raw_blocking(&mut buf).unwrap();
+            match decode::<SidecarInterfaceRequest>(&buf[..len]).unwrap() {
+                SidecarInterfaceRequest::EnqueueActions { actions } if caps == 0 => assert!(
+                    matches!(actions.as_slice(), [SidecarAction::FfeExposureBatch(b)] if b.exposures.len() == 2)
+                ),
+                SidecarInterfaceRequest::SubmitDeferredFfeV1 { batch } if caps == 3 => {
+                    assert_eq!(batch.exposures.len(), 2);
+                    if let Some(ok) = reply {
+                        peer.send_raw_blocking(encode(&ok), &[]).unwrap();
+                    }
+                }
+                _ => panic!("unexpected deferred wire opcode"),
+            }
+        });
+        assert_eq!(
+            submit(&mut sender, &[ffe_exposure("a"), ffe_exposure("b")]),
+            expected
+        );
+        peer.join().unwrap();
+    }
 }
 
 #[test]

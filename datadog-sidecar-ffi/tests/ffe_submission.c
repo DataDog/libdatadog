@@ -31,6 +31,9 @@ int main(void) {
   ddog_SidecarTransport *transport = NULL;
   ddog_MaybeError result = admit(&transport, &context, &exposure, true, 100, &admission);
   ddog_MaybeError_drop(result);
-  return admission != ddog_FFE_ADMISSION_UNAVAILABLE || status != DDOG_FFE_SUBMISSION_STATUS_UNAVAILABLE || attributes.len != 1 ||
+  ddog_FfeDeferredHandoff chunk = { UINT32_MAX, UINT32_MAX };
+  ddog_Slice_FfeExposure rows = { .ptr = &exposure, .len = 1 };
+  ddog_MaybeError_drop(ddog_sidecar_ffe_submit_deferred_v1(&transport, &context, rows, 100, &chunk));
+  return chunk.status != ddog_FFE_DEFERRED_REFUSED || chunk.rows != 0 || admission != ddog_FFE_ADMISSION_UNAVAILABLE || status != DDOG_FFE_SUBMISSION_STATUS_UNAVAILABLE || attributes.len != 1 ||
       snapshot.snapshot_error || submit == NULL;
 }

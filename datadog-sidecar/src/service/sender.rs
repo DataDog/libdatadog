@@ -187,7 +187,7 @@ impl ConnectionState {
 pub struct SidecarSender {
     pub channel: SidecarInterfaceChannel,
     state: ConnectionState,
-    ffe_admission_v1: Option<bool>,
+    ffe_capabilities: Option<u8>,
     /// Maximum allowed outstanding (sent-but-not-acked) messages before state drain is skipped
     /// and fire-and-forget sends are blocked.
     pub max_outstanding: u64,
@@ -203,7 +203,7 @@ impl SidecarSender {
         Self {
             channel,
             state: ConnectionState::default(),
-            ffe_admission_v1: None,
+            ffe_capabilities: None,
             max_outstanding: 100,
             enqueue_actions_counter: 0,
             metric_registrations: HashMap::new(),
@@ -466,6 +466,30 @@ impl SidecarSender {
         self.channel.call_flush(options)
     }
 
+    pub(super) fn ffe_capabilities_until(&mut self, deadline: std::time::Instant) -> Option<u8> {
+        if std::time::Instant::now() >= deadline
+            || self.channel.0.is_closed()
+            || !self.try_drain_outbox_while(|| std::time::Instant::now() < deadline)
+        {
+            return None;
+        }
+        if self.ffe_capabilities.is_none() {
+            let bytes = self
+                .channel
+                .0
+                .call_until(
+                    libdd_ipc::codec::encode(&SidecarInterfaceRequest::Ping {}),
+                    deadline,
+                )
+                .ok()?;
+            let [bits] = bytes.as_slice() else {
+                return None;
+            };
+            self.ffe_capabilities = Some(*bits);
+        }
+        self.ffe_capabilities
+    }
+
     pub fn admit_ffe_exposure_v1(
         &mut self,
         context: crate::service::FfeTelemetryContext,
@@ -475,24 +499,10 @@ impl SidecarSender {
     ) -> crate::service::ExposureVerdict {
         use crate::service::ExposureVerdict;
         use libdd_ipc::codec::{decode, encode};
-        if std::time::Instant::now() >= deadline
-            || self.channel.0.is_closed()
-            || !self.try_drain_outbox_while(|| std::time::Instant::now() < deadline)
+        if !self
+            .ffe_capabilities_until(deadline)
+            .is_some_and(|bits| bits & super::FFE_ADMISSION_V1_CAPABILITY != 0)
         {
-            return ExposureVerdict::Unavailable;
-        }
-        if self.ffe_admission_v1.is_none() {
-            let Ok(bytes) = self
-                .channel
-                .0
-                .call_until(encode(&SidecarInterfaceRequest::Ping {}), deadline)
-            else {
-                return ExposureVerdict::Unavailable;
-            };
-            let supported = matches!(bytes.as_slice(), [caps] if caps & super::FFE_ADMISSION_V1_CAPABILITY != 0);
-            self.ffe_admission_v1 = Some(supported);
-        }
-        if self.ffe_admission_v1 != Some(true) {
             return ExposureVerdict::Unavailable;
         }
         if !deliver {

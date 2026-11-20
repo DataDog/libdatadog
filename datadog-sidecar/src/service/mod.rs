@@ -47,6 +47,7 @@ pub(crate) mod evp_proxy;
 pub(crate) mod evp_transport;
 pub mod exception_hash_rate_limiter;
 pub(crate) mod ffe_config;
+pub mod ffe_deferred;
 pub(crate) mod ffe_exposures_flusher;
 pub(crate) mod ffe_flagevaluation_flusher;
 pub(crate) mod ffe_metrics_flusher;
@@ -161,6 +162,7 @@ pub struct ApplicationConfig {
 }
 
 pub(crate) const FFE_ADMISSION_V1_CAPABILITY: u8 = 1;
+pub(crate) const FFE_DEFERRED_V1_CAPABILITY: u8 = 2;
 
 #[repr(u32)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize, Serialize)]

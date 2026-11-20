@@ -141,13 +141,23 @@ impl IpcClientConn {
         data: Vec<u8>,
         deadline: Instant,
     ) -> Result<Vec<u8>, DeadlineCallError> {
+        self.call_with_handles_until(data, &[], deadline)
+    }
+
+    /// Sends one request with its transferred handles and waits for its ordered reply.
+    pub fn call_with_handles_until(
+        &mut self,
+        data: Vec<u8>,
+        fds: &[RawFd],
+        deadline: Instant,
+    ) -> Result<Vec<u8>, DeadlineCallError> {
         if self.closed
             || (self.ack_count < self.abandoned_reply && !self.drain_abandoned_reply())
             || Instant::now() >= deadline
         {
             return Err(DeadlineCallError::NotSent);
         }
-        self.try_send(data, &[]).map_err(|_| {
+        self.try_send(data, fds).map_err(|_| {
             if self.closed {
                 DeadlineCallError::Uncertain
             } else {

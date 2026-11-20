@@ -19,12 +19,13 @@ use crate::service::{ExposureVerdict, FfeExposure, FfeExposureBatch, FfeTelemetr
 use libdd_capabilities::{HttpClientCapability, SleepCapability};
 use libdd_capabilities_impl::NativeCapabilities;
 pub(crate) use libdd_ffe::telemetry::exposures::ExposureDeduplicator;
+#[cfg(test)]
 use libdd_ffe::telemetry::exposures::encode_exposure_batch_in_scope;
 use libdd_ffe::telemetry::exposures::{encode_admitted_exposure_batch, is_complete};
 use std::collections::HashMap;
 use std::sync::{Arc, OnceLock};
 use std::time::Duration;
-use tokio::sync::mpsc;
+use tokio::sync::{OwnedSemaphorePermit, Semaphore, mpsc};
 use tracing::debug;
 
 /// Historical Agent-only EVP v2 path for Feature Flags exposure intake.
@@ -37,6 +38,7 @@ const LOG_PREFIX: &str = "ffe_exposures_flusher";
 /// POST a structured Feature Flags exposure batch through the selected EVP route.
 /// Fire-and-forget: non-2xx responses are logged at `warn`, network errors at
 /// `debug`, and dropped (matches dd-trace-go behaviour).
+#[cfg(test)]
 pub(crate) async fn send_batch<C: HttpClientCapability + SleepCapability>(
     client: &C,
     transport: &EvpTransport,
@@ -77,7 +79,10 @@ async fn send_encoded<C: HttpClientCapability + SleepCapability>(
         .await;
 }
 
-type Job = (EvpTransport, FfeExposureBatch);
+pub(super) type Job = (EvpTransport, FfeExposureBatch, Option<OwnedSemaphorePermit>);
+
+const DEFERRED_SLOTS: usize = 32;
+const DEFERRED_BYTES: usize = 16 * 1024 * 1024;
 
 const ADMISSION_QUEUE_CAPACITY: usize = 1024;
 const MAX_BATCH_ROWS: usize = 64;
@@ -96,8 +101,10 @@ async fn drain_admissions<C: HttpClientCapability + SleepCapability>(
             jobs.extend(std::iter::from_fn(|| rx.try_recv().ok()).take(remaining));
         }
         let mut destinations = HashMap::new();
-        let mut batches: Vec<Job> = Vec::new();
-        for (route, mut batch) in jobs.drain(..) {
+        let mut batches: Vec<(EvpTransport, FfeExposureBatch)> = Vec::new();
+        let mut reservations = Vec::new();
+        for (route, mut batch, budget) in jobs.drain(..) {
+            reservations.extend(budget);
             // Workers with equivalent routes and telemetry context share one payload.
             let key = (
                 route.deduplication_scope().to_owned(),
@@ -116,14 +123,66 @@ async fn drain_admissions<C: HttpClientCapability + SleepCapability>(
     }
 }
 
-#[derive(Clone, Default)]
-pub(crate) struct AdmissionQueue(Arc<OnceLock<mpsc::Sender<Job>>>);
+#[derive(Clone)]
+pub(crate) struct AdmissionQueue {
+    writer: Arc<OnceLock<mpsc::Sender<Job>>>,
+    deferred_bytes: Arc<Semaphore>,
+}
+
+impl Default for AdmissionQueue {
+    fn default() -> Self {
+        Self {
+            writer: Arc::default(),
+            deferred_bytes: Arc::new(Semaphore::new(DEFERRED_BYTES)),
+        }
+    }
+}
 
 impl AdmissionQueue {
     #[cfg(test)]
     pub(super) fn capture(capacity: usize) -> (Self, mpsc::Receiver<Job>) {
-        let (sender, receiver) = mpsc::channel(capacity);
-        (Self(Arc::new(OnceLock::from(sender))), receiver)
+        let (sender, receiver) = mpsc::channel(capacity + DEFERRED_SLOTS);
+        (
+            Self {
+                writer: Arc::new(OnceLock::from(sender)),
+                ..Self::default()
+            },
+            receiver,
+        )
+    }
+
+    fn writer(&self, client: &NativeCapabilities) -> &mpsc::Sender<Job> {
+        self.writer.get_or_init(|| {
+            let (tx, rx) = mpsc::channel(ADMISSION_QUEUE_CAPACITY + DEFERRED_SLOTS);
+            let client = client.clone();
+            tokio::spawn(async move { drain_admissions(&client, rx).await });
+            tx
+        })
+    }
+
+    pub(super) fn submit_deferred(
+        &self,
+        client: &NativeCapabilities,
+        transport: &EvpTransport,
+        cache: &ExposureDeduplicator,
+        batch: FfeExposureBatch,
+    ) -> bool {
+        let Some(bytes) = libdd_ipc::codec::encoded_size(&batch)
+            .ok()
+            .and_then(|n| u32::try_from(n).ok())
+        else {
+            return false;
+        };
+        let Ok(budget) = self.deferred_bytes.clone().try_acquire_many_owned(bytes) else {
+            return false;
+        };
+        let Ok(slot) = self.writer(client).try_reserve() else {
+            return false;
+        };
+        cache.publish_reserved_batch(transport.deduplication_scope(), batch, |changed| {
+            slot.send((transport.clone(), changed, Some(budget)));
+        });
+        true
     }
 
     pub(crate) fn admit(
@@ -156,14 +215,10 @@ impl AdmissionQueue {
         }
         match cache.try_record_in_scope(transport.deduplication_scope(), &context, &event, || {
             if deliver {
-                let queue = self.0.get_or_init(|| {
-                    let (tx, rx) = mpsc::channel(ADMISSION_QUEUE_CAPACITY);
-                    let client = client.clone();
-                    tokio::spawn(async move {
-                        drain_admissions(&client, rx).await;
-                    });
-                    tx
-                });
+                let queue = self.writer(client);
+                if queue.capacity() <= DEFERRED_SLOTS {
+                    return Err(mpsc::error::TrySendError::Full(()));
+                }
                 let permit = queue.try_reserve()?;
                 permit.send((
                     transport.clone(),
@@ -171,6 +226,7 @@ impl AdmissionQueue {
                         context: context.clone(),
                         exposures: vec![event.clone()],
                     },
+                    None,
                 ));
             }
             Ok::<_, mpsc::error::TrySendError<()>>(())
@@ -273,6 +329,7 @@ mod tests {
                     },
                     exposures: vec![exposure("user", "allocation", v)],
                 },
+                None,
             )
         };
         let expected = |service: &str, variants: &[&str]| {

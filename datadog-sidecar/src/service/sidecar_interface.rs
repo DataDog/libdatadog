@@ -376,6 +376,8 @@ pub trait SidecarInterface {
         event: crate::service::FfeExposure,
         deliver: bool,
     ) -> crate::service::ExposureVerdict;
+
+    async fn submit_deferred_ffe_v1(batch: crate::service::FfeExposureBatch) -> bool;
 }
 
 #[cfg(test)]

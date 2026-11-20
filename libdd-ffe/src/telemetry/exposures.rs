@@ -103,19 +103,7 @@ impl ExposureDeduplicator {
             return publish().map(|()| true);
         };
 
-        let key = ExposureCacheKey {
-            scope: scope.to_owned(),
-            service: context.service.clone(),
-            env: context.env.clone(),
-            version: context.version.clone(),
-            flag_key: exposure.flag_key.clone(),
-            subject_id: exposure.subject_id.clone(),
-        };
-        let value = ExposureCacheValue {
-            allocation_key: exposure.allocation_key.clone(),
-            variant: exposure.variant.clone(),
-            serial_id: exposure.serial_id,
-        };
+        let (key, value) = assignment(scope, context, exposure);
 
         let mut cache = cache.lock().unwrap_or_else(|e| e.into_inner());
         if cache.get(&key).is_some_and(|cached| cached == &value) {
@@ -126,6 +114,57 @@ impl ExposureDeduplicator {
         cache.put(key, value);
         Ok(true)
     }
+    /// Publishes one ordered delivery chunk into capacity already reserved by the caller.
+    /// Single admissions and chunk publications are serialized by the same assignment lock.
+    pub fn publish_reserved_batch(
+        &self,
+        scope: &str,
+        mut batch: FfeExposureBatch,
+        publish: impl FnOnce(FfeExposureBatch),
+    ) {
+        let mut guard = self
+            .cache
+            .as_ref()
+            .map(|c| c.lock().unwrap_or_else(|e| e.into_inner()));
+        batch.exposures.retain(|event| {
+            if !is_complete(event) {
+                return false;
+            }
+            let Some(cache) = guard.as_mut() else {
+                return true;
+            };
+            let (key, value) = assignment(scope, &batch.context, event);
+            if cache.get(&key) == Some(&value) {
+                return false;
+            }
+            cache.put(key, value);
+            true
+        });
+        if !batch.exposures.is_empty() {
+            publish(batch);
+        }
+    }
+}
+
+fn assignment(
+    scope: &str,
+    context: &FfeTelemetryContext,
+    exposure: &FfeExposure,
+) -> (ExposureCacheKey, ExposureCacheValue) {
+    let key = ExposureCacheKey {
+        scope: scope.to_owned(),
+        service: context.service.clone(),
+        env: context.env.clone(),
+        version: context.version.clone(),
+        flag_key: exposure.flag_key.clone(),
+        subject_id: exposure.subject_id.clone(),
+    };
+    let value = ExposureCacheValue {
+        allocation_key: exposure.allocation_key.clone(),
+        variant: exposure.variant.clone(),
+        serial_id: exposure.serial_id,
+    };
+    (key, value)
 }
 
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
@@ -363,6 +402,23 @@ mod tests {
         );
         assert!(!cache.should_send_in_scope("scope", &ctx, &a));
         assert!(cache.should_send_in_scope("scope", &ctx, &b));
+    }
+
+    #[test]
+    fn reserved_batch_commits_ordered_changes_to_the_delivery_cache() {
+        let cache = ExposureDeduplicator::new(1);
+        let a = exposure("user", "alloc", "a");
+        let b = exposure("user", "alloc", "b");
+        assert!(cache.should_send_in_scope("route", &context(), &a));
+        let batch = FfeExposureBatch {
+            context: context(),
+            exposures: vec![a.clone(), b.clone(), b.clone(), a.clone()],
+        };
+        let mut sent = Vec::new();
+        cache.publish_reserved_batch("route", batch, |chunk| sent = chunk.exposures);
+        assert_eq!(sent, [b, a.clone()]);
+        assert!(!cache.should_send_in_scope("route", &context(), &a));
+        assert!(cache.should_send_in_scope("other", &context(), &a));
     }
 
     #[test]

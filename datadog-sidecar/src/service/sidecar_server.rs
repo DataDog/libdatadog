@@ -328,18 +328,14 @@ impl ConnectionSidecarHandler {
             .filter_map(|a| match a {
                 SidecarAction::FfeExposureBatch(batch) => {
                     if let Some(transport) = evp_transport.clone() {
-                        let batch = batch.clone();
-                        let client = ffe_http_client.clone();
-                        let deduplicator = self.server.ffe_exposure_deduplicator.clone();
-                        tokio::spawn(async move {
-                            ffe_exposures_flusher::send_batch(
-                                &client,
-                                &transport,
-                                &deduplicator,
-                                batch,
-                            )
-                            .await;
-                        });
+                        if !self.server.ffe_admission_queue.submit_deferred(
+                            &ffe_http_client,
+                            &transport,
+                            &self.server.ffe_exposure_deduplicator,
+                            batch,
+                        ) {
+                            debug!("ffe_exposures_flusher: deferred exposure queue full");
+                        }
                     } else {
                         debug!("ffe_exposures_flusher: no connection transport, dropping batch");
                     }
@@ -1600,8 +1596,30 @@ impl SidecarInterface for ConnectionSidecarHandler {
         )
     }
 
+    async fn submit_deferred_ffe_v1(&mut self, batch: crate::service::FfeExposureBatch) -> bool {
+        if batch.exposures.len() > super::ffe_deferred::MAX_CHUNK_ROWS
+            || !batch
+                .exposures
+                .iter()
+                .all(libdd_ffe::telemetry::exposures::is_complete)
+        {
+            return false;
+        }
+        let Some(transport) = self.session.load().as_ref().and_then(|session| {
+            session.get_evp_transport(evp_proxy::EVENT_PLATFORM_INTAKE_SUBDOMAIN)
+        }) else {
+            return false;
+        };
+        self.server.ffe_admission_queue.submit_deferred(
+            &self.server.ffe_http_client,
+            &transport,
+            &self.server.ffe_exposure_deduplicator,
+            batch,
+        )
+    }
+
     async fn ping(&mut self) -> u8 {
-        super::FFE_ADMISSION_V1_CAPABILITY
+        super::FFE_ADMISSION_V1_CAPABILITY | super::FFE_DEFERRED_V1_CAPABILITY
     }
 
     async fn dump(&mut self) -> String {

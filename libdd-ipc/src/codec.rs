@@ -10,6 +10,11 @@
 use serde::{Serialize, de::DeserializeOwned};
 use std::fmt;
 
+/// Size of a serialized payload using the wire options of [`encode`].
+pub fn encoded_size<T: Serialize>(value: &T) -> bincode::Result<u64> {
+    bincode::serialized_size(value)
+}
+
 /// Encode data as a bincode payload.
 pub fn encode<T: Serialize>(value: &T) -> Vec<u8> {
     #[allow(clippy::expect_used)]

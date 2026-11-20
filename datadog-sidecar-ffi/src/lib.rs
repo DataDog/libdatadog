@@ -1200,6 +1200,30 @@ pub unsafe extern "C" fn ddog_sidecar_ffe_admit_v1(
     };
     let deadline = std::time::Instant::now()
         + std::time::Duration::from_micros(u64::from(budget_us.min(50_000)));
+    let size = exposure_text_bytes(context, exposure, deliver);
+    if size > 65536 || budget_us == 0 {
+        return MaybeError::None;
+    }
+    let context = try_c!(ffe_context_from_ffi(context));
+    let mut fields = *exposure;
+    if !deliver {
+        fields.subject_attributes_json = CharSlice::empty();
+        fields.features_json = CharSlice::empty();
+    }
+    let event = try_c!(ffe_exposure_from_ffi(&fields));
+    out.write(admission_status(
+        transport
+            .inner
+            .admit_ffe_exposure_v1(context, event, deliver, deadline),
+    ));
+    MaybeError::None
+}
+
+fn exposure_text_bytes(
+    context: &FfeTelemetryContext<'_>,
+    exposure: &FfeExposure<'_>,
+    deliver: bool,
+) -> usize {
     let mut size = 0usize;
     for len in [
         context.service.len(),
@@ -1222,21 +1246,89 @@ pub unsafe extern "C" fn ddog_sidecar_ffe_admit_v1(
     ] {
         size = size.saturating_add(len);
     }
-    if size > 65536 || budget_us == 0 {
+    size
+}
+
+#[repr(C)]
+pub struct FfeDeferredHandoff {
+    pub status: u32,
+    pub rows: u32,
+}
+
+pub const FFE_DEFERRED_REFUSED: u32 = 0;
+pub const FFE_DEFERRED_CONFIRMED: u32 = 1;
+pub const FFE_DEFERRED_LEGACY_SUBMITTED: u32 = 2;
+pub const FFE_DEFERRED_UNKNOWN: u32 = 3;
+pub const FFE_DEFERRED_INVALID: u32 = 4;
+
+/// Attempts one wire-sized prefix within the supplied IPC budget (maximum 50 ms).
+/// CONFIRMED includes repeats. LEGACY_SUBMITTED confirms a socket write. UNKNOWN applies to
+/// the reported prefix; resume only at its suffix. INVALID identifies one rejected row.
+/// REFUSED leaves the entire input eligible for a later handoff.
+///
+/// # Safety
+/// Supply valid borrowed slices, writable output storage and a live, exclusively borrowed
+/// transport in each populated transport slot.
+#[unsafe(no_mangle)]
+// allow(ffi-panic-boundary): This crate uses the sidecar's abort-on-panic ABI.
+pub unsafe extern "C" fn ddog_sidecar_ffe_submit_deferred_v1(
+    transport: *mut *mut SidecarTransport,
+    context: &FfeTelemetryContext<'_>,
+    exposures: Slice<FfeExposure<'_>>,
+    budget_us: u32,
+    out: *mut FfeDeferredHandoff,
+) -> MaybeError {
+    use datadog_sidecar::service::ffe_deferred::ChunkOutcome;
+    let out = try_c!(
+        unsafe {
+            out.cast::<std::mem::MaybeUninit<FfeDeferredHandoff>>()
+                .as_mut()
+        }
+        .ok_or("missing deferred handoff output")
+    );
+    out.write(FfeDeferredHandoff {
+        status: FFE_DEFERRED_REFUSED,
+        rows: 0,
+    });
+    let Some(transport) = (unsafe { transport.as_ref().and_then(|p| (*p).as_mut()) }) else {
+        return MaybeError::None;
+    };
+    if budget_us == 0 {
         return MaybeError::None;
     }
-    let context = try_c!(ffe_context_from_ffi(context));
-    let mut fields = *exposure;
-    if !deliver {
-        fields.subject_attributes_json = CharSlice::empty();
-        fields.features_json = CharSlice::empty();
+    let deadline = std::time::Instant::now()
+        + std::time::Duration::from_micros(u64::from(budget_us.min(50_000)));
+    let rows = try_c!(
+        exposures
+            .try_as_slice()
+            .map_err(|e| format!("Invalid deferred exposure slice: {e}"))
+    );
+    let max = libdd_ipc::max_message_size();
+    if rows
+        .first()
+        .is_some_and(|row| exposure_text_bytes(context, row, true) > max)
+    {
+        out.write(FfeDeferredHandoff {
+            status: FFE_DEFERRED_INVALID,
+            rows: 1,
+        });
+        return MaybeError::None;
     }
-    let event = try_c!(ffe_exposure_from_ffi(&fields));
-    out.write(admission_status(
-        transport
-            .inner
-            .admit_ffe_exposure_v1(context, event, deliver, deadline),
-    ));
+    let ctx = try_c!(ffe_context_from_ffi(context));
+    let rows = rows.iter().map(|r| {
+        (exposure_text_bytes(context, r, true) <= max)
+            .then(|| ffe_exposure_from_ffi(r).ok())
+            .flatten()
+    });
+    let (outcome, rows) = transport.inner.submit_deferred_chunk(ctx, rows, deadline);
+    let status = match outcome {
+        ChunkOutcome::Confirmed => FFE_DEFERRED_CONFIRMED,
+        ChunkOutcome::LegacySubmitted => FFE_DEFERRED_LEGACY_SUBMITTED,
+        ChunkOutcome::Refused => FFE_DEFERRED_REFUSED,
+        ChunkOutcome::Unknown => FFE_DEFERRED_UNKNOWN,
+        ChunkOutcome::Invalid => FFE_DEFERRED_INVALID,
+    };
+    out.write(FfeDeferredHandoff { status, rows });
     MaybeError::None
 }
 
