@@ -531,17 +531,20 @@ impl SidecarSender {
         deliver: bool,
     ) -> crate::service::ExposureVerdict {
         use crate::service::ExposureVerdict;
-        if self.drain_outbox_blocking().is_err()
-            || !self
-                .channel
-                .call_ping()
-                .is_ok_and(|caps| caps & super::FFE_ADMISSION_V1_CAPABILITY != 0)
-        {
+        if !self.fixture_peer_supports(super::FFE_ADMISSION_V1_CAPABILITY) {
             return ExposureVerdict::Unavailable;
         }
         self.channel
             .call_admit_ffe_exposure_v1(context, event, deliver)
             .unwrap_or(ExposureVerdict::Unknown)
+    }
+
+    pub(super) fn fixture_peer_supports(&mut self, capability: u8) -> bool {
+        self.drain_outbox_blocking().is_ok()
+            && self
+                .channel
+                .call_ping()
+                .is_ok_and(|bits| bits & capability != 0)
     }
 
     pub fn ping(&mut self) -> io::Result<()> {

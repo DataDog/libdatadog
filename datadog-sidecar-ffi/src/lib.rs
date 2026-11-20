@@ -1295,7 +1295,6 @@ pub unsafe extern "C" fn ddog_sidecar_ffe_submit_deferred_v1(
     budget_us: u32,
     out: *mut FfeDeferredHandoff,
 ) -> MaybeError {
-    use datadog_sidecar::service::ffe_deferred::ChunkOutcome;
     let out = try_c!(
         unsafe {
             out.cast::<std::mem::MaybeUninit<FfeDeferredHandoff>>()
@@ -1303,7 +1302,7 @@ pub unsafe extern "C" fn ddog_sidecar_ffe_submit_deferred_v1(
         }
         .ok_or("missing deferred handoff output")
     );
-    out.write(FfeDeferredHandoff {
+    let out = out.write(FfeDeferredHandoff {
         status: FFE_DEFERRED_REFUSED,
         rows: 0,
     });
@@ -1315,6 +1314,31 @@ pub unsafe extern "C" fn ddog_sidecar_ffe_submit_deferred_v1(
     }
     let deadline = std::time::Instant::now()
         + std::time::Duration::from_micros(u64::from(budget_us.min(50_000)));
+    deferred_handoff(transport, context, exposures, Some(deadline), out)
+}
+
+#[doc(hidden)]
+pub fn submit_deferred_for_test(
+    transport: &mut SidecarTransport,
+    context: &FfeTelemetryContext<'_>,
+    exposures: Slice<FfeExposure<'_>>,
+    out: &mut FfeDeferredHandoff,
+) -> MaybeError {
+    *out = FfeDeferredHandoff {
+        status: FFE_DEFERRED_REFUSED,
+        rows: 0,
+    };
+    deferred_handoff(transport, context, exposures, None, out)
+}
+
+fn deferred_handoff(
+    transport: &mut SidecarTransport,
+    context: &FfeTelemetryContext<'_>,
+    exposures: Slice<FfeExposure<'_>>,
+    deadline: Option<std::time::Instant>,
+    out: &mut FfeDeferredHandoff,
+) -> MaybeError {
+    use datadog_sidecar::service::ffe_deferred::ChunkOutcome;
     let rows = try_c!(
         exposures
             .try_as_slice()
@@ -1325,10 +1349,10 @@ pub unsafe extern "C" fn ddog_sidecar_ffe_submit_deferred_v1(
         .first()
         .is_some_and(|row| exposure_text_bytes(context, row, true) > max)
     {
-        out.write(FfeDeferredHandoff {
+        *out = FfeDeferredHandoff {
             status: FFE_DEFERRED_INVALID,
             rows: 1,
-        });
+        };
         return MaybeError::None;
     }
     let ctx = try_c!(ffe_context_from_ffi(context));
@@ -1337,7 +1361,10 @@ pub unsafe extern "C" fn ddog_sidecar_ffe_submit_deferred_v1(
             .then(|| ffe_exposure_from_ffi(r).ok())
             .flatten()
     });
-    let (outcome, rows) = transport.inner.submit_deferred_chunk(ctx, rows, deadline);
+    let (outcome, rows) = match deadline {
+        Some(deadline) => transport.inner.submit_deferred_chunk(ctx, rows, deadline),
+        None => transport.inner.submit_deferred_chunk_for_test(ctx, rows),
+    };
     let status = match outcome {
         ChunkOutcome::Confirmed => FFE_DEFERRED_CONFIRMED,
         ChunkOutcome::LegacySubmitted => FFE_DEFERRED_LEGACY_SUBMITTED,
@@ -1345,7 +1372,7 @@ pub unsafe extern "C" fn ddog_sidecar_ffe_submit_deferred_v1(
         ChunkOutcome::Unknown => FFE_DEFERRED_UNKNOWN,
         ChunkOutcome::Invalid => FFE_DEFERRED_INVALID,
     };
-    out.write(FfeDeferredHandoff { status, rows });
+    *out = FfeDeferredHandoff { status, rows };
     MaybeError::None
 }
 

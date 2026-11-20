@@ -64,6 +64,30 @@ fn prefix(
 }
 
 impl SidecarSender {
+    #[doc(hidden)]
+    pub fn submit_deferred_chunk_for_test(
+        &mut self,
+        context: FfeTelemetryContext,
+        rows: impl Iterator<Item = Option<FfeExposure>>,
+    ) -> (ChunkOutcome, u32) {
+        let mut rows = rows.peekable();
+        if rows.peek().is_none() {
+            return (ChunkOutcome::Confirmed, 0);
+        }
+        if !self.fixture_peer_supports(FFE_DEFERRED_V1_CAPABILITY) {
+            return (ChunkOutcome::Refused, 0);
+        }
+        let Some((request, count)) = prefix(context, rows, true, libdd_ipc::max_message_size())
+        else {
+            return (ChunkOutcome::Invalid, 1);
+        };
+        match self.channel.call_request_blocking::<bool>(&request) {
+            Ok(true) => (ChunkOutcome::Confirmed, count),
+            Ok(false) => (ChunkOutcome::Refused, 0),
+            Err(_) => (ChunkOutcome::Unknown, count),
+        }
+    }
+
     /// Negotiates whether a deferred reply fences later admissions on this connection.
     pub fn supports_ordered_ffe_handoff_until(&mut self, deadline: Instant) -> bool {
         self.ffe_capabilities_until(deadline)

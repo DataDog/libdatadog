@@ -273,7 +273,8 @@ fn simulated_peer_with_caps(
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 #[cfg_attr(miri, ignore = "requires native sequenced-packet sockets")]
-async fn exact_peer_waits_for_the_applied_repeat() {
+async fn exact_peer_waits_for_the_checked_prefix_and_applied_repeat() {
+    use crate::service::ffe_deferred::ChunkOutcome;
     use std::sync::mpsc::{RecvTimeoutError, channel};
 
     let (server, mut queued) = authority(2, 2);
@@ -281,10 +282,11 @@ async fn exact_peer_waits_for_the_applied_repeat() {
     let (worker, relay) = SeqpacketConn::socketpair().unwrap();
     let (applied, observed) = channel();
     let (release, gate) = channel();
+    let (prefix, prefix_result) = channel();
     let (complete, result) = channel();
     let peer = std::thread::spawn(move || {
         let mut buf = [0; 4096];
-        for expected in [Admitted, Repeat] {
+        for deferred in [true, false] {
             let (n, _) = relay.recv_raw_blocking(&mut buf).unwrap();
             assert!(matches!(
                 decode::<SidecarInterfaceRequest>(&buf[..n]).unwrap(),
@@ -295,29 +297,49 @@ async fn exact_peer_waits_for_the_applied_repeat() {
                 .unwrap();
             let (n, _) = relay.recv_raw_blocking(&mut buf).unwrap();
             let request = decode::<SidecarInterfaceRequest>(&buf[..n]).unwrap();
-            assert!(
-                matches!(&request, SidecarInterfaceRequest::AdmitFfeExposureV1 { event, deliver: true, .. } if event.subject_id == "same")
-            );
-            let reply: ExposureVerdict = upstream.channel.call_request_blocking(&request).unwrap();
-            assert_eq!(reply, expected);
-            if reply == Repeat {
-                applied.send(()).unwrap();
-                gate.recv_timeout(Duration::from_secs(10)).unwrap();
-            }
-            relay.send_raw_blocking(encode(&reply), &[]).unwrap();
+            let reply = if deferred {
+                assert!(
+                    matches!(&request, SidecarInterfaceRequest::SubmitDeferredFfeV1 { batch } if batch.exposures.len() == 1 && batch.exposures[0].subject_id == "same")
+                );
+                let accepted: bool = upstream.channel.call_request_blocking(&request).unwrap();
+                assert!(accepted);
+                encode(&accepted)
+            } else {
+                assert!(
+                    matches!(&request, SidecarInterfaceRequest::AdmitFfeExposureV1 { event, deliver: true, .. } if event.subject_id == "same")
+                );
+                let reply: ExposureVerdict =
+                    upstream.channel.call_request_blocking(&request).unwrap();
+                assert_eq!(reply, Repeat);
+                encode(&reply)
+            };
+            applied.send(()).unwrap();
+            gate.recv_timeout(Duration::from_secs(10)).unwrap();
+            relay.send_raw_blocking(reply, &[]).unwrap();
         }
     });
     let worker = std::thread::spawn(move || {
         let mut sender = SidecarSender::new(SidecarInterfaceChannel::new(worker));
-        for _ in 0..2 {
-            complete
-                .send(sender.admit_ffe_exposure_for_test(ffe_context(), ffe_exposure("same"), true))
-                .unwrap();
-        }
+        prefix
+            .send(sender.submit_deferred_chunk_for_test(
+                ffe_context(),
+                std::iter::once(Some(ffe_exposure("same"))),
+            ))
+            .unwrap();
+        complete
+            .send(sender.admit_ffe_exposure_for_test(ffe_context(), ffe_exposure("same"), true))
+            .unwrap();
     });
+    observed.recv_timeout(Duration::from_secs(10)).unwrap();
     assert_eq!(
-        result.recv_timeout(Duration::from_secs(10)).unwrap(),
-        Admitted
+        prefix_result.recv_timeout(Duration::from_millis(100)),
+        Err(RecvTimeoutError::Timeout),
+        "prefix completed before its acknowledgement"
+    );
+    release.send(()).unwrap();
+    assert_eq!(
+        prefix_result.recv_timeout(Duration::from_secs(10)).unwrap(),
+        (ChunkOutcome::Confirmed, 1)
     );
     observed.recv_timeout(Duration::from_secs(10)).unwrap();
     assert_eq!(
