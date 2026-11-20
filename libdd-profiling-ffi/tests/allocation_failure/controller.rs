@@ -99,6 +99,8 @@ fn parse_event(line: &str) -> Option<Event> {
     let ordinal = it.next()?.parse().ok()?;
     let domain = match it.next()? {
         "Global" => Domain::Global,
+        "ArenaRequest" => Domain::ArenaRequest,
+        "ArenaBacking" => Domain::ArenaBacking,
         _ => return None,
     };
     let operation = match it.next()? {
@@ -379,15 +381,16 @@ impl Report {
         let _ = writeln!(s, "Baseline: {} events.\n", self.baseline.len());
         let _ = writeln!(
             s,
-            "| mode | ordinal | operation | size | align | thread | outcome | detail |"
+            "| mode | ordinal | domain | operation | size | align | thread | outcome | detail |"
         );
-        let _ = writeln!(s, "|---|---|---|---|---|---|---|---|");
+        let _ = writeln!(s, "|---|---|---|---|---|---|---|---|---|");
         for f in &self.runs {
             let _ = writeln!(
                 s,
-                "| {} | {} | {:?} | {} | {} | {} | {} | {} |",
+                "| {} | {} | {:?} | {:?} | {} | {} | {} | {} | {} |",
                 f.mode.as_str(),
                 f.ordinal,
+                f.event.domain,
                 f.event.operation,
                 f.event.size,
                 f.event.align,
@@ -688,6 +691,11 @@ fn is_owned_frame(line: &str) -> bool {
         return false;
     }
     if let Some((_, file)) = line.rsplit_once(" at ") {
+        // The chaos wrapper is test infrastructure, like this harness. The call site is the
+        // production line that asked for the memory.
+        if file.contains("chaos.rs") || file.contains("/allocation_failure/") {
+            return false;
+        }
         return file.contains("libdd-") || file.contains("libdd_");
     }
     line.split(" in ").nth(1).is_some_and(|rest| {

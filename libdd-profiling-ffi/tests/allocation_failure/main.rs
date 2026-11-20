@@ -20,8 +20,8 @@ mod contract;
 mod controller;
 mod scenarios;
 
-use allocator::ScopedFailingAllocator;
-use controller::{Mode, Outcome};
+use allocator::{Domain, ScopedFailingAllocator};
+use controller::{Mode, Outcome, Report};
 use std::alloc::System;
 
 #[global_allocator]
@@ -30,6 +30,29 @@ static ALLOCATOR: ScopedFailingAllocator<System> = ScopedFailingAllocator(System
 /// Discovery scenario: every ordinal in both modes is recorded. A crash is a finding.
 /// A nondeterministic trace is a harness error.
 fn discover(name: &'static str) {
+    let _ = load_discovery(name);
+}
+
+/// Same as [`discover`], then checks which allocation domains the baseline contains.
+fn discover_arena(name: &'static str, required: &[Domain], absent: &[Domain]) -> Report {
+    let report = load_discovery(name);
+    let present: Vec<Domain> = report.baseline.iter().map(|e| e.domain).collect();
+    for domain in required {
+        assert!(
+            present.contains(domain),
+            "{name}: baseline {present:?} is missing {domain:?}"
+        );
+    }
+    for domain in absent {
+        assert!(
+            !present.contains(domain),
+            "{name}: baseline {present:?} unexpectedly contains {domain:?}"
+        );
+    }
+    report
+}
+
+fn load_discovery(name: &'static str) -> Report {
     let report =
         controller::enumerate_with_stacks(name).unwrap_or_else(|e| panic!("harness error: {e}"));
     let nondeterministic: Vec<_> = report
@@ -70,6 +93,7 @@ fn discover(name: &'static str) {
         missing.is_empty(),
         "{name}: no owned call site for {missing:?}"
     );
+    report
 }
 
 /// Enumerates a toy scenario and checks every run has the `expected` outcome.
@@ -120,9 +144,74 @@ const TESTS: &[(&str, fn())] = &[
     ("scenario::tag_push_long", || {
         discover(scenarios::TAG_PUSH_LONG)
     }),
+    ("scenario::arena_first", || {
+        discover_arena(
+            scenarios::ARENA_FIRST,
+            &[Domain::ArenaRequest, Domain::ArenaBacking],
+            &[],
+        );
+    }),
+    ("scenario::arena_spare", || {
+        discover_arena(
+            scenarios::ARENA_SPARE,
+            &[Domain::ArenaRequest],
+            &[Domain::ArenaBacking],
+        );
+    }),
+    ("scenario::arena_exhausted", || {
+        discover_arena(
+            scenarios::ARENA_EXHAUSTED,
+            &[Domain::ArenaRequest],
+            &[Domain::ArenaBacking],
+        );
+    }),
+    ("scenario::arena_grow", || {
+        discover_arena(
+            scenarios::ARENA_GROW,
+            &[Domain::ArenaRequest, Domain::ArenaBacking],
+            &[],
+        );
+    }),
+    ("scenario::arena_oversized", || {
+        let report = discover_arena(
+            scenarios::ARENA_OVERSIZED,
+            &[Domain::ArenaRequest, Domain::ArenaBacking],
+            &[],
+        );
+        let hint = scenarios::ARENA_CHUNK_HINT as u64;
+        assert!(
+            report
+                .baseline
+                .iter()
+                .any(|event| { event.domain == Domain::ArenaBacking && event.size > hint }),
+            "oversized item did not grow a backing chunk past the hint"
+        );
+    }),
+    ("scenario::arena_string_table", || {
+        discover_arena(
+            scenarios::ARENA_STRING_TABLE,
+            &[Domain::ArenaRequest, Domain::ArenaBacking],
+            &[],
+        );
+    }),
+    ("scenario::arena_set", || {
+        discover_arena(
+            scenarios::ARENA_SET,
+            &[Domain::ArenaRequest, Domain::ArenaBacking],
+            &[],
+        );
+    }),
+    ("scenario::arena_slice_set", || {
+        discover_arena(
+            scenarios::ARENA_SLICE_SET,
+            &[Domain::ArenaRequest, Domain::ArenaBacking],
+            &[],
+        );
+    }),
 ];
 
 fn main() {
+    libdd_alloc::register_observer(allocator::observe_allocation);
     let args: Vec<String> = std::env::args().skip(1).collect();
 
     if args.first().map(String::as_str) == Some(controller::WORKER_ARG) {

@@ -50,6 +50,8 @@ impl Policy {
 #[repr(u8)]
 pub enum Domain {
     Global = 0,
+    ArenaRequest = 1,
+    ArenaBacking = 2,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -115,7 +117,11 @@ impl Slot {
             thread: (ordinal_thread & 0xffff_ffff) as u32,
             size: self.size.load(Ordering::Relaxed),
             align: align_domain_op >> 16,
-            domain: Domain::Global,
+            domain: match (align_domain_op >> 8) & 0xff {
+                1 => Domain::ArenaRequest,
+                2 => Domain::ArenaBacking,
+                _ => Domain::Global,
+            },
             operation: match align_domain_op & 0xff {
                 0 => Operation::Alloc,
                 1 => Operation::AllocZeroed,
@@ -164,9 +170,24 @@ fn thread_id() -> u32 {
         .unwrap_or(0)
 }
 
+/// Observer for the arena chaos wrappers. `domain` and `op` are the `libdd_alloc` codes.
+pub fn observe_allocation(domain: u8, op: u8, size: usize, align: usize) -> bool {
+    let domain = match domain {
+        1 => Domain::ArenaRequest,
+        2 => Domain::ArenaBacking,
+        _ => Domain::Global,
+    };
+    let operation = match op {
+        0 => Operation::Alloc,
+        1 => Operation::AllocZeroed,
+        _ => Operation::Realloc,
+    };
+    on_allocation(domain, operation, size, align)
+}
+
 /// Counts and records one allocation attempt of the current thread. Returns `true` if it must
 /// fail. Returns `false` outside a scope.
-fn on_allocation(operation: Operation, size: usize, align: usize) -> bool {
+fn on_allocation(domain: Domain, operation: Operation, size: usize, align: usize) -> bool {
     let Ok(Some((policy, ordinal))) = DEPTH.try_with(|depth| {
         if depth.get() == 0 {
             return None;
@@ -184,7 +205,7 @@ fn on_allocation(operation: Operation, size: usize, align: usize) -> bool {
 
     let event = Event {
         ordinal,
-        domain: Domain::Global,
+        domain,
         operation,
         size: size as u64,
         align: align as u64,
@@ -223,14 +244,24 @@ pub struct ScopedFailingAllocator<A>(pub A);
 
 unsafe impl<A: GlobalAlloc> GlobalAlloc for ScopedFailingAllocator<A> {
     unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
-        if on_allocation(Operation::Alloc, layout.size(), layout.align()) {
+        if on_allocation(
+            Domain::Global,
+            Operation::Alloc,
+            layout.size(),
+            layout.align(),
+        ) {
             return std::ptr::null_mut();
         }
         unsafe { self.0.alloc(layout) }
     }
 
     unsafe fn alloc_zeroed(&self, layout: Layout) -> *mut u8 {
-        if on_allocation(Operation::AllocZeroed, layout.size(), layout.align()) {
+        if on_allocation(
+            Domain::Global,
+            Operation::AllocZeroed,
+            layout.size(),
+            layout.align(),
+        ) {
             return std::ptr::null_mut();
         }
         unsafe { self.0.alloc_zeroed(layout) }
@@ -238,7 +269,7 @@ unsafe impl<A: GlobalAlloc> GlobalAlloc for ScopedFailingAllocator<A> {
 
     unsafe fn realloc(&self, ptr: *mut u8, layout: Layout, new_size: usize) -> *mut u8 {
         // Returning null leaves the old block allocated and unchanged.
-        if on_allocation(Operation::Realloc, new_size, layout.align()) {
+        if on_allocation(Domain::Global, Operation::Realloc, new_size, layout.align()) {
             return std::ptr::null_mut();
         }
         unsafe { self.0.realloc(ptr, layout, new_size) }

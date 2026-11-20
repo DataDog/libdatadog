@@ -2,17 +2,17 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use super::{SetError, ThinSlice};
+use crate::arena::{ProfilingArena, profiling_arena};
 use core::hash::{BuildHasher, Hash};
 use core::hint::unreachable_unchecked;
 use hashbrown::HashTable;
-use libdd_alloc::{ChainAllocator, VirtualAllocator};
 
 use super::SetHasher as Hasher;
 
 /// Holds unique slices and provides handles to fetch them later.
 pub struct SliceSet<T: Copy + Hash + Eq + 'static> {
     /// The bytes of each slice stored in `slices` are allocated here.
-    pub(crate) arena: ChainAllocator<VirtualAllocator>,
+    pub(crate) arena: ProfilingArena,
 
     /// The unordered hash set of unique slices.
     /// The static lifetimes are a lie; they are tied to the `arena`, which is
@@ -41,7 +41,7 @@ impl<T: Copy + Hash + Eq + 'static> SliceSet<T> {
     const SIZE_HINT: usize = 1024 * 1024;
 
     pub fn try_with_capacity(capacity: usize) -> Result<Self, SetError> {
-        let arena = ChainAllocator::new_in(Self::SIZE_HINT, VirtualAllocator {});
+        let arena = profiling_arena(Self::SIZE_HINT);
 
         let mut slices = HashTable::new();
         // SAFETY: we just made the empty hash table, so there's nothing that

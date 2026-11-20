@@ -3463,6 +3463,7 @@ dependencies = [
  "function_name",
  "hyper",
  "libc",
+ "libdd-alloc",
  "libdd-common",
  "libdd-common-ffi",
  "libdd-crashtracker-ffi",
