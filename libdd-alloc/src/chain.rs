@@ -66,9 +66,9 @@ impl<A: Allocator> ChainNode<A> {
     }
 }
 
-// SAFETY: the allocator (and the chain of chunks it manages) may be moved to
-// and used on another thread, which requires the inner allocator `A` to be
-// `Send` as well.
+// SAFETY: The allocator owns the list of chunks that back the allocated memory and may thus be
+// entirely moved to and used on another thread, as long as `A` can be as well. It is *not* `Sync`
+// though, since it uses unsynchronized interior mutability.
 unsafe impl<A: Allocator + Clone + Send> Send for ChainAllocator<A> {}
 
 impl<A: Allocator> ChainNode<A> {
