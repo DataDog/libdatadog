@@ -5,6 +5,9 @@
 pub mod bench_utils;
 
 #[cfg(feature = "cli")]
+pub mod codeowners;
+
+#[cfg(feature = "cli")]
 pub mod junit_file_attributes;
 
 #[cfg(feature = "test-utils")]

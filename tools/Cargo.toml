@@ -84,3 +84,8 @@ required-features = ["cli"]
 name = "add_junit_file_attributes"
 bench = false
 required-features = ["cli"]
+
+[[bin]]
+name = "validate_codeowners"
+bench = false
+required-features = ["cli"]
