@@ -63,7 +63,7 @@ libdd-networking = { path = "../libdd-networking", version = "1.0.0", features =
 libdd-process-utils = { version = "1.0.0", path = "../libdd-process-utils" }
 libdd-telemetry = { version = "12.0.0", path = "../libdd-telemetry" }
 libdd-trace-model = { version = "1.0.0", path = "../libdd-trace-model" }
-libdd-trace-utils = { version = "15.0.0", path = "../libdd-trace-utils", default-features = false }
+libdd-trace-utils = { version = "16.0.0", path = "../libdd-trace-utils", default-features = false }
 http = { workspace = true, features = ["std"] }
 libc.workspace = true
 nix = { workspace = true, features = ["poll", "signal", "socket"] }

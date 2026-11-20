@@ -30,7 +30,7 @@ strum_macros = { workspace = true, optional = true }
 libdd-regex = { version = "0.1.0", path = "../libdd-regex", default-features = false, features = ["require-regex-full"] }
 libdd-common = { path = "../libdd-common", version = "10.0.0", default-features = false, features = ["std"] }
 libdd-networking = { path = "../libdd-networking", version = "1.0.0", default-features = false }
-libdd-trace-normalization = { version = "4.3.0", path = "../libdd-trace-normalization", optional = true }
+libdd-trace-normalization = { version = "4.3.1", path = "../libdd-trace-normalization", optional = true }
 libdd-capabilities = { path = "../libdd-capabilities", version = "4.0.1", optional = true }
 http = { workspace = true, features = ["std"], optional = true }
 tokio = { workspace = true, features = ["time"], optional = true }
