@@ -703,6 +703,13 @@ const REPLAY_LIMIT: usize = 32;
 /// `alloc_chaos_injection_hook`.
 fn capture_stacks(scenario: &str, baseline: &[Event], runs: &mut [Finding]) {
     let force_debugger = std::env::var_os("ALLOC_CHAOS_DEBUGGER").is_some();
+    // Some unwinders allocate while walking the stack (notably on macOS). Those allocations also
+    // fail in fail-from mode, so reuse fail-once's stack for the same first failed allocation.
+    let fail_once_stacks: Vec<_> = runs
+        .iter()
+        .filter(|finding| finding.mode == Mode::FailOnce)
+        .map(|finding| (finding.ordinal, worker_stack(&finding.run.stderr)))
+        .collect();
     let mut replay = Vec::new();
     for (index, finding) in runs.iter_mut().enumerate() {
         if matches!(
@@ -712,7 +719,18 @@ fn capture_stacks(scenario: &str, baseline: &[Event], runs: &mut [Finding]) {
             continue;
         }
         if !force_debugger {
-            match worker_stack(&finding.run.stderr) {
+            let mut frames = worker_stack(&finding.run.stderr);
+            if finding.mode == Mode::FailFrom
+                && !frames
+                    .as_ref()
+                    .is_some_and(|frames| frames.iter().any(|line| is_owned_frame(line)))
+            {
+                frames = fail_once_stacks
+                    .iter()
+                    .find(|(ordinal, _)| *ordinal == finding.ordinal)
+                    .and_then(|(_, frames)| frames.clone());
+            }
+            match frames {
                 Some(frames) => {
                     finding.call_site = frames.iter().find(|line| is_owned_frame(line)).cloned();
                     finding.allocation_stack = Some(frames.join("\n"));

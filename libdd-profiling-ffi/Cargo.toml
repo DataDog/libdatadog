@@ -95,7 +95,7 @@ libdd-shared-runtime-ffi = { path = "../libdd-shared-runtime-ffi", default-featu
 libdd-otel-thread-ctx-ffi = { path = "../libdd-otel-thread-ctx-ffi", default-features = false, optional = true }
 
 [dev-dependencies]
-backtrace = "0.3.74"
+backtrace = { workspace = true, default-features = true }
 libdd-alloc = { path = "../libdd-alloc" }
 libdd-common = { path = "../libdd-common" }
 libdd-common-ffi = { path = "../libdd-common-ffi", features = ["std"] }

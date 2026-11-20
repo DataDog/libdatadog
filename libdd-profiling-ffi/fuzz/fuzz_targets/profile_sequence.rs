@@ -9,6 +9,10 @@
 #![no_main]
 
 use datadog_profiling_ffi as _;
+// Used by the shared modules below. cargo-machete does not follow out-of-package #[path] modules.
+use libdd_common as _;
+use libdd_common_ffi as _;
+use libdd_profiling as _;
 use libfuzzer_sys::fuzz_target;
 
 #[path = "../../tests/allocation_failure/agent.rs"]
