@@ -70,8 +70,15 @@ impl<T: Copy + hash::Hash + Eq + 'static> ParallelSliceSet<T> {
     }
 
     /// # Safety
-    /// The slice must not have been inserted yet, as it skips checking if
-    /// the slice is already present.
+    ///
+    /// - the slice must not have been inserted yet, as it skips checking if the slice is already
+    /// present.
+    /// - the set must not be mutated concurrently: there's a time interval between the start of
+    ///   this function and when the shard is locked for writes during which a concurrent inserter
+    ///   could insert `slice` and violate the uniqueness condition above.
+    // Note: revisiting this function, it's not entirely clear that the above condition is actually
+    // required for safety or just correction of the data structure. We err on the safe side and
+    // keep it documented as a safety condition for now.
     pub(super) unsafe fn insert_unique_uncontended(
         &self,
         slice: &[T],
