@@ -21,6 +21,7 @@ workspace = true
 
 [features]
 default = []
+libc_dns = ["dep:libc"]
 rustix-tcp = ["dep:rustix"]
 std = ["embedded-io/std", "embedded-io-async/std", "rustix?/std"]
 
@@ -28,10 +29,18 @@ std = ["embedded-io/std", "embedded-io-async/std", "rustix?/std"]
 embedded-io.workspace = true
 embedded-io-async.workspace = true
 embedded-nal-async.workspace = true
+libc = { workspace = true, optional = true }
 # `event` and `time` provide `poll` and `clock_gettime` for connect timeouts.
 # `time` is also required by rustix 1.1.5's `net` socket-timeout code.
 rustix = { workspace = true, features = ["event", "net", "time"], optional = true }
 
+[dev-dependencies]
+reqwless.workspace = true
+
 [[example]]
 name = "rustix_sync_client"
+required-features = ["rustix-tcp", "std"]
+
+[[example]]
+name = "rustix_async_client"
 required-features = ["rustix-tcp", "std"]
