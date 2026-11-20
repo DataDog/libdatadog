@@ -30,6 +30,7 @@ pub(crate) const OTLP_RETRY_DELAY_MS: u64 = 100;
 pub(crate) async fn send_otlp_http<C: HttpClientCapability + SleepCapability>(
     capabilities: &C,
     endpoint_url: &str,
+    unix_path: &'static str,
     config_headers: &HeaderMap,
     timeout: Duration,
     test_token: Option<&str>,
@@ -40,6 +41,7 @@ pub(crate) async fn send_otlp_http<C: HttpClientCapability + SleepCapability>(
     send_otlp_http_with_observer(
         capabilities,
         endpoint_url,
+        unix_path,
         config_headers,
         timeout,
         test_token,
@@ -58,6 +60,7 @@ pub(crate) async fn send_otlp_http_with_observer<
 >(
     capabilities: &C,
     endpoint_url: &str,
+    unix_path: &'static str,
     config_headers: &HeaderMap,
     timeout: Duration,
     test_token: Option<&str>,
@@ -66,12 +69,21 @@ pub(crate) async fn send_otlp_http_with_observer<
     max_retries: u32,
     observer: F,
 ) -> Result<(), TraceExporterError> {
-    let url = libdd_common::parse_uri(endpoint_url).map_err(|e| {
-        TraceExporterError::Internal(InternalErrorKind::InvalidWorkerState(format!(
-            "Invalid OTLP endpoint URL: {}",
-            e
-        )))
-    })?;
+    let url = libdd_common::parse_uri(endpoint_url)
+        .and_then(|url| {
+            if url.scheme_str() != Some("unix") {
+                return Ok(url);
+            }
+            let mut parts = url.into_parts();
+            parts.path_and_query = Some(http::uri::PathAndQuery::from_static(unix_path));
+            Ok(http::Uri::from_parts(parts)?)
+        })
+        .map_err(|e| {
+            TraceExporterError::Internal(InternalErrorKind::InvalidWorkerState(format!(
+                "Invalid OTLP endpoint URL: {}",
+                e
+            )))
+        })?;
 
     let target = Endpoint {
         url,
@@ -133,6 +145,7 @@ pub async fn send_otlp_traces_http<C: HttpClientCapability + SleepCapability>(
     send_otlp_http(
         capabilities,
         &config.endpoint_url,
+        "/v1/traces",
         &config.headers,
         config.timeout,
         test_token,

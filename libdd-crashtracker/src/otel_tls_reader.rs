@@ -1,13 +1,13 @@
 // Copyright 2026-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-//! Read an OTel `ThreadContextRecord` from a remote process via `/proc/<pid>/mem`.
+//! Read an OTel `ThreadContextRecord` from a remote process via `/proc/<pid>/mem`
+//! and ELF-based TLS symbol discovery and DTV probing
 
+use crate::crash_info::{OtelAttribute, OtelThreadContext};
 use alloc::fmt;
 use std::fs::File;
 use std::io::{Read, Seek, SeekFrom};
-
-use crate::crash_info::{OtelAttribute, OtelThreadContext};
 
 /// Size of the fixed record header (trace_id + span_id + valid + trace_flags + attrs_data_size).
 pub(crate) const RECORD_HEADER_SIZE: usize = 28;
@@ -56,7 +56,7 @@ impl ProcMemReader {
     }
 
     /// Read exactly `buf.len()` bytes at `addr`. Errors on short reads.
-    fn read_exact(&mut self, addr: u64, buf: &mut [u8]) -> Result<(), OtelTlsError> {
+    pub(crate) fn read_exact(&mut self, addr: u64, buf: &mut [u8]) -> Result<(), OtelTlsError> {
         self.file.seek(SeekFrom::Start(addr))?;
         self.file.read_exact(buf)?;
         Ok(())
@@ -156,7 +156,7 @@ impl ProcMemReader {
             return Ok(None);
         }
 
-        let attrs_data_size = u16::from_ne_bytes([buf[26], buf[27]]) as usize;
+        let attrs_data_size = usize::from(u16::from_ne_bytes([buf[26], buf[27]]));
         let attrs_to_read = attrs_data_size
             .min(MAX_ATTRS_DATA)
             .min(buf.len() - RECORD_HEADER_SIZE);
@@ -171,162 +171,6 @@ impl ProcMemReader {
         };
 
         Ok(Some(RECORD_HEADER_SIZE + attrs_read))
-    }
-}
-
-/// TLS module metadata discovered via `dl_iterate_phdr`.
-pub(crate) struct TlsModuleInfo {
-    /// TLS module ID (index into the DTV).
-    pub modid: usize,
-    /// Byte offset of the `otel_thread_ctx_v1` slot within the module's TLS block.
-    pub offset: usize,
-    /// The calling thread's TLS block base for this module (`dlpi_tls_data`).
-    /// Equal to `dtv[modid]` for the calling thread.
-    pub tls_block_base: usize,
-}
-
-/// Discover TLS module metadata for `otel_thread_ctx_v1` via `dl_iterate_phdr`.
-///
-/// Returns `None` if `tls_slot_address()` is 0 (symbol not linked) or no module's TLS range
-/// contains the slot address (can happen on older glibc where `_dl_tls_get_addr_soft` returns
-/// NULL after fork).
-pub(crate) fn tls_module_info() -> Option<TlsModuleInfo> {
-    let slot_addr = libdd_otel_thread_ctx::linux::tls_slot_address();
-    if slot_addr == 0 {
-        return None;
-    }
-
-    struct State {
-        slot_addr: usize,
-        result: Option<TlsModuleInfo>,
-    }
-
-    unsafe extern "C" fn callback(
-        info: *mut libc::dl_phdr_info,
-        _size: libc::size_t,
-        data: *mut core::ffi::c_void,
-    ) -> core::ffi::c_int {
-        // SAFETY: `data` points to the `State` local in the enclosing function, which is
-        // live for the duration of the `dl_iterate_phdr` call.
-        let state = unsafe { &mut *(data as *mut State) };
-        // SAFETY: `info` is a valid `dl_phdr_info` provided by `dl_iterate_phdr`.
-        let info = unsafe { &*info };
-
-        let tls_data = info.dlpi_tls_data;
-        if tls_data.is_null() {
-            return 0; // continue
-        }
-
-        // SAFETY: `dl_iterate_phdr` holds the loader lock, so no concurrent dlopen/dlclose
-        // can invalidate the program headers. `dlpi_phdr` points to a valid array of
-        // `dlpi_phnum` entries for a currently-loaded ELF object.
-        let phdrs =
-            unsafe { core::slice::from_raw_parts(info.dlpi_phdr, info.dlpi_phnum as usize) };
-        for phdr in phdrs {
-            if phdr.p_type == libc::PT_TLS {
-                let base = tls_data as usize;
-                let end = base + phdr.p_memsz as usize;
-                if state.slot_addr >= base && state.slot_addr < end {
-                    state.result = Some(TlsModuleInfo {
-                        modid: info.dlpi_tls_modid,
-                        offset: state.slot_addr - base,
-                        tls_block_base: base,
-                    });
-                    return 1; // stop iteration
-                }
-            }
-        }
-        0 // continue
-    }
-
-    let mut state = State {
-        slot_addr,
-        result: None,
-    };
-
-    // SAFETY: `callback` has the correct signature for `dl_iterate_phdr`. `state` is live for
-    // the duration of the call.
-    unsafe {
-        libc::dl_iterate_phdr(
-            Some(callback),
-            &mut state as *mut State as *mut core::ffi::c_void,
-        );
-    }
-
-    state.result
-}
-
-/// Return the signed byte offset from the thread pointer (TP) to the DTV pointer for the
-/// current (architecture, libc) combination.
-///
-/// Referred to the offsets in GDB's `get_tls_dtv_addr` implementation
-///
-/// GDB references:
-/// - x86_64: <https://sourceware.org/git/?p=binutils-gdb.git;a=blob;f=gdb/amd64-linux-tdep.c>
-///   (`amd64_linux_get_tls_dtv_addr`)
-/// - aarch64: <https://sourceware.org/git/?p=binutils-gdb.git;a=blob;f=gdb/aarch64-linux-tdep.c>
-///   (`aarch64_linux_get_tls_dtv_addr`)
-///
-/// - **x86_64 glibc**: `+8` — second field of `tcbhead_t` (`{void *tcb; dtv_t *dtv; …}`), glibc
-///   `sysdeps/x86_64/nptl/tls.h`
-/// - **aarch64 glibc**: `+0` — first field of `tcbhead_t` (`{dtv_t *dtv; …}`), glibc
-///   `sysdeps/aarch64/nptl/tls.h`
-/// - **x86_64 musl**: `+8` — second field of `struct __pthread` (`{self, *dtv, …}`), musl
-///   `src/internal/pthread_impl.h` with `!TLS_ABOVE_TP`
-/// - **aarch64 musl**: `-8` — TP points just past the end of `struct __pthread` (`TP_ADJ` adds
-///   `sizeof(struct __pthread)`), and `*dtv` is the last field, musl `src/internal/pthread_impl.h`
-///   with `TLS_ABOVE_TP`
-///
-/// Returns `None` for unknown combinations (the caller should fall back to the
-/// single TP-relative offset approach).
-fn dtv_pointer_offset() -> Option<isize> {
-    #[cfg(all(target_arch = "x86_64", target_env = "gnu"))]
-    return Some(8);
-
-    #[cfg(all(target_arch = "aarch64", target_env = "gnu"))]
-    return Some(0);
-
-    #[cfg(all(target_arch = "x86_64", target_env = "musl"))]
-    return Some(8);
-
-    #[cfg(all(target_arch = "aarch64", target_env = "musl"))]
-    return Some(-8);
-
-    #[allow(unreachable_code)]
-    None
-}
-
-/// Resolve the DTV pointer offset and validate it against a known `(modid, tls_block_base)`
-/// pair from `dl_iterate_phdr`.
-///
-/// Returns the validated signed offset, or `None` if the platform is unsupported or
-/// validation fails (which would indicate a libc ABI change).
-pub(crate) fn validated_dtv_offset(tp: u64, modid: usize, tls_block_base: usize) -> Option<isize> {
-    let offset = dtv_pointer_offset()?;
-    let dtv_addr = tp.checked_add_signed(offset as i64)?;
-
-    // Validate: read the DTV pointer, then check dtv[modid] == tls_block_base.
-    #[cfg(target_env = "gnu")]
-    const DTV_ENTRY_SIZE: u64 = 16;
-    #[cfg(target_env = "musl")]
-    const DTV_ENTRY_SIZE: u64 = 8;
-
-    // SAFETY: dtv_addr is within the calling thread's own TCB, which is valid and
-    // readable memory. The offset is a well-known libc ABI constant.
-    let dtv_ptr = unsafe { *(dtv_addr as *const u64) };
-    if dtv_ptr == 0 {
-        return None;
-    }
-
-    let entry_addr = dtv_ptr.checked_add((modid as u64).checked_mul(DTV_ENTRY_SIZE)?)?;
-    // SAFETY: if dtv_ptr is the real DTV and modid is valid (from dl_iterate_phdr),
-    // this entry is within the allocated DTV array.
-    let entry_value = unsafe { *(entry_addr as *const u64) };
-
-    if entry_value as usize == tls_block_base {
-        Some(offset)
-    } else {
-        None // ABI mismatch -- offset didn't lead to the expected DTV entry.
     }
 }
 
@@ -368,7 +212,7 @@ fn decode_attributes(data: &[u8]) -> Vec<OtelAttribute> {
 
     while offset + 2 <= data.len() {
         let key_index = data[offset];
-        let val_len = data[offset + 1] as usize;
+        let val_len = usize::from(data[offset + 1]);
         offset += 2;
 
         if offset + val_len > data.len() {
@@ -393,7 +237,306 @@ fn bytes_to_hex(bytes: &[u8]) -> String {
     s
 }
 
-/// Read a thread's name from `/proc/<pid>/task/<tid>/comm`.
+// ── TLS symbol info ─────────────────────────────────────────────────────────
+
+const SYMBOL_NAME: &[u8] = b"otel_thread_ctx_v1";
+
+/// TLS symbol info: everything the collector needs to resolve the OTel TLS variable.
+pub(crate) struct TlsSymbolInfo {
+    /// The symbol's `st_value` -- byte offset within the module's TLS block.
+    pub symbol_offset: usize,
+    /// PT_TLS `p_memsz` from the ELF program headers.
+    pub tls_memsz: usize,
+    /// PT_TLS `p_align` from the ELF program headers.
+    pub tls_align: usize,
+}
+
+// ── Pre-cached TLS metadata (populated at init, read at crash time) ─────────
+
+/// Global cache for TLS symbol metadata, populated once by [`cache_otel_tls_info`]
+/// at crashtracker init time (outside signal context). The collector reads this at
+/// crash time via [`cached_tls_info`].
+static CACHED_TLS_INFO: std::sync::OnceLock<TlsSymbolInfo> = std::sync::OnceLock::new();
+
+/// Resolve and cache the `otel_thread_ctx_v1` TLS symbol metadata via `dl_iterate_phdr`.
+///
+/// **Must be called outside signal/crash context** (e.g. during `crashtracker::init`).
+/// `dl_iterate_phdr` takes the loader lock, which is safe here but would deadlock
+/// if called from a post-fork collector while another thread holds the lock.
+///
+/// Only the first call performs discovery; subsequent calls are no-ops.
+pub(crate) fn cache_otel_tls_info() {
+    CACHED_TLS_INFO.get_or_init(|| {
+        resolve_tls_symbol_via_dl_iterate_phdr().unwrap_or(TlsSymbolInfo {
+            symbol_offset: 0,
+            tls_memsz: 0,
+            tls_align: 0,
+        })
+    });
+}
+
+/// Read the cached TLS symbol info. Returns `None` if [`cache_otel_tls_info`] was
+/// never called or the symbol wasn't found at init time.
+pub(crate) fn cached_tls_info() -> Option<&'static TlsSymbolInfo> {
+    CACHED_TLS_INFO.get().filter(|info| info.tls_memsz > 0) // sentinel: memsz==0 means "not found"
+}
+
+/// Discover `otel_thread_ctx_v1` TLS metadata via `dl_iterate_phdr`.
+///
+/// Only safe to call outside signal context (the loader lock is not async-signal-safe).
+///
+/// Phase 1: `dl_iterate_phdr` enumerates loaded objects with PT_TLS and collects their
+/// file paths and TLS segment metadata.
+/// Phase 2: For each candidate, goblin parses the ELF file from disk to search for the
+/// symbol in `.dynsym`. This avoids manual pointer arithmetic on in-memory ELF structures.
+fn resolve_tls_symbol_via_dl_iterate_phdr() -> Option<TlsSymbolInfo> {
+    use std::path::PathBuf;
+
+    struct Candidate {
+        path: PathBuf,
+        tls_memsz: usize,
+        tls_align: usize,
+    }
+
+    struct State {
+        candidates: Vec<Candidate>,
+    }
+
+    unsafe extern "C" fn callback(
+        info: *mut libc::dl_phdr_info,
+        _size: libc::size_t,
+        data: *mut core::ffi::c_void,
+    ) -> core::ffi::c_int {
+        // SAFETY: `data` points to the `State` local in the enclosing function.
+        let state = unsafe { &mut *(data as *mut State) };
+        // SAFETY: `info` is a valid `dl_phdr_info` provided by `dl_iterate_phdr`.
+        let info = unsafe { &*info };
+
+        // SAFETY: program headers are valid under the loader lock.
+        let phdrs =
+            unsafe { core::slice::from_raw_parts(info.dlpi_phdr, usize::from(info.dlpi_phnum)) };
+
+        // Only consider objects with a TLS segment.
+        let Some(pt_tls) = phdrs.iter().find(|p| p.p_type == libc::PT_TLS) else {
+            return 0;
+        };
+
+        // SAFETY: dlpi_name is a valid C string under the loader lock.
+        let name_cstr = unsafe { core::ffi::CStr::from_ptr(info.dlpi_name) };
+        let path = if name_cstr.to_bytes().is_empty() {
+            // Main executable — dlpi_name is empty; use /proc/self/exe.
+            PathBuf::from("/proc/self/exe")
+        } else {
+            PathBuf::from(name_cstr.to_string_lossy().as_ref())
+        };
+
+        state.candidates.push(Candidate {
+            path,
+            tls_memsz: pt_tls.p_memsz as usize,
+            tls_align: pt_tls.p_align as usize,
+        });
+
+        0 // continue — collect all candidates
+    }
+
+    let mut state = State {
+        candidates: Vec::new(),
+    };
+
+    // SAFETY: `callback` has the correct signature. `state` is live for the duration.
+    unsafe {
+        libc::dl_iterate_phdr(
+            Some(callback),
+            &mut state as *mut State as *mut core::ffi::c_void,
+        );
+    }
+
+    // Phase 2: search each candidate's ELF file for the symbol using goblin.
+    for candidate in &state.candidates {
+        if let Some(symbol_offset) = find_tls_symbol_in_file(&candidate.path) {
+            return Some(TlsSymbolInfo {
+                symbol_offset,
+                tls_memsz: candidate.tls_memsz,
+                tls_align: candidate.tls_align,
+            });
+        }
+    }
+
+    None
+}
+
+/// Parse an ELF file from disk and search its `.dynsym` for `otel_thread_ctx_v1`.
+/// Returns the symbol's `st_value` (TLS offset within the module's block).
+fn find_tls_symbol_in_file(path: &std::path::Path) -> Option<usize> {
+    let data = std::fs::read(path).ok()?;
+    let elf = goblin::elf::Elf::parse(&data).ok()?;
+
+    for sym in elf.dynsyms.iter() {
+        if sym.st_type() != goblin::elf::sym::STT_TLS {
+            continue;
+        }
+        if sym.st_shndx == goblin::elf::section_header::SHN_UNDEF as usize {
+            continue;
+        }
+        if elf.dynstrtab.get_at(sym.st_name).map(str::as_bytes) == Some(SYMBOL_NAME) {
+            return Some(sym.st_value as usize);
+        }
+    }
+    None
+}
+
+// ── DTV probing ─────────────────────────────────────────────────────────────
+
+/// Result of DTV probing: how to resolve TLS addresses for all threads.
+pub(crate) enum TlsResolution {
+    /// DTV entry was populated; use the standard DTV walk for all threads.
+    Dtv { module_id: usize },
+    /// DTV entry was `TLS_DTV_UNALLOCATED` (-1); the TLS block is at a fixed offset
+    /// from TP (static TLS, common on glibc 2.17). Use TP-relative addressing.
+    StaticOffset { tp_to_slot: i64 },
+}
+
+/// Signed byte offset from the thread pointer (TP) to the DTV pointer.
+///
+/// These are well-known, ABI-stable offsets for each combination.
+/// GDB references:
+/// - x86_64: <https://sourceware.org/git/?p=binutils-gdb.git;a=blob;f=gdb/amd64-linux-tdep.c>
+///   (`amd64_linux_get_tls_dtv_addr`)
+/// - aarch64: <https://sourceware.org/git/?p=binutils-gdb.git;a=blob;f=gdb/aarch64-linux-tdep.c>
+///   (`aarch64_linux_get_tls_dtv_addr`)
+pub(crate) fn dtv_pointer_offset() -> Option<isize> {
+    #[cfg(all(target_arch = "x86_64", target_env = "gnu"))]
+    return Some(8);
+
+    #[cfg(all(target_arch = "aarch64", target_env = "gnu"))]
+    return Some(0);
+
+    #[cfg(all(target_arch = "x86_64", target_env = "musl"))]
+    return Some(8);
+
+    #[cfg(all(target_arch = "aarch64", target_env = "musl"))]
+    return Some(-8);
+
+    #[allow(unreachable_code)]
+    None
+}
+
+/// Read a `u64` from a remote process's memory via `/proc/<pid>/mem`.
+fn remote_read_u64(mem: &mut ProcMemReader, addr: u64) -> Option<u64> {
+    let mut buf = [0u8; 8];
+    mem.read_exact(addr, &mut buf).ok()?;
+    Some(u64::from_ne_bytes(buf))
+}
+
+/// Discover how to resolve the OTel TLS variable by probing DTV entries on a stopped thread.
+///
+/// Instead of walking glibc's internal `link_map` chain (whose `l_tls_modid` offset varies
+/// across glibc versions), this probes DTV entries 1..N:
+///
+/// - Populated entry: check if `dtv[i] + symbol_offset` -> valid record pointer.
+/// - `TLS_DTV_UNALLOCATED` (-1): compute the static TLS block address from TP and the PT_TLS
+///   segment size, then validate. This is the path glibc 2.17 (CentOS 7) takes.
+pub(crate) fn probe_dtv_for_resolution(
+    mem: &mut ProcMemReader,
+    tp: u64,
+    dtv_offset: isize,
+    symbol: &TlsSymbolInfo,
+) -> Option<TlsResolution> {
+    #[cfg(target_env = "gnu")]
+    const DTV_ENTRY_SIZE: u64 = 16;
+    #[cfg(target_env = "musl")]
+    const DTV_ENTRY_SIZE: u64 = 8;
+
+    const MAX_PROBE: usize = 64;
+
+    let dtv_addr = tp.checked_add_signed(dtv_offset as i64)?;
+    let dtv_ptr = remote_read_u64(mem, dtv_addr)?;
+    if dtv_ptr == 0 {
+        return None;
+    }
+
+    for modid in 1..=MAX_PROBE {
+        let entry_val =
+            remote_read_u64(mem, dtv_ptr + (modid as u64) * DTV_ENTRY_SIZE).unwrap_or(0);
+
+        if entry_val == 0 {
+            continue;
+        }
+
+        let tls_block_base = if entry_val == u64::MAX {
+            // TLS_DTV_UNALLOCATED: the DTV entry hasn't been lazily filled, but for
+            // static TLS the block is always allocated next to the TCB. Compute its
+            // address from TP and the PT_TLS block size.
+            compute_static_tls_base(tp, symbol.tls_memsz, symbol.tls_align)?
+        } else {
+            entry_val
+        };
+
+        // Check if this TLS block + symbol_offset -> non-null slot -> valid record.
+        let slot_addr = tls_block_base + symbol.symbol_offset as u64;
+        let slot_val = remote_read_u64(mem, slot_addr).unwrap_or(0);
+        if slot_val == 0 {
+            continue;
+        }
+        let mut valid_byte = [0u8];
+        if mem.read_exact(slot_val + 24, &mut valid_byte).is_err() || valid_byte[0] != 1 {
+            continue;
+        }
+
+        // Found the right module.
+        return if entry_val == u64::MAX {
+            // Static TLS: record the TP-relative offset for use on all threads.
+            let tp_to_slot = slot_addr as i64 - tp as i64;
+            Some(TlsResolution::StaticOffset { tp_to_slot })
+        } else {
+            Some(TlsResolution::Dtv { module_id: modid })
+        };
+    }
+
+    None
+}
+
+/// Compute the base address of a static TLS block from the thread pointer.
+///
+/// Only needed when the DTV entry is `TLS_DTV_UNALLOCATED` (old glibc / old musl).
+/// Modern runtimes populate the DTV and never reach this path.
+///
+/// - **x86_64** (variant II, glibc + musl): TLS grows downward: `TP - align_up(memsz, align)`
+///
+/// - **aarch64 glibc** (variant I): TLS grows upward: `align_up(TP + 16, align)` 16 = glibc TCB
+///   size (`tcbhead_t`: 2 pointers — dtv + private). Ref: glibc `sysdeps/aarch64/nptl/tls.h`
+///   (`TLS_TCB_SIZE`)
+///
+/// - **aarch64 musl** (variant I): TLS grows upward: `align_up(TP, align)` musl defines
+///   `TLS_ABOVE_TP` for aarch64 and adjusts TP via `TP_ADJ(p)` = `(char*)(p) + sizeof(struct
+///   __pthread)`, so TP already points past the TCB. Ref: musl `src/internal/pthread_impl.h`
+///   (`TP_ADJ`, `TLS_ABOVE_TP`) Ref: musl `arch/aarch64/pthread_arch.h`
+fn compute_static_tls_base(tp: u64, tls_memsz: usize, tls_align: usize) -> Option<u64> {
+    if tls_memsz == 0 {
+        return None;
+    }
+    let align = if tls_align == 0 { 1 } else { tls_align };
+
+    #[cfg(target_arch = "x86_64")]
+    {
+        let aligned_size = (tls_memsz + align - 1) & !(align - 1);
+        return Some(tp.wrapping_sub(aligned_size as u64));
+    }
+    #[cfg(all(target_arch = "aarch64", target_env = "gnu"))]
+    {
+        // glibc: TCB (16 bytes) sits between TP and TLS data.
+        let tls_start = tp + 16;
+        return Some(((tls_start as usize + align - 1) & !(align - 1)) as u64);
+    }
+    #[cfg(all(target_arch = "aarch64", target_env = "musl"))]
+    {
+        // musl: TP_ADJ already points past the pthread struct; TLS starts at TP.
+        return Some(((tp as usize + align - 1) & !(align - 1)) as u64);
+    }
+    #[allow(unreachable_code)]
+    None
+}
+
 pub(crate) fn read_thread_name(pid: u32, tid: i32) -> Option<String> {
     std::fs::read_to_string(format!("/proc/{pid}/task/{tid}/comm"))
         .ok()

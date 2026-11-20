@@ -45,6 +45,7 @@ members = [
   "libdd-common",
   "libdd-common-ffi",
   "libdd-env",
+  "libdd-host-identity",
   "libdd-process-utils",
   "libdd-telemetry",
   "libdd-telemetry-ffi",
@@ -114,7 +115,7 @@ ignored = [
 [workspace.package]
 rust-version = "1.91.1"
 edition = "2024"
-version = "49.0.0"
+version = "51.0.0"
 license = "Apache-2.0"
 authors = ["Datadog Inc. <info@datadoghq.com>"]
 
@@ -226,7 +227,7 @@ libc = { version = "0.2", default-features = true }
 libc_alloc = { version = "1.0", default-features = false }
 libdd-libunwind-sys = { version = "1.0.3", default-features = false }
 log = { version = "0.4.21", default-features = false }
-lru = { version = "0.16.3", default-features = false }
+lru = { version = "0.18.2", default-features = false }
 manual_future = { version = "0.1.1", default-features = false }
 maplit = { version = "1.0", default-features = false }
 md5 = { version = "0.7.0", default-features = false }

@@ -52,10 +52,22 @@ let config = CdnConfig {
     request_timeout: Duration::from_secs(5),
     language: "php".into(),
     version: tracer_version,
+    service: Some(tracer_service),
 };
 let mut fetcher = CdnFetcher::new(config, configuration_sink)?;
 fetcher.run(cancellation_token).await;
 ```
+
+Each request sends `service` in the `DD-Service` header. The CDN uses it to
+attribute usage to the service. The value is the service name after the trace
+normalizer (`normalize_service` in `libdd-trace-normalization`), so
+`My Service` becomes `my_service`. A non-ASCII name, such as `café-api`, goes
+out as UTF-8 bytes.
+
+If the normalized name is empty or the normalizer fallback `unnamed-service`
+(for example from `___`), requests have no header. This is not a validation
+error. The fetcher logs it once at debug level. `service` is part of the subscription identity, so each
+service has its own fetcher.
 
 `CdnEndpoint::custom(url)` carries no Datadog API key. Redirects are not
 followed; invalid API-key header values fail endpoint construction. Custom URL

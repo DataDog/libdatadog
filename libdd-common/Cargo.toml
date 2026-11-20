@@ -4,7 +4,7 @@
 [package]
 name = "libdd-common"
 version = "9.0.0"
-description = "Shared utilities for Datadog libraries including container entity detection and tag validation"
+description = "Shared utilities for Datadog libraries including endpoint handling and tag validation"
 homepage = "https://github.com/DataDog/libdatadog/tree/main/libdd-common"
 repository = "https://github.com/DataDog/libdatadog/tree/main/libdd-common"
 edition.workspace = true
@@ -20,28 +20,12 @@ anyhow = { workspace = true, optional = true }
 arc-swap = { workspace = true, optional = true }
 hex = { workspace = true, features = ["std"], optional = true }
 http = { workspace = true, features = ["std"], optional = true }
-libdd-regex = { version = "0.1.0", path = "../libdd-regex", optional = true }
-libdd-env = { version = "0.1.0", path = "../libdd-env", optional = true }
 serde = { workspace = true, features = ["derive"] }
 static_assertions = { workspace = true, optional = true }
 const_format = { workspace = true, optional = true }
 
-[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
-libc = { workspace = true, optional = true }
-
-[target.'cfg(windows)'.dependencies.windows-sys]
-workspace = true
-optional = true
-features = [
-    "Win32_Foundation",
-    "Win32_System_Registry",
-]
-
 [dev-dependencies]
-indexmap = { workspace = true, default-features = true }
-maplit.workspace = true
 proptest = { workspace = true, default-features = true }
-tempfile.workspace = true
 
 [features]
 default = ["std"]
@@ -57,15 +41,8 @@ std = [
     "dep:arc-swap",
     "dep:hex",
     "dep:http",
-    "dep:libc",
-    "dep:libdd-regex",
-    "dep:libdd-env",
-    "dep:windows-sys",
     "serde/std",
 ]
-# Enable this feature to enable stubbing of cgroup
-# php directly import this crate and uses functions gated by this feature for their test
-cgroup_testing = ["std"]
 
 [lints.clippy]
 std_instead_of_alloc = "warn"

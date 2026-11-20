@@ -958,6 +958,7 @@ impl<
         send_otlp_http_with_observer(
             &self.capabilities,
             &config_to_use.endpoint_url,
+            "/v1/traces",
             &config_to_use.headers,
             config_to_use.timeout,
             self.endpoint.test_token.as_deref(),
@@ -1072,6 +1073,7 @@ impl<
         send_otlp_http_with_observer(
             &self.capabilities,
             &config_to_use.endpoint_url,
+            "/v1/traces",
             &config_to_use.headers,
             config_to_use.timeout,
             self.endpoint.test_token.as_deref(),
