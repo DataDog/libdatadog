@@ -1,0 +1,92 @@
+id: unsafe-block-missing-safety-comment
+valid:
+  - |
+    fn contained() {
+        // SAFETY: ptr is valid and aligned, checked above.
+        unsafe {
+            risky();
+        }
+    }
+  - |
+    fn let_binding() {
+        // SAFETY: lines.len() == 1 was checked above.
+        let line = unsafe { lines.first().unwrap_unchecked() };
+    }
+  - |
+    fn tail_expr(x: *mut u8) -> u8 {
+        // SAFETY: x is non-null and points to a valid u8.
+        unsafe { *x }
+    }
+  - |
+    fn multiline_comment() {
+        // Some context first.
+        // SAFETY: the mutex is only accessed from this thread.
+        unsafe {
+            risky();
+        }
+    }
+  - |
+    fn match_arm_block() {
+        match x {
+            Some(v) => {
+                // SAFETY: v was validated by the caller.
+                unsafe { use_it(v) }
+            }
+            None => 0,
+        }
+    }
+invalid:
+  - |
+    fn uncontained() {
+        unsafe {
+            risky();
+        }
+    }
+  - |
+    fn let_binding_no_comment() {
+        let x = unsafe { *ptr };
+    }
+  - |
+    fn tail_expr_no_comment(x: *mut u8) -> u8 {
+        unsafe { *x }
+    }
+  - |
+    fn unrelated_comment() {
+        // This does a thing.
+        unsafe {
+            risky();
+        }
+    }
+  - |
+    fn empty_safety_marker() {
+        // SAFETY:
+        unsafe {
+            risky();
+        }
+    }
+  - |
+    fn marker_without_colon() {
+        // SAFETY
+        unsafe {
+            risky();
+        }
+    }
+  - |
+    fn match_arm_no_comment() {
+        match x {
+            Some(v) => unsafe { use_it(v) },
+            None => 0,
+        }
+    }
+  - |
+    fn nested_arg_no_comment() {
+        foo(unsafe { *ptr })
+    }
+  - |
+    fn comment_on_wrong_statement() {
+        // SAFETY: this explains the line below, not the unsafe block.
+        let _ = 1;
+        unsafe {
+            risky();
+        }
+    }

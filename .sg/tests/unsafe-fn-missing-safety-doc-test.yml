@@ -1,0 +1,51 @@
+id: unsafe-fn-missing-safety-doc
+valid:
+  - |
+    pub trait ToInner<T> {
+        /// # Safety
+        /// The Handle must hold a valid `inner` which has been allocated and not freed.
+        unsafe fn to_inner_mut(&mut self) -> anyhow::Result<&mut T>;
+    }
+  - |
+    /// Reads one byte from the given pointer.
+    /// # Safety
+    /// Caller must ensure `x` is valid for reads of one byte.
+    pub unsafe fn direct_unsafe_fn(x: *mut u8) -> u8 {
+        unsafe { *x }
+    }
+  - |
+    /// # Safety
+    pub unsafe fn safety_is_last_doc_line(x: *mut u8) -> u8 {
+        unsafe { *x }
+    }
+  - |
+    /// # Safety
+    /// must be called exactly once.
+    #[inline]
+    pub unsafe fn with_attr_between(x: *mut u8) -> u8 {
+        unsafe { *x }
+    }
+  - |
+    #[no_mangle]
+    /// # Safety
+    pub unsafe extern "C" fn attr_before_doc(x: *mut u8) -> u8 {
+        unsafe { *x }
+    }
+invalid:
+  - |
+    pub unsafe fn direct_unsafe_fn(x: *mut u8) -> u8 {
+        unsafe { *x }
+    }
+  - |
+    /// Does a thing with pointers.
+    pub unsafe fn no_safety_section(x: *mut u8) -> u8 {
+        unsafe { *x }
+    }
+  - |
+    unsafe fn private_unsafe_fn_no_doc(x: *mut u8) -> u8 {
+        unsafe { *x }
+    }
+  - |
+    pub(crate) unsafe fn crate_visible_no_doc(x: *mut u8) -> u8 {
+        unsafe { *x }
+    }
