@@ -459,6 +459,78 @@ mod tests {
         posts.assert_calls_async(3).await;
     }
 
+    #[test]
+    fn writer_releases_capacity_during_the_next_coalescing_window() {
+        tokio::runtime::Builder::new_current_thread()
+            .enable_time()
+            .start_paused(true)
+            .build()
+            .unwrap()
+            .block_on(assert_writer_progress_during_coalescing());
+    }
+
+    async fn assert_writer_progress_during_coalescing() {
+        let route = EvpTransport::agent_only(
+            Endpoint {
+                url: "http://localhost:8080/".parse().unwrap(),
+                ..Endpoint::default()
+            },
+            EVP_SUBDOMAIN_VALUE,
+        )
+        .unwrap();
+        let capacity = Capacity::new(1);
+        let reserve = || capacity.reserve(route.scope_handle(), None);
+        let (tx, rx) = mpsc::channel(3);
+        let (writes, mut observed) = mpsc::unbounded_channel();
+        let release = tokio::sync::Notify::new();
+        let dispatcher = dispatch::dispatch(rx, |_, batch| {
+            let writes = &writes;
+            let release = &release;
+            async move {
+                let variants: Vec<_> = batch.exposures.into_iter().map(|row| row.variant).collect();
+                let first = variants == ["A"];
+                writes.send(variants).unwrap();
+                if first {
+                    release.notified().await;
+                }
+            }
+        });
+        tokio::pin!(dispatcher);
+        let job = |variant, credit| {
+            (
+                route.clone(),
+                FfeExposureBatch {
+                    context: context(),
+                    exposures: vec![exposure("user", "alloc", variant)],
+                },
+                credit,
+            )
+        };
+        tx.try_send(job("A", Some(reserve().unwrap()))).unwrap();
+        tokio::select! {
+            _ = &mut dispatcher => panic!("writer exited with an open input"),
+            first = observed.recv() => assert_eq!(first.unwrap(), ["A"]),
+        }
+        assert!(reserve().is_none());
+        tx.try_send(job("B", None)).unwrap();
+        assert!(futures::poll!(&mut dispatcher).is_pending());
+        assert_eq!(tx.capacity(), tx.max_capacity());
+        let start = tokio::time::Instant::now();
+        release.notify_one();
+        assert!(futures::poll!(&mut dispatcher).is_pending());
+        assert!(
+            reserve().is_some(),
+            "A's credit stayed held during B's coalescing window"
+        );
+        assert_eq!(tokio::time::Instant::now(), start);
+        assert!(observed.try_recv().is_err());
+        tx.try_send(job("C", None)).unwrap();
+        drop(tx);
+        dispatcher.await;
+        assert_eq!(observed.try_recv().unwrap(), ["B", "C"]);
+        assert!(observed.try_recv().is_err());
+    }
+
     #[tokio::test]
     #[cfg_attr(miri, ignore)]
     async fn later_route_progresses_while_first_writer_is_held() {

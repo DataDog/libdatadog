@@ -135,7 +135,7 @@ impl Drop for Credit {
 
 type Work = (EvpTransport, FfeExposureBatch, Vec<Credit>);
 
-pub(super) async fn dispatch<F, Fut>(mut rx: mpsc::Receiver<Job>, send: F)
+pub(super) async fn dispatch<F, Fut>(rx: mpsc::Receiver<Job>, send: F)
 where
     F: Fn(EvpTransport, FfeExposureBatch) -> Fut,
     Fut: Future<Output = ()>,
@@ -143,7 +143,19 @@ where
     let mut lanes: HashMap<Arc<str>, VecDeque<Work>> = HashMap::new();
     let mut ready = VecDeque::new();
     let mut pending = FuturesUnordered::new();
-    let mut jobs = Vec::with_capacity(MAX_BATCH_ROWS);
+    let bursts = futures::stream::unfold(rx, |mut rx| async move {
+        let mut jobs = Vec::with_capacity(MAX_BATCH_ROWS);
+        let n = rx.recv_many(&mut jobs, MAX_BATCH_ROWS).await;
+        if n == 0 {
+            return None;
+        }
+        if n < MAX_BATCH_ROWS && !rx.is_closed() {
+            tokio::time::sleep(COALESCE_WINDOW).await;
+            jobs.extend(std::iter::from_fn(|| rx.try_recv().ok()).take(MAX_BATCH_ROWS - n));
+        }
+        Some((jobs, rx))
+    });
+    tokio::pin!(bursts);
     let mut closed = false;
     loop {
         while pending.len() < WRITERS {
@@ -167,15 +179,11 @@ where
             Some(key) = pending.next(), if !pending.is_empty() => {
                 if lanes.get(&key).is_some_and(VecDeque::is_empty) { lanes.remove(&key); } else { ready.push_back(key); }
             },
-            n = rx.recv_many(&mut jobs, MAX_BATCH_ROWS), if !closed => {
-                if n == 0 { closed = true; continue; }
-                if n < MAX_BATCH_ROWS && !rx.is_closed() {
-                    tokio::time::sleep(COALESCE_WINDOW).await;
-                    jobs.extend(std::iter::from_fn(|| rx.try_recv().ok()).take(MAX_BATCH_ROWS-n));
-                }
+            burst = bursts.next(), if !closed => {
+                let Some(jobs) = burst else { closed = true; continue; };
                 let mut groups = HashMap::new();
                 let mut batches: Vec<Work> = Vec::new();
-                for (route, mut batch, credit) in jobs.drain(..) {
+                for (route, mut batch, credit) in jobs {
                     // A deferred chunk already occupies its own wire-sized batch.
                     let chunk = credit.as_ref().is_some_and(|c| c.bytes.is_some());
                     let group = (route.scope_handle(), batch.context.clone());
