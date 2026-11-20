@@ -7,6 +7,7 @@ use crate::trace_exporter::msgpack_decoder::decode::error::DecodeError;
 use http::StatusCode;
 #[cfg(not(target_arch = "wasm32"))]
 use libdd_networking::http_common;
+use libdd_shared_runtime::WorkerHandleError;
 use rmp_serde::encode::Error as EncodeError;
 use std::error::Error;
 use std::fmt::{Debug, Display};
@@ -158,9 +159,41 @@ impl RequestError {
     }
 }
 
+/// A background worker owned by a [`TraceExporter`](super::TraceExporter).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ExporterWorker {
+    Telemetry,
+    DogStatsD,
+    InfoFetcher,
+    Stats,
+}
+
+impl Display for ExporterWorker {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            ExporterWorker::Telemetry => write!(f, "telemetry"),
+            ExporterWorker::DogStatsD => write!(f, "dogstatsd"),
+            ExporterWorker::InfoFetcher => write!(f, "info fetcher"),
+            ExporterWorker::Stats => write!(f, "stats"),
+        }
+    }
+}
+
 #[derive(Debug)]
 pub enum ShutdownError {
     TimedOut(std::time::Duration),
+    /// The executor could not wait for the discard. The workers were already cancelled and
+    /// finish retiring in the background.
+    Executor(std::io::Error),
+    /// The worker task failed while it was being discarded.
+    WorkerFailed {
+        worker: ExporterWorker,
+        source: WorkerHandleError,
+    },
+    /// A graceful stop or runtime shutdown claimed the worker first, so it may have flushed.
+    WorkerAlreadyStopped {
+        worker: ExporterWorker,
+    },
 }
 
 impl Display for ShutdownError {
@@ -168,6 +201,16 @@ impl Display for ShutdownError {
         match self {
             ShutdownError::TimedOut(dur) => {
                 write!(f, "Shutdown timed out after {}s", dur.as_secs_f32())
+            }
+            ShutdownError::Executor(e) => write!(f, "Executor unavailable: {e}"),
+            ShutdownError::WorkerFailed { worker, source } => {
+                write!(
+                    f,
+                    "The {worker} worker failed while being discarded: {source}"
+                )
+            }
+            ShutdownError::WorkerAlreadyStopped { worker } => {
+                write!(f, "The {worker} worker was already stopped")
             }
         }
     }

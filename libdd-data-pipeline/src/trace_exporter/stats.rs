@@ -18,7 +18,7 @@ use arc_swap::ArcSwap;
 use libdd_capabilities::{HttpClientCapability, MaybeSend, SleepCapability};
 use libdd_common::Endpoint;
 use libdd_common::MutexExt;
-use libdd_shared_runtime::{SharedRuntime, WorkerHandle};
+use libdd_shared_runtime::{SharedRuntime, Worker, WorkerHandle, WorkerHandleError};
 #[cfg(feature = "stats-obfuscation")]
 use libdd_trace_obfuscation::obfuscation_config::SqlConfig;
 pub(crate) use libdd_trace_stats::span_concentrator::default_stats_eligible_span_kinds;
@@ -32,8 +32,10 @@ use libdd_trace_stats::stats_exporter::{
 };
 use libdd_trace_utils::trace_filter::TraceFilterer;
 use std::fmt::Debug;
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering, fence};
 use std::sync::{Arc, Mutex, Weak};
 use std::time::Duration;
+use tokio::sync::Notify;
 use tracing::{debug, error};
 // std::time::SystemTime::now() panics on wasm32.
 use web_time::SystemTime;
@@ -104,6 +106,129 @@ pub(crate) struct StatsComputationConfig {
     /// regardless of agent support.
     #[cfg(feature = "stats-obfuscation")]
     pub(crate) obfuscation_enabled: bool,
+    /// Set by `TraceExporter::shutdown_without_flush_async`. From then on, agent-driven changes
+    /// discard the stats worker instead of starting it or stopping it gracefully, since a
+    /// graceful stop flushes the concentrator. Sends check it before reporting native telemetry
+    /// or health metrics. Shared with the stats workers started by sends, which stop sending
+    /// once it is set.
+    pub(crate) retiring: Arc<AtomicBool>,
+    /// Number of stats flushes being polled, forced or run by a stats worker that a send started.
+    /// Each poll counts itself, then checks `retiring`, so `shutdown_without_flush_async`, which
+    /// sets `retiring` first, either stops the flush or waits for that poll to end. A poll never
+    /// spans an `.await`.
+    pub(crate) polling_flushes: Arc<AtomicUsize>,
+    /// Notified by the first poll of `shutdown_without_flush_async`'s future, after `retiring` is
+    /// set, to wake the stats flushes waiting on a response so they stop.
+    pub(crate) retired: Arc<Notify>,
+}
+
+/// Counts one stats flush poll in [`StatsComputationConfig::polling_flushes`] until dropped,
+/// including on unwind.
+pub(crate) struct PollingFlush<'a>(&'a AtomicUsize);
+
+impl<'a> PollingFlush<'a> {
+    pub(crate) fn enter(polling_flushes: &'a AtomicUsize) -> Self {
+        polling_flushes.fetch_add(1, Ordering::SeqCst);
+        Self(polling_flushes)
+    }
+}
+
+impl Drop for PollingFlush<'_> {
+    fn drop(&mut self) {
+        self.0.fetch_sub(1, Ordering::SeqCst);
+    }
+}
+
+/// Polls the stats `flush` until it completes, or returns `None` once the exporter is retiring.
+/// Each poll is counted in `polling_flushes` and checks `retiring`, and `retired` wakes a flush
+/// waiting on a response, so it stops without waiting for that response.
+pub(crate) async fn until_retiring<F: Future>(
+    flush: F,
+    retiring: &AtomicBool,
+    polling_flushes: &AtomicUsize,
+    retired: &Notify,
+) -> Option<F::Output> {
+    let mut flush = std::pin::pin!(flush);
+    // A Notified receives every notify_waiters call made after it is created. It is boxed
+    // because it links into the waiter list shared by the exporter, and a fork during the flush
+    // must not leave that list pointing into the stack of a thread the child does not have.
+    let mut retired = Box::pin(retired.notified());
+    std::future::poll_fn(|cx| {
+        let _polling = PollingFlush::enter(polling_flushes);
+        // Polling `retired` registers the wake-up before the flush can wait, so a notification
+        // after the flag check is not missed.
+        if retiring.load(Ordering::SeqCst) || retired.as_mut().poll(cx).is_ready() {
+            return std::task::Poll::Ready(None);
+        }
+        flush.as_mut().poll(cx).map(Some)
+    })
+    .await
+}
+
+impl StatsComputationConfig {
+    /// Whether the exporter is retiring its workers without flushing.
+    ///
+    /// Call this after storing a new status. The fence pairs with the one in
+    /// `shutdown_without_flush_async`, which sets the flag and then loads the status. So either
+    /// this sees the flag, or that function loads the stored status and discards its worker.
+    pub(crate) fn is_retiring(&self) -> bool {
+        fence(Ordering::SeqCst);
+        self.retiring.load(Ordering::SeqCst)
+    }
+}
+
+pub(crate) async fn discard_stats_worker(worker_handle: &WorkerHandle) {
+    match worker_handle.clone().discard().await {
+        // shutdown_without_flush_async already retired it, or runtime shutdown stopped it.
+        // RetirableStatsWorker keeps that stop from flushing once the exporter is retiring.
+        Ok(()) | Err(WorkerHandleError::AlreadyStopped) => {}
+        Err(e) => error!("Failed to discard stats worker: {e}"),
+    }
+}
+
+/// Stats worker that stops sending once the exporter is retiring.
+///
+/// `shutdown_without_flush_async` only claims the stats worker it finds in the status. A worker
+/// that a concurrent send registered before publishing it is not claimed, so runtime shutdown or
+/// fork can stop or restart it before that send discards it. Its sends run through
+/// [`until_retiring`], so one already running when the exporter starts retiring stops too.
+#[derive(Debug)]
+struct RetirableStatsWorker<W> {
+    inner: W,
+    retiring: Arc<AtomicBool>,
+    polling_flushes: Arc<AtomicUsize>,
+    retired: Arc<Notify>,
+}
+
+#[cfg_attr(not(target_arch = "wasm32"), async_trait::async_trait)]
+#[cfg_attr(target_arch = "wasm32", async_trait::async_trait(?Send))]
+impl<W: Worker> Worker for RetirableStatsWorker<W> {
+    async fn run(&mut self) {
+        let (retiring, polling, retired) = (&self.retiring, &self.polling_flushes, &self.retired);
+        until_retiring(self.inner.run(), retiring, polling, retired).await;
+    }
+
+    async fn trigger(&mut self) {
+        self.inner.trigger().await
+    }
+
+    async fn initial_trigger(&mut self) {
+        self.inner.initial_trigger().await
+    }
+
+    fn reset(&mut self) {
+        self.inner.reset()
+    }
+
+    async fn flush(&mut self) {
+        let (retiring, polling, retired) = (&self.retiring, &self.polling_flushes, &self.retired);
+        until_retiring(self.inner.flush(), retiring, polling, retired).await;
+    }
+
+    async fn shutdown(&mut self) {
+        let (retiring, polling, retired) = (&self.retiring, &self.polling_flushes, &self.retired);
+        until_retiring(self.inner.shutdown(), retiring, polling, retired).await;
+    }
 }
 
 /// Return true if the agent supports client-side stats.
@@ -145,6 +270,9 @@ fn get_span_kinds_for_stats(agent_info: &Arc<AgentInfo>) -> Vec<String> {
 /// Start the stats exporter and enable stats computation
 ///
 /// Should only be used if the agent enabled stats computation
+///
+/// Returns the new stats worker if the caller must discard it: a concurrent send published its
+/// own worker first, or the exporter started retiring.
 pub(crate) fn start_stats_computation<
     C: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static,
     R: SharedRuntime,
@@ -154,10 +282,10 @@ pub(crate) fn start_stats_computation<
     peer_tags: Vec<String>,
     capabilities: C,
     client_side_stats: &StatsComputationConfig,
-) -> anyhow::Result<()> {
-    if let StatsComputationStatus::DisabledByAgent { bucket_size } =
-        **client_side_stats.status.load()
-    {
+) -> anyhow::Result<Option<WorkerHandle>> {
+    // load_full() keeps the snapshot that the new status is published over.
+    let current = client_side_stats.status.load_full();
+    if let StatsComputationStatus::DisabledByAgent { bucket_size } = *current {
         let stats_concentrator = Arc::new(Mutex::new(SpanConcentrator::new(
             bucket_size,
             SystemTime::now(),
@@ -168,12 +296,20 @@ pub(crate) fn start_stats_computation<
             #[cfg(feature = "stats-obfuscation")]
             Some(client_side_stats.obfuscation_config.clone()),
         )));
-        create_and_start_stats_worker(ctx, &stats_concentrator, capabilities, client_side_stats)?;
+        return create_and_start_stats_worker(
+            ctx,
+            &stats_concentrator,
+            capabilities,
+            client_side_stats,
+            &current,
+        );
     }
-    Ok(())
+    Ok(None)
 }
 
-/// Create stats exporter and worker, start the worker, and update the state
+/// Create stats exporter and worker, start the worker, and publish it over `current`.
+///
+/// Returns the new worker if the caller must discard it, see [`start_stats_computation`].
 fn create_and_start_stats_worker<
     C: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static,
     R: SharedRuntime,
@@ -182,7 +318,8 @@ fn create_and_start_stats_worker<
     stats_concentrator: &Arc<Mutex<SpanConcentrator>>,
     capabilities: C,
     client_side_stats: &StatsComputationConfig,
-) -> anyhow::Result<()> {
+    current: &Arc<StatsComputationStatus>,
+) -> anyhow::Result<Option<WorkerHandle>> {
     let bucket_size = stats_concentrator.lock_or_panic().get_bucket_size();
     let stats_exporter = StatsExporter::<C>::new(
         bucket_size,
@@ -200,27 +337,39 @@ fn create_and_start_stats_worker<
         ctx.dogstatsd.clone(),
     );
     let (shared, weak) = SharedStatsExporter::wrap(stats_exporter);
+    let worker = RetirableStatsWorker {
+        inner: shared,
+        retiring: client_side_stats.retiring.clone(),
+        polling_flushes: client_side_stats.polling_flushes.clone(),
+        retired: client_side_stats.retired.clone(),
+    };
     let worker_handle = ctx
         .shared_runtime
-        .spawn_worker(shared, ctx.restart_after_fork)
+        .spawn_worker(worker, ctx.restart_after_fork)
         .map_err(|e| anyhow::anyhow!(e))?;
 
-    // Update the stats computation state with the new worker components.
-    client_side_stats
-        .status
-        .store(Arc::new(StatsComputationStatus::Enabled {
+    // Publish only over the status the caller checked. Overwriting a worker that a concurrent
+    // send published since would leave that worker running untracked.
+    let previous = client_side_stats.status.compare_and_swap(
+        current,
+        Arc::new(StatsComputationStatus::Enabled {
             stats_concentrator: stats_concentrator.clone(),
-            worker_handle,
+            worker_handle: worker_handle.clone(),
             flush_handle: weak,
-        }));
-
-    Ok(())
+        }),
+    );
+    if !Arc::ptr_eq(&previous, current) {
+        // Never published, so no send added spans to its concentrator.
+        return Ok(Some(worker_handle));
+    }
+    // shutdown_without_flush_async may have loaded the status before it was published.
+    Ok(client_side_stats.is_retiring().then_some(worker_handle))
 }
 
 /// Transition from `Enabled` to `DisabledByAgent`, awaiting the stats worker shutdown.
-pub(crate) async fn stop_stats_computation(client_side_stats: &ArcSwap<StatsComputationStatus>) {
+pub(crate) async fn stop_stats_computation(client_side_stats: &StatsComputationConfig) {
     // load_full() avoids holding an ArcSwap Guard (!Send) across .await.
-    let snapshot = client_side_stats.load_full();
+    let snapshot = client_side_stats.status.load_full();
     if let StatsComputationStatus::Enabled {
         stats_concentrator,
         worker_handle,
@@ -228,16 +377,22 @@ pub(crate) async fn stop_stats_computation(client_side_stats: &ArcSwap<StatsComp
     } = &*snapshot
     {
         let bucket_size = stats_concentrator.lock_or_panic().get_bucket_size();
-        client_side_stats.store(Arc::new(StatsComputationStatus::DisabledByAgent {
-            bucket_size,
-        }));
-        if let Err(e) = worker_handle.clone().stop().await {
+        client_side_stats
+            .status
+            .store(Arc::new(StatsComputationStatus::DisabledByAgent {
+                bucket_size,
+            }));
+        if client_side_stats.is_retiring() {
+            discard_stats_worker(worker_handle).await;
+        } else if let Err(e) = worker_handle.clone().stop().await {
             error!("Failed to stop stats worker: {e}");
         }
     }
 }
 
 /// Handle stats computation when agent changes from disabled to enabled
+///
+/// Returns the new stats worker if the caller must discard it, see [`start_stats_computation`].
 pub(crate) fn handle_stats_disabled_by_agent<
     C: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static,
     R: SharedRuntime,
@@ -246,7 +401,7 @@ pub(crate) fn handle_stats_disabled_by_agent<
     agent_info: &Arc<AgentInfo>,
     capabilities: C,
     client_side_stats: &StatsComputationConfig,
-) {
+) -> Option<WorkerHandle> {
     if is_stats_computation_supported(agent_info) {
         let status = start_stats_computation(
             ctx,
@@ -256,7 +411,7 @@ pub(crate) fn handle_stats_disabled_by_agent<
             client_side_stats,
         );
         match status {
-            Ok(()) => {
+            Ok(discard) => {
                 if let StatsComputationStatus::Enabled {
                     stats_concentrator, ..
                 } = &**client_side_stats.status.load()
@@ -268,11 +423,16 @@ pub(crate) fn handle_stats_disabled_by_agent<
                 #[cfg(feature = "stats-obfuscation")]
                 update_obfuscation_config(agent_info, client_side_stats);
                 debug!("Client-side stats enabled");
+                discard
             }
-            Err(_) => error!("Failed to start stats computation"),
+            Err(_) => {
+                error!("Failed to start stats computation");
+                None
+            }
         }
     } else {
-        debug!("Client-side stats computation has been disabled by the agent")
+        debug!("Client-side stats computation has been disabled by the agent");
+        None
     }
 }
 
@@ -326,7 +486,7 @@ pub(crate) async fn handle_stats_enabled(
         #[cfg(feature = "stats-obfuscation")]
         update_obfuscation_config(agent_info, client_side_stats);
     } else {
-        stop_stats_computation(&client_side_stats.status).await;
+        stop_stats_computation(client_side_stats).await;
         debug!("Client-side stats computation has been disabled by the agent")
     }
 }
@@ -521,6 +681,67 @@ mod tests {
             SUPPORTED_OBFUSCATION_VERSION.to_string(),
             SUPPORTED_OBFUSCATION_VERSION_STR
         );
+    }
+
+    /// A stats worker run already waiting on a response when the exporter starts retiring
+    /// stops, instead of sending once the response arrives. Such a worker can be one that
+    /// `shutdown_without_flush_async` did not claim.
+    #[cfg(not(target_arch = "wasm32"))]
+    #[cfg_attr(miri, ignore)]
+    #[test]
+    fn test_retiring_stops_running_stats_worker() {
+        use super::RetirableStatsWorker;
+        use libdd_shared_runtime::Worker;
+        use std::sync::Arc;
+        use std::sync::atomic::{AtomicBool, Ordering};
+        use std::time::{Duration, Instant};
+
+        /// Marks its run as started, then waits like a request whose response never comes.
+        #[derive(Debug)]
+        struct StalledRun(Arc<AtomicBool>);
+
+        #[async_trait::async_trait]
+        impl Worker for StalledRun {
+            async fn run(&mut self) {
+                self.0.store(true, Ordering::SeqCst);
+                std::future::pending::<()>().await
+            }
+            async fn trigger(&mut self) {}
+        }
+
+        let started = Arc::new(AtomicBool::new(false));
+        let mut worker = RetirableStatsWorker {
+            inner: StalledRun(started.clone()),
+            retiring: Arc::default(),
+            polling_flushes: Arc::default(),
+            retired: Arc::default(),
+        };
+        let (retiring, retired) = (worker.retiring.clone(), worker.retired.clone());
+        // Only a wake-up can poll the run again, so a missed one leaves the thread blocked.
+        let (done, finished) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let runtime = tokio::runtime::Builder::new_current_thread()
+                .build()
+                .unwrap();
+            runtime.block_on(worker.run());
+            done.send(worker.polling_flushes.load(Ordering::SeqCst))
+                .unwrap();
+        });
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while !started.load(Ordering::SeqCst) {
+            assert!(
+                Instant::now() < deadline,
+                "the stats worker run never started"
+            );
+            std::thread::sleep(Duration::from_millis(1));
+        }
+        // What shutdown_without_flush_async does first.
+        retiring.store(true, Ordering::SeqCst);
+        retired.notify_waiters();
+        let polling = finished
+            .recv_timeout(Duration::from_secs(5))
+            .expect("retiring must stop the running stats worker");
+        assert_eq!(polling, 0);
     }
 
     #[cfg(not(target_arch = "wasm32"))]

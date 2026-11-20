@@ -193,9 +193,38 @@ int verify_mutable_identity(void) {
     return 0;
 }
 
+int verify_free_without_flush(void) {
+    ddog_TraceExporterBuilder_ForkSafeRuntime *builder = NULL;
+    ddog_trace_exporter_builder_new(&builder);
+    // Nothing listens on port 1. The exporter still owns a running /info fetcher worker for
+    // the call to cancel.
+    ddog_TraceExporterError *err =
+        ddog_trace_exporter_builder_set_url(builder, DDOG_CHARSLICE_C("http://127.0.0.1:1"));
+    if (err != NULL) {
+        handle_error(err);
+        ddog_trace_exporter_builder_free(builder);
+        return 1;
+    }
+    ddog_TraceExporter *exporter = NULL;
+    // builder is consumed by ddog_trace_exporter_builder_build, including on error.
+    err = ddog_trace_exporter_builder_build(builder, &exporter);
+    if (err != NULL) {
+        handle_error(err);
+        return 1;
+    }
+    // The exporter is consumed on success and on error.
+    err = ddog_trace_exporter_free_without_flush(exporter, 1000);
+    if (err != NULL) {
+        handle_error(err);
+        return 1;
+    }
+    return 0;
+}
+
 int main(int argc, char** argv)
 {
     if (verify_mutable_identity() != 0) return 1;
+    if (verify_free_without_flush() != 0) return 1;
     if (verify_structured_value_encoder() != 0) return 1;
     if (verify_structured_value_encoder_rejects_invalid() != 0) return 1;
 
