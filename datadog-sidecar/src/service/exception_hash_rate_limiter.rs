@@ -155,7 +155,7 @@ mod tests {
         let reader = ExceptionHashRateLimiter::new_reader();
         assert!(reader.find(123, Duration::from_secs(60)).is_some());
         let old_probe_arena =
-            ShmLimiterMemory::<()>::create(crate::tracer::shm_limiter_path()).unwrap();
+            crate::tracer::ProbeLimiterMemory::create(crate::tracer::shm_limiter_path()).unwrap();
 
         let runtime = tokio::runtime::Builder::new_current_thread()
             .enable_all()
@@ -215,7 +215,7 @@ mod tests {
                 let mut child_probes = limiters.probes.as_ref().unwrap().lock().unwrap();
                 let slot = child_probes.alloc().unwrap();
                 assert!(
-                    ShmLimiterMemory::<()>::open(&crate::tracer::shm_limiter_path())
+                    crate::tracer::ProbeLimiterMemory::open(&crate::tracer::shm_limiter_path())
                         .unwrap()
                         .get(slot.index())
                         .is_some()

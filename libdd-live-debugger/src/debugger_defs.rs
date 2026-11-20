@@ -15,6 +15,18 @@ pub struct DebuggerPayload<'a> {
     pub message: Option<Cow<'a, str>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub process_tags: Option<Cow<'a, str>>,
+    #[serde(
+        rename = "dd.trace_id",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub trace_id: Option<Cow<'a, str>>,
+    #[serde(
+        rename = "dd.span_id",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub span_id: Option<Cow<'a, str>>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
