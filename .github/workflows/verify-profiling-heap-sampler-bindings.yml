@@ -42,7 +42,16 @@ jobs:
         # them. We use an env var (rather than a cargo feature) so that
         # unrelated `--all-features` CI jobs cannot accidentally invoke
         # bindgen — see libdd-profiling-heap-sampler/Cargo.toml for the rationale.
-        run: LIBDD_PROFILING_HEAP_SAMPLER_REGEN=1 cargo build -p libdd-profiling-heap-sampler
+        #
+        # Pin libclang to the same LLVM as the installed clang and point
+        # bindgen at that clang's resource dir, which holds the builtin
+        # headers (<stdatomic.h>, ...). Without this, libclang may be
+        # loaded from a different LLVM whose resource dir is missing, and
+        # `atomic_load_explicit` ends up undeclared.
+        run: |
+          export LIBCLANG_PATH=/usr/lib/llvm-21/lib
+          export BINDGEN_EXTRA_CLANG_ARGS="-isystem $(clang-21 -print-resource-dir)/include"
+          LIBDD_PROFILING_HEAP_SAMPLER_REGEN=1 cargo build -p libdd-profiling-heap-sampler
       - name: Verify committed bindings match regenerated output
         run: |
           if ! git diff --exit-code libdd-profiling-heap-sampler/src/generated/; then
