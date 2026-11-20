@@ -25,7 +25,7 @@ use crate::worker::Worker;
 use libdd_capabilities::MaybeSend;
 use libdd_common::MutexExt;
 pub use pausable_worker::FlushToken;
-use pausable_worker::{PausableWorker, PausableWorkerError};
+use pausable_worker::{FlushRequester, PausableWorker, PausableWorkerError};
 use std::sync::{Arc, Mutex};
 use std::{fmt, io};
 
@@ -186,6 +186,9 @@ pub trait BlockingRuntime: SharedRuntime {
 pub struct WorkerHandle {
     pub(crate) worker_id: u64,
     pub(crate) workers: Arc<Mutex<Vec<WorkerEntry>>>,
+    /// Sends flush requests without locking `workers`, which runtimes hold while pausing
+    /// workers before a fork.
+    pub(crate) flush_requester: Option<FlushRequester>,
 }
 
 #[derive(Debug)]
@@ -246,12 +249,18 @@ impl WorkerHandle {
     ///
     /// # Errors
     /// Returns an error if the worker has already been stopped or is in an invalid state.
+    ///
+    /// Does not take the worker registry lock, so it can be called from another worker's task
+    /// while a runtime pauses its workers (e.g. in `before_fork`).
     pub fn flush(&self) -> Result<FlushToken, WorkerHandleError> {
-        let workers_lock = self.workers.lock_or_panic();
-        let Some(entry) = workers_lock.iter().find(|entry| entry.id == self.worker_id) else {
-            return Err(WorkerHandleError::AlreadyStopped);
+        let Some(requester) = &self.flush_requester else {
+            return Err(WorkerHandleError::WorkerError(
+                PausableWorkerError::InvalidState,
+            ));
         };
-        Ok(entry.worker.request_flush()?)
+        requester
+            .request_flush()
+            .map_err(|_| WorkerHandleError::AlreadyStopped)
     }
 
     /// Stop the worker and execute the shutdown logic.

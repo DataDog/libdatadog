@@ -27,12 +27,10 @@ use libdd_trace_stats::span_concentrator::{ChunkSpanView, SpanConcentrator};
 use libdd_trace_stats::span_concentrator::{
     SharedStatsComputationObfuscationConfig, StatsComputationObfuscationConfig,
 };
-use libdd_trace_stats::stats_exporter::{
-    FlushableStatsExport, SharedStatsExporter, StatsExporter, StatsMetadata,
-};
+use libdd_trace_stats::stats_exporter::{SharedStatsExporter, StatsExporter, StatsMetadata};
 use libdd_trace_utils::trace_filter::TraceFilterer;
 use std::fmt::Debug;
-use std::sync::{Arc, Mutex, Weak};
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use tracing::{debug, error};
 // std::time::SystemTime::now() panics on wasm32.
@@ -86,10 +84,8 @@ pub(crate) enum StatsComputationStatus {
     /// Client-side stats is enabled
     Enabled {
         stats_concentrator: Arc<Mutex<SpanConcentrator>>,
+        /// Handle to the stats worker, also used to force-flush buffered stats.
         worker_handle: WorkerHandle,
-        /// Weak handle to trigger an immediate forced flush of the stats
-        /// exporter without holding a strong reference to the background worker.
-        flush_handle: Weak<dyn FlushableStatsExport>,
     },
 }
 
@@ -199,7 +195,7 @@ fn create_and_start_stats_worker<
         ctx.telemetry.clone(),
         ctx.dogstatsd.clone(),
     );
-    let (shared, weak) = SharedStatsExporter::wrap(stats_exporter);
+    let shared = SharedStatsExporter::new(stats_exporter);
     let worker_handle = ctx
         .shared_runtime
         .spawn_worker(shared, ctx.restart_after_fork)
@@ -211,7 +207,6 @@ fn create_and_start_stats_worker<
         .store(Arc::new(StatsComputationStatus::Enabled {
             stats_concentrator: stats_concentrator.clone(),
             worker_handle,
-            flush_handle: weak,
         }));
 
     Ok(())
@@ -800,22 +795,11 @@ mod tests {
                 }
             }
 
-            #[derive(Debug)]
-            struct NoopFlusher;
-
-            #[async_trait::async_trait]
-            impl FlushableStatsExport for NoopFlusher {
-                async fn force_flush(&self) {}
-            }
-
             let runtime = ForkSafeRuntime::new().unwrap();
             let worker_handle = runtime.spawn_worker(NoopWorker, false).unwrap();
-            let flush_handle =
-                Arc::downgrade(&Arc::new(NoopFlusher)) as Weak<dyn FlushableStatsExport>;
             let client_side_stats = ArcSwap::new(Arc::new(StatsComputationStatus::Enabled {
                 stats_concentrator: Arc::new(new_concentrator()),
                 worker_handle,
-                flush_handle,
             }));
             let trace_filterer = TraceFilterer::default();
 
