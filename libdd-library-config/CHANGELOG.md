@@ -2,6 +2,14 @@
 
 
 
+## [5.0.1](https://github.com/datadog/libdatadog/compare/libdd-library-config-v5.0.0..libdd-library-config-v5.0.1) - 2026-10-28
+
+### Changed
+
+- Bump MSRV from 1.87.0 to 1.91.1 ([#2734](https://github.com/datadog/libdatadog/issues/2734)) - ([1c6b398](https://github.com/datadog/libdatadog/commit/1c6b398b6caf0cfa2deaf1f493c08248719f2dc4))
+
+
+
 ## [5.0.0](https://github.com/datadog/libdatadog/compare/libdd-library-config-v4.2.0..libdd-library-config-v5.0.0) - 2026-10-23
 
 ### Added
