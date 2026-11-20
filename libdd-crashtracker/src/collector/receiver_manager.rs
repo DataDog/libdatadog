@@ -2,12 +2,12 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use super::process_handle::ProcessHandle;
-use libdd_common::timeout::TimeoutManager;
+use libdd_process_utils::timeout::TimeoutManager;
 
 use crate::shared::configuration::CrashtrackerReceiverConfig;
 use core::ptr;
 use core::sync::atomic::{AtomicPtr, Ordering::SeqCst};
-use libdd_common::unix_utils::{PreparedExecve, alt_fork, open_file_or_quiet, terminate};
+use libdd_process_utils::unix_utils::{PreparedExecve, alt_fork, open_file_or_quiet, terminate};
 use nix::sys::signal::{self, SaFlags, SigAction, SigHandler, SigSet};
 use nix::sys::socket;
 use std::os::unix::io::{IntoRawFd, RawFd};
@@ -27,7 +27,7 @@ pub enum ReceiverError {
     #[error("Failed to open file: {0}")]
     FileOpenError(std::io::Error),
     #[error("Failed to prepare execve: {0}")]
-    PreparedExecveError(#[from] libdd_common::unix_utils::PreparedExecveError),
+    PreparedExecveError(#[from] libdd_process_utils::unix_utils::PreparedExecveError),
 }
 
 static RECEIVER_CONFIG: AtomicPtr<(CrashtrackerReceiverConfig, PreparedExecve)> =
@@ -78,7 +78,7 @@ impl Receiver {
         .map_err(ReceiverError::SocketPairError)?;
         let (uds_parent, uds_child) = (uds_parent.into_raw_fd(), uds_child.into_raw_fd());
 
-        // See libdd_common::unix_utils for platform-specific comments on alt_fork()
+        // See libdd_process_utils::unix_utils for platform-specific comments on alt_fork()
         match alt_fork() {
             0 => {
                 // Child (noreturn)

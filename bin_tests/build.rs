@@ -57,6 +57,52 @@ fn main() {
         println!("cargo:rustc-link-search=native={}", out_dir.display());
         println!("cargo:rustc-link-lib=static=trigger_assert");
         println!("cargo:rerun-if-changed=src/c/trigger_assert.c");
+
+        // Export otel_thread_ctx_v1 to the dynamic symbol table (.dynsym).
+        //
+        // When definition and reference are in the same PIE executable, the linker
+        // relaxes TLSDESC to local-exec and may drop the symbol name from .dynsym.
+        // This happens for statically linked languages like Rust where the TLS
+        // variable and its consumer are in the same final binary. The same issue
+        // applies to production Rust tracers (not just this test binary).
+        //
+        // We use --dynamic-list to export only the specific symbol (instead of
+        // --export-dynamic which exports everything). The assembly anchor provides
+        // a weak definition so the symbol survives linking even without TLSDESC.
+        let otel_dynlist = out_dir.join("otel_thread_ctx.dynlist");
+        std::fs::write(&otel_dynlist, "{ otel_thread_ctx_v1; };\n")
+            .expect("failed to write otel dynlist");
+
+        let otel_asm_src = out_dir.join("otel_tls_anchor.s");
+        let otel_asm_obj = out_dir.join("otel_tls_anchor.o");
+        std::fs::write(
+            &otel_asm_src,
+            ".section .tbss,\"awT\",@nobits\n\
+             .weak otel_thread_ctx_v1\n\
+             .type  otel_thread_ctx_v1, @tls_object\n\
+             .size  otel_thread_ctx_v1, 8\n\
+             .balign 8\n\
+             otel_thread_ctx_v1:\n\
+             .zero  8\n\
+             .previous\n",
+        )
+        .expect("failed to write otel TLS anchor assembly");
+
+        let status = Command::new("cc")
+            .args(["-c", "-o"])
+            .arg(&otel_asm_obj)
+            .arg(&otel_asm_src)
+            .status()
+            .expect("failed to assemble otel_tls_anchor.s");
+        if !status.success() {
+            panic!("assembling otel_tls_anchor.s failed with status {status}");
+        }
+
+        println!("cargo:rustc-link-arg={}", otel_asm_obj.display());
+        println!(
+            "cargo:rustc-link-arg=-Wl,--dynamic-list={}",
+            otel_dynlist.display()
+        );
     }
 }
 

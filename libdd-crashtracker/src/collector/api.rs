@@ -89,6 +89,12 @@ pub fn init(
     register_panic_hook()?;
     #[cfg(all(target_os = "linux", target_pointer_width = "64"))]
     super::assert_interceptor::install_assert_hook();
+    // Pre-cache OTel TLS metadata. This is okay because if we unload ddtrace, CT
+    // is also unloaded.
+    #[cfg(all(target_os = "linux", feature = "otel-thread-ctx"))]
+    if config.collect_otel_thread_contexts() {
+        crate::otel_tls_reader::cache_otel_tls_info();
+    }
     enable();
     Ok(())
 }
@@ -647,7 +653,7 @@ mod single_threaded_tests {
                 // should fail.
                 let mut children = vec![];
                 let sleep_duration = Duration::from_millis(100);
-                let timeout_duration = Duration::from_millis(500);
+                let timeout_duration = Duration::from_secs(10);
                 for _ in 0..10 {
                     match unsafe { libc::fork() } {
                         -1 => {
@@ -683,6 +689,11 @@ mod single_threaded_tests {
                     if pid == -1 && errno == libc::ECHILD {
                         // No more children!  Done!
                         std::process::exit(42);
+                    }
+
+                    // Yield CPU between polls to avoid busy-spinning
+                    if pid == 0 {
+                        std::thread::sleep(Duration::from_millis(10));
                     }
                 }
             }

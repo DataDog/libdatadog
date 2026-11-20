@@ -41,6 +41,8 @@ impl Sidecar {
                 init_shm_eagerly: true,
                 authorizer: ConnectionAuthorizer::new(policy),
                 drain_only_own_process: false,
+                enable_cdn_fetching: false,
+                allow_liveness_watch: false,
             };
             let acquire = move || {
                 let async_listener = listener.into_async_listener()?;
@@ -81,10 +83,10 @@ impl Drop for Sidecar {
     fn drop(&mut self) {
         self.stop.notify_one();
         // Join if shutdown finishes in time; otherwise detach so a stuck loop cannot hang CI.
-        if self.wait_for_exit() {
-            if let Some(thread) = self.thread.take() {
-                let _ = thread.join();
-            }
+        if self.wait_for_exit()
+            && let Some(thread) = self.thread.take()
+        {
+            let _ = thread.join();
         }
     }
 }

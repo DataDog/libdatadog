@@ -15,10 +15,3 @@ object = { workspace = true, default-features = true }
 [[bin]]
 name = "sidecar_mockgen"
 bench = false
-
-[lints.clippy]
-# TODO(paullgdc): This fails a lot because of if-let chaining which became
-# allowed with the 1.91.1 MSRV bump.
-# I am planning to fix each crate as an individual PR in order to not have 
-# too many conflicts
-collapsible_if = "allow"

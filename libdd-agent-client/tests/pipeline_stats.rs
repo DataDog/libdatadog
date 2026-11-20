@@ -8,10 +8,10 @@ use httpmock::prelude::*;
 
 #[tokio::test]
 #[cfg_attr(miri, ignore)]
-async fn puts_to_correct_endpoint() {
+async fn posts_to_correct_endpoint() {
     let server = MockServer::start();
     let mock = server.mock(|when, then| {
-        when.method(PUT).path("/v0.1/pipeline_stats");
+        when.method(POST).path("/v0.1/pipeline_stats");
         then.status(200).body("");
     });
 
@@ -28,7 +28,7 @@ async fn puts_to_correct_endpoint() {
 async fn sets_gzip_encoding() {
     let server = MockServer::start();
     let mock = server.mock(|when, then| {
-        when.method(PUT)
+        when.method(POST)
             .path("/v0.1/pipeline_stats")
             .header("Content-Encoding", "gzip");
         then.status(200).body("");

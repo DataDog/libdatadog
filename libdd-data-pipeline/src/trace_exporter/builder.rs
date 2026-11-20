@@ -26,7 +26,8 @@ use arc_swap::ArcSwap;
 use arc_swap::ArcSwapOption;
 use libdd_capabilities::{HttpClientCapability, LogWriterCapability, MaybeSend, SleepCapability};
 use libdd_common::mutable_metadata::{MutableMetadata, MutableMetadataHandle};
-use libdd_common::{Endpoint, parse_uri, tag};
+use libdd_common::tag;
+use libdd_common::{Endpoint, parse_uri};
 use libdd_dogstatsd_client::DogStatsDClient;
 use libdd_shared_runtime::SharedRuntime;
 #[cfg(not(target_arch = "wasm32"))]
@@ -489,6 +490,9 @@ impl<R: SharedRuntime> TraceExporterBuilder<R> {
     /// [`Self::set_url`] alongside OTLP is allowed; the agent URL is still used for
     /// auxiliary endpoints (e.g. agent info / stats).
     ///
+    /// On Unix, all protocols also support `unix:///absolute/path/to/socket`.
+    /// HTTP sends to `/v1/traces` on that socket; the socket path is not a request path.
+    ///
     /// Example: `set_otlp_endpoint("http://localhost:4318/v1/traces")`
     pub fn set_otlp_endpoint(&mut self, url: &str) -> &mut Self {
         self.otlp_endpoint = Some(url.to_owned());
@@ -499,7 +503,8 @@ impl<R: SharedRuntime> TraceExporterBuilder<R> {
     /// [`OtlpProtocol::HttpProtobuf`], or [`OtlpProtocol::Grpc`]. The host language resolves this
     /// from `OTEL_EXPORTER_OTLP_TRACES_PROTOCOL` / `OTEL_EXPORTER_OTLP_PROTOCOL`; all three OTel
     /// protocol strings (`http/json`, `http/protobuf`, `grpc`) parse into [`OtlpProtocol`]. gRPC
-    /// export requires a plaintext `http://` endpoint: an `https://` gRPC endpoint is rejected at
+    /// export accepts plaintext `http://` endpoints and `unix:///absolute/socket/path` on Unix.
+    /// An `https://` gRPC endpoint is rejected at
     /// [`build`](Self::build) time, and gRPC is not supported on wasm32 targets (also rejected at
     /// build time).
     pub fn set_otlp_protocol(&mut self, protocol: OtlpProtocol) -> &mut Self {
@@ -1152,7 +1157,7 @@ impl<R: SharedRuntime> TraceExporterBuilder<R> {
                 .agent_rates_payload_version_enabled
                 .then(AgentResponsePayloadVersion::new),
             otlp,
-            otlp_resource_info,
+            otlp_resource_info: ArcSwap::from_pointee(otlp_resource_info),
             agentless_config,
             trace_filterer: ArcSwap::from_pointee(TraceFilterer::with_empty_conf()),
             otlp_stats_enabled,
@@ -1681,7 +1686,12 @@ mod tests {
             };
             let resource = {
                 let mut concentrator = stats_concentrator.lock().unwrap();
-                concentrator.add_span(&span);
+                let chunk =
+                    libdd_trace_utils::span::RootSpanChunk::new(std::slice::from_ref(&span));
+                concentrator.add_span(&libdd_trace_stats::span_concentrator::ChunkSpanView {
+                    span: &span,
+                    chunk: &chunk,
+                });
                 let buckets = concentrator.flush_with_otlp_exact(web_time::SystemTime::now(), true);
                 buckets[0].bucket.stats[0].resource.clone()
             };
@@ -1709,14 +1719,9 @@ mod tests {
             .set_otlp_instrumentation_scope("dd-trace-js", "7.0.0-pre");
         let exporter = builder.build::<NativeCapabilities>().unwrap();
         assert!(matches!(exporter.otlp, Some(OtlpExportMode::Grpc(_))));
-        assert_eq!(
-            exporter.otlp_resource_info.instrumentation_scope_name,
-            "dd-trace-js"
-        );
-        assert_eq!(
-            exporter.otlp_resource_info.instrumentation_scope_version,
-            "7.0.0-pre"
-        );
+        let resource = exporter.otlp_resource_info.load();
+        assert_eq!(resource.instrumentation_scope_name, "dd-trace-js");
+        assert_eq!(resource.instrumentation_scope_version, "7.0.0-pre");
     }
 
     #[cfg_attr(miri, ignore)]

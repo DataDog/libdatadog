@@ -3,9 +3,10 @@
 
 use crate::log::{MULTI_LOG_FILTER, MULTI_LOG_WRITER, TemporarilyRetainedMapStats};
 use crate::service::{
-    ApplicationConfig, ConnectionSessionHandle, EvpTransportConfigWithIdentity, InstanceId,
-    SerializedTracerHeaderTags, SessionConfig, SidecarAction, SidecarFlushOptions,
-    SidecarInterface,
+    ApplicationConfig, ConnectionSessionHandle, ContextDD, EvpTransportConfigWithIdentity,
+    FfeFlagEvaluationBatch, FfeTelemetryContext, FlagEvalEventContext, InstanceId,
+    MAX_FIELD_LENGTH, SerializedTracerHeaderTags, SessionConfig, SidecarAction,
+    SidecarFlushOptions, SidecarInterface,
     application::ActiveApplication,
     connection_session::ConnectionSession,
     dogstatsd_pool::DogStatsDPool,
@@ -13,11 +14,15 @@ use crate::service::{
     telemetry::{TelemetryCachedClient, TelemetryCachedClientSet},
     tracing::TraceFlusher,
 };
-use libdd_common::{Endpoint, MutexExt};
+use libdd_common::Endpoint;
+use libdd_common::MutexExt;
 use libdd_ipc::SeqpacketConn;
 use libdd_ipc::platform::{FileBackedHandle, ShmHandle};
 use libdd_telemetry::metrics::MetricContext;
 use libdd_telemetry::worker::{LifecycleAction, TelemetryActions, TelemetryWorkerStats};
+use libdd_trace_normalization::normalizer_v1;
+use libdd_trace_utils::msgpack_encoder;
+use libdd_trace_utils::msgpack_encoder::v04::V1DowngradeOptions;
 use libdd_trace_utils::send_with_retry::{RetryBackoffType, RetryStrategy};
 use libdd_trace_utils::span::BytesData;
 use libdd_trace_utils::trace_utils::SendData;
@@ -39,7 +44,10 @@ use tracing::{debug, error, info, trace, warn};
 use crate::appsec::{AppSecConnection, AppSecManager};
 #[cfg(unix)]
 use crate::config::AppSecConfig;
-use crate::service::agent_info::AgentInfos;
+use crate::service::agent_info::{AgentInfoGuard, AgentInfos};
+use crate::service::data_streams_flusher::{
+    DsmTableKey, DsmTables, flush_all_dsm_now, get_or_create_dsm_table,
+};
 use crate::service::debugger_diagnostics_bookkeeper::{
     DebuggerDiagnosticsBookkeeper, DebuggerDiagnosticsBookkeeperStats,
 };
@@ -47,6 +55,7 @@ use crate::service::evp_proxy;
 use crate::service::ffe_exposures_flusher;
 use crate::service::ffe_flagevaluation_flusher;
 use crate::service::ffe_metrics_flusher;
+use crate::service::kafka_cluster_ids::KafkaClusterIds;
 #[cfg(windows)]
 use crate::service::remote_configs::RemoteConfigNotifyTarget;
 use crate::service::remote_configs::RemoteConfigs;
@@ -57,8 +66,10 @@ use crate::service::stats_flusher::{
 use crate::service::telemetry::InProcessTelemetryClientFactory;
 use crate::service::tracing::trace_flusher::TraceFlusherStats;
 use crate::tracer::ShmLimiters;
+use futures::FutureExt;
 use libdd_capabilities_impl::NativeCapabilities;
 use libdd_common::tag::Tag;
+use libdd_data_pipeline::agent_info::schema::AgentInfoStruct;
 use libdd_dogstatsd_client::DogStatsDActionOwned;
 use libdd_ipc::ipc_server::OwnedServerConn;
 use libdd_live_debugger::sender::DebuggerType;
@@ -107,10 +118,19 @@ pub struct SidecarServer {
     dogstatsd: DogStatsDPool,
     /// All remote config handling
     remote_configs: RemoteConfigs,
+    cdn_configs: super::ffe_config::CdnConfigs,
+    cdn_enabled: bool,
+    /// Only subprocess sidecars may retain client liveness writers across connections.
+    allow_liveness_watch: bool,
     /// Diagnostics bookkeeper
     debugger_diagnostics_bookkeeper: Arc<DebuggerDiagnosticsBookkeeper>,
     /// Per-env&version SHM span concentrators (global across all sessions).
     pub(crate) span_concentrators: Arc<Mutex<HashMap<ConcentratorKey, Arc<SpanConcentratorState>>>>,
+    /// Per-(env, version, service, primary tag) SHM DSM tables (global across all sessions).
+    pub(crate) dsm_tables: DsmTables,
+    /// Kafka cluster ids by bootstrap servers, published for all processes (global across all
+    /// sessions).
+    pub(crate) kafka_cluster_ids: KafkaClusterIds,
     /// HTTP client shared by FFE fire-and-forget forwarders for connection reuse.
     pub(crate) ffe_http_client: NativeCapabilities,
     /// Sidecar-owned exposure cache, shared across sessions/connections.
@@ -127,6 +147,17 @@ struct ConnectionStats {
     connections: AtomicU32,
     applications: AtomicU32,
     remote_config_clients: AtomicU32,
+}
+
+#[cfg(target_os = "linux")]
+fn retain_liveness_writer(
+    writer: libdd_ipc::platform::PlatformHandle<std::io::PipeWriter>,
+) -> std::io::Result<tokio::task::JoinHandle<()>> {
+    // The empty pipe is always writable. Wait only for EPOLLERR when its last reader closes.
+    let writer = tokio::io::unix::AsyncFd::with_interest(writer, tokio::io::Interest::ERROR)?;
+    Ok(tokio::spawn(async move {
+        let _ = writer.ready(tokio::io::Interest::ERROR).await;
+    }))
 }
 
 /// The application slot of a connection, keeping the server-wide counters up to date.
@@ -171,6 +202,9 @@ impl Drop for ApplicationSlot {
 
 /// Per-connection handler, owning all session and application state of its client.
 struct ConnectionSidecarHandler {
+    cdn_subscription: Option<super::ffe_config::CdnConnection>,
+    cdn_notify_enabled: Arc<std::sync::atomic::AtomicBool>,
+    cdn_remote_config_generation: u64,
     server: SidecarServer,
     /// Per-connection counter incremented on each received IPC message.
     submitted_payloads: Arc<AtomicU64>,
@@ -206,6 +240,9 @@ impl ConnectionSidecarHandler {
         };
         let session = ConnectionSessionHandle::default();
         Self {
+            cdn_subscription: None,
+            cdn_notify_enabled: Arc::default(),
+            cdn_remote_config_generation: 0,
             server,
             submitted_payloads,
             #[cfg(unix)]
@@ -224,15 +261,60 @@ impl ConnectionSidecarHandler {
             .map(|app| (app.config.service_name.clone(), app.config.env_name.clone()))
     }
 
+    /// Snapshot the current application's identity before the batch enters the shared coalescer.
+    /// Any explicit batch context opts out; an absent application leaves the batch unattributed.
+    fn attach_flagevaluation_application(&self, batch: &mut FfeFlagEvaluationBatch) {
+        if batch.context != FfeTelemetryContext::default() {
+            return;
+        }
+        let Some(app) = self.application.app.as_ref() else {
+            return;
+        };
+        let config = &app.config;
+        // Bound identity before copying it into the batch, each row, and aggregation keys.
+        // Keep counts unattributed rather than copying or truncating oversized identities.
+        if [&config.service_name, &config.env_name, &config.app_version]
+            .into_iter()
+            .any(|field| field.chars().nth(MAX_FIELD_LENGTH).is_some())
+        {
+            debug!(
+                "ffe_flagevaluation: application identity exceeds {MAX_FIELD_LENGTH} characters, \
+                 batch left unattributed"
+            );
+            return;
+        }
+        batch.context = FfeTelemetryContext {
+            service: config.service_name.clone(),
+            env: config.env_name.clone(),
+            version: config.app_version.clone(),
+        };
+        if batch.context.service.is_empty() {
+            return;
+        }
+        for event in &mut batch.flag_evaluations {
+            // Degraded events must remain context-free, even with application attribution.
+            if event.is_degraded {
+                continue;
+            }
+            let context = event.context.get_or_insert(FlagEvalEventContext {
+                evaluation: None,
+                dd: None,
+            });
+            if context.dd.as_ref().is_none_or(|dd| dd.service.is_empty()) {
+                context.dd = Some(ContextDD {
+                    service: batch.context.service.clone(),
+                });
+            }
+        }
+    }
+
     /// Processes actions for the given (service, env), or the current application if `None`.
     fn process_actions(&self, target: Option<(String, String)>, actions: Vec<SidecarAction>) {
         let Some(session) = self.session.load() else {
             info!("Dropping actions sent on a connection without configuration");
             return;
         };
-        let connection_metric_registrations = self.metric_registrations.clone();
         let trace_config = &session.tracer_config;
-        let runtime_metadata = session.runtime_metadata();
         let instance_id = &session.instance_id;
         let evp_transport = session.get_evp_transport(evp_proxy::EVENT_PLATFORM_INTAKE_SUBDOMAIN);
         let explicit_evp_transport =
@@ -261,7 +343,10 @@ impl ConnectionSidecarHandler {
                     }
                     None
                 }
-                SidecarAction::FfeFlagEvaluationBatch(batch) => {
+                SidecarAction::FfeFlagEvaluationBatch(mut batch) => {
+                    if target.is_none() {
+                        self.attach_flagevaluation_application(&mut batch);
+                    }
                     if let Some(transport) = explicit_evp_transport.clone() {
                         self.server.ffe_flagevaluation_coalescer.enqueue_with_transport(
                             ffe_http_client.clone(),
@@ -318,6 +403,7 @@ impl ConnectionSidecarHandler {
             return;
         };
         let (service, env) = (service.as_str(), env.as_str());
+        let runtime_metadata = session.runtime_metadata();
 
         {
             let process_tags = session.process_tags_with_svc_source();
@@ -353,12 +439,11 @@ impl ConnectionSidecarHandler {
             // Auto-register any metrics known to this connection but not yet registered
             // in this telemetry client (e.g., the client was just created for a new service/env).
             for action in &actions {
-                if let SidecarAction::AddTelemetryMetricPoint((name, _, _)) = action {
-                    if !telemetry.telemetry_metrics.contains_key(name) {
-                        if let Some(metric) = connection_metric_registrations.get(name) {
-                            telemetry.register_metric(metric.clone());
-                        }
-                    }
+                if let SidecarAction::AddTelemetryMetricPoint((name, _, _)) = action
+                    && !telemetry.telemetry_metrics.contains_key(name)
+                    && let Some(metric) = self.metric_registrations.get(name)
+                {
+                    telemetry.register_metric(metric.clone());
                 }
             }
 
@@ -486,6 +571,16 @@ impl Drop for ConnectionSidecarHandler {
 }
 
 impl SidecarServer {
+    pub(crate) fn with_liveness_watch(mut self, enabled: bool) -> Self {
+        self.allow_liveness_watch = enabled;
+        self
+    }
+
+    pub(crate) fn with_cdn_fetching(mut self, enabled: bool) -> Self {
+        self.cdn_enabled = enabled;
+        self
+    }
+
     pub(crate) fn shm_limiters(&self) -> &ShmLimiters {
         self.remote_configs.shm_limiters()
     }
@@ -546,6 +641,7 @@ impl SidecarServer {
         data: tinybytes::Bytes,
         target: &Endpoint,
         retry_interval: u64,
+        flush_interval: Duration,
     ) {
         let headers: TracerHeaderTags = match headers.try_into() {
             Ok(headers) => headers,
@@ -557,7 +653,14 @@ impl SidecarServer {
                 return;
             }
         };
-        self.send_trace(headers, data, target, retry_interval, TraceEncoding::V04)
+        self.send_trace(
+            headers,
+            data,
+            target,
+            retry_interval,
+            flush_interval,
+            TraceEncoding::V04,
+        )
     }
 
     /// Entry point for the V1 trace path. Input bytes are a V1 msgpack `TracerPayload` from the
@@ -574,31 +677,59 @@ impl SidecarServer {
     /// tracers when it can't decode the body, and populating them only on the agent side would
     /// leave a gap whenever a tracer is upgraded ahead of its agent.
     ///
-    /// `target` is `tracer::Config::endpoint_v1`, already normalized to the agent's
-    /// `/v1.0/traces` route (or the shared intake URL for agentless sessions) by
-    /// `tracer::Config::set_endpoint`.
+    /// Sends a V1 payload, negotiating with the agent (see [`Self::agent_supports_v1`]): V1 to
+    /// `v1_target` when the agent advertises `/v1.0/traces` or agentless, else downgrade to v0.4.
+    /// `force_v04` (`DD_TRACE_AGENT_PROTOCOL_VERSION=0.4`) always downgrades.
+    #[allow(clippy::too_many_arguments)]
     fn send_trace_v1(
         &self,
+        session: &ConnectionSession,
         generic: TracerGenericTags,
         lang_interpreter: &str,
         lang_vendor: &str,
         data: tinybytes::Bytes,
-        target: &Endpoint,
+        v1_target: &Endpoint,
+        v04_target: &Endpoint,
         retry_interval: u64,
+        flush_interval: Duration,
+        force_v04: bool,
     ) {
+        let supports_v1 = !force_v04 && Self::agent_supports_v1(session, v04_target);
         match decode_to_trace_chunks(data, TraceEncoding::V1) {
-            Ok((payload, size)) => {
-                let TraceChunks::V1(tracer_payload) = &payload else {
+            Ok((mut payload, size)) => {
+                let TraceChunks::V1(tracer_payload) = &mut payload else {
                     unreachable!(
                         "decode_to_trace_chunks(_, TraceEncoding::V1) always returns TraceChunks::V1"
                     );
                 };
+                // The payload was encoded from a builder that already deduped every map
+                // (`ddog_send_traces_to_sidecar_v1`), so don't dedup it a second time.
+                tracer_payload.mark_deduped();
                 // Cheap refcounted clones: decouples the header strings from `payload`'s
                 // borrow so `payload` can still be moved into `enqueue_trace` below.
                 let lang = tracer_payload.language_name.clone();
                 let lang_version = tracer_payload.language_version.clone();
                 let tracer_version = tracer_payload.tracer_version.clone();
                 let container_id = tracer_payload.container_id.clone();
+
+                // Agentless payloads skip the agent, so normalize them as it would have.
+                if supports_v1 && v1_target.api_key.is_some() {
+                    tracer_payload.chunks.retain_mut(|chunk| {
+                        normalizer_v1::normalize_chunk(chunk, lang.borrow())
+                            .inspect_err(|e| warn!("Dropping agentless V1 trace chunk: {e}"))
+                            .is_ok()
+                    });
+                }
+
+                // The V1 endpoint expects the tracer to mark top-level spans (`_dd.top_level`).
+                if supports_v1
+                    && tracer_payload
+                        .chunks
+                        .iter()
+                        .any(|c| !c.spans.iter().any(libdd_trace_model::Span::has_top_level))
+                {
+                    warn!("V1 trace chunk without a top-level span; the tracer must mark them");
+                }
 
                 let headers = TracerHeaderTags {
                     lang: lang.borrow(),
@@ -609,12 +740,59 @@ impl SidecarServer {
                     container_id: container_id.borrow(),
                     generic,
                 };
-                debug!(
-                    "Received {} bytes of data for {:?} with headers {:?}",
-                    size, target, headers
-                );
-                trace!("Parsed the trace payload and enqueuing it for sending: {payload:?}");
-                self.enqueue_trace(payload, size, headers, target, retry_interval);
+
+                if supports_v1 {
+                    debug!(
+                        "Received {} bytes of data for {:?} with headers {:?}",
+                        size, v1_target, headers
+                    );
+                    trace!("Parsed the trace payload and enqueuing it for sending: {payload:?}");
+                    self.enqueue_trace(
+                        payload,
+                        size,
+                        headers,
+                        v1_target,
+                        retry_interval,
+                        flush_interval,
+                        session.agent_info().cloned(),
+                    );
+                    return;
+                }
+
+                // Agent lacks `/v1.0/traces` or is older than 7.79: downgrade to v0.4 and re-decode
+                // so the existing v0.4 send path handles serialization/retries unchanged.
+                let TraceChunks::V1(tracer_payload) = &payload else {
+                    unreachable!("payload is still TraceChunks::V1");
+                };
+                // Native span events only once `/info` advertises them.
+                let opts = V1DowngradeOptions {
+                    native_span_events: session.agent_info().is_some_and(|info| {
+                        Self::peek_agent_info(info, |info| info.span_events == Some(true))
+                    }),
+                };
+                let v04_bytes = msgpack_encoder::v04::to_vec_from_v1_with(tracer_payload, opts);
+                match decode_to_trace_chunks(tinybytes::Bytes::from(v04_bytes), TraceEncoding::V04)
+                {
+                    Ok((v04_payload, v04_size)) => {
+                        debug!(
+                            "Agent does not accept V1; downgrading to v0.4 ({} bytes) for {:?} with headers {:?}",
+                            v04_size, v04_target, headers
+                        );
+                        self.enqueue_trace(
+                            v04_payload,
+                            v04_size,
+                            headers,
+                            v04_target,
+                            retry_interval,
+                            flush_interval,
+                            None,
+                        );
+                    }
+                    Err(e) => error!(
+                        "Failed to re-decode downgraded v0.4 trace payload with error {:?}",
+                        e
+                    ),
+                }
             }
             Err(e) => {
                 error!(
@@ -625,12 +803,37 @@ impl SidecarServer {
         }
     }
 
+    /// Whether the agent accepts V1 (non-blocking). Fails closed to v0.4 until `/info` advertises
+    /// `/v1.0/traces`, so we never send V1 to an agent that can't decode it, and after a 404 from
+    /// it until `/info` changes. Agents before 7.79 get v0.4 too (see
+    /// [`AgentInfoGuard::v1_active`]). Agentless is always V1.
+    fn agent_supports_v1(session: &ConnectionSession, v04_target: &Endpoint) -> bool {
+        if v04_target.api_key.is_some() {
+            return true;
+        }
+        // The session's `/info` is fetched since `set_connection_config`. A fetcher keyed by the
+        // trace endpoint would be a separate, cold one.
+        session.agent_info().is_some_and(|info| info.v1_active())
+    }
+
+    /// Applies `f` to the agent info without blocking the send path; false until it is fetched.
+    fn peek_agent_info(info: &AgentInfoGuard, f: impl Fn(&AgentInfoStruct) -> bool) -> bool {
+        let info = info.get();
+        // `peek` borrows the resolved info; polling (which clones the whole struct) is only
+        // needed until the first poll resolves it.
+        match info.peek() {
+            Some(info) => f(info),
+            None => info.now_or_never().is_some_and(|info| f(&info)),
+        }
+    }
+
     fn send_trace(
         &self,
         headers: TracerHeaderTags,
         data: tinybytes::Bytes,
         target: &Endpoint,
         retry_interval: u64,
+        flush_interval: Duration,
         encoding: TraceEncoding,
     ) {
         debug!(
@@ -643,7 +846,15 @@ impl SidecarServer {
         match decode_to_trace_chunks(data, encoding) {
             Ok((payload, size)) => {
                 trace!("Parsed the trace payload and enqueuing it for sending: {payload:?}");
-                self.enqueue_trace(payload, size, headers, target, retry_interval);
+                self.enqueue_trace(
+                    payload,
+                    size,
+                    headers,
+                    target,
+                    retry_interval,
+                    flush_interval,
+                    None,
+                );
             }
             Err(e) => {
                 error!(
@@ -654,6 +865,8 @@ impl SidecarServer {
         }
     }
 
+    /// `v1_agent_info`: for a V1 send, the agent info in which a 404 turns V1 off.
+    #[allow(clippy::too_many_arguments)]
     fn enqueue_trace(
         &self,
         payload: TraceChunks<BytesData>,
@@ -661,6 +874,8 @@ impl SidecarServer {
         headers: TracerHeaderTags,
         target: &Endpoint,
         retry_interval: u64,
+        flush_interval: Duration,
+        v1_agent_info: Option<Arc<AgentInfoGuard>>,
     ) {
         let mut data = SendData::new(
             size,
@@ -670,7 +885,8 @@ impl SidecarServer {
         );
         let strategy = RetryStrategy::new(5, retry_interval, RetryBackoffType::Exponential, None);
         data.set_retry_strategy(strategy);
-        self.trace_flusher.enqueue(data);
+        self.trace_flusher
+            .enqueue(data, flush_interval, v1_agent_info);
     }
 
     pub async fn compute_stats(&self) -> SidecarStats {
@@ -729,11 +945,53 @@ impl SidecarServer {
     }
 
     pub fn shutdown(&self) {
+        self.cdn_configs.shutdown();
         self.remote_configs.shutdown();
     }
 }
 
 impl SidecarInterface for ConnectionSidecarHandler {
+    async fn set_cdn_configuration(
+        &mut self,
+        config: Option<crate::shm_remote_config::CdnRegistration>,
+    ) {
+        let Some(config) = config.filter(|_| self.server.cdn_enabled) else {
+            self.cdn_subscription = None;
+            return;
+        };
+        if self
+            .cdn_subscription
+            .as_ref()
+            .is_some_and(|s| s.config == config)
+        {
+            return;
+        }
+        self.cdn_subscription = None;
+        // Only an explicitly RC-enabled session with a registered application may
+        // receive signals. SIGVTALRM's default disposition terminates a process.
+        let session = self.session.clone();
+        let enabled = self.cdn_notify_enabled.clone();
+        let notify = Arc::new(move || {
+            use libdd_remote_config::fetch::NotifyTarget;
+            if enabled.load(Ordering::Acquire)
+                && let Some(session) = session.load().filter(|s| s.remote_config_enabled)
+                && let Some(target) = session.notify_target()
+            {
+                target.notify();
+            }
+        });
+        match super::ffe_config::CdnConnection::new(
+            self.server.cdn_configs.clone(),
+            self.server.remote_configs.publications.clone(),
+            config,
+            notify,
+            self.cdn_remote_config_generation,
+        ) {
+            Ok(connection) => self.cdn_subscription = Some(connection),
+            Err(error) => warn!("Could not register CDN configuration: {error}"),
+        }
+    }
+
     fn recv_counter(&self) -> &AtomicU64 {
         &self.submitted_payloads
     }
@@ -778,10 +1036,6 @@ impl SidecarInterface for ConnectionSidecarHandler {
     ) {
         debug!("Set connection config for {instance_id:?} to {config:?}");
 
-        self.server.trace_flusher.interval_ms.store(
-            u64::try_from(config.flush_interval.as_millis()).unwrap_or(u64::MAX),
-            Ordering::Relaxed,
-        );
         self.server.trace_flusher.min_force_flush_size_bytes.store(
             u32::try_from(config.force_flush_size).unwrap_or(u32::MAX),
             Ordering::Relaxed,
@@ -812,6 +1066,11 @@ impl SidecarInterface for ConnectionSidecarHandler {
             });
         }
 
+        self.cdn_notify_enabled.store(false, Ordering::Release);
+        self.cdn_remote_config_generation = 0;
+        if let Some(cdn) = &self.cdn_subscription {
+            cdn.notify_current(0);
+        }
         self.session.store(session);
         // The application is registered for the previous session: the client sends it again.
         self.application.modify(|app| *app = None);
@@ -857,6 +1116,9 @@ impl SidecarInterface for ConnectionSidecarHandler {
         application: Option<ApplicationConfig>,
         remote_config_generation: u64,
     ) {
+        self.cdn_remote_config_generation = remote_config_generation;
+        self.cdn_notify_enabled
+            .store(application.is_some(), Ordering::Release);
         let session = self.session.load();
         self.application.modify(|current| {
             let Some(config) = application else {
@@ -883,17 +1145,20 @@ impl SidecarInterface for ConnectionSidecarHandler {
                 }
                 None => current.insert(ActiveApplication::new(config)),
             };
-            if let Some(session) = session {
-                if let Some(notify_target) = session.notify_target() {
-                    app.update_remote_config(
-                        &self.server.remote_configs,
-                        &session,
-                        remote_config_generation,
-                        notify_target,
-                    );
-                }
+            if let Some(session) = session
+                && let Some(notify_target) = session.notify_target()
+            {
+                app.update_remote_config(
+                    &self.server.remote_configs,
+                    &session,
+                    remote_config_generation,
+                    notify_target,
+                );
             }
         });
+        if let Some(cdn) = &self.cdn_subscription {
+            cdn.notify_current(remote_config_generation);
+        }
     }
 
     async fn send_trace_v04_shm(
@@ -910,11 +1175,18 @@ impl SidecarInterface for ConnectionSidecarHandler {
         if let Some(endpoint) = trace_config.endpoint.clone() {
             let server = self.server.clone();
             let retry_interval = trace_config.retry_interval;
+            let flush_interval = trace_config.flush_interval;
             tokio::spawn(async move {
                 match handle.map() {
                     Ok(mapped) => {
                         let bytes = tinybytes::Bytes::from(mapped);
-                        server.send_trace_v04(&headers, bytes, &endpoint, retry_interval);
+                        server.send_trace_v04(
+                            &headers,
+                            bytes,
+                            &endpoint,
+                            retry_interval,
+                            flush_interval,
+                        );
                     }
                     Err(e) => error!("Failed mapping shared trace data memory: {}", e),
                 }
@@ -937,9 +1209,10 @@ impl SidecarInterface for ConnectionSidecarHandler {
         if let Some(endpoint) = trace_config.endpoint.clone() {
             let server = self.server.clone();
             let retry_interval = trace_config.retry_interval;
+            let flush_interval = trace_config.flush_interval;
             tokio::spawn(async move {
                 let bytes = tinybytes::Bytes::from(data);
-                server.send_trace_v04(&headers, bytes, &endpoint, retry_interval);
+                server.send_trace_v04(&headers, bytes, &endpoint, retry_interval, flush_interval);
             });
         } else {
             warn!(
@@ -962,20 +1235,30 @@ impl SidecarInterface for ConnectionSidecarHandler {
             return;
         };
         let trace_config = &session.tracer_config;
-        if let Some(endpoint) = trace_config.endpoint_v1.clone() {
+        if let (Some(v1_endpoint), Some(v04_endpoint)) = (
+            trace_config.endpoint_v1.clone(),
+            trace_config.endpoint.clone(),
+        ) {
             let server = self.server.clone();
             let retry_interval = trace_config.retry_interval;
+            let flush_interval = trace_config.flush_interval;
+            let force_v04 = trace_config.force_v04;
+            let session = session.clone();
             tokio::spawn(async move {
                 match handle.map() {
                     Ok(mapped) => {
                         let bytes = tinybytes::Bytes::from(mapped);
                         server.send_trace_v1(
+                            &session,
                             generic,
                             &lang_interpreter,
                             &lang_vendor,
                             bytes,
-                            &endpoint,
+                            &v1_endpoint,
+                            &v04_endpoint,
                             retry_interval,
+                            flush_interval,
+                            force_v04,
                         );
                     }
                     Err(e) => error!("Failed mapping shared trace data memory: {}", e),
@@ -1002,18 +1285,28 @@ impl SidecarInterface for ConnectionSidecarHandler {
         };
         let trace_config = &session.tracer_config;
 
-        if let Some(endpoint) = trace_config.endpoint_v1.clone() {
+        if let (Some(v1_endpoint), Some(v04_endpoint)) = (
+            trace_config.endpoint_v1.clone(),
+            trace_config.endpoint.clone(),
+        ) {
             let server = self.server.clone();
             let retry_interval = trace_config.retry_interval;
+            let flush_interval = trace_config.flush_interval;
+            let force_v04 = trace_config.force_v04;
+            let session = session.clone();
             tokio::spawn(async move {
                 let bytes = tinybytes::Bytes::from(data);
                 server.send_trace_v1(
+                    &session,
                     generic,
                     &lang_interpreter,
                     &lang_vendor,
                     bytes,
-                    &endpoint,
+                    &v1_endpoint,
+                    &v04_endpoint,
                     retry_interval,
+                    flush_interval,
+                    force_v04,
                 );
             });
         } else {
@@ -1119,10 +1412,64 @@ impl SidecarInterface for ConnectionSidecarHandler {
             session_id,
             &session,
         ) {
-            let mut peer_tag_buf = Vec::new();
-            let input = span.as_shm_input(&mut peer_tag_buf);
+            let mut tag_buf = Vec::new();
+            let input = span.as_shm_input(&mut tag_buf);
             state.concentrator.add_span(&input);
         }
+    }
+
+    async fn add_dsm_checkpoint(
+        &mut self,
+        env: String,
+        version: String,
+        service: String,
+        primary_tag: String,
+        checkpoint: libdd_ipc::shm_dsm_checkpoint::OwnedDsmCheckpoint,
+    ) {
+        let Some(session) = self.session.load() else {
+            return;
+        };
+        // Lazily create the table on the first IPC checkpoint for this key.
+        let key = DsmTableKey {
+            env,
+            version,
+            service,
+            primary_tag,
+        };
+        if let Some(state) = get_or_create_dsm_table(&self.server.dsm_tables, key, &session) {
+            let mut edge_tag_buf = Vec::new();
+            state
+                .checkpoints
+                .add_checkpoint(&checkpoint.as_shm_input(&mut edge_tag_buf));
+        }
+    }
+
+    async fn add_dsm_backlog(
+        &mut self,
+        env: String,
+        version: String,
+        service: String,
+        primary_tag: String,
+        backlog: libdd_ipc::shm_dsm_backlog::OwnedDsmBacklog,
+    ) {
+        let Some(session) = self.session.load() else {
+            return;
+        };
+        let key = DsmTableKey {
+            env,
+            version,
+            service,
+            primary_tag,
+        };
+        if let Some(state) = get_or_create_dsm_table(&self.server.dsm_tables, key, &session) {
+            state.backlogs.add_backlog(&backlog.as_shm_input());
+        }
+    }
+
+    async fn set_kafka_cluster_id(&mut self, bootstrap_servers: String, cluster_id: String) {
+        self.server
+            .kafka_cluster_ids
+            .set(bootstrap_servers, cluster_id);
     }
 
     async fn flush(&mut self, options: SidecarFlushOptions) {
@@ -1138,12 +1485,14 @@ impl SidecarInterface for ConnectionSidecarHandler {
         let traces_and_stats = options.traces_and_stats;
         let flusher = self.server.trace_flusher.clone();
         let span_concentrators = self.server.span_concentrators.clone();
+        let dsm_tables = self.server.dsm_tables.clone();
         let flush_traces_and_stats = async move {
             if traces_and_stats {
                 if let Err(e) = tokio::spawn(async move { flusher.flush().await }).await {
                     error!("Failed flushing traces: {e:?}");
                 }
                 flush_all_stats_now(&span_concentrators).await;
+                flush_all_dsm_now(&dsm_tables).await;
                 debug!("Finished executing flush() for traces and stats")
             }
         };
@@ -1189,6 +1538,24 @@ impl SidecarInterface for ConnectionSidecarHandler {
     ) {
         self.flush(options).await;
         drop(completion);
+    }
+
+    async fn register_liveness(
+        &mut self,
+        writer: libdd_ipc::platform::PlatformHandle<std::io::PipeWriter>,
+    ) {
+        if !self.server.allow_liveness_watch {
+            return;
+        }
+        #[cfg(target_os = "linux")]
+        {
+            // The task outlives this connection and releases its writer on client exit.
+            if let Err(error) = retain_liveness_writer(writer) {
+                warn!("Could not register process liveness pipe: {error}");
+            }
+        }
+        #[cfg(not(target_os = "linux"))]
+        drop(writer);
     }
 
     async fn set_test_session_token(&mut self, token: String) {
@@ -1268,6 +1635,11 @@ impl SidecarInterface for ConnectionSidecarHandler {
 #[path = "flagevaluation_privacy_tests.rs"]
 mod flagevaluation_privacy_tests;
 
+#[cfg(all(test, unix))]
+// These tests exercise private connection state, so keep them in this module.
+#[path = "../../tests/unit/cdn.rs"]
+mod cdn_tests;
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1283,6 +1655,129 @@ mod tests {
     use libdd_ipc::PeerCredentials;
     use libdd_telemetry::config::Config;
     use tokio::time::{Duration as TokioDuration, sleep};
+
+    #[cfg(target_os = "linux")]
+    #[tokio::test]
+    #[cfg_attr(miri, ignore = "requires native pipe readiness")]
+    async fn liveness_writer_waits_for_client_exit_and_reports_sidecar_exit() {
+        use libdd_ipc::platform::PlatformHandle;
+        use std::os::fd::AsRawFd;
+
+        let (reader, writer) = std::io::pipe().unwrap();
+        let task = retain_liveness_writer(PlatformHandle::from(writer)).unwrap();
+        tokio::task::yield_now().await;
+        assert!(!task.is_finished());
+        drop(reader);
+        tokio::time::timeout(Duration::from_secs(2), task)
+            .await
+            .unwrap()
+            .unwrap();
+
+        let (reader, writer) = std::io::pipe().unwrap();
+        let task = retain_liveness_writer(PlatformHandle::from(writer)).unwrap();
+        task.abort();
+        assert!(task.await.unwrap_err().is_cancelled());
+        let mut fd = libc::pollfd {
+            fd: reader.as_raw_fd(),
+            events: 0,
+            revents: 0,
+        };
+        // SAFETY: fd points to one initialized pollfd for the duration of the call.
+        assert_eq!(unsafe { libc::poll(&mut fd, 1, 0) }, 1);
+        assert_ne!(fd.revents & libc::POLLHUP, 0);
+    }
+
+    #[cfg(target_os = "linux")]
+    #[tokio::test]
+    #[cfg_attr(miri, ignore = "requires native IPC sockets")]
+    async fn disabled_liveness_watch_releases_repeated_registrations() {
+        use super::super::blocking::SidecarTransport;
+        use libdd_ipc::platform::PlatformHandle;
+        use std::os::fd::AsRawFd;
+
+        let (reader, writer) = std::io::pipe().unwrap();
+        let (client, server) = SeqpacketConn::socketpair().unwrap();
+        let server = tokio::spawn(SidecarServer::default().accept_connection(server));
+        tokio::task::spawn_blocking(move || {
+            let mut transport = SidecarTransport::from(client);
+            // Repeated SCM_RIGHTS transfers of the same pipe each create a new server fd.
+            for _ in 0..16 {
+                transport
+                    .inner
+                    .channel
+                    .send_request_blocking(
+                        &super::super::sidecar_interface::SidecarInterfaceRequest::RegisterLiveness {
+                            writer: PlatformHandle::from(writer.try_clone().unwrap()),
+                        },
+                    )
+                    .unwrap();
+            }
+            drop(writer);
+            // The reply confirms every registration was processed. Keep the connection and
+            // reader open to verify that neither disconnect nor client exit is needed for cleanup.
+            transport.inner.channel.call_ping().unwrap();
+            let mut fd = libc::pollfd {
+                fd: reader.as_raw_fd(),
+                events: 0,
+                revents: 0,
+            };
+            // SAFETY: fd points to one initialized pollfd for the duration of the call.
+            assert_eq!(unsafe { libc::poll(&mut fd, 1, 0) }, 1);
+            assert_ne!(fd.revents & libc::POLLHUP, 0);
+        })
+        .await
+        .unwrap();
+        tokio::time::timeout(Duration::from_secs(2), server)
+            .await
+            .unwrap()
+            .unwrap();
+    }
+
+    #[cfg(target_os = "linux")]
+    #[tokio::test]
+    #[cfg_attr(miri, ignore = "requires native IPC sockets")]
+    async fn liveness_pipe_outlives_the_registering_connection() {
+        use super::super::blocking::SidecarTransport;
+        use libdd_ipc::platform::PlatformHandle;
+        use std::os::fd::AsRawFd;
+
+        let (reader, writer) = std::io::pipe().unwrap();
+        let (client, server) = SeqpacketConn::socketpair().unwrap();
+        let server = tokio::spawn(
+            SidecarServer::default()
+                .with_liveness_watch(true)
+                .accept_connection(server),
+        );
+        tokio::task::spawn_blocking(move || {
+            let mut transport = SidecarTransport::from(client);
+            transport
+                .inner
+                .channel
+                .send_request_blocking(
+                    &super::super::sidecar_interface::SidecarInterfaceRequest::RegisterLiveness {
+                        writer: PlatformHandle::from(writer),
+                    },
+                )
+                .unwrap();
+            transport.inner.channel.call_ping().unwrap();
+        })
+        .await
+        .unwrap();
+        tokio::time::timeout(Duration::from_secs(2), server)
+            .await
+            .unwrap()
+            .unwrap();
+        let mut fd = libc::pollfd {
+            fd: reader.as_raw_fd(),
+            events: 0,
+            revents: 0,
+        };
+        // The registration was transferred by SCM_RIGHTS and its connection is gone,
+        // but the independent sidecar task still owns the writer.
+        // SAFETY: fd points to one initialized pollfd for the duration of the call.
+        assert_eq!(unsafe { libc::poll(&mut fd, 1, 0) }, 0);
+        drop(reader);
+    }
 
     /// Build a handler backed by a throwaway socketpair connection. These tests call the handler
     /// methods directly and never read the connection, but the handler requires one.
@@ -1386,10 +1881,10 @@ mod tests {
 
             let deadline = Instant::now() + Duration::from_secs(5);
             let retired_before_removal = loop {
-                if let Ok(guard) = client.try_lock() {
-                    if guard.is_none() {
-                        break true;
-                    }
+                if let Ok(guard) = client.try_lock()
+                    && guard.is_none()
+                {
+                    break true;
                 }
                 if Instant::now() >= deadline {
                     break false;
@@ -1665,6 +2160,7 @@ mod tests {
             allocation_key: "alloc".to_owned(),
             variant: "variant".to_owned(),
             serial_id: None,
+            features_json: String::new(),
         }
     }
 
@@ -1696,6 +2192,7 @@ mod tests {
                 context: None,
                 error: None,
                 runtime_default_used: false,
+                features: None,
                 observe_full_evaluation_data: false,
                 is_degraded: false,
                 field_omissions: Default::default(),
@@ -1853,6 +2350,493 @@ mod tests {
             .expect("IPC server did not terminate after closing its client")
         {
             assert!(error.is_cancelled(), "server task panicked: {error}");
+        }
+    }
+
+    #[tokio::test]
+    #[cfg_attr(miri, ignore)]
+    async fn flagevaluation_application_identity_is_bounded_before_copying() {
+        let mut handler = test_handler(SidecarServer::default());
+        for character in ["a", "é"] {
+            for (length, attributed) in [(256, true), (257, false)] {
+                let value = character.repeat(length);
+                for (field, application) in [
+                    ("service", test_application(&value)),
+                    (
+                        "env",
+                        ApplicationConfig {
+                            env_name: value.clone(),
+                            ..test_application("svc")
+                        },
+                    ),
+                    (
+                        "version",
+                        ApplicationConfig {
+                            app_version: value.clone(),
+                            ..test_application("svc")
+                        },
+                    ),
+                ] {
+                    let case = format!("{field} = {character:?} x {length}");
+                    handler.set_application(Some(application.clone()), 0).await;
+                    let mut batch = ffe_flag_evaluation_batch();
+                    batch.context = FfeTelemetryContext::default();
+                    handler.attach_flagevaluation_application(&mut batch);
+                    let event_service = batch.flag_evaluations[0]
+                        .context
+                        .as_ref()
+                        .and_then(|context| context.dd.as_ref())
+                        .map(|dd| dd.service.as_str());
+                    if attributed {
+                        let expected = FfeTelemetryContext {
+                            service: application.service_name.clone(),
+                            env: application.env_name.clone(),
+                            version: application.app_version.clone(),
+                        };
+                        assert_eq!(batch.context, expected, "{case}: batch context");
+                        assert_eq!(
+                            event_service,
+                            Some(application.service_name.as_str()),
+                            "{case}: event service"
+                        );
+                    } else {
+                        assert_eq!(
+                            batch.context,
+                            FfeTelemetryContext::default(),
+                            "{case}: batch context"
+                        );
+                        assert!(
+                            batch.flag_evaluations[0].context.is_none(),
+                            "{case}: event context"
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    #[tokio::test]
+    #[cfg_attr(miri, ignore)]
+    async fn flagevaluation_oversized_identity_preserves_counts_across_batches() {
+        let http = MockServer::start_async().await;
+        let output = http
+            .mock_async(|when, then| {
+                when.method(POST).path(EVP_FLAGEVALUATION_PATH).json_body(serde_json::json!({
+                "context": {},
+                "flagEvaluations": [{"timestamp": 123, "flag": {"key": "flag"},
+                    "first_evaluation": 100, "last_evaluation": 123, "evaluation_count": 32}]
+            }));
+                then.status(202);
+            })
+            .await;
+        let mut handler = test_handler(SidecarServer::default());
+        configure_session(&handler, InstanceId::new("session", "runtime"), |session| {
+            set_trace_endpoint(session, http.url("/"));
+        });
+        handler
+            .set_application(Some(test_application(&"s".repeat(257))), 0)
+            .await;
+        let mut batch = ffe_flag_evaluation_batch();
+        batch.context = FfeTelemetryContext::default();
+        let mut large_batch = batch.clone();
+        large_batch.flag_evaluations = vec![batch.flag_evaluations[0].clone(); 16];
+        handler
+            .enqueue_actions(vec![SidecarAction::FfeFlagEvaluationBatch(large_batch)])
+            .await;
+        for _ in 0..16 {
+            handler
+                .enqueue_actions(vec![SidecarAction::FfeFlagEvaluationBatch(batch.clone())])
+                .await;
+        }
+        handler
+            .flush(SidecarFlushOptions {
+                flag_evaluations: true,
+                ..Default::default()
+            })
+            .await;
+        output.assert_calls_async(1).await;
+    }
+
+    #[tokio::test]
+    #[cfg_attr(miri, ignore)]
+    async fn flagevaluation_fill_skips_degraded_rows_and_replaces_empty_service() {
+        let mut handler = test_handler(SidecarServer::default());
+        handler
+            .set_application(Some(test_application("checkout")), 0)
+            .await;
+        let mut batch = ffe_flag_evaluation_batch();
+        batch.context = FfeTelemetryContext::default();
+        let mut degraded = batch.flag_evaluations[0].clone();
+        degraded.is_degraded = true;
+        batch.flag_evaluations[0].context = Some(FlagEvalEventContext {
+            evaluation: None,
+            dd: Some(ContextDD {
+                service: String::new(),
+            }),
+        });
+        batch.flag_evaluations.push(degraded);
+        handler.attach_flagevaluation_application(&mut batch);
+        // Check before normalization, which also clears degraded context.
+        assert!(batch.flag_evaluations[1].context.is_none());
+        assert_eq!(
+            batch.flag_evaluations[0]
+                .context
+                .as_ref()
+                .unwrap()
+                .dd
+                .as_ref()
+                .unwrap()
+                .service,
+            "checkout",
+        );
+    }
+
+    #[tokio::test]
+    #[cfg_attr(miri, ignore)]
+    async fn flagevaluation_empty_application_service_only_attributes_the_batch() {
+        let http = MockServer::start_async().await;
+        let output = http
+            .mock_async(|when, then| {
+                when.method(POST)
+                    .path(EVP_FLAGEVALUATION_PATH)
+                    .json_body(serde_json::json!({
+                        "context": {"env": "prod"},
+                        "flagEvaluations": [{"timestamp": 123, "flag": {"key": "flag"},
+                            "first_evaluation": 100, "last_evaluation": 123, "evaluation_count": 2}]
+                    }));
+                then.status(202);
+            })
+            .await;
+        let mut handler = test_handler(SidecarServer::default());
+        configure_session(&handler, InstanceId::new("session", "runtime"), |session| {
+            set_trace_endpoint(session, http.url("/"));
+        });
+        handler
+            .set_application(
+                Some(ApplicationConfig {
+                    env_name: "prod".into(),
+                    ..test_application("")
+                }),
+                0,
+            )
+            .await;
+        for context in [
+            FfeTelemetryContext::default(),
+            FfeTelemetryContext {
+                env: "prod".into(),
+                ..Default::default()
+            },
+        ] {
+            let mut batch = ffe_flag_evaluation_batch();
+            batch.context = context;
+            handler
+                .enqueue_actions(vec![SidecarAction::FfeFlagEvaluationBatch(batch)])
+                .await;
+        }
+        handler
+            .flush(SidecarFlushOptions {
+                flag_evaluations: true,
+                ..Default::default()
+            })
+            .await;
+        output.assert_calls_async(1).await;
+    }
+
+    #[tokio::test]
+    #[cfg_attr(miri, ignore)]
+    async fn flagevaluation_for_explicit_service_is_not_attributed_to_the_connection() {
+        let http = MockServer::start_async().await;
+        let output = http
+            .mock_async(|when, then| {
+                when.method(POST)
+                    .path(EVP_FLAGEVALUATION_PATH)
+                    .json_body(serde_json::json!({
+                        "context": {},
+                        "flagEvaluations": [{"timestamp": 123, "flag": {"key": "flag"},
+                            "first_evaluation": 100, "last_evaluation": 123, "evaluation_count": 1}]
+                    }));
+                then.status(202);
+            })
+            .await;
+        let mut handler = test_handler(SidecarServer::default());
+        configure_session(&handler, InstanceId::new("session", "runtime"), |session| {
+            set_trace_endpoint(session, http.url("/"));
+        });
+        handler
+            .set_application(Some(test_application("checkout")), 0)
+            .await;
+        let mut batch = ffe_flag_evaluation_batch();
+        batch.context = FfeTelemetryContext::default();
+        handler
+            .enqueue_actions_for_service(
+                "billing".into(),
+                "staging".into(),
+                vec![SidecarAction::FfeFlagEvaluationBatch(batch)],
+            )
+            .await;
+        handler
+            .flush(SidecarFlushOptions {
+                flag_evaluations: true,
+                ..Default::default()
+            })
+            .await;
+        output.assert_calls_async(1).await;
+    }
+
+    #[tokio::test]
+    #[cfg_attr(miri, ignore)]
+    async fn flagevaluation_application_identity_is_snapshotted_before_coalescing() {
+        let http = MockServer::start_async().await;
+        let identities = [
+            ("unknown-service", "none", ""),
+            ("checkout", "prod", "1"),
+            ("checkout", "staging", "1"),
+            ("checkout", "staging", "2"),
+            ("another-connection", "prod", "1"),
+            ("", "", ""),
+        ];
+        let mut outputs = Vec::new();
+        for (service, env, version) in identities {
+            let mut context = serde_json::json!({});
+            for (key, value) in [("service", service), ("env", env), ("version", version)] {
+                if !value.is_empty() {
+                    context[key] = value.into();
+                }
+            }
+            let mut row = serde_json::json!({
+                "timestamp": 123, "flag": {"key": "flag"},
+                "first_evaluation": 100, "last_evaluation": 123,
+                "evaluation_count": if service.is_empty() { 2 } else { 1 },
+            });
+            if !service.is_empty() {
+                row["context"] = serde_json::json!({"dd": {"service": service}});
+            }
+            outputs.push(
+                http.mock_async(|when, then| {
+                    when.method(POST).path(EVP_FLAGEVALUATION_PATH).json_body(
+                        serde_json::json!({"context": context, "flagEvaluations": [row]}),
+                    );
+                    then.status(202);
+                })
+                .await,
+            );
+        }
+        let server = SidecarServer::default();
+        let mut handler = test_handler(server.clone());
+        let mut other = test_handler(server);
+        for (handler, runtime) in [(&handler, "one"), (&other, "two")] {
+            configure_session(handler, InstanceId::new("session", runtime), |session| {
+                set_trace_endpoint(session, http.url("/"));
+            });
+        }
+        let mut batch = ffe_flag_evaluation_batch();
+        batch.context = FfeTelemetryContext::default();
+        // Keep evaluations without an application, but never reuse a cleared application.
+        handler
+            .enqueue_actions(vec![SidecarAction::FfeFlagEvaluationBatch(batch.clone())])
+            .await;
+        for (service, env, version) in &identities[..4] {
+            handler
+                .set_application(
+                    Some(ApplicationConfig {
+                        env_name: (*env).into(),
+                        app_version: (*version).into(),
+                        ..test_application(service)
+                    }),
+                    0,
+                )
+                .await;
+            handler
+                .enqueue_actions(vec![SidecarAction::FfeFlagEvaluationBatch(batch.clone())])
+                .await;
+        }
+        other
+            .set_application(
+                Some(ApplicationConfig {
+                    env_name: "prod".into(),
+                    app_version: "1".into(),
+                    ..test_application("another-connection")
+                }),
+                0,
+            )
+            .await;
+        other
+            .enqueue_actions(vec![SidecarAction::FfeFlagEvaluationBatch(batch.clone())])
+            .await;
+        handler.set_application(None, 0).await;
+        handler
+            .enqueue_actions(vec![SidecarAction::FfeFlagEvaluationBatch(batch)])
+            .await;
+        // No awaits above yield to the timer: all applications share one pending coalescer.
+        handler
+            .flush(SidecarFlushOptions {
+                flag_evaluations: true,
+                ..SidecarFlushOptions::default()
+            })
+            .await;
+        for output in outputs {
+            output.assert_calls_async(1).await;
+        }
+    }
+
+    #[tokio::test]
+    #[cfg_attr(miri, ignore)]
+    async fn flagevaluation_explicit_context_is_not_filled_or_overwritten() {
+        let http = MockServer::start_async().await;
+        let mut handler = test_handler(SidecarServer::default());
+        configure_session(&handler, InstanceId::new("session", "runtime"), |session| {
+            set_trace_endpoint(session, http.url("/"));
+        });
+        handler
+            .set_application(Some(test_application("connection-service")), 0)
+            .await;
+        for context in [
+            ffe_context(),
+            FfeTelemetryContext {
+                service: "explicit-service".into(),
+                ..Default::default()
+            },
+            FfeTelemetryContext {
+                env: "explicit-env".into(),
+                ..Default::default()
+            },
+            FfeTelemetryContext {
+                version: "explicit-version".into(),
+                ..Default::default()
+            },
+        ] {
+            let mut expected = serde_json::json!({});
+            for (key, value) in [
+                ("service", &context.service),
+                ("env", &context.env),
+                ("version", &context.version),
+            ] {
+                if !value.is_empty() {
+                    expected[key] = value.clone().into();
+                }
+            }
+            let output = http
+                .mock_async(|when, then| {
+                    when.method(POST).path(EVP_FLAGEVALUATION_PATH).json_body(serde_json::json!({
+                    "context": expected,
+                    "flagEvaluations": [{"timestamp": 123, "flag": {"key": "flag"},
+                        "first_evaluation": 100, "last_evaluation": 123, "evaluation_count": 1}]
+                }));
+                    then.status(202);
+                })
+                .await;
+            let mut batch = ffe_flag_evaluation_batch();
+            batch.context = context;
+            handler
+                .enqueue_actions(vec![SidecarAction::FfeFlagEvaluationBatch(batch)])
+                .await;
+            handler
+                .flush(SidecarFlushOptions {
+                    flag_evaluations: true,
+                    ..Default::default()
+                })
+                .await;
+            output.assert_calls_async(1).await;
+        }
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    #[cfg_attr(miri, ignore)]
+    async fn flagevaluation_uses_pending_application_replayed_after_reconnect() {
+        let http = MockServer::start_async().await;
+        let output = http
+            .mock_async(|when, then| {
+                when.method(POST)
+                    .path(EVP_FLAGEVALUATION_PATH)
+                    .header("DD-EVP-ORIGIN", "dd-trace-php")
+                    .header("DD-EVP-ORIGIN-VERSION", "1.0")
+                    .json_body(serde_json::json!({
+                        "context": {"service": "pending-service", "env": "prod", "version": "2"},
+                        "flagEvaluations": [{"timestamp": 123, "flag": {"key": "flag"},
+                            "first_evaluation": 100, "last_evaluation": 123, "evaluation_count": 1,
+                            "context": {"dd": {"service": "pending-service"}}}]
+                    }));
+                then.status(202);
+            })
+            .await;
+        let (local, client) = SeqpacketConn::socketpair().unwrap();
+        let mut handler = ConnectionSidecarHandler::new(
+            SidecarServer::default(),
+            OwnedServerConn::new(local).unwrap(),
+        );
+        let task =
+            tokio::spawn(async move { serve_sidecar_interface_connection(&mut handler).await });
+        tokio::task::block_in_place(|| {
+            let (old_client, _old_peer) = SeqpacketConn::socketpair().unwrap();
+            let mut previous = SidecarSender::new(SidecarInterfaceChannel::new(old_client));
+            previous.set_connection_config(
+                InstanceId::new("session", "runtime"),
+                #[cfg(windows)]
+                None,
+                SessionConfig::for_test(),
+            );
+            previous.set_session_evp_transport(
+                EvpTransportConfigWithIdentity::new(
+                    EvpTransportConfig::agent_only(
+                        Endpoint {
+                            url: http.url("/").parse().unwrap(),
+                            ..Endpoint::default()
+                        },
+                        evp_proxy::EVENT_PLATFORM_INTAKE_SUBDOMAIN,
+                    ),
+                    EvpProducerIdentity::new("dd-trace-php", "1.0").unwrap(),
+                )
+                .unwrap(),
+            );
+            previous.set_application(Some(test_application("old-service")), 0);
+            // Hold the application change in the normal sender's pending state.
+            previous.max_outstanding = 0;
+            previous.set_application(
+                Some(ApplicationConfig {
+                    env_name: "prod".into(),
+                    app_version: "2".into(),
+                    ..test_application("pending-service")
+                }),
+                0,
+            );
+            let mut sender = SidecarSender::new(SidecarInterfaceChannel::new(client));
+            sender.adopt_state(previous);
+            sender.max_outstanding = 100;
+            let mut batch = ffe_flag_evaluation_batch();
+            batch.context = FfeTelemetryContext::default();
+            let request =
+                crate::service::sidecar_interface::SidecarInterfaceRequest::EnqueueActions {
+                    actions: vec![SidecarAction::FfeFlagEvaluationBatch(batch)],
+                };
+            let deadline = std::time::Instant::now() + Duration::from_secs(5);
+            loop {
+                match sender.send_actions(&request) {
+                    Ok(()) => break,
+                    // Windows may still be completing a replayed state message's pipe write.
+                    Err(error)
+                        if error.kind() == std::io::ErrorKind::WouldBlock
+                            && std::time::Instant::now() < deadline =>
+                    {
+                        std::thread::sleep(Duration::from_millis(1));
+                    }
+                    result => result.expect("evaluation submission after state replay"),
+                }
+            }
+            sender
+                .flush(SidecarFlushOptions {
+                    flag_evaluations: true,
+                    ..Default::default()
+                })
+                .unwrap();
+            sender.ping().unwrap();
+        });
+        output.assert_calls_async(1).await;
+        task.abort();
+        if let Err(error) = tokio::time::timeout(Duration::from_secs(5), task)
+            .await
+            .unwrap()
+        {
+            assert!(error.is_cancelled(), "IPC server task panicked: {error}");
         }
     }
 
@@ -2211,21 +3195,35 @@ mod tests {
     }
 
     fn sample_v1_trace_payload_bytes() -> Vec<u8> {
+        sample_v1_trace_payload_bytes_with("svc", Default::default())
+    }
+
+    fn sample_v1_trace_payload_bytes_with(
+        service: &str,
+        span_events: libdd_trace_utils::span::v1::ThinVec<
+            libdd_trace_utils::span::v1::SpanEventBytes,
+        >,
+    ) -> Vec<u8> {
         use libdd_tinybytes::BytesString;
         use libdd_trace_utils::msgpack_encoder::v1::to_vec_from_v1;
-        use libdd_trace_utils::span::v1::{Span as V1Span, TraceChunkBytes, TracerPayloadBytes};
+        use libdd_trace_utils::span::v1::{
+            AttributeValue, Span as V1Span, TraceChunkBytes, TracerPayloadBytes,
+        };
 
         fn bs(s: &str) -> BytesString {
             BytesString::from_slice(s.as_bytes()).expect("test string must fit in BytesString")
         }
 
         let span = V1Span {
-            service: bs("svc"),
+            service: bs(service),
             name: bs("GET /users"),
             resource: bs("/users"),
             span_id: 42,
             start: 1_700_000_000_000,
             duration: 1_500,
+            // The tracer marks top-level spans itself.
+            attributes: vec![(bs("_dd.top_level"), AttributeValue::Float(1.0))].into(),
+            span_events,
             ..Default::default()
         };
 
@@ -2246,16 +3244,54 @@ mod tests {
         to_vec_from_v1(&payload)
     }
 
-    /// Agentful sessions have their trace endpoint normalized to `/v0.4/traces` by
-    /// `tracer::Config::set_endpoint` since it doesn't know ahead of time which encoding will be
-    /// used. This exercises the full `send_trace_v1_bytes` chain to ensure V1 payloads are
-    /// redirected to the agent's `/v1.0/traces` route instead, and that `lang_interpreter`/
-    /// `lang_vendor` (which the V1 payload model has no room for) survive as headers, alongside
-    /// `lang`/`lang_version`/`tracer_version` (which are read back out of the decoded V1 payload
-    /// — see `send_trace_v1`).
+    /// Mocks `/info` advertising `endpoints` and returns its agent info, for the session to hold
+    /// as `set_connection_config` does. The send path peeks non-blockingly, so the info is resolved
+    /// before returning.
+    async fn prime_agent_info(
+        http_server: &MockServer,
+        server: &SidecarServer,
+        endpoints: &[&str],
+    ) -> AgentInfoGuard {
+        prime_agent_info_body(
+            http_server,
+            server,
+            serde_json::json!({ "endpoints": endpoints }),
+        )
+        .await
+    }
+
+    /// [`prime_agent_info`] with a whole `/info` body.
+    async fn prime_agent_info_body(
+        http_server: &MockServer,
+        server: &SidecarServer,
+        body: serde_json::Value,
+    ) -> AgentInfoGuard {
+        let body = body.to_string();
+        http_server
+            .mock_async(|when, then| {
+                when.path("/info");
+                then.status(200)
+                    .header("content-type", "application/json")
+                    .header("datadog-agent-state", "state-hash-1")
+                    .body(body);
+            })
+            .await;
+        let endpoint = Endpoint {
+            url: http_server.url("/").parse().unwrap(),
+            ..Endpoint::default()
+        };
+        let guard = server.agent_infos.query_for(endpoint);
+        // Await the initial fetch so the cached future is resolved by the time we send.
+        guard.get().await;
+        guard
+    }
+
+    /// When the agent advertises `/v1.0/traces`, `send_trace_v1_bytes` routes V1 to that endpoint,
+    /// and `lang_interpreter`/`lang_vendor` (absent from the V1 payload model) survive as headers
+    /// alongside the payload-carried `lang`/`lang_version`/`tracer_version` (see `send_trace_v1`).
     #[tokio::test]
     #[cfg_attr(miri, ignore)]
-    async fn send_trace_v1_bytes_routes_to_v1_endpoint() {
+    async fn send_trace_v1_bytes_routes_to_v1_endpoint_when_agent_advertises_v1() {
         let http_server = MockServer::start_async().await;
         let v1_mock = http_server
             .mock_async(|when, then| {
@@ -2265,7 +3301,11 @@ mod tests {
                     .header("datadog-meta-lang-interpreter-vendor", "cpython-vendor")
                     .header("datadog-meta-lang", "rust")
                     .header("datadog-meta-lang-version", "1.87")
-                    .header("datadog-meta-tracer-version", "9.9.9");
+                    .header("datadog-meta-tracer-version", "9.9.9")
+                    // Top-level spans are marked with the tracer key on the V1 path.
+                    .header("datadog-client-computed-top-level", "true")
+                    .body_includes("_dd.top_level")
+                    .body_excludes("_top_level");
                 then.status(200);
             })
             .await;
@@ -2277,14 +3317,24 @@ mod tests {
             .await;
 
         let mut handler = test_handler(SidecarServer::default());
+        let agent_info = prime_agent_info(
+            &http_server,
+            &handler.server,
+            &["/v0.4/traces", "/v1.0/traces"],
+        )
+        .await;
         configure_session(&handler, InstanceId::new("session", "runtime"), |session| {
             set_trace_endpoint(session, http_server.url("/"));
+            session.set_agent_info(agent_info);
         });
 
         handler
             .send_trace_v1_bytes(
                 sample_v1_trace_payload_bytes(),
-                TracerGenericTags::default(),
+                TracerGenericTags {
+                    client_computed_top_level: true,
+                    ..Default::default()
+                },
                 "cpython".to_owned(),
                 "cpython-vendor".to_owned(),
             )
@@ -2297,6 +3347,419 @@ mod tests {
 
         v1_mock.assert_async().await;
         assert_eq!(v04_mock.calls_async().await, 0);
+    }
+
+    /// Agentless V1 payloads skip the agent, so the sidecar normalizes them; agent-bound payloads
+    /// are left for the agent to normalize.
+    #[tokio::test(flavor = "current_thread")]
+    #[cfg_attr(miri, ignore)]
+    async fn send_trace_v1_bytes_normalizes_only_agentless_payloads() {
+        for agentless in [true, false] {
+            let http_server = MockServer::start_async().await;
+            let path = if agentless {
+                "/api/v0.2/traces"
+            } else {
+                "/v1.0/traces"
+            };
+            let normalized = http_server
+                .mock_async(|when, then| {
+                    when.method(POST)
+                        .path(path)
+                        .body_includes("unnamed-rust-service");
+                    then.status(200);
+                })
+                .await;
+            let unnormalized = http_server
+                .mock_async(|when, then| {
+                    when.method(POST)
+                        .path(path)
+                        .body_excludes("unnamed-rust-service");
+                    then.status(200);
+                })
+                .await;
+
+            let mut handler = test_handler(SidecarServer::default());
+            let agent_info = prime_agent_info(
+                &http_server,
+                &handler.server,
+                &["/v0.4/traces", "/v1.0/traces"],
+            )
+            .await;
+            configure_session(&handler, InstanceId::new("session", "runtime"), |session| {
+                let endpoint = Endpoint {
+                    url: http_server.url("/").parse().unwrap(),
+                    api_key: agentless.then(|| "api-key".into()),
+                    ..Endpoint::default()
+                };
+                session.tracer_config.set_endpoint(endpoint).unwrap();
+                session.set_agent_info(agent_info);
+            });
+
+            handler
+                .send_trace_v1_bytes(
+                    sample_v1_trace_payload_bytes_with("", Default::default()),
+                    TracerGenericTags {
+                        client_computed_top_level: true,
+                        ..Default::default()
+                    },
+                    "cpython".to_owned(),
+                    "cpython-vendor".to_owned(),
+                )
+                .await;
+            sleep(TokioDuration::from_millis(50)).await;
+            handler.server.trace_flusher.join().await.unwrap();
+
+            assert_eq!(normalized.calls_async().await, usize::from(agentless));
+            assert_eq!(unnormalized.calls_async().await, usize::from(!agentless));
+        }
+    }
+
+    /// When the agent does not advertise `/v1.0/traces`, `send_trace_v1_bytes` downgrades to v0.4
+    /// and sends to `/v0.4/traces` instead, so old agents keep receiving traces.
+    #[tokio::test]
+    #[cfg_attr(miri, ignore)]
+    async fn send_trace_v1_bytes_downgrades_to_v04_when_agent_lacks_v1() {
+        let http_server = MockServer::start_async().await;
+        let v1_mock = http_server
+            .mock_async(|when, then| {
+                when.method(POST).path("/v1.0/traces");
+                then.status(200);
+            })
+            .await;
+        let v04_mock = http_server
+            .mock_async(|when, then| {
+                when.method(POST)
+                    .path("/v0.4/traces")
+                    .header("datadog-meta-lang-interpreter", "cpython")
+                    .header("datadog-meta-lang-interpreter-vendor", "cpython-vendor")
+                    .header("datadog-meta-lang", "rust")
+                    .header("datadog-meta-lang-version", "1.87")
+                    .header("datadog-meta-tracer-version", "9.9.9")
+                    // The downgrade keeps the tracer's own top-level marks and header.
+                    .header_missing("datadog-client-computed-top-level")
+                    .body_includes("_dd.top_level");
+                then.status(200);
+            })
+            .await;
+
+        let mut handler = test_handler(SidecarServer::default());
+        let agent_info = prime_agent_info(&http_server, &handler.server, &["/v0.4/traces"]).await;
+        configure_session(&handler, InstanceId::new("session", "runtime"), |session| {
+            set_trace_endpoint(session, http_server.url("/"));
+            session.set_agent_info(agent_info);
+        });
+
+        handler
+            .send_trace_v1_bytes(
+                sample_v1_trace_payload_bytes(),
+                TracerGenericTags::default(),
+                "cpython".to_owned(),
+                "cpython-vendor".to_owned(),
+            )
+            .await;
+
+        sleep(TokioDuration::from_millis(50)).await;
+        handler.server.trace_flusher.join().await.unwrap();
+
+        v04_mock.assert_async().await;
+        assert_eq!(v1_mock.calls_async().await, 0);
+    }
+
+    /// `force_v04` (`DD_TRACE_AGENT_PROTOCOL_VERSION=0.4`) downgrades even when the agent
+    /// advertises `/v1.0/traces`.
+    #[tokio::test]
+    #[cfg_attr(miri, ignore)]
+    async fn send_trace_v1_bytes_downgrades_to_v04_when_forced() {
+        let http_server = MockServer::start_async().await;
+        let v1_mock = http_server
+            .mock_async(|when, then| {
+                when.method(POST).path("/v1.0/traces");
+                then.status(200);
+            })
+            .await;
+        let v04_mock = http_server
+            .mock_async(|when, then| {
+                when.method(POST).path("/v0.4/traces");
+                then.status(200);
+            })
+            .await;
+
+        let mut handler = test_handler(SidecarServer::default());
+        let agent_info = prime_agent_info(
+            &http_server,
+            &handler.server,
+            &["/v0.4/traces", "/v1.0/traces"],
+        )
+        .await;
+        configure_session(&handler, InstanceId::new("session", "runtime"), |session| {
+            set_trace_endpoint(session, http_server.url("/"));
+            session.tracer_config.force_v04 = true;
+            session.set_agent_info(agent_info);
+        });
+
+        handler
+            .send_trace_v1_bytes(
+                sample_v1_trace_payload_bytes(),
+                TracerGenericTags::default(),
+                "cpython".to_owned(),
+                "cpython-vendor".to_owned(),
+            )
+            .await;
+
+        sleep(TokioDuration::from_millis(50)).await;
+        handler.server.trace_flusher.join().await.unwrap();
+
+        v04_mock.assert_async().await;
+        assert_eq!(v1_mock.calls_async().await, 0);
+    }
+
+    /// The first trace after `set_connection_config` goes out as V1 once the session's `/info`
+    /// fetch has resolved: the send path reads the session's agent info rather than starting a
+    /// separate fetcher keyed by the `/v0.4/traces` endpoint.
+    #[tokio::test]
+    #[cfg_attr(miri, ignore)]
+    async fn first_send_after_connection_config_uses_v1() {
+        let http_server = MockServer::start_async().await;
+        let info_mock = http_server
+            .mock_async(|when, then| {
+                when.path("/info");
+                then.status(200)
+                    .header("content-type", "application/json")
+                    .header("datadog-agent-state", "state-hash-1")
+                    .body(r#"{"endpoints":["/v0.4/traces","/v1.0/traces"]}"#);
+            })
+            .await;
+        let v1_mock = http_server
+            .mock_async(|when, then| {
+                when.method(POST)
+                    .path("/v1.0/traces")
+                    .header("datadog-client-computed-top-level", "true")
+                    .body_includes("_dd.top_level")
+                    .body_excludes("_top_level");
+                then.status(200);
+            })
+            .await;
+        let v04_mock = http_server
+            .mock_async(|when, then| {
+                when.method(POST).path("/v0.4/traces");
+                then.status(200);
+            })
+            .await;
+
+        let mut handler = test_handler(SidecarServer::default());
+        let endpoint = Endpoint {
+            url: http_server.url("/").parse().unwrap(),
+            ..Endpoint::default()
+        };
+        handler
+            .set_connection_config(
+                InstanceId::new("session", "runtime"),
+                #[cfg(windows)]
+                None,
+                SessionConfig {
+                    endpoint: endpoint.clone(),
+                    dogstatsd_endpoint: endpoint,
+                    language: "rust".to_owned(),
+                    language_version: "1.87".to_owned(),
+                    tracer_version: "9.9.9".to_owned(),
+                    ..SessionConfig::for_test()
+                },
+            )
+            .await;
+
+        // Wait for the session's `/info` fetch, as the agent answered before the first flush.
+        let session_info = handler
+            .session
+            .load()
+            .expect("the connection is configured")
+            .agent_info()
+            .expect("an agentful session holds an agent info guard")
+            .get();
+        session_info.await;
+
+        handler
+            .send_trace_v1_bytes(
+                sample_v1_trace_payload_bytes(),
+                TracerGenericTags {
+                    client_computed_top_level: true,
+                    ..Default::default()
+                },
+                "cpython".to_owned(),
+                "cpython-vendor".to_owned(),
+            )
+            .await;
+
+        sleep(TokioDuration::from_millis(50)).await;
+        handler.server.trace_flusher.join().await.unwrap();
+
+        assert_eq!(v04_mock.calls_async().await, 0);
+        v1_mock.assert_async().await;
+        // One fetcher per agent: sending must not start a second `/info` poller.
+        assert_eq!(info_mock.calls_async().await, 1);
+    }
+
+    /// Sends one V1 payload through `handler` and waits for the flusher to send it.
+    async fn send_v1_and_flush(handler: &mut ConnectionSidecarHandler, payload: Vec<u8>) {
+        handler
+            .send_trace_v1_bytes(
+                payload,
+                TracerGenericTags::default(),
+                "cpython".to_owned(),
+                "cpython-vendor".to_owned(),
+            )
+            .await;
+        sleep(TokioDuration::from_millis(50)).await;
+        handler.server.trace_flusher.join().await.unwrap();
+    }
+
+    fn sample_span_event() -> libdd_trace_utils::span::v1::SpanEventBytes {
+        libdd_trace_utils::span::v1::SpanEventBytes {
+            time_unix_nano: 1_700_000_000_000_000_000,
+            name: libdd_tinybytes::BytesString::from_static("exception"),
+            ..Default::default()
+        }
+    }
+
+    /// The downgrade writes native v0.4 `span_events` only when `/info` advertises them, and
+    /// falls back to the legacy `events` meta JSON otherwise.
+    #[tokio::test]
+    #[cfg_attr(miri, ignore)]
+    async fn downgrade_uses_native_span_events_only_when_info_advertises_them() {
+        for span_events in [Some(true), None] {
+            let http_server = MockServer::start_async().await;
+            let native = span_events == Some(true);
+            let v04_mock = http_server
+                .mock_async(|when, then| {
+                    let when = when.method(POST).path("/v0.4/traces");
+                    // msgpack strings are unquoted; the JSON in the `events` meta quotes its keys.
+                    if native {
+                        when.body_includes("span_events")
+                            .body_excludes("\"time_unix_nano\"");
+                    } else {
+                        when.body_excludes("span_events")
+                            .body_includes("\"time_unix_nano\"");
+                    }
+                    then.status(200);
+                })
+                .await;
+
+            let mut handler = test_handler(SidecarServer::default());
+            let agent_info = prime_agent_info_body(
+                &http_server,
+                &handler.server,
+                serde_json::json!({ "endpoints": ["/v0.4/traces"], "span_events": span_events }),
+            )
+            .await;
+            configure_session(&handler, InstanceId::new("session", "runtime"), |session| {
+                set_trace_endpoint(session, http_server.url("/"));
+                session.set_agent_info(agent_info);
+            });
+
+            send_v1_and_flush(
+                &mut handler,
+                sample_v1_trace_payload_bytes_with(
+                    "svc",
+                    libdd_trace_utils::span::v1::ThinVec::from_iter([sample_span_event()]),
+                ),
+            )
+            .await;
+
+            v04_mock.assert_async().await;
+        }
+    }
+
+    /// A 404 from `/v1.0/traces` turns V1 off and re-fetches `/info` right away. The 404'd payload
+    /// is not re-sent, the next one goes to v0.4, and V1 comes back once `/info` changes.
+    #[tokio::test]
+    #[cfg_attr(miri, ignore)]
+    async fn v1_404_falls_back_to_v04_until_info_changes() {
+        let http_server = MockServer::start_async().await;
+        let info_body = |version: &str| {
+            serde_json::json!({
+                "version": version,
+                "endpoints": ["/v0.4/traces", "/v1.0/traces"],
+            })
+            .to_string()
+        };
+        let info_mock = http_server
+            .mock_async(|when, then| {
+                when.path("/info");
+                then.status(200).body(info_body("7.80.0"));
+            })
+            .await;
+        let v1_mock = http_server
+            .mock_async(|when, then| {
+                when.method(POST).path("/v1.0/traces");
+                then.status(404).body("404 page not found");
+            })
+            .await;
+        let v04_mock = http_server
+            .mock_async(|when, then| {
+                when.method(POST).path("/v0.4/traces");
+                then.status(200);
+            })
+            .await;
+
+        let mut handler = test_handler(SidecarServer::default());
+        let endpoint = Endpoint {
+            url: http_server.url("/").parse().unwrap(),
+            ..Endpoint::default()
+        };
+        let agent_info = handler.server.agent_infos.query_for(endpoint.clone());
+        agent_info.get().await;
+        // A second guard on the same fetcher, to observe it.
+        let probe = handler.server.agent_infos.query_for(endpoint);
+        configure_session(&handler, InstanceId::new("session", "runtime"), |session| {
+            set_trace_endpoint(session, http_server.url("/"));
+            session.set_agent_info(agent_info);
+        });
+
+        send_v1_and_flush(&mut handler, sample_v1_trace_payload_bytes()).await;
+        assert!(!probe.v1_active());
+        let v1_calls = v1_mock.calls_async().await;
+        assert!(v1_calls > 0);
+        // Re-fetched without waiting for the next poll; unchanged, so V1 stays off.
+        for _ in 0..100 {
+            if info_mock.calls_async().await >= 2 {
+                break;
+            }
+            sleep(TokioDuration::from_millis(10)).await;
+        }
+        assert_eq!(info_mock.calls_async().await, 2);
+
+        send_v1_and_flush(&mut handler, sample_v1_trace_payload_bytes()).await;
+        v04_mock.assert_calls_async(1).await;
+        assert_eq!(v1_mock.calls_async().await, v1_calls);
+        assert!(!probe.v1_active());
+
+        // The agent now serves V1 and a changed `/info`.
+        info_mock.delete_async().await;
+        v1_mock.delete_async().await;
+        let info_mock = http_server
+            .mock_async(|when, then| {
+                when.path("/info");
+                then.status(200).body(info_body("7.81.0"));
+            })
+            .await;
+        let v1_mock = http_server
+            .mock_async(|when, then| {
+                when.method(POST).path("/v1.0/traces");
+                then.status(200);
+            })
+            .await;
+        probe.refresh();
+        for _ in 0..100 {
+            if probe.v1_active() {
+                break;
+            }
+            sleep(TokioDuration::from_millis(10)).await;
+        }
+        assert!(probe.v1_active());
+        info_mock.assert_async().await;
+
+        send_v1_and_flush(&mut handler, sample_v1_trace_payload_bytes()).await;
+        v1_mock.assert_async().await;
+        v04_mock.assert_calls_async(1).await;
     }
 }
 

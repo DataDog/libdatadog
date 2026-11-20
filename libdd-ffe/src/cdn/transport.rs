@@ -9,7 +9,8 @@ use http::header::{
 };
 use http::{Method, Request};
 use http_body_util::BodyExt;
-use libdd_common::http_common::{self, Body};
+use libdd_networking::http_common::{self, Body};
+use libdd_trace_normalization::normalize_utils::normalize_service;
 use percent_encoding::percent_decode_str;
 use std::future::Future;
 use std::io::Read;
@@ -21,6 +22,7 @@ pub(super) const MAX_RESPONSE_BODY_BYTES: usize = 10 << 20;
 const INTERNAL_UNTRACED_HEADER: &str = "DD-Internal-Untraced-Request";
 const API_KEY_HEADER: &str = "DD-API-KEY";
 const AUTHORIZATION_HEADER: &str = "Authorization";
+const SERVICE_HEADER: &str = "DD-Service";
 
 pub(super) type FetchFuture<'a> =
     Pin<Box<dyn Future<Output = Result<PollResponse, TransportFailure>> + Send + 'a>>;
@@ -54,19 +56,21 @@ pub(super) struct PollResponse {
 }
 
 pub(super) struct HyperTransport {
-    client: libdd_common::HttpClient,
+    client: http_common::HttpClient,
     language: String,
     version: String,
+    service: Option<String>,
 }
 
 impl HyperTransport {
-    pub(super) fn new(language: String, version: String) -> Self {
+    pub(super) fn new(language: String, version: String, service: Option<String>) -> Self {
         Self {
             // Leave redirects visible: credentials must never be forwarded
             // to a location supplied by the server.
             client: http_common::new_client_periodic(),
             language,
             version,
+            service: usage_service(service),
         }
     }
 
@@ -77,7 +81,13 @@ impl HyperTransport {
         etag: Option<&str>,
         cancellation: &CancellationToken,
     ) -> Result<PollResponse, TransportFailure> {
-        let request = build_request(endpoint, etag, &self.language, &self.version)?;
+        let request = build_request(
+            endpoint,
+            etag,
+            &self.language,
+            &self.version,
+            self.service.as_deref(),
+        )?;
         let operation = async {
             let response = self
                 .client
@@ -147,6 +157,7 @@ fn build_request(
     etag: Option<&str>,
     language: &str,
     version: &str,
+    service: Option<&str>,
 ) -> Result<Request<Body>, TransportFailure> {
     let (request_url, authorization) = request_url_and_authorization(endpoint.uri())?;
     // Keep CDN headers explicit. Endpoint's generic request builder also adds
@@ -159,6 +170,10 @@ fn build_request(
         .header("DD-Client-Library-Version", version)
         .header(INTERNAL_UNTRACED_HEADER, "1");
 
+    // The CDN uses this header to attribute usage to the service.
+    if let Some(service) = service {
+        builder = builder.header(SERVICE_HEADER, service);
+    }
     if let Some(etag) = etag {
         builder = builder.header(IF_NONE_MATCH, etag);
     }
@@ -172,6 +187,36 @@ fn build_request(
     builder
         .body(Body::empty())
         .map_err(|_| TransportFailure::BuildRequest)
+}
+
+/// The name that [`normalize_service`] gives a service that has nothing left
+/// after normalization.
+const FALLBACK_SERVICE: &str = "unnamed-service";
+
+/// Returns the `DD-Service` value: the normalized service name, or `None`.
+///
+/// The name comes from the trace normalizer ([`normalize_service`]), so
+/// `My Service` becomes `my_service`, and `café-api` stays `café-api`. If the
+/// normalized name is empty or the normalizer fallback `unnamed-service` (for
+/// example from `___`), the request has no header. A service that is itself
+/// named `unnamed-service` also has no header, because it is the same value as
+/// the fallback.
+///
+/// The `http` crate accepts UTF-8 header values and sends their bytes. The
+/// normalizer replaces line breaks and other control characters with `_`, so
+/// the returned value is always a valid header value, and a service cannot
+/// make requests fail.
+fn usage_service(service: Option<String>) -> Option<String> {
+    let service = service.filter(|service| !service.is_empty())?;
+    let mut normalized = service.clone();
+    normalize_service(&mut normalized);
+    let accepted = normalized != FALLBACK_SERVICE && !normalized.is_empty();
+    if !accepted {
+        log::debug!(
+            "Feature Flags: service {service:?} has an empty normalized name; DD-Service header not sent"
+        );
+    }
+    accepted.then_some(normalized)
 }
 
 fn request_url_and_authorization(
@@ -312,8 +357,10 @@ mod tests {
             .expect("custom endpoint");
 
         let managed_request =
-            build_request(&managed, Some("etag"), "python", "1.0").expect("managed request");
+            build_request(&managed, Some("etag"), "python", "1.0", Some("checkout"))
+                .expect("managed request");
         assert_eq!(managed_request.headers()[API_KEY_HEADER], "secret");
+        assert_eq!(managed_request.headers()[SERVICE_HEADER], "checkout");
         assert_eq!(
             managed_request.headers()["DD-Client-Library-Language"],
             "python"
@@ -325,13 +372,93 @@ mod tests {
         assert_eq!(managed_request.headers()[IF_NONE_MATCH], "etag");
         assert_eq!(managed_request.headers()[INTERNAL_UNTRACED_HEADER], "1");
 
-        let custom_request = build_request(&custom, None, "php", "1.27").expect("custom request");
+        let custom_request =
+            build_request(&custom, None, "php", "1.27", Some("checkout")).expect("custom request");
         assert!(!custom_request.headers().contains_key(API_KEY_HEADER));
+        // A service name is not a secret, so custom endpoints also get it.
+        assert_eq!(custom_request.headers()[SERVICE_HEADER], "checkout");
         assert_eq!(
             custom_request.headers()[AUTHORIZATION_HEADER],
             "Basic dXNlcjpwYXNzd29yZA=="
         );
         assert_eq!(custom_request.uri(), "https://localhost/custom");
+    }
+
+    #[test]
+    fn service_header_is_omitted_without_a_service() {
+        let endpoint =
+            CdnEndpoint::build("", "datadoghq.com", "", "secret").expect("managed endpoint");
+        crate::test_logging::start_log_capture();
+        for service in [None, Some("")] {
+            let service = usage_service(service.map(Into::into));
+            let request =
+                build_request(&endpoint, Some("etag"), "php", "1.27", service.as_deref()).unwrap();
+            assert!(
+                !request.headers().contains_key(SERVICE_HEADER),
+                "{service:?}"
+            );
+        }
+        // No service is not a rejected service, so there is no log.
+        assert!(crate::test_logging::captured_logs().is_empty());
+    }
+
+    #[test]
+    fn the_service_is_sent_normalized_or_not_at_all() {
+        // The trace normalizer has its own tests. These rows check only that the
+        // header carries its result, and that some results send no header.
+        // (configured service, DD-Service header)
+        let rows: [(&str, Option<&str>); 7] = [
+            ("checkout", Some("checkout")),
+            ("My Service", Some("my_service")),
+            ("Default Web Site/Shop", Some("default_web_site/shop")),
+            // The header carries non-ASCII names as UTF-8 bytes.
+            ("café-api", Some("café-api")),
+            ("支付", Some("支付")),
+            // The normalizer fallback `unnamed-service`.
+            ("___", None),
+            ("   ", None),
+        ];
+        let endpoint = CdnEndpoint::custom("http://localhost/config").unwrap();
+        for (service, header) in rows {
+            crate::test_logging::start_log_capture();
+            let sent = usage_service(Some(service.to_owned()));
+            assert_eq!(sent.as_deref(), header, "{service:?}");
+            let request = build_request(&endpoint, None, "php", "1.27", sent.as_deref())
+                .expect("the header is a valid header value");
+            assert_eq!(
+                request
+                    .headers()
+                    .get(SERVICE_HEADER)
+                    .map(|value| value.as_bytes()),
+                header.map(str::as_bytes),
+                "{service:?}"
+            );
+            // A service that is set but not sent has one debug log.
+            let logs = crate::test_logging::captured_logs();
+            if header.is_none() {
+                assert_eq!(logs.len(), 1, "{service:?}");
+                assert_eq!(logs[0].level, log::Level::Debug);
+                assert_eq!(
+                    logs[0].message,
+                    format!(
+                        "Feature Flags: service {service:?} has an empty normalized name; DD-Service header not sent"
+                    )
+                );
+            } else {
+                assert!(logs.is_empty(), "{service:?}");
+            }
+        }
+
+        // The raw value is not a valid header value. If it went out as is,
+        // every request would fail.
+        assert!(matches!(
+            build_request(&endpoint, None, "php", "1.27", Some("bad\nvalue")),
+            Err(TransportFailure::BuildRequest)
+        ));
+        assert_eq!(
+            usage_service(Some("bad\nvalue".to_owned())).as_deref(),
+            Some("bad_value")
+        );
     }
 
     #[test]
@@ -343,7 +470,7 @@ mod tests {
             "must-not-be-sent",
         )
         .unwrap();
-        let request = build_request(&endpoint, None, "php", "1.27").unwrap();
+        let request = build_request(&endpoint, None, "php", "1.27", Some("checkout")).unwrap();
         assert_eq!(
             request.uri(),
             "https://[::1]:8443/a/../Config%2fraw?tenant=a%2Fb&tenant=x+y&empty="
@@ -359,6 +486,7 @@ mod tests {
                 | "dd-client-library-language"
                 | "dd-client-library-version"
                 | "dd-internal-untraced-request"
+                | "dd-service"
                 | "authorization"
         )));
     }
@@ -377,7 +505,7 @@ mod tests {
                 "https://{userinfo}@[::1]:8443/a/../Config%2fraw?tenant=a%2Fb"
             ))
             .unwrap();
-            let request = build_request(&endpoint, None, "php", "1.27").unwrap();
+            let request = build_request(&endpoint, None, "php", "1.27", None).unwrap();
             assert_eq!(request.headers()[AUTHORIZATION_HEADER], expected);
             assert_eq!(
                 request.uri(),
@@ -397,7 +525,7 @@ mod tests {
                 "https://user:{password}@[::1]:8443/a/../Config%2fraw?tenant=a%2Fb"
             ))
             .unwrap();
-            let request = build_request(&endpoint, None, "php", "1.27").unwrap();
+            let request = build_request(&endpoint, None, "php", "1.27", None).unwrap();
             assert_eq!(
                 request.headers()[AUTHORIZATION_HEADER],
                 expected_authorization
@@ -410,7 +538,7 @@ mod tests {
         }
 
         let endpoint = CdnEndpoint::custom("https://user:päss@localhost/café?query=olé").unwrap();
-        let request = build_request(&endpoint, None, "php", "1.27").unwrap();
+        let request = build_request(&endpoint, None, "php", "1.27", None).unwrap();
         assert_eq!(request.uri(), "https://localhost/caf%C3%A9?query=ol%C3%A9");
         assert_eq!(
             request.headers()[AUTHORIZATION_HEADER],
@@ -419,6 +547,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[cfg_attr(miri, ignore = "tests HTTP cancellation, not unsafe memory access")]
     async fn cancellation_interrupts_an_inflight_http_request() {
         use tokio::io::AsyncReadExt;
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -436,8 +565,9 @@ mod tests {
         });
         let cancellation = CancellationToken::new();
         let stop = cancellation.clone();
+        let transport = HyperTransport::new("php".into(), "1.27".into(), None);
         let request = tokio::spawn(async move {
-            HyperTransport::new("php".into(), "1.27".into())
+            transport
                 .get(&endpoint, Duration::from_secs(30), None, &stop)
                 .await
         });
@@ -469,7 +599,7 @@ mod tests {
             assert!(socket.read(&mut request).await.unwrap() > 0);
             socket.write_all(b"HTTP/1.1 429 Too Many Requests\r\nRetry-After: 10\r\nContent-Length: 100000000\r\n\r\n").await.unwrap();
         });
-        let response = HyperTransport::new("php".into(), "1.27".into())
+        let response = HyperTransport::new("php".into(), "1.27".into(), None)
             .get(
                 &endpoint,
                 Duration::from_secs(5),
@@ -509,7 +639,7 @@ mod tests {
                 .await
                 .unwrap();
         });
-        let transport = HyperTransport::new("python".into(), "1.0".into());
+        let transport = HyperTransport::new("python".into(), "1.0".into(), None);
         let response = transport
             .get(
                 &endpoint,

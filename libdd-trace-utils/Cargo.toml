@@ -54,8 +54,10 @@ thread_local.workspace = true
 
 libdd-capabilities = { path = "../libdd-capabilities", version = "4.0.1" }
 libdd-common = { version = "10.0.0", path = "../libdd-common", default-features = false, features = ["std"] }
+libdd-host-identity = { version = "1.0.0", path = "../libdd-host-identity" }
+libdd-regex = { version = "0.1.0", path = "../libdd-regex" }
 libdd-trace-normalization = { version = "4.3.1", path = "../libdd-trace-normalization" }
-libdd-trace-protobuf = { version = "5.1.1", path = "../libdd-trace-protobuf" }
+libdd-trace-protobuf = { version = "5.1.1", path = "../libdd-trace-protobuf", features = ["trace-model"] }
 libdd-trace-model = { version = "1.0.0", path = "../libdd-trace-model" }
 libdd-tinybytes = { version = "1.2.0", path = "../libdd-tinybytes", features = [
     "bytes_string",
@@ -74,6 +76,7 @@ cargo_metadata = { workspace = true, optional = true }
 cargo-platform = { workspace = true, optional = true }
 httpmock = { workspace = true, optional = true }
 urlencoding = { workspace = true, optional = true }
+libdd-networking = { path = "../libdd-networking", version = "1.0.0", default-features = false }
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 libdd-capabilities-impl = { version = "9.0.0", path = "../libdd-capabilities-impl", default-features = false, optional = true }
@@ -98,16 +101,16 @@ tempfile.workspace = true
 
 [features]
 default = ["https"]
-https = ["libdd-common/https", "dep:libdd-capabilities-impl", "libdd-capabilities-impl/https"]
+https = ["libdd-networking/https", "dep:libdd-capabilities-impl", "libdd-capabilities-impl/https"]
 mini_agent = [
     "compression",
-    "libdd-common/http-client",
-    "libdd-common/use_webpki_roots",
+    "libdd-networking/http-client",
+    "libdd-networking/use_webpki_roots",
     "dep:flate2",
 ]
 test-utils = [
     "dep:tokio",
-    "libdd-common/http-client",
+    "libdd-networking/http-client",
     "hyper/server",
     "httpmock",
     "cargo_metadata",
@@ -122,11 +125,4 @@ compression = ["zstd"]
 # target: zstd on native platforms and zrip on WASM.
 zstd = ["dep:zstd", "dep:zrip"]
 # FIPS mode uses the FIPS-compliant cryptographic provider (Unix only)
-fips = ["libdd-common/fips", "dep:libdd-capabilities-impl", "libdd-capabilities-impl/fips"]
-
-[lints.clippy]
-# TODO(paullgdc): This fails a lot because of if-let chaining which became
-# allowed with the 1.91.1 MSRV bump.
-# I am planning to fix each crate as an individual PR in order to not have 
-# too many conflicts
-collapsible_if = "allow"
+fips = ["libdd-networking/fips", "dep:libdd-capabilities-impl", "libdd-capabilities-impl/fips"]

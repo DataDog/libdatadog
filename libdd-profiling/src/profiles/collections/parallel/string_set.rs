@@ -2,7 +2,9 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use crate::profiles::collections::parallel::slice_set::{ParallelSliceSet, ParallelSliceStorage};
-use crate::profiles::collections::{Arc, ArcOverflow, SetError, StringRef, WELL_KNOWN_STRING_REFS};
+use crate::profiles::collections::{
+    Arc, ArcOverflow, SetError, StringRef, ThinStr, WELL_KNOWN_STRING_REFS,
+};
 use core::ptr;
 use std::ffi::c_void;
 use std::ops::Deref;
@@ -74,7 +76,9 @@ impl ParallelStringSet {
     pub unsafe fn insert_unique_uncontended(&self, str: &str) -> Result<StringRef, SetError> {
         unsafe {
             let thin_slice = self.inner.insert_unique_uncontended(str.as_bytes())?;
-            Ok(StringRef(thin_slice.into()))
+            // SAFETY: the slice was just created from `str.as_bytes()`, which
+            // is valid UTF-8.
+            Ok(StringRef(ThinStr::from_utf8_unchecked(thin_slice)))
         }
     }
 
@@ -82,7 +86,11 @@ impl ParallelStringSet {
     /// returns a handle to the string that can be used to retrieve it later.
     pub fn try_insert(&self, str: &str) -> Result<StringRef, SetError> {
         let thin_slice = self.inner.try_insert(str.as_bytes())?;
-        Ok(StringRef(thin_slice.into()))
+        // SAFETY: the slice was just created from `str.as_bytes()`, which is
+        // valid UTF-8.
+        Ok(StringRef(unsafe {
+            ThinStr::from_utf8_unchecked(thin_slice)
+        }))
     }
 
     /// Selects which shard a hash should go to (0-3 for 4 shards).

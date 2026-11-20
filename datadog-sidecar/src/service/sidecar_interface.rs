@@ -32,12 +32,53 @@ pub struct SidecarFlushOptions {
     pub telemetry: bool,
 }
 
+/// A rejected CDN subscription. Variants contain no endpoint or credential data.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub enum CdnSubscriptionError {
+    InvalidEndpoint,
+    InvalidPollInterval,
+    InvalidRequestTimeout,
+    InvalidLanguage,
+    InvalidVersion,
+    PublicationUnavailable,
+}
+
+impl From<libdd_ffe::cdn::InvalidConfig> for CdnSubscriptionError {
+    fn from(error: libdd_ffe::cdn::InvalidConfig) -> Self {
+        use libdd_ffe::cdn::InvalidConfig;
+        match error {
+            InvalidConfig::Endpoint => Self::InvalidEndpoint,
+            InvalidConfig::PollInterval => Self::InvalidPollInterval,
+            InvalidConfig::RequestTimeout => Self::InvalidRequestTimeout,
+            InvalidConfig::Language => Self::InvalidLanguage,
+            InvalidConfig::Version => Self::InvalidVersion,
+        }
+    }
+}
+
+impl std::fmt::Display for CdnSubscriptionError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str(match self {
+            Self::InvalidEndpoint => "invalid CDN endpoint",
+            Self::InvalidPollInterval => "invalid CDN polling interval",
+            Self::InvalidRequestTimeout => "invalid CDN request timeout",
+            Self::InvalidLanguage => "invalid CDN client language",
+            Self::InvalidVersion => "invalid CDN client version",
+            Self::PublicationUnavailable => "CDN configuration publication unavailable",
+        })
+    }
+}
+
+impl std::error::Error for CdnSubscriptionError {}
+
 /// The `SidecarInterface` trait defines the necessary methods for the sidecar service.
 ///
 /// A connection serves a single client thread, which processes one request at a time. All
 /// session and application state is therefore bound to the connection: it is set by the
 /// `set_*` methods (which the client replays after a reconnect) and implicitly applies to every
 /// other message on the same connection.
+/// CDN subscriptions carry their own complete configuration and may also use a
+/// dedicated connection without session/application messages.
 #[libdd_ipc_macros::service]
 pub trait SidecarInterface {
     /// Enqueues a list of actions for the application of the current request.
@@ -223,6 +264,14 @@ pub trait SidecarInterface {
         #[SerializedHandle] completion: libdd_ipc::platform::PlatformHandle<std::io::PipeWriter>,
     );
 
+    /// Keep the writer until the client closes its reader or this sidecar exits.
+    /// This process watch outlives the connection which registered it. No bytes are written.
+    /// In-process listeners ignore registrations and release the writer immediately.
+    #[oneway]
+    async fn register_liveness(
+        #[SerializedHandle] writer: libdd_ipc::platform::PlatformHandle<std::io::PipeWriter>,
+    );
+
     /// Sets x-datadog-test-session-token on all requests of this connection.
     ///
     /// # Arguments
@@ -237,6 +286,33 @@ pub trait SidecarInterface {
         version: String,
         span: libdd_ipc::shm_stats::OwnedShmSpanInput,
     );
+
+    /// IPC fallback: add a DSM checkpoint directly to the sidecar's SHM DSM table for
+    /// (env, version, service, primary tag). Creates the table if needed, retiring any stale
+    /// segment.
+    async fn add_dsm_checkpoint(
+        env: String,
+        version: String,
+        service: String,
+        primary_tag: String,
+        checkpoint: libdd_ipc::shm_dsm_checkpoint::OwnedDsmCheckpoint,
+    );
+
+    /// IPC fallback: add a DSM backlog offset directly to the sidecar's SHM DSM backlog table
+    /// for (env, version, service, primary tag). Creates the tables if needed, as
+    /// `add_dsm_checkpoint` does.
+    async fn add_dsm_backlog(
+        env: String,
+        version: String,
+        service: String,
+        primary_tag: String,
+        backlog: libdd_ipc::shm_dsm_backlog::OwnedDsmBacklog,
+    );
+
+    /// Records that Kafka clients with `bootstrap_servers` reach the cluster `cluster_id`, and
+    /// shares it with the sidecar's other processes through the map in
+    /// [`kafka_cluster_ids`](crate::service::kafka_cluster_ids).
+    async fn set_kafka_cluster_id(bootstrap_servers: String, cluster_id: String);
 
     /// Starts the AppSec backend if it has not already been initialized.
     ///
@@ -288,10 +364,12 @@ pub trait SidecarInterface {
     /// their target without replacing the session's other transports. Repeated
     /// identical configuration preserves routing and deduplication state.
     /// Targets absent from the batch are unchanged; this is not a full snapshot.
-    ///
-    /// Keep this method last: request variants cross the bincode IPC boundary,
-    /// so appending preserves the ordinals of all existing messages.
     async fn add_session_evp_transports(configs: Vec<EvpTransportConfigWithIdentity>);
+
+    /// Queue CDN configuration for this connection. No acknowledgement or returned handle:
+    /// readers open the ordinary RC directory immediately using registration.invariants().
+    /// Replay after reconnect. In-process listeners reject this to keep CDN HTTP out of PHP.
+    async fn set_cdn_configuration(config: Option<crate::shm_remote_config::CdnRegistration>);
 }
 
 #[cfg(test)]

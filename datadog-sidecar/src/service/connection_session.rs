@@ -7,7 +7,8 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use arc_swap::ArcSwapOption;
-use libdd_common::{Endpoint, tag::Tag};
+use libdd_common::Endpoint;
+use libdd_common::tag::Tag;
 use libdd_dogstatsd_client::DogStatsDClient;
 use libdd_live_debugger::sender::{DebuggerType, PayloadSender};
 use libdd_remote_config::fetch::{ConfigInvariants, ConfigOptions};
@@ -18,6 +19,7 @@ use crate::config::get_product_endpoint;
 use crate::log::{MULTI_LOG_FILTER, MULTI_LOG_WRITER, MultiEnvFilterGuard, MultiWriterGuard};
 use crate::service::agent_info::{AgentInfoGuard, AgentInfos};
 use crate::service::application::ActiveApplication;
+use crate::service::data_streams_flusher::{DsmConfig, dsm_endpoint};
 use crate::service::dogstatsd_pool::DogStatsDPool;
 use crate::service::evp_proxy::EVENT_PLATFORM_INTAKE_SUBDOMAIN;
 use crate::service::evp_transport::EvpTransport;
@@ -48,6 +50,8 @@ pub struct ConnectionSession {
     pub remote_config_interval: Duration,
     pub remote_config_enabled: bool,
     pub(crate) stats_config: Option<StatsConfig>,
+    /// `None` in agentless mode, where DSM is not sent.
+    pub(crate) dsm_config: Option<DsmConfig>,
     pub otlp_metrics_endpoint: Option<Endpoint>,
     evp_transports: EvpTransportState,
     pub process_tags: Vec<Tag>,
@@ -153,6 +157,8 @@ impl ConnectionSession {
             .clone_from(&config.tracer_version);
         tracer_config.retry_interval =
             u64::try_from(config.retry_interval.as_millis()).unwrap_or(u64::MAX);
+        tracer_config.flush_interval = config.flush_interval;
+        tracer_config.force_v04 = config.force_v04_traces;
 
         let mut debugger_config = libdd_live_debugger::sender::Config::default();
         debugger_config
@@ -183,6 +189,15 @@ impl ConnectionSession {
             tracer_version: config.tracer_version.clone(),
         });
 
+        // Process tags are filled in by `refresh_stats_process_tags`, as for stats.
+        let dsm_config = dsm_endpoint(&config.endpoint).map(|endpoint| DsmConfig {
+            endpoint,
+            language: config.language.clone(),
+            language_version: config.language_version.clone(),
+            tracer_version: config.tracer_version.clone(),
+            process_tags: vec![],
+        });
+
         let mut session = ConnectionSession {
             instance_id,
             telemetry_config,
@@ -202,6 +217,7 @@ impl ConnectionSession {
             remote_config_interval: config.remote_config_poll_interval,
             remote_config_enabled: config.remote_config_enabled,
             stats_config,
+            dsm_config,
             otlp_metrics_endpoint: config.otlp_metrics_endpoint,
             evp_transports: EvpTransportState::default(),
             process_tags: config.process_tags,
@@ -247,6 +263,7 @@ impl ConnectionSession {
             remote_config_interval: Duration::from_secs(5),
             remote_config_enabled: false,
             stats_config: None,
+            dsm_config: None,
             otlp_metrics_endpoint: None,
             evp_transports: EvpTransportState::default(),
             process_tags: vec![],
@@ -356,10 +373,10 @@ impl ConnectionSession {
             if let Ok(tag) = Tag::new("svc.user", "true") {
                 tags.push(tag);
             }
-        } else if let Some(name) = self.auto_resolved_service_name.as_ref() {
-            if let Ok(tag) = Tag::new("svc.auto", name.clone()) {
-                tags.push(tag);
-            }
+        } else if let Some(name) = self.auto_resolved_service_name.as_ref()
+            && let Ok(tag) = Tag::new("svc.auto", name.clone())
+        {
+            tags.push(tag);
         }
         tags
     }
@@ -369,10 +386,12 @@ impl ConnectionSession {
             .process_tags_with_svc_source()
             .iter()
             .map(|t| t.to_string())
-            .collect::<Vec<_>>()
-            .join(",");
+            .collect::<Vec<_>>();
         if let Some(stats) = self.stats_config.as_mut() {
-            stats.process_tags = process_tags;
+            stats.process_tags = process_tags.join(",");
+        }
+        if let Some(dsm) = self.dsm_config.as_mut() {
+            dsm.process_tags = process_tags;
         }
     }
 
@@ -394,7 +413,10 @@ impl ConnectionSession {
         }
         // So that newly created concentrators carry the test token.
         if let Some(stats) = self.stats_config.as_mut() {
-            stats.endpoint.test_token = token;
+            stats.endpoint.test_token = token.clone();
+        }
+        if let Some(dsm) = self.dsm_config.as_mut() {
+            dsm.endpoint.test_token = token;
         }
         // TODO(APMSP-1377): the dogstatsd-client doesn't support test_session tokens yet
     }
@@ -412,6 +434,17 @@ impl ConnectionSession {
         {
             self.remote_config_notify_target.clone()
         }
+    }
+
+    /// The agent info of this session's endpoint; `None` when agentless.
+    pub(crate) fn agent_info(&self) -> Option<&Arc<AgentInfoGuard>> {
+        self.agent_info.as_ref()
+    }
+
+    /// Replaces the agent info, for tests that prime it from a mock agent.
+    #[cfg(test)]
+    pub(crate) fn set_agent_info(&mut self, agent_info: AgentInfoGuard) {
+        self.agent_info = Some(Arc::new(agent_info));
     }
 
     fn debugger_config(&self) -> Cow<'_, libdd_live_debugger::sender::Config> {
@@ -449,12 +482,10 @@ impl ConnectionSession {
             }
 
             let mut sender = guard.lock().await;
-            if new_tags {
-                if let Some(sender) = sender.take() {
-                    spawn_map_err!(finish_sender(debugger_type, sender), |e| {
-                        error!("Error sending to live debugger {debugger_type:?} endpoint: {e:?}");
-                    });
-                }
+            if new_tags && let Some(sender) = sender.take() {
+                spawn_map_err!(finish_sender(debugger_type, sender), |e| {
+                    error!("Error sending to live debugger {debugger_type:?} endpoint: {e:?}");
+                });
             }
             if sender.is_none() {
                 *sender = Some(PayloadSender::new(

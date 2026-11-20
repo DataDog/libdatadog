@@ -66,6 +66,14 @@ Iterate fastest with `cargo check -p <crate>` while editing; validate each affec
   ```bash
   cargo nextest run -p libdd-otel-thread-ctx --no-default-features --features shared-context
   ```
+- **libdd-regex**: ships two alternative engine features (`full` is the default, `regex-lite` is
+  the alternative). Only one engine is re-exported per build, so each mode needs its own run:
+  ```bash
+  # Default (full) engine — covered by the workspace test run
+  cargo nextest run -p libdd-regex
+  # regex-lite engine
+  cargo nextest run -p libdd-regex --no-default-features --features regex-lite
+  ```
 - **test_spawn_from_lib**: `cargo nextest run --package test_spawn_from_lib --features prefer-dynamic`.
 
 ### Code exploration
@@ -81,6 +89,32 @@ Keep tool output concise to preserve conversation context:
 - Avoid dumping full diffs unless explicitly requested; use `git diff --stat`, `git diff --name-only`, or targeted snippets instead.
 - Avoid inspecting generated artifacts under `target/` unless validating generated output specifically.
 - During iteration, prefer narrow checks such as `cargo check -p <crate>`; batch slower tests, examples, and linting once the intended API/code shape has settled.
+
+### Community pull requests
+
+Fork PRs run CI with a restricted token. To run a fork PR with maintainer
+permissions, mirror it with:
+
+```bash
+./scripts/mirror-community-pull-request.sh --sha <reviewed-head-sha> <pr-number> [<target-branch>]
+```
+
+The script fetches the fork commits over HTTPS, cherry-picks them signed
+(`-S`) onto `external/community-pr-<N>`, pushes with a consent-pinned lease,
+and opens a mirror PR titled `<original title> 🪩 #<N>`. Both PRs get the
+`external` label. The mirror branch is disposable: re-running the script
+deletes and rebuilds it from scratch.
+
+* `--sha` is required for a real run and must match the PR head at run time.
+  Commits pushed after your review abort the run instead of being mirrored.
+* `--dry-run` prints the plan, including the current head SHA and warnings
+  for commits that change CI files. It needs no `--sha`.
+* `--no-push` builds the branch locally and skips the push and PR creation.
+* The run aborts before pushing when the PR changes CI files, CI-invoked
+  scripts, or benchmark/fuzz harnesses (`.github/`, `.gitlab-ci.yml`,
+  `.gitlab/`, `.sg/`, `sgconfig.yml`, `scripts/`, `benchmark/`, `fuzz/`),
+  since those would run with the repository's credentials.
+* Requires `gh`, `jq`, and git commit signing configured.
 
 ## Key Conventions
 
@@ -104,10 +138,12 @@ Exceptions are per dependency and must be justified in a comment:
 - a workspace entry that enables a feature for every member needs
   `# allow(workspace-deps-features): <justification>` on the line(s) directly above it.
 
-This is enforced in CI by the "Workspace dependency declarations" job of `lint.yml`. You can run it locally from inside the CI helper workspace:
+This is enforced in CI by the "Workspace dependency declarations" job of `lint.yml`, which builds the
+helpers on the pinned latest stable from `ci-toolchain.toml` (their dependencies have moved past the
+workspace MSRV). Run it locally the same way:
 
 ```bash
-(cd .github/actions && cargo run -p workspace-deps-lint)
+(cd .github/actions && RUSTUP_TOOLCHAIN=$(awk -F'"' '/^stable[[:space:]]*=/ {print $2}' ../../ci-toolchain.toml) cargo run -p workspace-deps-lint)
 ```
 
 ### Cryptography
@@ -132,4 +168,6 @@ All code source files (e.g. `.rs`, `.sh`) and TOML files (e.g. `Cargo.toml`) mus
   cargo run --bin release -- --out output-folder
   ```
   Feature flags control what's built: `crashtracker`, `profiling`, `telemetry`, `data-pipeline`, `symbolizer`, `library-config`, `log`, `ddsketch`, `ffe`
+
+  `--file-version <major.minor.patch>` overrides the `FileVersion` embedded in the Windows artifacts' `VERSIONINFO` resource, forwarded to the build as `LIBDATADOG_PACKAGE_VERSION`. It exists for redistributors that ship these artifacts under a version of their own (libdatadog-dotnet), because `FileVersion` is what Windows Installer compares when deciding whether to replace a file on upgrade. Omit it — as every libdatadog build and all of CI does — and both `FileVersion` and `ProductVersion` are the workspace release version. It has no effect on non-Windows targets.
 - **tools** — dev binaries: header dedup, FFI test runner, JUnit attribute injection

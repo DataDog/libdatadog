@@ -10,6 +10,8 @@ common:
   - any-glob-to-any-file: [
       'libdd-common/**/*',
       'libdd-common-ffi/**/*',
+      'libdd-regex/**/*',
+      'libdd-env/**/*',
     ]
 
 ci-build:

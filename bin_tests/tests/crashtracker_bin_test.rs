@@ -1068,10 +1068,8 @@ fn test_collector_no_allocations_stacktrace_modes() {
                 log_exists,
                 "Expected allocation detection log for mode {env_value}"
             );
-            if log_exists {
-                if let Ok(bytes) = fs::read(&detector_log_path) {
-                    eprintln!("{}", String::from_utf8_lossy(&bytes));
-                }
+            if log_exists && let Ok(bytes) = fs::read(&detector_log_path) {
+                eprintln!("{}", String::from_utf8_lossy(&bytes));
             }
         } else {
             result.unwrap();
@@ -1493,7 +1491,7 @@ fn test_panic_hook_mode(mode: &str, expected_category: &str, expected_panic_mess
 
         // Check for location format (file:line:column) - always present in Debug builds
         // Location should end with pattern like " (path/file.rs:123:45)"
-        let location_regex = libdd_common::regex_engine::Regex::new(r" \(.+?:\d+:\d+\)$").unwrap();
+        let location_regex = libdd_regex::Regex::new(r" \(.+?:\d+:\d+\)$").unwrap();
         assert!(
             location_regex.is_match(message),
             "Expected panic message to end with location ' (file:line:column)', got: {}",
@@ -1892,13 +1890,13 @@ fn validate_runtime_callback_string_data(crash_payload: &Value) {
 
     // Ensure frames array is empty for string mode
     let frames = runtime_stack.get("frames");
-    if let Some(frames_array) = frames {
-        if let Some(array) = frames_array.as_array() {
-            assert!(
-                array.is_empty(),
-                "Frames array should be empty for string mode"
-            );
-        }
+    if let Some(frames_array) = frames
+        && let Some(array) = frames_array.as_array()
+    {
+        assert!(
+            array.is_empty(),
+            "Frames array should be empty for string mode"
+        );
     }
 }
 
@@ -2778,12 +2776,12 @@ fn test_crash_tracking_bin_with_errors_intake_uds(
     let socket_path = std::path::Path::new("/var/run/datadog/apm.socket");
 
     // Create directory if it doesn't exist
-    if let Some(parent) = socket_path.parent() {
-        if std::fs::create_dir_all(parent).is_err() {
-            // Skip test if we can't create the directory
-            eprintln!("Skipping UDS test - cannot create /var/run/datadog directory");
-            return;
-        }
+    if let Some(parent) = socket_path.parent()
+        && std::fs::create_dir_all(parent).is_err()
+    {
+        // Skip test if we can't create the directory
+        eprintln!("Skipping UDS test - cannot create /var/run/datadog directory");
+        return;
     }
 
     // Remove socket if it exists from a previous run
@@ -3019,4 +3017,53 @@ fn extend_path<T: AsRef<Path>>(parent: &Path, path: T) -> PathBuf {
     let mut parent = parent.to_path_buf();
     parent.push(path);
     parent
+}
+
+/// Verify that the receiver reads OTel thread contexts from all threads.
+#[test]
+#[cfg_attr(miri, ignore)]
+#[cfg(target_os = "linux")]
+fn test_crash_tracking_otel_thread_ctx() {
+    use bin_tests::modes::unix::test_022_otel_thread_ctx::{MAIN_SPAN_ID, MAIN_TRACE_ID};
+
+    let config = CrashTestConfig::new(
+        BuildProfile::Release,
+        TestMode::OtelThreadCtx,
+        CrashType::NullDeref,
+    );
+    let artifacts = StandardArtifacts::new(config.profile);
+    let artifacts_map = fetch_built_artifacts(&artifacts.as_slice()).unwrap();
+
+    let validator: ValidatorFn = Box::new(move |payload, _fixtures| {
+        let contexts = payload["experimental"]["otel_thread_contexts"]
+            .as_array()
+            .expect("experimental.otel_thread_contexts should be an array");
+        assert!(
+            contexts.len() >= 3,
+            "expected at least 3 OTel thread contexts (main + 2 workers), got {}",
+            contexts.len()
+        );
+
+        // Find the crashing thread's context by trace_id.
+        let main_ctx = contexts
+            .iter()
+            .find(|c| c["trace_id"].as_str() == Some(MAIN_TRACE_ID))
+            .expect("crashing thread context not found");
+        assert_eq!(main_ctx["span_id"].as_str(), Some(MAIN_SPAN_ID));
+        assert_eq!(main_ctx["trace_flags"].as_u64(), Some(0x01));
+
+        // Verify worker threads are present by their trace_ids.
+        let has_http = contexts
+            .iter()
+            .any(|c| c["trace_id"].as_str().is_some_and(|t| t.starts_with("aa")));
+        let has_db = contexts
+            .iter()
+            .any(|c| c["trace_id"].as_str().is_some_and(|t| t.starts_with("cc")));
+        assert!(has_http, "worker-http thread context not found");
+        assert!(has_db, "worker-db thread context not found");
+
+        Ok(())
+    });
+
+    run_crash_test_with_artifacts(&config, &artifacts_map, &artifacts, validator).unwrap();
 }

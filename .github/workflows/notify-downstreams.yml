@@ -1,0 +1,26 @@
+# v<major>.<minor>.<patch> tags are the release interface. Consumers such as
+# libdatadog-rb build from the tag (the crate is not on crates.io), so a tag
+# push is the first consumable moment of a release. Hotfixes are tagged on
+# maintenance branches (v46.x) before reaching main, so only a tag trigger
+# catches every release flow.
+#
+# Runs from the TAGGED COMMIT, so it is untrusted by design: no permissions,
+# no tokens. It only completes so that notify-downstreams-dispatch.yml,
+# resolved from main via workflow_run, mints from reviewed code.
+#
+# Unnamed on purpose: the default workflow name is this file's path, which is
+# what the dispatcher watches. Do not add a name field.
+
+on: # yamllint disable-line rule:truthy
+  push:
+    tags:
+      - "v[0-9]*.[0-9]*.[0-9]*"
+
+permissions: {}
+
+jobs:
+  notify-downstreams:
+    if: github.event.deleted == false
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo "Release tag ${{ github.ref_name }} pushed. notify-downstreams-dispatch.yml picks this up from main."

@@ -15,6 +15,8 @@ serde_json.workspace = true
 thiserror = { workspace = true, default-features = true }
 libdd-capabilities = { version = "4.0.1", path = "../libdd-capabilities" }
 libdd-common = { version = "10.0.0", path = "../libdd-common", default-features = false, features = ["std"] }
+libdd-host-identity = { version = "1.0.0", path = "../libdd-host-identity" }
+libdd-regex = { version = "0.1.0", path = "../libdd-regex" }
 libdd-trace-stats = { version = "13.0.0", path = "../libdd-trace-stats", default-features = false, optional = true }
 libdd-trace-utils = { version = "16.0.0", path = "../libdd-trace-utils", default-features = false }
 libdd-trace-obfuscation = { version = "12.0.0", path = "../libdd-trace-obfuscation", default-features = false }
@@ -28,5 +30,8 @@ zstd.workspace = true
 [features]
 default = []
 compression = ["libdd-trace-stats?/compression", "libdd-trace-utils/compression"]
-regex-lite = ["libdd-common/regex-lite"]
+regex-lite = ["libdd-regex/regex-lite"]
 stats-obfuscation = ["dep:anyhow", "dep:libdd-trace-stats", "libdd-trace-stats/stats-obfuscation"]
+
+[package.metadata.cargo-machete]
+ignored = ["libdd-regex"]

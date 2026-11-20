@@ -1,15 +1,15 @@
 // Copyright 2025-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-use std::collections::HashMap;
+use std::{collections::HashMap, sync::Arc};
 
 use serde::Deserialize;
 
 use crate::rules_based::{Str, Timestamp, error::EvaluationError, sharder::PreSaltedSharder};
 
 use super::{
-    AllocationWire, AssignmentValue, Environment, FlagWire, RuleWire, ShardRange, ShardWire,
-    SplitWire, TryParse, UniversalFlagConfigWire, VariationType,
+    AllocationWire, AssignmentValue, Environment, Feature, FlagWire, RuleWire, ShardRange,
+    ShardWire, SplitWire, TryParse, UniversalFlagConfigWire, VariationType,
 };
 
 #[derive(Debug)]
@@ -22,6 +22,8 @@ pub struct UniversalFlagConfig {
 #[derive(Debug, Deserialize)]
 #[serde(from = "UniversalFlagConfigWire")]
 pub(crate) struct CompiledFlagsConfig {
+    // Preserve absence versus explicit null and defer validation until a dependency is reached.
+    pub max_dependency_depth: Option<serde_json::Value>,
     /// When configuration was last updated.
     pub created_at: Timestamp,
     /// Environment this configuration belongs to.
@@ -37,6 +39,7 @@ pub(crate) struct CompiledFlagsConfig {
 
 #[derive(Debug)]
 pub(crate) struct Flag {
+    pub has_dependencies: bool,
     pub variation_type: VariationType,
     pub allocations: Box<[Allocation]>,
     // Activation errors apply only when an opted-out subject uses future mode.
@@ -61,6 +64,7 @@ pub(crate) struct Split {
     pub variation_key: Str,
     pub value: AssignmentValue,
     pub serial_id: Option<i32>,
+    pub features: Option<Arc<[Feature]>>,
 }
 
 #[derive(Debug, Clone)]
@@ -100,6 +104,9 @@ impl From<UniversalFlagConfigWire> for CompiledFlagsConfig {
             .collect();
 
         CompiledFlagsConfig {
+            max_dependency_depth: config
+                .evaluator_params
+                .and_then(|params| params.get("maxDependencyDepth").cloned()),
             created_at: config.created_at,
             environment: config.environment,
             observe_full_evaluation_data: config.observe_full_evaluation_data,
@@ -137,6 +144,18 @@ fn compile_flag(flag: FlagWire) -> Result<Flag, EvaluationError> {
             Some(TryParse::ParseFailed(_))
         )
     });
+    let has_dependencies = flag
+        .allocations
+        .iter()
+        .filter_map(|allocation| allocation.rules.as_ref())
+        .flat_map(|rules| rules.iter())
+        .flat_map(|rule| &rule.conditions)
+        .any(|condition| {
+            matches!(
+                condition.check,
+                super::ConditionCheck::FlagEvaluation { .. }
+            )
+        });
     let allocations = flag
         .allocations
         .into_iter()
@@ -144,6 +163,7 @@ fn compile_flag(flag: FlagWire) -> Result<Flag, EvaluationError> {
         .collect::<Result<_, _>>()?;
 
     Ok(Flag {
+        has_dependencies,
         variation_type: flag.variation_type,
         allocations,
         has_invalid_activation,
@@ -201,6 +221,7 @@ fn compile_split(
         variation_key: split.variation_key,
         value: result,
         serial_id: split.serial_id,
+        features: (!split.features.is_empty()).then(|| split.features.into()),
     })
 }
 

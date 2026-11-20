@@ -12,6 +12,7 @@ use async_trait::async_trait;
 use bytes::Bytes;
 use libdd_capabilities::{HttpClientCapability, MaybeSend, SleepCapability};
 use libdd_common::Endpoint;
+use libdd_networking::endpoint::EndpointExt;
 use libdd_shared_runtime::Worker;
 use sha2::{Digest, Sha256};
 use std::marker::PhantomData;
@@ -743,10 +744,10 @@ mod single_threaded_tests {
 
         while attempts < MAX_ATTEMPTS {
             let updated_info = AGENT_INFO_CACHE.load();
-            if let Some(info) = updated_info.as_ref() {
-                if info.state_hash == expected_hash {
-                    break;
-                }
+            if let Some(info) = updated_info.as_ref()
+                && info.state_hash == expected_hash
+            {
+                break;
             }
             attempts += 1;
             std::thread::sleep(Duration::from_millis(SLEEP_DURATION_MS));

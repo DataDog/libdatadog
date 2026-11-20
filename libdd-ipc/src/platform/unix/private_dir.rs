@@ -62,10 +62,10 @@ pub fn ensure(path: &Path, mode: u32) -> io::Result<()> {
     // `AlreadyExists` here means something is at the path that is *not* a directory - an
     // existing directory makes a recursive create succeed. Tolerate it so that `verify` gets to
     // classify it and the repair below gets to deal with it, instead of failing on the spot.
-    if let Err(e) = create(path, mode) {
-        if e.kind() != io::ErrorKind::AlreadyExists {
-            return Err(e);
-        }
+    if let Err(e) = create(path, mode)
+        && e.kind() != io::ErrorKind::AlreadyExists
+    {
+        return Err(e);
     }
     // Enforced after verification, never before: chmod is only safe on a directory just
     // confirmed to be ours. `DirBuilder::mode` alone does not settle it, because mkdir masks

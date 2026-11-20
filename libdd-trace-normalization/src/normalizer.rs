@@ -34,10 +34,10 @@ pub(crate) fn normalize_span(s: &mut pb::Span) -> anyhow::Result<()> {
         normalize_utils::normalize_tag(env_tag);
     }
 
-    if let Some(code) = s.meta.get("http.status_code") {
-        if !is_valid_http_status_code(code) {
-            s.meta.remove("http.status_code");
-        }
+    if let Some(code) = s.meta.get("http.status_code")
+        && !is_valid_http_status_code(code)
+    {
+        s.meta.remove("http.status_code");
     };
 
     Ok(())
@@ -98,11 +98,11 @@ pub fn normalize_chunk(chunk: &mut pb::TraceChunk, root_span_index: usize) -> an
         }
     }
     // check if origin is not populated
-    if chunk.origin.is_empty() {
-        if let Some(origin) = root_span.meta.get(TAG_ORIGIN) {
-            // Older tracers set origin in the root span.
-            chunk.origin = origin.to_string();
-        }
+    if chunk.origin.is_empty()
+        && let Some(origin) = root_span.meta.get(TAG_ORIGIN)
+    {
+        // Older tracers set origin in the root span.
+        chunk.origin = origin.to_string();
     }
     Ok(())
 }

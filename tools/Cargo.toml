@@ -31,7 +31,7 @@ mime = { workspace = true, optional = true }
 multer = { workspace = true, optional = true }
 quick-xml = { workspace = true, optional = true }
 rand = { workspace = true, default-features = true, optional = true }
-libdd-common = { path = "../libdd-common", default-features = false, features = ["std"], optional = true }
+libdd-regex = { path = "../libdd-regex", optional = true }
 toml = { workspace = true, features = ["parse"], optional = true }
 wait-timeout = { workspace = true, optional = true }
 
@@ -45,18 +45,18 @@ tokio = { workspace = true, features = ["rt", "macros"] }
 default = ["cli"]
 # Builds the tool binaries and their supporting lib modules. Consumers that only need the
 # test/bench utilities depend on this crate with default-features = false to avoid the
-# heavy CLI dependency tree (clap, cargo_metadata, quick-xml, toml, libdd-common).
+# heavy CLI dependency tree (clap, cargo_metadata, quick-xml, toml, libdd-regex).
 cli = [
     "dep:anyhow",
     "dep:cargo_metadata",
     "dep:clap",
     "dep:colored",
-    "dep:libdd-common",
     "dep:quick-xml",
+    "dep:libdd-regex",
     "dep:toml",
     "dep:wait-timeout",
 ]
-regex-lite = ["libdd-common/regex-lite"]
+regex-lite = ["libdd-regex/regex-lite"]
 bench-utils = ["dep:criterion"]
 test-utils = [
     "dep:anyhow",
@@ -84,10 +84,3 @@ required-features = ["cli"]
 name = "add_junit_file_attributes"
 bench = false
 required-features = ["cli"]
-
-[lints.clippy]
-# TODO(paullgdc): This fails a lot because of if-let chaining which became
-# allowed with the 1.91.1 MSRV bump.
-# I am planning to fix each crate as an individual PR in order to not have 
-# too many conflicts
-collapsible_if = "allow"

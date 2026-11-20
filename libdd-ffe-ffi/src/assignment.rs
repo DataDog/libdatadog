@@ -20,6 +20,16 @@ pub struct ResolutionDetails {
     // memoizing some fields, so we can hand off references to them:
     error_message: Option<String>,
     flag_metadata: Vec<KeyValue<BorrowedStr, BorrowedStr>>,
+    dependencies: Vec<ffe::EvaluationRecord>,
+    // Views of the selected split's features, borrowing from the pinned assignment. Empty (and
+    // unallocated) when the split has no features.
+    features: Vec<Feature>,
+    // Backing storage for every feature's `destinations` array, laid out contiguously so each
+    // feature can borrow a (ptr, count) slice into it.
+    // Read only through the raw pointers stored in `features`; must not be dropped or shrunk
+    // while the handle lives.
+    #[allow(dead_code)]
+    feature_destinations: Vec<BorrowedStr>,
 }
 impl ResolutionDetails {
     fn new(value: Result<Assignment, EvaluationError>) -> ResolutionDetails {
@@ -40,11 +50,81 @@ impl ResolutionDetails {
             });
         }
 
+        let (features, feature_destinations) = Self::borrow_features((*inner).as_ref());
+
         ResolutionDetails {
             inner,
             error_message,
             flag_metadata,
+            dependencies: Vec::new(),
+            features,
+            feature_destinations,
         }
+    }
+
+    fn borrow_features(
+        result: Result<&Assignment, &EvaluationError>,
+    ) -> (Vec<Feature>, Vec<BorrowedStr>) {
+        let Ok(assignment) = result else {
+            return (Vec::new(), Vec::new());
+        };
+        let source = assignment.features_slice();
+        if source.is_empty() {
+            return (Vec::new(), Vec::new());
+        }
+
+        let total_destinations: usize = source
+            .iter()
+            .map(|feature| feature.destinations.len())
+            .sum();
+        // SAFETY: the same borrow-from-pinned-assignment discipline as `flag_metadata` above.
+        // All destination strings are borrowed up front, so the pointers handed out below stay
+        // valid: the Vec is never reallocated after this loop.
+        let mut feature_destinations = Vec::with_capacity(total_destinations);
+        for feature in source.iter() {
+            for destination in feature.destinations.iter() {
+                // SAFETY: borrows from the pinned assignment, which ResolutionDetails owns.
+                feature_destinations
+                    .push(unsafe { BorrowedStr::borrow_from_str(destination.as_str()) });
+            }
+        }
+
+        let mut offset = 0;
+        let features = source
+            .iter()
+            .map(|feature| {
+                let count = feature.destinations.len();
+                let destinations = BorrowedStrArray {
+                    elements: if count == 0 {
+                        std::ptr::null()
+                    } else {
+                        feature_destinations[offset..offset + count].as_ptr()
+                    },
+                    count,
+                };
+                offset += count;
+                Feature {
+                    // SAFETY: see above.
+                    key: unsafe { BorrowedStr::borrow_from_str(feature.key.as_str()) },
+                    value: match &feature.value {
+                        libdd_ffe::rules_based::FeatureValue::String(s) => {
+                            // SAFETY: borrows from the pinned assignment, which ResolutionDetails
+                            // owns.
+                            FeatureValue::String(unsafe {
+                                BorrowedStr::borrow_from_str(s.as_str())
+                            })
+                        }
+                        libdd_ffe::rules_based::FeatureValue::Number(n) => FeatureValue::Float(*n),
+                        libdd_ffe::rules_based::FeatureValue::Boolean(b) => {
+                            FeatureValue::Boolean(*b)
+                        }
+                    },
+                    destinations,
+                }
+            })
+            .collect();
+
+        (features, feature_destinations)
     }
 }
 impl From<Assignment> for ResolutionDetails {
@@ -293,7 +373,7 @@ unsafe fn get_assignment_with_mode(
         );
     };
 
-    let assignment_result = config.eval_flag_with_options(
+    let evaluation = config.eval_flag_with_trace(
         flag_key,
         context,
         expected_type.into(),
@@ -303,7 +383,86 @@ unsafe fn get_assignment_with_mode(
         },
     );
 
-    Handle::new(assignment_result.into())
+    let mut details = ResolutionDetails::new(evaluation.result);
+    details.dependencies = evaluation.evaluations;
+    Handle::new(details)
+}
+
+/// Number of distinct prerequisite flags reached while evaluating this root, including transitive
+/// prerequisites and those on rules that did not match; excludes the root. Indices follow
+/// completion order. Always 0 for handles returned by `ddog_ffe_assignment_get_dependency_result`.
+/// # Safety
+/// `assignment` must be a live handle.
+#[unsafe(no_mangle)]
+// allow(ffi-panic-boundary): reads the length of an owned vector. Requires a live handle;
+// `Handle::as_ref` can panic on a null handle.
+pub unsafe extern "C" fn ddog_ffe_assignment_get_dependency_count(
+    assignment: Handle<ResolutionDetails>,
+) -> usize {
+    // SAFETY: caller guarantees a live handle.
+    unsafe { assignment.as_ref() }.dependencies.len()
+}
+
+/// Prerequisite key, borrowed until the root assignment is freed; empty for an invalid index.
+/// # Safety
+/// `assignment` must be a live handle.
+#[unsafe(no_mangle)]
+// allow(ffi-panic-boundary): bounds-checked lookup and borrowing do not allocate. Requires a live
+// handle; `Handle::as_ref` can panic on a null handle.
+pub unsafe extern "C" fn ddog_ffe_assignment_get_dependency_key(
+    assignment: Handle<ResolutionDetails>,
+    index: usize,
+) -> BorrowedStr {
+    // SAFETY: caller guarantees a live handle.
+    match unsafe { assignment.as_ref() }.dependencies.get(index) {
+        // SAFETY: caller retains the root assignment throughout the borrow.
+        Some(record) => unsafe { BorrowedStr::borrow_from_str(&record.flag_key) },
+        None => BorrowedStr::empty(),
+    }
+}
+
+/// Whether this prerequisite contributed to the root's successful assignment.
+/// Returns false for an invalid index.
+/// This does not override the prerequisite's `do_log` or SDK consent and deduplication.
+/// # Safety
+/// `assignment` must be a live handle.
+#[unsafe(no_mangle)]
+// allow(ffi-panic-boundary): bounds-checked lookup of a boolean does not allocate. Requires a live
+// handle; `Handle::as_ref` can panic on a null handle.
+pub unsafe extern "C" fn ddog_ffe_assignment_get_dependency_exposure_eligible(
+    assignment: Handle<ResolutionDetails>,
+    index: usize,
+) -> bool {
+    // SAFETY: caller guarantees a live handle.
+    unsafe { assignment.as_ref() }
+        .dependencies
+        .get(index)
+        .is_some_and(|record| record.exposure_eligible)
+}
+
+/// Copies a prerequisite result into an independently owned handle, including errors.
+/// Free it with `ddog_ffe_assignment_drop`. Invalid indices return a General error.
+/// # Safety
+/// `assignment` must be a live handle.
+#[unsafe(no_mangle)]
+#[must_use]
+pub unsafe extern "C" fn ddog_ffe_assignment_get_dependency_result(
+    assignment: Handle<ResolutionDetails>,
+    index: usize,
+) -> Handle<ResolutionDetails> {
+    catch_assignment_panic(|| {
+        // SAFETY: caller guarantees a live handle.
+        let result = unsafe { assignment.as_ref() }
+            .dependencies
+            .get(index)
+            .map(|record| record.result.clone())
+            .unwrap_or_else(|| {
+                Err(EvaluationError::Internal(Str::from_static_str(
+                    "invalid prerequisite index",
+                )))
+            });
+        Handle::new(result.into())
+    })
 }
 
 #[repr(C)]
@@ -315,6 +474,37 @@ pub enum VariantValue {
     Float(f64),
     Boolean(bool),
     Object(BorrowedStr),
+}
+
+/// Value of a feature attached to the selected split.
+#[repr(C)]
+pub enum FeatureValue {
+    /// The string is not NUL-terminated; see `BorrowedStr`.
+    String(BorrowedStr),
+    Float(f64),
+    Boolean(bool),
+}
+
+/// A borrowed array of `BorrowedStr`. `elements` is NULL when `count` is `0`.
+#[repr(C)]
+pub struct BorrowedStrArray {
+    pub elements: *const BorrowedStr,
+    pub count: usize,
+}
+
+/// A feature attached to the selected split.
+#[repr(C)]
+pub struct Feature {
+    pub key: BorrowedStr,
+    pub value: FeatureValue,
+    pub destinations: BorrowedStrArray,
+}
+
+/// A borrowed array of `Feature`. `elements` is NULL when `count` is `0`.
+#[repr(C)]
+pub struct FeatureArray {
+    pub elements: *const Feature,
+    pub count: usize,
 }
 
 /// A string that has been borrowed. Beware that it is NOT nul-terminated!
@@ -598,6 +788,40 @@ pub unsafe extern "C" fn ddog_ffe_assignnment_get_flag_metadata(
     unsafe { ArrayMap::borrow_from_slice(&a.flag_metadata) }
 }
 
+/// Get the features attached to the selected split.
+///
+/// Entries with unsupported value types, empty keys or no non-empty destinations are absent
+/// from the array. On a repeated key only the first valid feature is present. Destinations pass
+/// through unfiltered; the caller decides what to do with unknown values.
+///
+/// # Ownership
+///
+/// The returned array borrows from `assignment`. It must not be used after `assignment` is
+/// freed.
+///
+/// # Safety
+/// `assignment` must be a valid handle.
+// allow(ffi-panic-boundary): only reads a pointer and a length from the handle.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn ddog_ffe_assignment_get_features(
+    assignment: Handle<ResolutionDetails>,
+) -> FeatureArray {
+    // SAFETY: the caller must ensure that assignment is valid
+    let a = unsafe { assignment.as_ref() };
+    if a.features.is_empty() {
+        FeatureArray {
+            elements: std::ptr::null(),
+            count: 0,
+        }
+    } else {
+        // SAFETY: the caller must not use returned value after `assignment` is freed.
+        FeatureArray {
+            elements: a.features.as_ptr(),
+            count: a.features.len(),
+        }
+    }
+}
+
 /// Frees an Assignment handle.
 ///
 /// # Safety
@@ -613,6 +837,245 @@ mod tests {
     use std::{collections::HashMap, sync::Arc};
 
     use super::*;
+    use libdd_ffe::rules_based::{AssignmentReason, Feature as FfeFeature};
+
+    fn assignment_with_features(features: Vec<FfeFeature>) -> ResolutionDetails {
+        ResolutionDetails::from(Assignment {
+            value: AssignmentValue::String(Str::from("on")),
+            variation_key: Str::from("on"),
+            allocation_key: Str::from("static"),
+            reason: AssignmentReason::Static,
+            serial_id: Some(7),
+            do_log: true,
+            features: (!features.is_empty()).then(|| features.into()),
+        })
+    }
+
+    fn ffe_feature(
+        key: &str,
+        value: libdd_ffe::rules_based::FeatureValue,
+        destinations: &[&str],
+    ) -> FfeFeature {
+        FfeFeature {
+            key: Str::from(key),
+            value,
+            destinations: destinations.iter().map(|d| Str::from(*d)).collect(),
+        }
+    }
+
+    fn borrowed(s: &BorrowedStr) -> &str {
+        // SAFETY: test-only view over a BorrowedStr constructed from a valid &str.
+        std::str::from_utf8(unsafe { s.as_bytes() }).unwrap()
+    }
+
+    #[test]
+    fn prerequisite_handles_preserve_errors_eligibility_and_ownership() {
+        let json = br#"{
+          "createdAt":"2026-01-01T00:00:00Z","environment":{"name":"test"},
+          "flags":{
+            "parent":{"key":"parent","enabled":true,"variationType":"BOOLEAN",
+              "variations":{"on":{"key":"on","value":true}},
+              "allocations":[{"key":"parent-allocation","doLog":true,"splits":[{"variationKey":"on","shards":[]}]}]},
+            "root":{"key":"root","enabled":true,"variationType":"BOOLEAN",
+              "variations":{"on":{"key":"on","value":true}},
+              "allocations":[{"key":"root-allocation","rules":[{"conditions":[
+                {"flagEvaluation":{"key":"parent"},"operator":"ONE_OF","value":["on"]},
+                {"flagEvaluation":{"key":"parent"},"operator":"ONE_OF","value":["on"]}
+              ]}],"splits":[{"variationKey":"on","shards":[]}]}]}
+          }}"#;
+        for prerequisite in ["parent", "missing", "disabled", "unassigned"] {
+            let wire = String::from_utf8(json.to_vec()).unwrap().replace(
+                "\"flagEvaluation\":{\"key\":\"parent\"}",
+                &format!("\"flagEvaluation\":{{\"key\":\"{prerequisite}\"}}"),
+            );
+            let wire = match prerequisite {
+                "disabled" | "unassigned" => {
+                    wire.replace("\"parent\"", &format!("\"{prerequisite}\""))
+                }
+                _ => wire,
+            };
+            let wire = match prerequisite {
+                "disabled" => wire.replacen("\"enabled\":true", "\"enabled\":false", 1),
+                "unassigned" => wire.replace("\"key\":\"parent-allocation\",", "\"key\":\"parent-allocation\",\"rules\":[{\"conditions\":[{\"attribute\":\"country\",\"operator\":\"ONE_OF\",\"value\":[\"US\"]}]}],"),
+                _ => wire,
+            };
+            let config = Configuration::from_server_response(
+                ffe::UniversalFlagConfig::from_json(wire.into_bytes()).unwrap(),
+            );
+            let context = EvaluationContext::new(Some("subject".into()), Default::default());
+            let trace = config.eval_flag_with_trace(
+                "root",
+                &context,
+                ffe::ExpectedFlagType::Boolean,
+                now(),
+                Default::default(),
+            );
+            let mut details = ResolutionDetails::new(trace.result);
+            details.dependencies = trace.evaluations;
+            let mut root = Handle::new(details);
+            // SAFETY: the handle copies are borrowed only until root is freed below.
+            let count_handle = unsafe { std::ptr::read(&root) };
+            assert_eq!(
+                // SAFETY: count_handle borrows the live root.
+                unsafe { ddog_ffe_assignment_get_dependency_count(count_handle) },
+                1
+            );
+            // SAFETY: this copy borrows the live root.
+            let key_handle = unsafe { std::ptr::read(&root) };
+            // SAFETY: key_handle remains valid throughout this call.
+            let key = unsafe { ddog_ffe_assignment_get_dependency_key(key_handle, 0) };
+            assert_eq!(
+                // SAFETY: the key is borrowed from the live root.
+                unsafe { std::slice::from_raw_parts(key.ptr, key.len) },
+                prerequisite.as_bytes()
+            );
+            // SAFETY: this copy borrows the live root.
+            let eligibility_handle = unsafe { std::ptr::read(&root) };
+            assert_eq!(
+                // SAFETY: eligibility_handle remains valid throughout this call.
+                unsafe {
+                    ddog_ffe_assignment_get_dependency_exposure_eligible(eligibility_handle, 0)
+                },
+                prerequisite == "parent"
+            );
+            // SAFETY: this copy borrows the live root.
+            let result_handle = unsafe { std::ptr::read(&root) };
+            // SAFETY: result_handle is live; the returned copy owns its result independently.
+            let mut dependency =
+                unsafe { ddog_ffe_assignment_get_dependency_result(result_handle, 0) };
+            // SAFETY: all root borrows ended.
+            unsafe { ddog_ffe_assignment_drop(&mut root) };
+            // SAFETY: the child owns its result and survives the root's destruction.
+            let error_handle = unsafe { std::ptr::read(&dependency) };
+            assert_eq!(
+                // SAFETY: error_handle borrows the live child.
+                unsafe { ddog_ffe_assignment_get_error_code(error_handle) },
+                if prerequisite == "missing" {
+                    ErrorCode::FlagNotFound
+                } else {
+                    ErrorCode::Ok
+                }
+            );
+            if prerequisite == "parent" {
+                // SAFETY: this copy borrows the live child.
+                let allocation_handle = unsafe { std::ptr::read(&dependency) };
+                // SAFETY: allocation_handle remains valid throughout the call.
+                let allocation =
+                    unsafe { ddog_ffe_assignment_get_allocation_key(allocation_handle) };
+                assert_eq!(
+                    // SAFETY: allocation borrows the still-live child.
+                    unsafe { std::slice::from_raw_parts(allocation.ptr, allocation.len) },
+                    b"parent-allocation"
+                );
+            }
+            // SAFETY: all child borrows ended; free its owned copy once.
+            unsafe { ddog_ffe_assignment_drop(&mut dependency) };
+        }
+    }
+
+    #[test]
+    fn entry_point_exposes_ordered_prerequisites_and_selected_path_eligibility() {
+        // root's first allocation reads `a` and is rejected; the second reads `b`, which reads `c`.
+        let json = br#"{"createdAt":"2026-01-01T00:00:00Z","environment":{"name":"test"},"flags":{
+          "root":{"key":"root","enabled":true,"variationType":"BOOLEAN",
+            "variations":{"on":{"key":"on","value":true},"off":{"key":"off","value":false}},
+            "allocations":[
+              {"key":"rejected","doLog":true,"rules":[{"conditions":[{"flagEvaluation":{"key":"a"},"operator":"ONE_OF","value":["off"]}]}],"splits":[{"variationKey":"off","shards":[]}]},
+              {"key":"selected","doLog":true,"rules":[{"conditions":[{"flagEvaluation":{"key":"b"},"operator":"ONE_OF","value":["on"]}]}],"splits":[{"variationKey":"on","shards":[]}]}]},
+          "a":{"key":"a","enabled":true,"variationType":"BOOLEAN","variations":{"on":{"key":"on","value":true}},
+            "allocations":[{"key":"a-allocation","doLog":true,"splits":[{"variationKey":"on","shards":[]}]}]},
+          "b":{"key":"b","enabled":true,"variationType":"BOOLEAN","variations":{"on":{"key":"on","value":true}},
+            "allocations":[{"key":"b-allocation","doLog":true,"rules":[{"conditions":[{"flagEvaluation":{"key":"c"},"operator":"ONE_OF","value":["on"]}]}],"splits":[{"variationKey":"on","shards":[]}]}]},
+          "c":{"key":"c","enabled":true,"variationType":"BOOLEAN","variations":{"on":{"key":"on","value":true}},
+            "allocations":[{"key":"c-allocation","doLog":true,"splits":[{"variationKey":"on","shards":[]}]}]}}}"#;
+        let mut config = Handle::new(Configuration::from_server_response(
+            ffe::UniversalFlagConfig::from_json(json.to_vec()).unwrap(),
+        ));
+        let mut context = Handle::new(EvaluationContext::new(
+            Some("subject".into()),
+            Default::default(),
+        ));
+        // SAFETY: the copy borrows config, which is freed below.
+        let config_copy = unsafe { std::ptr::read(&config) };
+        // SAFETY: the copy borrows context, which is freed below.
+        let context_copy = unsafe { std::ptr::read(&context) };
+        // SAFETY: both handles are live and the key is NUL-terminated.
+        let mut root = unsafe {
+            ddog_ffe_get_assignment(
+                config_copy,
+                c"root".as_ptr(),
+                ExpectedFlagType::Boolean,
+                context_copy,
+            )
+        };
+        // SAFETY: each copy borrows root, which stays live until it is freed below.
+        let r = || unsafe { std::ptr::read(&root) };
+        assert_eq!(
+            // SAFETY: root is live.
+            unsafe { ddog_ffe_assignment_get_error_code(r()) },
+            ErrorCode::Ok
+        );
+        // SAFETY: root is live.
+        assert_eq!(unsafe { ddog_ffe_assignment_get_dependency_count(r()) }, 3);
+        for (index, (key, eligible)) in [("a", false), ("c", true), ("b", true)]
+            .into_iter()
+            .enumerate()
+        {
+            // SAFETY: root is live, so the key borrow is valid for this iteration.
+            let actual = unsafe { ddog_ffe_assignment_get_dependency_key(r(), index) };
+            // SAFETY: actual borrows from the live root.
+            assert_eq!(unsafe { actual.as_bytes() }, key.as_bytes());
+            assert_eq!(
+                // SAFETY: root is live.
+                unsafe { ddog_ffe_assignment_get_dependency_exposure_eligible(r(), index) },
+                eligible
+            );
+            // SAFETY: root is live; the child is freed below.
+            let mut child = unsafe { ddog_ffe_assignment_get_dependency_result(r(), index) };
+            // SAFETY: the copy borrows the live child.
+            let child_count_copy = unsafe { std::ptr::read(&child) };
+            assert_eq!(
+                // SAFETY: child is live; child results do not retain prerequisite observations.
+                unsafe { ddog_ffe_assignment_get_dependency_count(child_count_copy) },
+                0
+            );
+            // SAFETY: the copy borrows the live child.
+            let child_copy = unsafe { std::ptr::read(&child) };
+            // SAFETY: child is live.
+            let allocation = unsafe { ddog_ffe_assignment_get_allocation_key(child_copy) };
+            assert_eq!(
+                // SAFETY: allocation borrows from the live child.
+                unsafe { allocation.as_bytes() },
+                format!("{key}-allocation").as_bytes()
+            );
+            // SAFETY: child is freed once.
+            unsafe { ddog_ffe_assignment_drop(&mut child) };
+        }
+        assert_eq!(
+            // SAFETY: root is live.
+            unsafe { ddog_ffe_assignment_get_dependency_key(r(), 3) }.len,
+            0
+        );
+        // SAFETY: root is live.
+        assert!(!unsafe { ddog_ffe_assignment_get_dependency_exposure_eligible(r(), 3) });
+        // SAFETY: root is live; the invalid-index child is freed below.
+        let mut invalid = unsafe { ddog_ffe_assignment_get_dependency_result(r(), 3) };
+        // SAFETY: invalid is live.
+        let details = unsafe { invalid.as_ref() };
+        assert_eq!(ErrorCode::from(details), ErrorCode::General);
+        assert_eq!(
+            details.error_message.as_deref(),
+            Some("internal error: invalid prerequisite index")
+        );
+        // SAFETY: invalid is freed exactly once.
+        unsafe { ddog_ffe_assignment_drop(&mut invalid) };
+        // SAFETY: all root borrows ended; root is freed exactly once.
+        unsafe { ddog_ffe_assignment_drop(&mut root) };
+        // SAFETY: config is freed exactly once after the evaluation.
+        unsafe { crate::configuration::ddog_ffe_configuration_drop(&mut config) };
+        // SAFETY: context is freed exactly once after the evaluation.
+        unsafe { crate::evaluation_context::ddog_ffe_evaluation_context_drop(&mut context) };
+    }
 
     #[test]
     fn evaluation_panic_returns_owned_redacted_error() {
@@ -736,5 +1199,109 @@ mod tests {
         let details = ResolutionDetails::from(EvaluationError::InvalidContext);
         assert!(matches!(Reason::from(&details), Reason::Error));
         assert_eq!(ErrorCode::from(&details), ErrorCode::InvalidContext);
+    }
+
+    #[test]
+    fn features_are_borrowed_from_the_assignment() {
+        let details = assignment_with_features(vec![
+            ffe_feature(
+                "holdout.key",
+                libdd_ffe::rules_based::FeatureValue::String(Str::from("abc")),
+                &["HOOK"],
+            ),
+            ffe_feature(
+                "holdout.fraction",
+                libdd_ffe::rules_based::FeatureValue::Number(0.5),
+                &["HOOK", "SOME_NEW_DESTINATION"],
+            ),
+            ffe_feature(
+                "holdout.enabled",
+                libdd_ffe::rules_based::FeatureValue::Boolean(false),
+                &["EXPOSURE"],
+            ),
+        ]);
+
+        assert_eq!(details.features.len(), 3);
+        assert_eq!(borrowed(&details.features[0].key), "holdout.key");
+        match &details.features[0].value {
+            FeatureValue::String(s) => assert_eq!(borrowed(s), "abc"),
+            _ => panic!("expected string"),
+        }
+        match &details.features[1].value {
+            FeatureValue::Float(f) => assert_eq!(*f, 0.5),
+            _ => panic!("expected float"),
+        }
+        match &details.features[2].value {
+            FeatureValue::Boolean(b) => assert!(!*b),
+            _ => panic!("expected boolean"),
+        }
+
+        for (feature, expected) in details.features.iter().zip([
+            &["HOOK"][..],
+            &["HOOK", "SOME_NEW_DESTINATION"][..],
+            &["EXPOSURE"][..],
+        ]) {
+            // SAFETY: the pointer and count come from borrow_features over a live handle.
+            let destinations = unsafe {
+                std::slice::from_raw_parts(
+                    feature.destinations.elements,
+                    feature.destinations.count,
+                )
+            };
+            assert_eq!(destinations.len(), expected.len());
+            for (destination, expected) in destinations.iter().zip(expected) {
+                assert_eq!(borrowed(destination), *expected);
+            }
+        }
+
+        let expected_elements = details.features.as_ptr();
+        let mut handle = Handle::new(details);
+        // SAFETY: Handle is a plain pointer wrapper; a bitwise copy is sound.
+        let handle_copy = unsafe { std::ptr::read(&handle) };
+        // SAFETY: the handle is valid; it is freed below.
+        let features = unsafe { ddog_ffe_assignment_get_features(handle_copy) };
+        assert_eq!(features.count, 3);
+        assert_eq!(features.elements, expected_elements);
+        // SAFETY: elements points at `count` live features owned by the handle.
+        let first = unsafe { &*features.elements };
+        assert_eq!(borrowed(&first.key), "holdout.key");
+
+        // SAFETY: freeing the test handle.
+        unsafe { ddog_ffe_assignment_drop(&mut handle) };
+    }
+
+    #[test]
+    fn assignment_without_features_exposes_an_empty_array() {
+        let details = assignment_with_features(vec![]);
+
+        assert!(details.features.is_empty());
+        assert!(details.feature_destinations.is_empty());
+
+        let mut handle = Handle::new(details);
+        // SAFETY: Handle is a plain pointer wrapper; a bitwise copy is sound.
+        let handle_copy = unsafe { std::ptr::read(&handle) };
+        // SAFETY: the handle is valid; the original is freed below.
+        let features = unsafe { ddog_ffe_assignment_get_features(handle_copy) };
+        assert_eq!(features.count, 0);
+        assert!(features.elements.is_null());
+
+        // SAFETY: freeing the test handle.
+        unsafe { ddog_ffe_assignment_drop(&mut handle) };
+    }
+
+    #[test]
+    fn error_result_exposes_an_empty_array() {
+        let mut handle = Handle::new(ResolutionDetails::from(
+            EvaluationError::ConfigurationMissing,
+        ));
+        // SAFETY: Handle is a plain pointer wrapper; a bitwise copy is sound.
+        let handle_copy = unsafe { std::ptr::read(&handle) };
+        // SAFETY: the handle is valid; the original is freed below.
+        let features = unsafe { ddog_ffe_assignment_get_features(handle_copy) };
+        assert_eq!(features.count, 0);
+        assert!(features.elements.is_null());
+
+        // SAFETY: freeing the test handle.
+        unsafe { ddog_ffe_assignment_drop(&mut handle) };
     }
 }

@@ -369,10 +369,10 @@ where
     }
 
     fn process_span(&self, segment: Option<&Segment<T::Text>>, span: &mut Span<T>) {
-        if let Some(kind) = span.meta.get("kind") {
-            if *kind != self.str_internal {
-                span.metrics.insert(self.str_measured.clone(), 1.0);
-            }
+        if let Some(kind) = span.meta.get("kind")
+            && *kind != self.str_internal
+        {
+            span.metrics.insert(self.str_measured.clone(), 1.0);
         }
 
         if span.service != self.tracer_service {
@@ -385,10 +385,10 @@ where
         span.metrics
             .insert(self.str_process_id.clone(), f64::from(self.pid));
 
-        if let Some(segment) = segment {
-            if let Some(origin) = segment.origin.clone() {
-                span.meta.insert(self.str_origin.clone(), origin);
-            }
+        if let Some(segment) = segment
+            && let Some(origin) = segment.origin.clone()
+        {
+            span.meta.insert(self.str_origin.clone(), origin);
         }
     }
 

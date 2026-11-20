@@ -13,7 +13,7 @@ on: # yamllint disable-line rule:truthy
       - "*.nix"
       - "flake.*"
       - "rust-toolchain.toml"
-      - "nightly-toolchain.toml"
+      - "ci-toolchain.toml"
       - ".github/workflows/nix.yml"
   # Nightly safeguard: catches devshell drift from changes that don't match the
   # paths above (e.g. a dependency or build-script change that needs new native

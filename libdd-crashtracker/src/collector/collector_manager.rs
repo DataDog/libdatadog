@@ -3,12 +3,12 @@
 
 use super::process_handle::ProcessHandle;
 use super::receiver_manager::Receiver;
-use libdd_common::timeout::TimeoutManager;
+use libdd_process_utils::timeout::TimeoutManager;
 use std::time::Instant;
 
 use super::emitters::{CrashKindData, emit_crashreport};
 use crate::shared::configuration::CrashtrackerConfiguration;
-use libdd_common::unix_utils::{alt_fork, terminate};
+use libdd_process_utils::unix_utils::{alt_fork, terminate};
 use nix::sys::signal::{self, SaFlags, SigAction, SigHandler, SigSet};
 use std::os::unix::io::RawFd;
 use std::os::unix::{io::FromRawFd, net::UnixStream};
@@ -41,11 +41,16 @@ impl Collector {
         // Get the current tid to identify thread info
         let tid = current_tid();
 
-        // Thread collection needs the collector to ptrace us, and Yama permits that only once
-        // we name it as our tracer - which we cannot do before the fork tells us its pid. The
-        // child therefore blocks on this pipe until we have granted it.
+        // Thread collection needs the collector to ptrace us. Yama permits that
+        // only once we name it as our tracer — which we cannot do before the fork
+        // tells us its pid. The child therefore blocks on this pipe until we have
+        // granted it.
         #[cfg(target_os = "linux")]
-        let ptrace_gate = if config.collect_all_threads() {
+        let needs_ptrace = config.collect_all_threads()
+            || (cfg!(feature = "otel-thread-ctx") && config.collect_otel_thread_contexts());
+
+        #[cfg(target_os = "linux")]
+        let ptrace_gate = if needs_ptrace {
             make_ptrace_gate()
         } else {
             None

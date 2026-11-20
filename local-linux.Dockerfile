@@ -45,13 +45,13 @@ RUN usermod -aG docker user
 WORKDIR /home/user
 
 # Copy toolchain files so the Rust install reads pinned versions from source of truth
-COPY rust-toolchain.toml nightly-toolchain.toml /home/user/
+COPY rust-toolchain.toml ci-toolchain.toml /home/user/
 
 # Install Rust toolchain for user in the usual ~/.cargo location.
 # Stable and nightly versions are read from the toolchain files
 RUN su - user -c "curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y"
 RUN su - user -c "cargo install --locked 'cargo-nextest@0.9.96'"
-RUN NIGHTLY=$(awk -F'"' '/^channel[[:space:]]*=/ {print $2}' /home/user/nightly-toolchain.toml) && \
+RUN NIGHTLY=$(awk -F'"' '/^nightly[[:space:]]*=/ {print $2}' /home/user/ci-toolchain.toml) && \
     su - user -c "rustup install $NIGHTLY"
 RUN STABLE=$(awk -F'"' '/^channel[[:space:]]*=/ {print $2}' /home/user/rust-toolchain.toml) && \
     su - user -c "rustup default $STABLE"

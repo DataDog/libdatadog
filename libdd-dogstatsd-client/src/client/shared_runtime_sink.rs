@@ -90,20 +90,20 @@ impl Worker for MetricSinkWorker {
 
     /// Forwards the single metric stored by `trigger` to the wrapped sink.
     async fn run(&mut self) {
-        if let Some(metric) = self.pending.take() {
-            if let Err(e) = self.sink.emit(&metric) {
-                error!(?e, "MetricSinkWorker: failed to emit metric");
-            }
+        if let Some(metric) = self.pending.take()
+            && let Err(e) = self.sink.emit(&metric)
+        {
+            error!(?e, "MetricSinkWorker: failed to emit metric");
         }
     }
 
     /// Drains any remaining queued metrics and flushes the wrapped sink.
     async fn shutdown(&mut self) {
         // Forward the metric that was sitting in `pending`, if any.
-        if let Some(metric) = self.pending.take() {
-            if let Err(e) = self.sink.emit(&metric) {
-                error!(?e, "MetricSinkWorker: failed to emit metric on shutdown");
-            }
+        if let Some(metric) = self.pending.take()
+            && let Err(e) = self.sink.emit(&metric)
+        {
+            error!(?e, "MetricSinkWorker: failed to emit metric on shutdown");
         }
         // Drain the channel.
         while let Ok(metric) = self.receiver.try_recv() {

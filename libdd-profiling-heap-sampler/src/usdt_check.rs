@@ -128,10 +128,10 @@ fn check_one_note_per_probe(
         let mut parts = strings.split(|&b| b == 0);
         let provider = parts.next().unwrap_or(&[]);
         let probe = parts.next().unwrap_or(&[]);
-        if provider == PROVIDER.as_bytes() {
-            if let Ok(name) = std::str::from_utf8(probe) {
-                *counts.entry(name.to_string()).or_default() += 1;
-            }
+        if provider == PROVIDER.as_bytes()
+            && let Ok(name) = std::str::from_utf8(probe)
+        {
+            *counts.entry(name.to_string()).or_default() += 1;
         }
     }
 

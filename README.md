@@ -137,7 +137,7 @@ nix develop .#nightly --command cargo fmt --all -- --check
 ##### Debugging CI failures
 
 - Reproduce the Nix CI build with `nix develop --command cargo build --workspace --exclude builder`.
-- After an MSRV or nightly bump, update `rust-toolchain.toml` or `nightly-toolchain.toml`, then refresh `flake.lock` with `nix flake update`.
+- After an MSRV or CI toolchain bump, update `rust-toolchain.toml` or `ci-toolchain.toml`, then refresh `flake.lock` with `nix flake update`.
 
 #### Docker container
 A dockerfile is provided to run tests in a Ubuntu linux environment. This is particularly useful for running and debugging linux-only tests on macOS.

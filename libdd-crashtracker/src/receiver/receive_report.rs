@@ -7,7 +7,9 @@ use crate::StacktraceCollection;
 use crate::ptrace_collector::{crash_site_registers, parse_hex_address};
 use crate::{
     CrashtrackerConfiguration, StackTrace,
-    crash_info::{CrashInfo, CrashInfoBuilder, ErrorKind, SigInfo, Span, StackFrame, Ucontext},
+    crash_info::{
+        CrashInfo, CrashInfoBuilder, ErrorKind, SigInfo, Span, SpansToClose, StackFrame, Ucontext,
+    },
     receiver::debug_logger::{DebugLogger, ReceiverIssue},
     runtime_callback::RuntimeStack,
     shared::constants::*,
@@ -93,6 +95,10 @@ pub(crate) enum StdinState {
     StackTrace,
     Threads,
     TraceIds,
+    /// Inside a spans to close block: its line, once read.
+    SpansToClose(Option<String>),
+    /// Inside a spans to close block already dropped, up to its end.
+    SpansToCloseSkipped,
     Ucontext,
     Waiting,
     WholeStackTrace,
@@ -101,6 +107,7 @@ pub(crate) enum StdinState {
     RuntimeStackFrame(Vec<StackFrame>),
     RuntimeStackString(Vec<String>),
     Message,
+    OtelThreadCtx(i32),
 }
 
 /// A state machine that processes data from the crash-tracker collector line by
@@ -263,6 +270,23 @@ fn process_line(
             StdinState::Message
         }
 
+        StdinState::OtelThreadCtx(tid) if line.starts_with(DD_CRASHTRACK_END_OTEL_THREAD_CTX) => {
+            // No hex data arrived for this tid; just close the block.
+            let _ = tid;
+            StdinState::Waiting
+        }
+        StdinState::OtelThreadCtx(tid) => {
+            #[cfg(all(target_os = "linux", feature = "otel-thread-ctx"))]
+            if let Some(ctx) = decode_hex_otel_record(tid, line) {
+                let mut contexts = builder.otel_thread_contexts.take().unwrap_or_default();
+                contexts.push(ctx);
+                builder.with_otel_thread_contexts(contexts)?;
+            }
+            #[cfg(not(all(target_os = "linux", feature = "otel-thread-ctx")))]
+            let _ = tid;
+            StdinState::OtelThreadCtx(tid)
+        }
+
         StdinState::SpanIds if line.starts_with(DD_CRASHTRACK_END_SPAN_IDS) => StdinState::Waiting,
         StdinState::SpanIds => {
             let span_ids: Vec<Span> = serde_json::from_str(line)?;
@@ -288,6 +312,33 @@ fn process_line(
             builder.with_trace_ids(trace_ids)?;
             StdinState::TraceIds
         }
+        StdinState::SpansToClose(block) if line.starts_with(DD_CRASHTRACK_END_SPANS_TO_CLOSE) => {
+            let spans = match block {
+                Some(block) => SpansToClose::parse(&block),
+                None => Err(anyhow::anyhow!("empty block")),
+            };
+            match spans {
+                Ok(spans) => builder.with_spans_to_close(spans)?,
+                Err(e) => {
+                    builder.with_log_message(format!("Dropped spans to close: {e:#}"), true)?
+                }
+            }
+            StdinState::Waiting
+        }
+        // The block is one line; a second one makes it unreadable, not the report.
+        StdinState::SpansToClose(None) => StdinState::SpansToClose(Some(line.to_string())),
+        StdinState::SpansToClose(Some(_)) => {
+            builder.with_log_message(
+                "Dropped spans to close: more than one line".to_string(),
+                true,
+            )?;
+            StdinState::SpansToCloseSkipped
+        }
+        StdinState::SpansToCloseSkipped if line.starts_with(DD_CRASHTRACK_END_SPANS_TO_CLOSE) => {
+            StdinState::Waiting
+        }
+        StdinState::SpansToCloseSkipped => StdinState::SpansToCloseSkipped,
+
         StdinState::Ucontext if line.starts_with(DD_CRASHTRACK_END_UCONTEXT) => StdinState::Waiting,
         StdinState::Ucontext => {
             let ucontext: Ucontext = serde_json::from_str(line)?;
@@ -297,6 +348,9 @@ fn process_line(
 
         StdinState::Waiting if line.starts_with(DD_CRASHTRACK_BEGIN_ADDITIONAL_TAGS) => {
             StdinState::AdditionalTags
+        }
+        StdinState::Waiting if line.starts_with(DD_CRASHTRACK_BEGIN_SPANS_TO_CLOSE) => {
+            StdinState::SpansToClose(None)
         }
         StdinState::Waiting if line.starts_with(DD_CRASHTRACK_BEGIN_CONFIG) => StdinState::Config,
         StdinState::Waiting if line.starts_with(DD_CRASHTRACK_BEGIN_COUNTERS) => {
@@ -336,6 +390,13 @@ fn process_line(
         }
         StdinState::Waiting if line.starts_with(DD_CRASHTRACK_BEGIN_WHOLE_STACKTRACE) => {
             StdinState::WholeStackTrace
+        }
+        StdinState::Waiting if line.starts_with(DD_CRASHTRACK_BEGIN_OTEL_THREAD_CTX) => {
+            let tid = line
+                .split_once(' ')
+                .and_then(|(_, tid_str)| tid_str.parse::<i32>().ok())
+                .unwrap_or(0);
+            StdinState::OtelThreadCtx(tid)
         }
         StdinState::Waiting if line.starts_with(DD_CRASHTRACK_DONE) => {
             builder.with_incomplete(false)?;
@@ -395,6 +456,9 @@ pub(crate) async fn receive_report_from_stream(
         // We need to wait until at least we receive config, metadata, and kind (on non-Windows
         // platforms) before sending the crash ping
         if !crash_ping_sent && builder.is_ping_ready() {
+            if builder.timestamp.is_none() {
+                builder.with_timestamp_now()?;
+            }
             if let Some(ref config_ref) = config {
                 let config_clone = config_ref.clone();
                 crash_ping_sent = true;
@@ -499,23 +563,27 @@ pub(crate) async fn receive_report_from_stream(
     // privileged host instead of the worker.
     if let ReceiverFileAccess::Restricted { peer_pid } = access {
         let claimed = builder.proc_info.as_ref().map(|p| p.pid);
-        if let Some(claimed) = claimed {
-            if claimed != peer_pid {
-                builder.with_log_message(
-                    format!(
-                        "Restricting crash process inspection to the authenticated peer pid \
+        if let Some(claimed) = claimed
+            && claimed != peer_pid
+        {
+            builder.with_log_message(
+                format!(
+                    "Restricting crash process inspection to the authenticated peer pid \
                          {peer_pid} (report claimed {claimed})"
-                    ),
-                    false,
-                )?;
-                if let Some(proc_info) = builder.proc_info.as_mut() {
-                    proc_info.pid = peer_pid;
-                }
+                ),
+                false,
+            )?;
+            if let Some(proc_info) = builder.proc_info.as_mut() {
+                proc_info.pid = peer_pid;
             }
         }
     }
 
     enrich_thread_name(&mut builder)?;
+
+    #[cfg(all(target_os = "linux", feature = "otel-thread-ctx"))]
+    enrich_otel_thread_names(&mut builder);
+
     builder.with_os_info_this_machine()?;
 
     // Without a config, we don't even know the endpoint to transmit to.  Not much to do to recover.
@@ -529,25 +597,27 @@ pub(crate) async fn receive_report_from_stream(
     // crashing thread's stack supplied by the worker is retained.
     // Use this fallback only when the collector supplied no threads.
     #[cfg(target_os = "linux")]
-    if config.collect_all_threads() && !access.is_restricted() && builder.error.threads.is_none() {
-        if let Some(proc_info) = builder.proc_info.as_ref() {
-            let parent_pid = proc_info.pid;
-            let crashing_tid = proc_info.tid;
-            // If we never received a first line (deadline is None) use zero so
-            // collection is skipped; there is nothing to attach to anyway.
-            let remaining_budget = deadline
-                .map(|d| d.saturating_duration_since(Instant::now()))
-                .unwrap_or(Duration::ZERO);
-            if let Err(e) = collect_and_add_thread_contexts(
-                &mut builder,
-                &config,
-                parent_pid,
-                crashing_tid,
-                remaining_budget,
-            ) {
-                let _ = builder
-                    .with_log_message(format!("Failed to collect thread contexts: {e}"), true);
-            }
+    if config.collect_all_threads()
+        && !access.is_restricted()
+        && builder.error.threads.is_none()
+        && let Some(proc_info) = builder.proc_info.as_ref()
+    {
+        let parent_pid = proc_info.pid;
+        let crashing_tid = proc_info.tid;
+        // If we never received a first line (deadline is None) use zero so
+        // collection is skipped; there is nothing to attach to anyway.
+        let remaining_budget = deadline
+            .map(|d| d.saturating_duration_since(Instant::now()))
+            .unwrap_or(Duration::ZERO);
+        if let Err(e) = collect_and_add_thread_contexts(
+            &mut builder,
+            &config,
+            parent_pid,
+            crashing_tid,
+            remaining_budget,
+        ) {
+            let _ =
+                builder.with_log_message(format!("Failed to collect thread contexts: {e}"), true);
         }
     }
 
@@ -579,8 +649,10 @@ fn attach_additional_files(
         let opened: std::io::Result<std::fs::File> = if restricted {
             #[cfg(unix)]
             {
-                libdd_common::unix_utils::open_regular_for_read(std::path::Path::new(filename))
-                    .map_err(std::io::Error::from)
+                libdd_process_utils::unix_utils::open_regular_for_read(std::path::Path::new(
+                    filename,
+                ))
+                .map_err(std::io::Error::from)
             }
             #[cfg(not(unix))]
             {
@@ -643,10 +715,11 @@ fn collect_and_add_thread_contexts(
             let used_saved_context = captured.as_ref().is_some_and(|ctx| ctx.used_saved_context);
             let mut thread =
                 thread_data_from_capture(parent_pid, crashing_tid, crash_site, tid, captured);
-            if thread.crashed && used_saved_context {
-                if let Some(collector) = collector_stack {
-                    recover_collector_callers(&mut thread.stack, collector);
-                }
+            if thread.crashed
+                && used_saved_context
+                && let Some(collector) = collector_stack
+            {
+                recover_collector_callers(&mut thread.stack, collector);
             }
             if thread.crashed
                 && should_promote_crashing_stack(config, used_saved_context)
@@ -776,6 +849,44 @@ fn enrich_thread_name(builder: &mut CrashInfoBuilder) -> anyhow::Result<()> {
 #[cfg(not(target_os = "linux"))]
 fn enrich_thread_name(_builder: &mut CrashInfoBuilder) -> anyhow::Result<()> {
     Ok(())
+}
+
+/// Decode a hex-encoded OTel thread-context record emitted by the collector.
+///
+/// The collector writes each record as a single line of hex digits (2 hex chars per byte).
+/// This decodes it and delegates to `otel_tls_reader::decode_record`.
+#[cfg(all(target_os = "linux", feature = "otel-thread-ctx"))]
+fn decode_hex_otel_record(
+    tid: i32,
+    hex_line: &str,
+) -> Option<crate::crash_info::OtelThreadContext> {
+    let hex_line = hex_line.trim();
+    if hex_line.len() < 2 || !hex_line.len().is_multiple_of(2) {
+        return None;
+    }
+    let bytes: Vec<u8> = (0..hex_line.len())
+        .step_by(2)
+        .map(|i| u8::from_str_radix(&hex_line[i..i + 2], 16))
+        .collect::<Result<Vec<_>, _>>()
+        .ok()?;
+    // Thread name enrichment happens later in receive_report_from_stream
+    // after we know the crashing process's PID from proc_info.
+    crate::otel_tls_reader::decode_record(tid, &bytes)
+}
+
+#[cfg(all(target_os = "linux", feature = "otel-thread-ctx"))]
+fn enrich_otel_thread_names(builder: &mut CrashInfoBuilder) {
+    let pid = match builder.proc_info.as_ref() {
+        Some(p) => p.pid,
+        None => return,
+    };
+    if let Some(ref mut contexts) = builder.otel_thread_contexts {
+        for ctx in contexts.iter_mut() {
+            if ctx.thread_name.is_none() {
+                ctx.thread_name = crate::otel_tls_reader::read_thread_name(pid, ctx.tid);
+            }
+        }
+    }
 }
 
 #[cfg(test)]
@@ -984,6 +1095,40 @@ mod tests {
             ..Default::default()
         });
         stack
+    }
+
+    const SPANS_BLOCK: &str = r#"{"version":1,"agent_url":"http://agent:8126","traces":[{"trace_id":"00000000000000000000000000000003","spans":[{"span_id":"0000000000000007","service":"s","name":"n","start_unix_ns":5}]}]}"#;
+
+    #[test]
+    fn spans_to_close_are_kept_per_block() {
+        let (builder, state) = parse_test_lines(&[
+            DD_CRASHTRACK_BEGIN_SPANS_TO_CLOSE,
+            SPANS_BLOCK,
+            DD_CRASHTRACK_END_SPANS_TO_CLOSE,
+            // Blocks the receiver cannot read are noted and skipped.
+            DD_CRASHTRACK_BEGIN_SPANS_TO_CLOSE,
+            r#"{"version":9,"agent_url":"http://agent:8126","traces":[]}"#,
+            DD_CRASHTRACK_END_SPANS_TO_CLOSE,
+            DD_CRASHTRACK_BEGIN_SPANS_TO_CLOSE,
+            SPANS_BLOCK,
+            SPANS_BLOCK,
+            SPANS_BLOCK,
+            DD_CRASHTRACK_END_SPANS_TO_CLOSE,
+            DD_CRASHTRACK_BEGIN_SPANS_TO_CLOSE,
+            DD_CRASHTRACK_END_SPANS_TO_CLOSE,
+            DD_CRASHTRACK_BEGIN_SPANS_TO_CLOSE,
+            SPANS_BLOCK,
+            DD_CRASHTRACK_END_SPANS_TO_CLOSE,
+        ])
+        .unwrap();
+        assert!(matches!(state, StdinState::Waiting));
+        assert_eq!(builder.spans_to_close.len(), 2);
+        assert_eq!(builder.spans_to_close[0].traces[0].spans[0].span_id, 7);
+        let logs = builder.log_messages.unwrap_or_default();
+        assert_eq!(logs.len(), 3, "{logs:?}");
+        assert!(logs[0].contains("version 9"), "{logs:?}");
+        assert!(logs[1].contains("more than one line"), "{logs:?}");
+        assert!(logs[2].contains("empty block"), "{logs:?}");
     }
 
     fn parse_test_lines(lines: &[&str]) -> anyhow::Result<(CrashInfoBuilder, StdinState)> {

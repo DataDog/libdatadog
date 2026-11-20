@@ -8,10 +8,9 @@ use crate::expr_defs::{
 use crate::{
     CaptureConfiguration, CaptureExpression, DslString, EvaluateAt, FilterList, InBodyLocation,
     LiveDebuggingData, LogProbe, MetricKind, MetricProbe, Probe, ProbeCondition, ProbeTarget,
-    ProbeType, ProbeValue, ServiceConfiguration, SpanDecorationProbe, SpanProbe,
+    ProbeType, ProbeValue, ServiceConfiguration, SourceLine, SpanDecorationProbe, SpanProbe,
     SpanProbeDecoration, SpanProbeTarget,
 };
-use anyhow::Context;
 use serde::Deserialize;
 use std::fmt::{Display, Formatter};
 
@@ -45,14 +44,12 @@ pub fn parse(json: &str) -> anyhow::Result<LiveDebuggingData> {
                     ProbeTarget {
                         type_name: target.type_name,
                         method_name: target.method_name,
-                        source_file: target.source_file,
+                        source_file: target.source_file.map(|file| file.replace('\\', "/")),
                         signature: target.signature,
                         lines: {
                             let mut lines = vec![];
-                            for line in target.lines.unwrap_or(vec![]) {
-                                lines.push(line.parse().with_context(|| {
-                                    format!("'{line}' is not a valid Probe line target")
-                                })?);
+                            for line in target.lines.unwrap_or_default() {
+                                lines.push(line.parse()?);
                             }
                             lines
                         },
@@ -87,10 +84,21 @@ pub fn parse(json: &str) -> anyhow::Result<LiveDebuggingData> {
                         ),
                         capture: parsed.capture.unwrap_or_default(),
                         capture_snapshot: parsed.capture_snapshot.unwrap_or(false),
-                        sampling_snapshots_per_second: parsed
-                            .sampling
-                            .map(|s| s.snapshots_per_second)
-                            .unwrap_or(5000),
+                        // Capturing probes default to one snapshot per second, plain log lines to
+                        // 5000.
+                        sampling_snapshots_per_second: parsed.sampling.map_or(
+                            if parsed.capture_snapshot.unwrap_or(false)
+                                || parsed
+                                    .capture_expressions
+                                    .as_ref()
+                                    .is_some_and(|exprs| !exprs.is_empty())
+                            {
+                                1
+                            } else {
+                                5000
+                            },
+                            |s| s.snapshots_per_second,
+                        ),
                         capture_expressions: {
                             let mut exprs = vec![];
                             for raw in parsed.capture_expressions.unwrap_or_default() {
@@ -141,9 +149,11 @@ pub fn parse(json: &str) -> anyhow::Result<LiveDebuggingData> {
                     _ => unreachable!(),
                 },
             };
-            // unconditional snapshot probes always capture their entry context (for arguments).
-            // Probes with capture_expressions only are evaluated at exit so locals are available.
-            if matches!(
+            if probe.target.method_name.is_none() && !probe.target.lines.is_empty() {
+                // Line probes evaluate before the line unless explicitly asked to evaluate after
+                // it.
+                probe.evaluate_at = parsed.evaluate_at.unwrap_or(EvaluateAt::Entry);
+            } else if matches!(
                 probe.probe,
                 ProbeType::Log(LogProbe {
                     when: ProbeCondition(Condition::Always),
@@ -151,6 +161,9 @@ pub fn parse(json: &str) -> anyhow::Result<LiveDebuggingData> {
                     ..
                 })
             ) {
+                // Unconditional snapshot method probes always capture their entry context (for
+                // arguments). Probes with capture_expressions only are evaluated at exit so locals
+                // are available.
                 probe.evaluate_at = EvaluateAt::Entry;
             }
             probe
@@ -206,8 +219,49 @@ struct ProbeWhere {
     method_name: Option<String>,
     source_file: Option<String>,
     signature: Option<String>,
-    lines: Option<Vec<String>>,
+    lines: Option<Vec<RawSourceLine>>,
     in_body_location: Option<InBodyLocation>,
+}
+
+/// A `where.lines` entry, which tracers send as either a string or a bare integer.
+#[derive(Deserialize)]
+#[serde(untagged)]
+enum RawSourceLine {
+    Number(u32),
+    String(String),
+}
+
+impl RawSourceLine {
+    fn parse(self) -> anyhow::Result<SourceLine> {
+        let invalid =
+            |line: &dyn Display| anyhow::format_err!("'{line}' is not a valid Probe line target");
+        let line = match self {
+            RawSourceLine::Number(line) => SourceLine {
+                from: line,
+                till: line,
+            },
+            RawSourceLine::String(str) => {
+                let parse = |part: &str| part.trim().parse::<u32>().map_err(|_| invalid(&str));
+                match str.split_once('-') {
+                    Some((from, till)) => SourceLine {
+                        from: parse(from)?,
+                        till: parse(till)?,
+                    },
+                    None => {
+                        let line = parse(&str)?;
+                        SourceLine {
+                            from: line,
+                            till: line,
+                        }
+                    }
+                }
+            }
+        };
+        if line.from == 0 || line.till < line.from {
+            return Err(invalid(&line));
+        }
+        Ok(line)
+    }
 }
 
 #[derive(Deserialize)]
@@ -600,7 +654,7 @@ impl Display for RawExpr {
 mod tests {
     use crate::{
         CaptureConfiguration, EvaluateAt, LiveDebuggingData, LogProbe, MetricKind, MetricProbe,
-        Probe, ProbeType, SpanDecorationProbe, SpanProbeTarget, parse_json,
+        Probe, ProbeType, SourceLine, SpanDecorationProbe, SpanProbeTarget, parse_json,
     };
 
     #[test]
@@ -866,5 +920,99 @@ mod tests {
         } else {
             unreachable!();
         }
+    }
+
+    fn line_probe_json(where_lines: &str, extra: &str) -> String {
+        format!(
+            r#"{{
+  "id": "line-probe",
+  "type": "LOG_PROBE",
+  "language": "php",
+  "where": {{ "sourceFile": "src\\Controller\\Foo.php", "lines": {where_lines} }},
+  "segments": []{extra}
+}}"#
+        )
+    }
+
+    fn parse_line_probe(where_lines: &str, extra: &str) -> anyhow::Result<Probe> {
+        match parse_json(&line_probe_json(where_lines, extra))? {
+            LiveDebuggingData::Probe(probe) => Ok(probe),
+            LiveDebuggingData::ServiceConfiguration(_) => unreachable!(),
+        }
+    }
+
+    #[test]
+    fn test_line_probe_lines_accept_strings_ints_and_ranges() {
+        let probe = parse_line_probe(r#"["10", 12, "20-25", " 30 - 31 "]"#, "").unwrap();
+        assert_eq!(
+            probe.target.lines,
+            vec![
+                SourceLine { from: 10, till: 10 },
+                SourceLine { from: 12, till: 12 },
+                SourceLine { from: 20, till: 25 },
+                SourceLine { from: 30, till: 31 },
+            ]
+        );
+        let rendered: Vec<String> = probe.target.lines.iter().map(|l| l.to_string()).collect();
+        assert_eq!(rendered, vec!["10", "12", "20-25", "30-31"]);
+    }
+
+    #[test]
+    fn test_line_probe_lines_reject_invalid() {
+        for lines in [r#"["0"]"#, r#"["9-3"]"#, r#"["a"]"#, r#"["5-"]"#, r#"[0]"#] {
+            let err = parse_line_probe(lines, "").unwrap_err();
+            assert!(
+                err.to_string().contains("is not a valid Probe line target"),
+                "{lines}: {err}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_line_probe_source_file_normalized() {
+        let probe = parse_line_probe(r#"["10"]"#, "").unwrap();
+        assert_eq!(
+            probe.target.source_file.as_deref(),
+            Some("src/Controller/Foo.php")
+        );
+    }
+
+    #[test]
+    fn test_log_probe_sampling_defaults() {
+        let rate = |extra: &str| match parse_line_probe(r#"["10"]"#, extra).unwrap().probe {
+            ProbeType::Log(LogProbe {
+                sampling_snapshots_per_second,
+                ..
+            }) => sampling_snapshots_per_second,
+            _ => unreachable!(),
+        };
+        assert_eq!(rate(""), 5000);
+        assert_eq!(rate(r#", "captureSnapshot": true"#), 1);
+        assert_eq!(
+            rate(r#", "captureExpressions": [{"name": "x", "expr": {"json": {"ref": "x"}}}]"#),
+            1
+        );
+        assert_eq!(rate(r#", "captureExpressions": []"#), 5000);
+        assert_eq!(
+            rate(r#", "captureSnapshot": true, "sampling": {"snapshotsPerSecond": 100}"#),
+            100
+        );
+    }
+
+    #[test]
+    fn test_line_probe_evaluate_at_defaults_to_entry() {
+        let probe = parse_line_probe(r#"["10"]"#, "").unwrap();
+        assert!(matches!(probe.evaluate_at, EvaluateAt::Entry));
+
+        let probe = parse_line_probe(r#"["10"]"#, r#", "evaluateAt": "EXIT""#).unwrap();
+        assert!(matches!(probe.evaluate_at, EvaluateAt::Exit));
+
+        // The unconditional-snapshot override is for method probes only.
+        let probe = parse_line_probe(
+            r#"["10"]"#,
+            r#", "evaluateAt": "EXIT", "captureSnapshot": true"#,
+        )
+        .unwrap();
+        assert!(matches!(probe.evaluate_at, EvaluateAt::Exit));
     }
 }

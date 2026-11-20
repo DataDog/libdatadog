@@ -12,16 +12,17 @@ use anyhow::anyhow;
 use bytes::Buf;
 use bytes::buf::Reader;
 use http_body_util::BodyExt;
-use libdd_common::azure_app_services;
+use libdd_host_identity::azure_app_services;
 use libdd_trace_normalization::normalizer;
 use libdd_trace_protobuf::pb;
 use rmp::decode::read_array_len;
 use rmpv::decode::read_value;
 use rmpv::{Integer, Value};
 use std::cmp::Ordering;
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
+use std::collections::hash_map::RandomState;
 use std::env;
-use tracing::{debug, error};
+use tracing::error;
 
 /// The maximum payload size for a single request that can be sent to the trace agent. Payloads
 /// larger than this size will be dropped and the agent will return a 413 error if
@@ -280,19 +281,19 @@ pub struct TracerPayloadTags {
 /// Returns the first non-empty value of `field` found in `trace`, searching the root span first
 /// then all other spans.
 fn search_trace_for_field(root: &pb::Span, trace: &[pb::Span], field: &str) -> Option<String> {
-    if let Some(v) = root.meta.get(field) {
-        if !v.is_empty() {
-            return Some(v.clone());
-        }
+    if let Some(v) = root.meta.get(field)
+        && !v.is_empty()
+    {
+        return Some(v.clone());
     }
     for span in trace {
         if span.span_id == root.span_id {
             continue;
         }
-        if let Some(v) = span.meta.get(field) {
-            if !v.is_empty() {
-                return Some(v.clone());
-            }
+        if let Some(v) = span.meta.get(field)
+            && !v.is_empty()
+        {
+            return Some(v.clone());
         }
     }
     None
@@ -342,14 +343,13 @@ pub(crate) fn cmp_send_data_payloads(a: &pb::TracerPayload, b: &pb::TracerPayloa
 }
 
 pub fn coalesce_send_data(mut data: Vec<SendData>) -> Vec<SendData> {
-    // TODO trace payloads with identical data except for chunk could be merged?
-
-    data.sort_unstable_by(|a, b| {
-        a.get_target()
-            .url
-            .to_string()
-            .cmp(&b.get_target().url.to_string())
-            .then(a.get_target().test_token.cmp(&b.get_target().test_token))
+    let hashers = [RandomState::new(), RandomState::new()];
+    data.sort_by_cached_key(|data| {
+        (
+            data.get_target().url.to_string(),
+            data.get_target().test_token.clone(),
+            data.tracer_payloads.v1_group_key(&hashers),
+        )
     });
     data.dedup_by(|a, b| {
         if a.get_target().url == b.get_target().url
@@ -379,44 +379,10 @@ pub fn coalesce_send_data(mut data: Vec<SendData>) -> Vec<SendData> {
     data
 }
 
+/// Returns the index of the root span in `trace`, see
+/// [`crate::span::trace_utils::get_root_span_index`].
 pub fn get_root_span_index(trace: &[pb::Span]) -> anyhow::Result<usize> {
-    if trace.is_empty() {
-        anyhow::bail!("Cannot find root span index in an empty trace.");
-    }
-
-    // Do a first pass to find if we have an obvious root span (starting from the end) since some
-    // clients put the root span last.
-    for (i, span) in trace.iter().enumerate().rev() {
-        if span.parent_id == 0 {
-            return Ok(i);
-        }
-    }
-
-    let span_ids: HashSet<_> = trace.iter().map(|span| span.span_id).collect();
-
-    let mut root_span_id = None;
-    for (i, span) in trace.iter().enumerate() {
-        // If a span's parent is not in the trace, it is a root
-        if !span_ids.contains(&span.parent_id) {
-            if root_span_id.is_some() {
-                debug!(
-                    trace_id = &trace[0].trace_id,
-                    "trace has multiple root spans"
-                );
-            }
-            root_span_id = Some(i);
-        }
-    }
-    Ok(match root_span_id {
-        Some(i) => i,
-        None => {
-            debug!(
-                trace_id = &trace[0].trace_id,
-                "Could not find the root span for trace"
-            );
-            trace.len() - 1
-        }
-    })
+    crate::span::trace_utils::get_root_span_index(trace)
 }
 
 /// Updates all the spans top-level attribute.
@@ -561,20 +527,21 @@ pub fn enrich_span_with_google_cloud_function_metadata(
         todo!()
     };
 
-    if let Some(function) = function {
-        if !region.is_empty() && !project.is_empty() {
-            let resource_name = format!(
-                "projects/{}/locations/{}/functions/{}",
-                project, region, function
-            );
+    if let Some(function) = function
+        && !region.is_empty()
+        && !project.is_empty()
+    {
+        let resource_name = format!(
+            "projects/{}/locations/{}/functions/{}",
+            project, region, function
+        );
 
-            span.meta
-                .insert("gcrfx.location".to_string(), region.to_string());
-            span.meta
-                .insert("gcrfx.project_id".to_string(), project.to_string());
-            span.meta
-                .insert("gcrfx.resource_name".to_string(), resource_name.to_string());
-        }
+        span.meta
+            .insert("gcrfx.location".to_string(), region.to_string());
+        span.meta
+            .insert("gcrfx.project_id".to_string(), project.to_string());
+        span.meta
+            .insert("gcrfx.resource_name".to_string(), resource_name.to_string());
     }
 }
 
@@ -628,10 +595,8 @@ pub fn collect_pb_trace_chunks<T: tracer_payload::TraceChunkProcessor>(
     let mut tracer_payload_tags = TracerPayloadTags::default();
 
     for trace in traces.iter_mut() {
-        if is_agentless {
-            if let Err(e) = normalizer::normalize_trace(trace) {
-                error!("Error normalizing trace: {e}");
-            }
+        if is_agentless && let Err(e) = normalizer::normalize_trace(trace) {
+            error!("Error normalizing trace: {e}");
         }
 
         let mut chunk = construct_trace_chunk(trace.to_vec());
@@ -667,30 +632,30 @@ pub fn collect_pb_trace_chunks<T: tracer_payload::TraceChunkProcessor>(
             // Check each field independently so that a later trace can fill in fields missing
             // from an earlier trace.
             let root = &trace[root_span_index];
-            if tracer_payload_tags.env.is_empty() {
-                if let Some(mut v) = search_trace_for_field(root, trace, "env") {
-                    // Normalize env tag in case the span it was pulled from was skipped during
-                    // normalization
-                    libdd_trace_normalization::normalize_utils::normalize_tag(&mut v);
-                    if !v.is_empty() {
-                        tracer_payload_tags.env = v;
-                    }
+            if tracer_payload_tags.env.is_empty()
+                && let Some(mut v) = search_trace_for_field(root, trace, "env")
+            {
+                // Normalize env tag in case the span it was pulled from was skipped during
+                // normalization
+                libdd_trace_normalization::normalize_utils::normalize_tag(&mut v);
+                if !v.is_empty() {
+                    tracer_payload_tags.env = v;
                 }
             }
-            if tracer_payload_tags.app_version.is_empty() {
-                if let Some(v) = search_trace_for_field(root, trace, "version") {
-                    tracer_payload_tags.app_version = v;
-                }
+            if tracer_payload_tags.app_version.is_empty()
+                && let Some(v) = search_trace_for_field(root, trace, "version")
+            {
+                tracer_payload_tags.app_version = v;
             }
-            if tracer_payload_tags.hostname.is_empty() {
-                if let Some(v) = search_trace_for_field(root, trace, "_dd.hostname") {
-                    tracer_payload_tags.hostname = v;
-                }
+            if tracer_payload_tags.hostname.is_empty()
+                && let Some(v) = search_trace_for_field(root, trace, "_dd.hostname")
+            {
+                tracer_payload_tags.hostname = v;
             }
-            if tracer_payload_tags.runtime_id.is_empty() {
-                if let Some(v) = search_trace_for_field(root, trace, "runtime-id") {
-                    tracer_payload_tags.runtime_id = v;
-                }
+            if tracer_payload_tags.runtime_id.is_empty()
+                && let Some(v) = search_trace_for_field(root, trace, "runtime-id")
+            {
+                tracer_payload_tags.runtime_id = v;
             }
         }
     }
@@ -720,11 +685,13 @@ pub fn is_partial_snapshot(span: &pb::Span) -> bool {
 mod tests {
     use super::*;
     use crate::{
-        span::SharedDictBytes,
+        span::{SharedDictBytes, v1},
         test_utils::{create_test_no_alloc_span, create_test_span},
     };
     use http::Request;
-    use libdd_common::{Endpoint, http_common};
+    use libdd_common::Endpoint;
+    use libdd_networking::http_common;
+    use libdd_tinybytes::BytesString;
     use serde_json::json;
 
     fn find_index_in_dict(dict: &SharedDictBytes, value: &str) -> Option<u32> {
@@ -784,6 +751,442 @@ mod tests {
                 > 1
         );
         assert!(coalesced.len() > 1 && coalesced.len() < 5);
+    }
+
+    fn v1_send_data(runtime_id: &str) -> SendData {
+        SendData::new(
+            100,
+            TracerPayloadCollection::V1(Box::new(v1::TracerPayload {
+                runtime_id: BytesString::from_slice(runtime_id.as_bytes()).unwrap(),
+                chunks: vec![v1::TraceChunk {
+                    spans: vec![v1::Span::default()],
+                    ..Default::default()
+                }],
+                ..Default::default()
+            })),
+            TracerHeaderTags::default(),
+            &Endpoint::default(),
+        )
+    }
+
+    fn v1_runtime_id_and_chunks(send_data: &SendData) -> (&str, usize) {
+        match &send_data.tracer_payloads {
+            TracerPayloadCollection::V1(payload) => {
+                (payload.runtime_id.as_str(), payload.chunks.len())
+            }
+            _ => panic!("expected a V1 payload"),
+        }
+    }
+
+    #[test]
+    fn test_coalesce_v1_interleaved_runtime_ids() {
+        let coalesced = coalesce_send_data(vec![
+            v1_send_data("A"),
+            v1_send_data("B"),
+            v1_send_data("A"),
+            v1_send_data("B"),
+        ]);
+        let mut entries: Vec<_> = coalesced.iter().map(v1_runtime_id_and_chunks).collect();
+        entries.sort_unstable();
+        assert_eq!(vec![("", 4)], entries);
+        let TracerPayloadCollection::V1(payload) = &coalesced[0].tracer_payloads else {
+            panic!("expected a V1 payload");
+        };
+        let mut runtime_ids: Vec<_> = payload
+            .chunks
+            .iter()
+            .map(|chunk| {
+                chunk.spans[0]
+                    .attributes
+                    .get("runtime-id")
+                    .unwrap()
+                    .as_str()
+                    .unwrap()
+            })
+            .collect();
+        runtime_ids.sort_unstable();
+        assert_eq!(runtime_ids, ["A", "A", "B", "B"]);
+        assert_eq!(
+            4,
+            coalesced
+                .iter()
+                .map(|s| s.tracer_payloads.size())
+                .sum::<usize>()
+        );
+    }
+
+    #[test]
+    fn test_coalesce_v1_single_runtime_keeps_payload_runtime_id() {
+        let coalesced = coalesce_send_data(vec![v1_send_data("A"), v1_send_data("A")]);
+        assert_eq!(coalesced.len(), 1);
+        assert_eq!(v1_runtime_id_and_chunks(&coalesced[0]), ("A", 2));
+        let TracerPayloadCollection::V1(payload) = &coalesced[0].tracer_payloads else {
+            panic!("expected a V1 payload");
+        };
+        for chunk in &payload.chunks {
+            assert!(!chunk.spans[0].attributes.contains_key("runtime-id"));
+        }
+    }
+
+    #[test]
+    fn test_coalesce_v1_runtime_id_carriers() {
+        let mut data = Vec::new();
+        for runtime_id in ["A", "B"] {
+            let mut send_data = v1_send_data(runtime_id);
+            let TracerPayloadCollection::V1(payload) = &mut send_data.tracer_payloads else {
+                panic!("expected a V1 payload");
+            };
+            payload.chunks = [
+                None,
+                Some(-128),
+                Some(-2),
+                Some(-1),
+                Some(0),
+                Some(1),
+                Some(2),
+            ]
+            .into_iter()
+            .map(|priority| {
+                let mut spans: Vec<_> = (0..4)
+                    .map(|_| v1::Span {
+                        service: BytesString::from_static(runtime_id),
+                        ..Default::default()
+                    })
+                    .collect();
+                // A non-numeric sampling marker is not recognized by the agent.
+                spans[0].attributes.insert(
+                    BytesString::from_static("_dd.span_sampling.mechanism"),
+                    v1::AttributeValue::String(BytesString::from_static("8")),
+                );
+                spans[1].attributes.insert(
+                    BytesString::from_static("_dd.span_sampling.mechanism"),
+                    v1::AttributeValue::Float(8.0),
+                );
+                spans[2].attributes.insert(
+                    BytesString::from_static("_dd.span_sampling.mechanism"),
+                    v1::AttributeValue::Int(8),
+                );
+                spans[3].attributes.insert(
+                    BytesString::from_static("runtime-id"),
+                    v1::AttributeValue::String(BytesString::from_static("explicit")),
+                );
+                v1::TraceChunk {
+                    priority,
+                    spans,
+                    ..Default::default()
+                }
+            })
+            .collect();
+            data.push(send_data);
+        }
+
+        let coalesced = coalesce_send_data(data);
+        assert_eq!(coalesced.len(), 1);
+        let TracerPayloadCollection::V1(payload) = &coalesced[0].tracer_payloads else {
+            panic!("expected a V1 payload");
+        };
+        assert!(payload.runtime_id.is_empty());
+        assert_eq!(payload.chunks.len(), 14);
+        for chunk in &payload.chunks {
+            let rejected = chunk.priority.is_some_and(|priority| priority <= 0);
+            for (index, span) in chunk.spans.iter().enumerate() {
+                let expected = if index == 3 {
+                    Some("explicit")
+                } else if index == 0 || (rejected && index == 1) {
+                    Some(span.service.as_str())
+                } else {
+                    None
+                };
+                assert_eq!(
+                    span.attributes
+                        .get("runtime-id")
+                        .and_then(v1::AttributeValue::as_str),
+                    expected,
+                    "priority {:?}, span {index}",
+                    chunk.priority,
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn test_coalesce_v1_empty_and_rejected_chunks_without_sampled_spans() {
+        let mut data = Vec::new();
+        for runtime_id in ["A", "B"] {
+            let mut send_data = v1_send_data(runtime_id);
+            let TracerPayloadCollection::V1(payload) = &mut send_data.tracer_payloads else {
+                panic!("expected a V1 payload");
+            };
+            payload.chunks[0].priority = Some(0);
+            payload.chunks.push(v1::TraceChunk::default());
+            data.push(send_data);
+        }
+        let coalesced = coalesce_send_data(data);
+        assert_eq!(v1_runtime_id_and_chunks(&coalesced[0]), ("", 4));
+        let TracerPayloadCollection::V1(payload) = &coalesced[0].tracer_payloads else {
+            panic!("expected a V1 payload");
+        };
+        let mut runtime_ids: Vec<_> = payload
+            .chunks
+            .iter()
+            .flat_map(|chunk| &chunk.spans)
+            .map(|span| span.attributes.get("runtime-id").unwrap().as_str().unwrap())
+            .collect();
+        runtime_ids.sort_unstable();
+        assert_eq!(runtime_ids, ["A", "B"]);
+    }
+
+    #[test]
+    fn test_coalesce_v1_first_span_is_single_span_sampled() {
+        let mut data = Vec::new();
+        for runtime_id in ["A", "B"] {
+            let mut send_data = v1_send_data(runtime_id);
+            let TracerPayloadCollection::V1(payload) = &mut send_data.tracer_payloads else {
+                panic!("expected a V1 payload");
+            };
+            let chunk = &mut payload.chunks[0];
+            chunk.priority = Some(0);
+            chunk.spans.push(v1::Span::default());
+            for span in &mut chunk.spans {
+                span.attributes.insert(
+                    BytesString::from_static("_dd.span_sampling.mechanism"),
+                    v1::AttributeValue::Int(8),
+                );
+            }
+            data.push(send_data);
+        }
+        let coalesced = coalesce_send_data(data);
+        assert_eq!(coalesced.len(), 1);
+        let TracerPayloadCollection::V1(payload) = &coalesced[0].tracer_payloads else {
+            panic!("expected a V1 payload");
+        };
+        for chunk in &payload.chunks {
+            assert!(chunk.spans[0].attributes.contains_key("runtime-id"));
+            assert!(!chunk.spans[1].attributes.contains_key("runtime-id"));
+        }
+    }
+
+    #[test]
+    fn test_coalesce_v1_does_not_move_runtime_id_when_size_prevents_merge() {
+        let mut data = vec![v1_send_data("A"), v1_send_data("B")];
+        for send_data in &mut data {
+            send_data.size = MAX_PAYLOAD_SIZE / 2;
+        }
+        let coalesced = coalesce_send_data(data);
+        let mut entries: Vec<_> = coalesced.iter().map(v1_runtime_id_and_chunks).collect();
+        entries.sort_unstable();
+        assert_eq!(entries, [("A", 1), ("B", 1)]);
+    }
+
+    #[test]
+    fn test_coalesce_v1_many_runtimes() {
+        let data = (0..1000)
+            .map(|index| v1_send_data(&format!("runtime-{index}")))
+            .collect();
+        let coalesced = coalesce_send_data(data);
+        assert_eq!(coalesced.len(), 1);
+        assert_eq!(v1_runtime_id_and_chunks(&coalesced[0]), ("", 1000));
+        let TracerPayloadCollection::V1(payload) = &coalesced[0].tracer_payloads else {
+            panic!("expected a V1 payload");
+        };
+        let encoded = crate::msgpack_encoder::v1::to_vec_from_v1(payload);
+        let (payload, _) = crate::msgpack_decoder::v1::from_bytes(encoded.into()).unwrap();
+        assert!(payload.runtime_id.is_empty());
+        let runtime_ids: std::collections::HashSet<_> = payload
+            .chunks
+            .iter()
+            .map(|chunk| {
+                chunk.spans[0]
+                    .attributes
+                    .get("runtime-id")
+                    .unwrap()
+                    .as_str()
+                    .unwrap()
+            })
+            .collect();
+        assert_eq!(runtime_ids.len(), 1000);
+    }
+
+    #[test]
+    fn test_coalesce_v1_diverging_attributes_not_merged() {
+        fn with_attribute(runtime_id: &str, value: i64) -> SendData {
+            let mut send_data = v1_send_data(runtime_id);
+            if let TracerPayloadCollection::V1(payload) = &mut send_data.tracer_payloads {
+                payload.attributes.insert(
+                    BytesString::from_static("key"),
+                    v1::AttributeValue::Int(value),
+                );
+            }
+            send_data
+        }
+        let coalesced = coalesce_send_data(vec![with_attribute("A", 1), with_attribute("B", 2)]);
+        let mut entries: Vec<_> = coalesced.iter().map(v1_runtime_id_and_chunks).collect();
+        entries.sort_unstable();
+        assert_eq!(vec![("A", 1), ("B", 1)], entries);
+    }
+
+    #[test]
+    fn test_coalesce_v1_interleaved_attributes_and_runtime_ids() {
+        let mut data = Vec::new();
+        for runtime_id in ["A", "B"] {
+            for value in [1, 2] {
+                let mut send_data = v1_send_data(runtime_id);
+                let TracerPayloadCollection::V1(payload) = &mut send_data.tracer_payloads else {
+                    panic!("expected a V1 payload");
+                };
+                payload.attributes.insert(
+                    BytesString::from_static("key"),
+                    v1::AttributeValue::Int(value),
+                );
+                data.push(send_data);
+            }
+        }
+        let coalesced = coalesce_send_data(data);
+        assert_eq!(coalesced.len(), 2);
+        for send_data in &coalesced {
+            assert_eq!(v1_runtime_id_and_chunks(send_data), ("", 2));
+            let TracerPayloadCollection::V1(payload) = &send_data.tracer_payloads else {
+                panic!("expected a V1 payload");
+            };
+            let mut runtime_ids: Vec<_> = payload
+                .chunks
+                .iter()
+                .map(|chunk| {
+                    chunk.spans[0]
+                        .attributes
+                        .get("runtime-id")
+                        .unwrap()
+                        .as_str()
+                        .unwrap()
+                })
+                .collect();
+            runtime_ids.sort_unstable();
+            assert_eq!(runtime_ids, ["A", "B"]);
+        }
+    }
+
+    #[test]
+    fn test_coalesce_v1_equivalent_attribute_maps() {
+        let mut data = Vec::new();
+        for runtime_id in ["A", "B"] {
+            let mut nested = crate::span::vec_map::VecMap::new();
+            if runtime_id == "A" {
+                nested.insert(BytesString::from_static("z"), v1::AttributeValue::Int(-1));
+                nested.insert(
+                    BytesString::from_static("a"),
+                    v1::AttributeValue::Float(0.0),
+                );
+                nested.insert(BytesString::from_static("z"), v1::AttributeValue::Int(42));
+            } else {
+                nested.insert(BytesString::from_static("z"), v1::AttributeValue::Int(42));
+                nested.insert(
+                    BytesString::from_static("a"),
+                    v1::AttributeValue::Float(-0.0),
+                );
+            }
+            let mut entries = vec![
+                (
+                    BytesString::from_static("nested"),
+                    v1::AttributeValue::KeyValueList(nested),
+                ),
+                (
+                    BytesString::from_static("array"),
+                    v1::AttributeValue::Array(vec![
+                        v1::AttributeValue::String(BytesString::from_static("text")),
+                        v1::AttributeValue::Bool(true),
+                        v1::AttributeValue::Int(7),
+                        v1::AttributeValue::Float(3.5),
+                        v1::AttributeValue::Bytes(libdd_tinybytes::Bytes::from_static(b"bytes")),
+                    ]),
+                ),
+                (
+                    BytesString::from_static("zero"),
+                    v1::AttributeValue::Float(if runtime_id == "A" { 0.0 } else { -0.0 }),
+                ),
+            ];
+            if runtime_id == "B" {
+                entries.reverse();
+            }
+            let mut send_data = v1_send_data(runtime_id);
+            let TracerPayloadCollection::V1(payload) = &mut send_data.tracer_payloads else {
+                panic!("expected a V1 payload");
+            };
+            payload
+                .attributes
+                .insert(BytesString::from_static("zero"), v1::AttributeValue::Int(1));
+            for (key, value) in entries {
+                payload.attributes.insert(key, value);
+            }
+            data.push(send_data);
+        }
+        let coalesced = coalesce_send_data(data);
+        assert_eq!(coalesced.len(), 1);
+        assert_eq!(v1_runtime_id_and_chunks(&coalesced[0]), ("", 2));
+    }
+
+    #[test]
+    fn test_coalesce_v1_distinct_attribute_types_and_array_orders() {
+        let values = vec![
+            v1::AttributeValue::String(BytesString::from_static("1")),
+            v1::AttributeValue::Bool(true),
+            v1::AttributeValue::Int(1),
+            v1::AttributeValue::Float(1.0),
+            v1::AttributeValue::Bytes(libdd_tinybytes::Bytes::from_static(b"1")),
+            v1::AttributeValue::Array(vec![v1::AttributeValue::Int(1), v1::AttributeValue::Int(2)]),
+            v1::AttributeValue::Array(vec![v1::AttributeValue::Int(2), v1::AttributeValue::Int(1)]),
+            v1::AttributeValue::Array(vec![]),
+            v1::AttributeValue::KeyValueList(
+                vec![(BytesString::from_static("a"), v1::AttributeValue::Int(1))].into(),
+            ),
+            v1::AttributeValue::KeyValueList(Default::default()),
+        ];
+        let mut data = Vec::new();
+        for runtime_id in ["A", "B"] {
+            for value in &values {
+                let mut send_data = v1_send_data(runtime_id);
+                let TracerPayloadCollection::V1(payload) = &mut send_data.tracer_payloads else {
+                    panic!("expected a V1 payload");
+                };
+                payload
+                    .attributes
+                    .insert(BytesString::from_static("key"), value.clone());
+                data.push(send_data);
+            }
+        }
+        let coalesced = coalesce_send_data(data);
+        assert_eq!(coalesced.len(), values.len());
+        for send_data in &coalesced {
+            assert_eq!(v1_runtime_id_and_chunks(send_data), ("", 2));
+        }
+    }
+
+    #[test]
+    fn test_coalesce_v1_and_v04_payloads() {
+        fn v04_send_data() -> SendData {
+            SendData::new(
+                100,
+                TracerPayloadCollection::V04(vec![vec![create_test_no_alloc_span(
+                    0, 1, 0, 2, true,
+                )]]),
+                TracerHeaderTags::default(),
+                &Endpoint::default(),
+            )
+        }
+        let coalesced = coalesce_send_data(vec![
+            v04_send_data(),
+            v1_send_data("A"),
+            v04_send_data(),
+            v1_send_data("A"),
+        ]);
+        assert_eq!(2, coalesced.len());
+        for send_data in &coalesced {
+            assert_eq!(2, send_data.tracer_payloads.size());
+        }
+        assert!(
+            coalesced
+                .iter()
+                .any(|s| matches!(s.tracer_payloads, TracerPayloadCollection::V04(_)))
+        );
     }
 
     #[tokio::test]

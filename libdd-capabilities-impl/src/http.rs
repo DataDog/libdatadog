@@ -25,8 +25,8 @@ mod native {
     };
     use libdd_capabilities::maybe_send::MaybeSend;
     use libdd_common::MutexExt;
-    use libdd_common::connector::Connector;
-    use libdd_common::http_common::{
+    use libdd_networking::connector::Connector;
+    use libdd_networking::http_common::{
         Body, GenericHttpClient, new_client_periodic, new_default_client,
     };
 
@@ -40,7 +40,7 @@ mod native {
         periodic: bool,
     }
 
-    pub struct NativeBodySender(libdd_common::http_common::Sender);
+    pub struct NativeBodySender(libdd_networking::http_common::Sender);
 
     impl StreamingBodySender for NativeBodySender {
         fn send_chunk(&mut self, data: bytes::Bytes) -> ChunkFuture<'_> {
@@ -86,7 +86,7 @@ mod native {
         // Worker endpoints need constrained file opens. Directory mode also creates and renames
         // paths without validation, so disable it when restrictions are enabled.
         #[cfg(unix)]
-        let restricted = libdd_common::unix_utils::worker_file_outputs_restricted();
+        let restricted = libdd_process_utils::unix_utils::worker_file_outputs_restricted();
         #[cfg(not(unix))]
         let restricted = false;
 
@@ -122,7 +122,7 @@ mod native {
 
             #[cfg(unix)]
             let mut file = if restricted {
-                libdd_common::unix_utils::open_regular_for_append(&path)
+                libdd_process_utils::unix_utils::open_regular_for_append(&path)
                     .map_err(|e| HttpError::Other(anyhow::anyhow!("opening {path:?}: {e}")))?
             } else {
                 OpenOptions::new()

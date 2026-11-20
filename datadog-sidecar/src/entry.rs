@@ -46,6 +46,14 @@ pub struct MainLoopConfig {
     /// must not hold up the exit of its host for the connections of other processes, like forked
     /// children: these lose their connection and reconnect to a listener of their own.
     pub drain_only_own_process: bool,
+    /// Whether connections may register a CDN source, causing this process to poll over HTTP.
+    /// In-process listeners set this to false so applications open no CDN connections;
+    /// their registration messages are ignored without starting a fetcher.
+    pub enable_cdn_fetching: bool,
+    /// Whether connections may register liveness pipes that outlive the connection.
+    /// In-process listeners must disable this: worker-supplied descriptors would otherwise
+    /// accumulate in the potentially privileged host's shared file descriptor table.
+    pub allow_liveness_watch: bool,
 }
 
 impl Default for MainLoopConfig {
@@ -56,6 +64,8 @@ impl Default for MainLoopConfig {
             init_shm_eagerly: true,
             authorizer: ConnectionAuthorizer::for_spawned_sidecar(),
             drain_only_own_process: false,
+            enable_cdn_fetching: true,
+            allow_liveness_watch: true,
         }
     }
 }
@@ -110,7 +120,9 @@ where
         });
     }
 
-    let server = SidecarServer::default();
+    let server = SidecarServer::default()
+        .with_cdn_fetching(loop_config.enable_cdn_fetching)
+        .with_liveness_watch(loop_config.allow_liveness_watch);
     if loop_config.init_shm_eagerly {
         server.shm_limiters();
     }
@@ -131,9 +143,10 @@ where
 
     tokio::spawn(telemetry_action_receiver_task(server.clone(), telemetry_rx));
 
-    let (shutdown_complete_tx, shutdown_complete_rx) = mpsc::channel::<()>(1);
+    let (shutdown_complete_tx, mut shutdown_complete_rx) = mpsc::channel::<()>(1);
+    let (watchdog_shutdown_tx, watchdog_shutdown_rx) = mpsc::channel::<()>(1);
 
-    let mut watchdog = Watchdog::from_receiver(shutdown_complete_rx);
+    let mut watchdog = Watchdog::from_receiver(watchdog_shutdown_rx);
     if config.max_memory != 0 {
         watchdog.max_memory_usage_bytes = config.max_memory;
     }
@@ -192,15 +205,17 @@ where
     idle_shutdown.abort();
     listener_result?;
 
-    // Shutdown final sender so the receiver can complete
+    // Wait for the drained connections independently of the watchdog. Outgoing work can
+    // still hold substantial memory after the listener and the last client have closed.
     drop(shutdown_complete_tx);
+    shutdown_complete_rx.recv().await;
 
-    // Await everything else to completion
-    _ = telemetry_handle.await;
     server.shutdown();
     _ = server.trace_flusher.join().await;
     #[cfg(unix)]
     server.shutdown_appsec().await;
+    drop(watchdog_shutdown_tx);
+    _ = telemetry_handle.await;
 
     Ok(())
 }

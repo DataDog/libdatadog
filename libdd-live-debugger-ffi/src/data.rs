@@ -6,7 +6,7 @@ use libdd_common_ffi::{CharSlice, Option};
 use libdd_live_debugger::debugger_defs::{ProbeMetadata, ProbeMetadataLocation, ProbeStatus};
 use libdd_live_debugger::{
     CaptureConfiguration, CaptureExpression as RustCaptureExpression, DslString, EvaluateAt,
-    InBodyLocation, MetricKind, ProbeCondition, ProbeValue, SpanProbeTarget,
+    InBodyLocation, MetricKind, ProbeCondition, ProbeValue, SourceLine, SpanProbeTarget,
 };
 use std::borrow::Cow;
 
@@ -215,7 +215,7 @@ pub struct ProbeTarget<'a> {
     pub method_name: CharSlice<'a>,
     pub source_file: CharSlice<'a>,
     pub signature: Option<CharSlice<'a>>, // we need to distinguish empty signature and not present
-    pub lines: *const u32,
+    pub lines: *const SourceLine,
     pub lines_count: u32,
     pub in_body_location: InBodyLocation,
 }
@@ -296,6 +296,22 @@ impl<'a> From<&Probe<'a>> for ProbeMetadata<'a> {
             location: ProbeMetadataLocation {
                 method: to_cow_option(&val.target.method_name),
                 r#type: to_cow_option(&val.target.type_name),
+                file: to_cow_option(&val.target.source_file),
+                lines: if val.target.lines.is_null() {
+                    vec![]
+                } else {
+                    // SAFETY: lines/lines_count describe the original rust Vec<SourceLine>, whose
+                    // length came from a usize, so widening it back is lossless.
+                    unsafe {
+                        std::slice::from_raw_parts(
+                            val.target.lines,
+                            val.target.lines_count as usize,
+                        )
+                    }
+                    .iter()
+                    .map(|line| Cow::Owned(line.to_string()))
+                    .collect()
+                },
             },
         }
     }
@@ -358,4 +374,49 @@ impl<'a> From<&'a libdd_live_debugger::LiveDebuggingData> for LiveDebuggingData<
 #[unsafe(no_mangle)]
 pub extern "C" fn ddog_capture_defaults() -> CaptureConfiguration {
     CaptureConfiguration::default()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::Probe;
+    use libdd_live_debugger::debugger_defs::ProbeMetadata;
+    use libdd_live_debugger::{LiveDebuggingData, parse_json};
+
+    #[test]
+    fn test_line_probe_metadata_location() {
+        let json = r#"{
+  "id": "line-probe",
+  "type": "LOG_PROBE",
+  "where": { "sourceFile": "src\\Foo.php", "lines": ["10", 12, "20-25"] },
+  "segments": []
+}"#;
+        let LiveDebuggingData::Probe(probe) = parse_json(json).unwrap() else {
+            unreachable!();
+        };
+        let ffi_probe: Probe = (&probe).into();
+        let metadata: ProbeMetadata = (&ffi_probe).into();
+        assert_eq!(
+            serde_json::to_value(&metadata.location).unwrap(),
+            serde_json::json!({ "file": "src/Foo.php", "lines": ["10", "12", "20-25"] })
+        );
+    }
+
+    #[test]
+    fn test_method_probe_metadata_location() {
+        let json = r#"{
+  "id": "method-probe",
+  "type": "LOG_PROBE",
+  "where": { "typeName": "Foo", "methodName": "bar" },
+  "segments": []
+}"#;
+        let LiveDebuggingData::Probe(probe) = parse_json(json).unwrap() else {
+            unreachable!();
+        };
+        let ffi_probe: Probe = (&probe).into();
+        let metadata: ProbeMetadata = (&ffi_probe).into();
+        assert_eq!(
+            serde_json::to_value(&metadata.location).unwrap(),
+            serde_json::json!({ "method": "bar", "type": "Foo" })
+        );
+    }
 }

@@ -136,10 +136,10 @@ impl Target {
     /// Automatically detect which spawn method should be used
     #[cfg(not(target_os = "macos"))]
     pub fn detect_spawn_method(&self) -> std::io::Result<SpawnMethod> {
-        if let Ok(env) = env::var("DD_SPAWN_WORKER_USE_EXEC") {
-            if !env.is_empty() {
-                return Ok(SpawnMethod::Exec);
-            }
+        if let Ok(env) = env::var("DD_SPAWN_WORKER_USE_EXEC")
+            && !env.is_empty()
+        {
+            return Ok(SpawnMethod::Exec);
         }
 
         let current_exec_path = env::current_exe()?;
@@ -438,12 +438,11 @@ impl SpawnWorker {
                     LibDependency::Binary(_) => None,
                 })
                 .collect();
-            if !path_deps.is_empty() {
-                if let Ok(s) =
+            if !path_deps.is_empty()
+                && let Ok(s) =
                     CString::new(format!("_DD_SIDECAR_PATH_DEPS={}", path_deps.join(":")))
-                {
-                    envp.push(s);
-                }
+            {
+                envp.push(s);
             }
 
             Some(CString::new(

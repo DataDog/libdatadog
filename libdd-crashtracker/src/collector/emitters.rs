@@ -149,6 +149,17 @@ pub(crate) fn emit_crashreport(
         );
     }
 
+    #[cfg(all(target_os = "linux", feature = "otel-thread-ctx"))]
+    if config.collect_otel_thread_contexts() {
+        let _ = emit_otel_thread_contexts(
+            pipe,
+            ppid,
+            crashing_tid,
+            config.max_threads(),
+            threads_deadline,
+        );
+    }
+
     writeln!(pipe, "{DD_CRASHTRACK_DONE}")?;
     pipe.flush()?;
     Ok(())
@@ -428,6 +439,126 @@ unsafe fn emit_frame_with_dladdr(w: &mut impl Write, ip: usize) -> Result<(), Em
     Ok(())
 }
 
+/// Emit OTel thread context records from the crashing process's TLS.
+#[cfg(all(target_os = "linux", feature = "otel-thread-ctx"))]
+fn emit_otel_thread_contexts(
+    w: &mut impl Write,
+    ppid: i32,
+    crashing_tid: libc::pid_t,
+    max_threads: usize,
+    deadline: Instant,
+) -> Result<(), EmitterError> {
+    use crate::otel_tls_reader::{
+        ProcMemReader, TlsResolution, dtv_pointer_offset, probe_dtv_for_resolution,
+    };
+    use crate::ptrace_collector::{
+        attach_thread, detach_thread, enumerate_threads, read_thread_pointer,
+    };
+
+    // If the cache is empty, the symbol wasn't found or init wasn't called theres nothing to
+    // collect.
+    let Some(symbol_info) = crate::otel_tls_reader::cached_tls_info() else {
+        return Ok(());
+    };
+
+    let Some(dtv_off) = dtv_pointer_offset() else {
+        return Ok(());
+    };
+
+    let Ok(tids) = enumerate_threads(ppid) else {
+        return Ok(());
+    };
+
+    let stop_timeout = core::time::Duration::from_millis(100);
+    let mut mem: Option<ProcMemReader> = None;
+    let mut record_buf = [0u8; 640];
+    let mut resolution: Option<TlsResolution> = None;
+    let mut processed = 0;
+
+    let mut try_emit_otel = |tid: libc::pid_t| -> Result<bool, EmitterError> {
+        let stop_deadline = (Instant::now() + stop_timeout).min(deadline);
+        if attach_thread(tid, stop_deadline).is_err() {
+            return Ok(false);
+        }
+
+        let emitted = (|| -> Result<bool, EmitterError> {
+            let mem = match mem.as_mut() {
+                Some(m) => m,
+                None => match ProcMemReader::open(ppid as u32) {
+                    Ok(m) => mem.insert(m),
+                    Err(_) => return Ok(false),
+                },
+            };
+
+            let tp = match read_thread_pointer(tid) {
+                Ok(tp) => tp,
+                Err(_) => return Ok(false),
+            };
+
+            // On first thread, probe DTV to discover resolution strategy.
+            let res = match resolution.as_ref() {
+                Some(r) => r,
+                None => match probe_dtv_for_resolution(mem, tp, dtv_off, symbol_info) {
+                    Some(r) => resolution.insert(r),
+                    None => return Ok(false),
+                },
+            };
+
+            let slot_addr = match *res {
+                TlsResolution::Dtv { module_id } => {
+                    match mem.resolve_tls_addr(tp, dtv_off, module_id, symbol_info.symbol_offset) {
+                        Ok(addr) => addr,
+                        Err(_) => return Ok(false),
+                    }
+                }
+                TlsResolution::StaticOffset { tp_to_slot } => {
+                    (tp as i64).wrapping_add(tp_to_slot) as u64
+                }
+            };
+
+            let record_ptr = match mem.read_tls_slot(slot_addr) {
+                Ok(ptr) if ptr != 0 => ptr,
+                _ => return Ok(false),
+            };
+            let record_len = match mem.read_record(record_ptr, &mut record_buf) {
+                Ok(Some(n)) => n,
+                _ => return Ok(false),
+            };
+
+            writeln!(w, "{DD_CRASHTRACK_BEGIN_OTEL_THREAD_CTX} {tid}")?;
+            for byte in &record_buf[..record_len] {
+                write!(w, "{byte:02x}")?;
+            }
+            writeln!(w)?;
+            writeln!(w, "{DD_CRASHTRACK_END_OTEL_THREAD_CTX}")?;
+            w.flush()?;
+            Ok(true)
+        })();
+
+        let _ = detach_thread(tid);
+        emitted
+    };
+
+    // Process the crashing thread first so it is never dropped by the cap.
+    if crashing_tid != 0 && tids.contains(&crashing_tid) {
+        let _ = try_emit_otel(crashing_tid);
+    }
+
+    for tid in tids {
+        if tid == crashing_tid {
+            continue;
+        }
+        if Instant::now() >= deadline || processed >= max_threads {
+            break;
+        }
+        if matches!(try_emit_otel(tid), Ok(true)) {
+            processed += 1;
+        }
+    }
+
+    Ok(())
+}
+
 /// Write a complete stack from the collector child, outside the crashing process's handler.
 fn emit_whole_stacktrace(w: &mut impl Write, stacktrace: &StackTrace) -> Result<(), EmitterError> {
     writeln!(w, "{DD_CRASHTRACK_BEGIN_WHOLE_STACKTRACE}")?;
@@ -647,13 +778,13 @@ fn write_sanitized_message_line(w: &mut impl Write, message: &str) -> Result<(),
 }
 
 fn emit_message(w: &mut impl Write, message: Option<&str>) -> Result<(), EmitterError> {
-    if let Some(msg) = message {
-        if !msg.trim().is_empty() {
-            writeln!(w, "{DD_CRASHTRACK_BEGIN_MESSAGE}")?;
-            write_sanitized_message_line(w, msg)?;
-            writeln!(w, "{DD_CRASHTRACK_END_MESSAGE}")?;
-            w.flush()?;
-        }
+    if let Some(msg) = message
+        && !msg.trim().is_empty()
+    {
+        writeln!(w, "{DD_CRASHTRACK_BEGIN_MESSAGE}")?;
+        write_sanitized_message_line(w, msg)?;
+        writeln!(w, "{DD_CRASHTRACK_END_MESSAGE}")?;
+        w.flush()?;
     }
     Ok(())
 }

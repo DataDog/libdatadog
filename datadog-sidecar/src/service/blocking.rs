@@ -7,6 +7,7 @@ use super::{
 };
 use crate::service::ffe_submission::FfeSubmissionStatus;
 use crate::service::sender::SidecarSender;
+pub use crate::service::sidecar_interface::CdnSubscriptionError;
 use crate::service::sidecar_interface::{
     SidecarInterfaceChannel, SidecarInterfaceClientRequest, SidecarInterfaceRequest,
 };
@@ -532,6 +533,60 @@ pub fn add_span_to_concentrator(
     Ok(transport.with_retry(|s| s.send(&request)))
 }
 
+/// IPC fallback for DSM. Returns whether the checkpoint was sent, so callers can retry a failed
+/// bootstrap.
+pub fn add_dsm_checkpoint(
+    transport: &mut SidecarTransport,
+    env: String,
+    version: String,
+    service: String,
+    primary_tag: String,
+    checkpoint: libdd_ipc::shm_dsm_checkpoint::OwnedDsmCheckpoint,
+) -> io::Result<bool> {
+    let request = SidecarInterfaceRequest::AddDsmCheckpoint {
+        env,
+        version,
+        service,
+        primary_tag,
+        checkpoint,
+    };
+    Ok(transport.with_retry(|s| s.send(&request)))
+}
+
+/// IPC fallback for DSM backlogs. Returns whether the offset was sent, as
+/// [`add_dsm_checkpoint`] does.
+pub fn add_dsm_backlog(
+    transport: &mut SidecarTransport,
+    env: String,
+    version: String,
+    service: String,
+    primary_tag: String,
+    backlog: libdd_ipc::shm_dsm_backlog::OwnedDsmBacklog,
+) -> io::Result<bool> {
+    let request = SidecarInterfaceRequest::AddDsmBacklog {
+        env,
+        version,
+        service,
+        primary_tag,
+        backlog,
+    };
+    Ok(transport.with_retry(|s| s.send(&request)))
+}
+
+/// Shares a Kafka cluster id with the sidecar's other processes. Returns whether it was sent, as
+/// [`add_dsm_checkpoint`] does.
+pub fn set_kafka_cluster_id(
+    transport: &mut SidecarTransport,
+    bootstrap_servers: String,
+    cluster_id: String,
+) -> io::Result<bool> {
+    let request = SidecarInterfaceRequest::SetKafkaClusterId {
+        bootstrap_servers,
+        cluster_id,
+    };
+    Ok(transport.with_retry(|s| s.send(&request)))
+}
+
 /// Starts the AppSec backend in the sidecar and waits for initialization to
 /// complete before returning.
 pub fn ensure_appsec_started(
@@ -546,6 +601,17 @@ pub fn ensure_appsec_started(
     transport.with_retry(|s| {
         s.ensure_appsec_started(&request)
             .map_err(decode_error_to_io)
+    })
+}
+
+/// Enqueue CDN registration without waiting for a sidecar response.
+pub fn set_cdn_configuration(
+    transport: &mut SidecarTransport,
+    config: Option<crate::shm_remote_config::CdnRegistration>,
+) -> io::Result<()> {
+    transport.with_retry(|s| {
+        s.set_cdn_configuration(config.clone());
+        Ok(())
     })
 }
 
@@ -604,7 +670,8 @@ mod tests {
     use super::try_submit_ffe;
     use crate::service::SidecarAction;
     use crate::service::blocking::{
-        SidecarTransport, add_span_to_concentrator, enqueue_actions, send_dogstatsd_actions,
+        SidecarTransport, add_dsm_backlog, add_dsm_checkpoint, add_span_to_concentrator,
+        enqueue_actions, send_dogstatsd_actions, set_kafka_cluster_id,
     };
     use crate::service::ffe_submission::FfeSubmissionStatus;
     use crate::service::sidecar_interface::{
@@ -643,6 +710,29 @@ mod tests {
         let mut buf = [0; 8192];
         let (len, _) = peer.try_recv_raw(&mut buf).unwrap();
         buf[..len].to_vec()
+    }
+
+    #[test]
+    #[cfg(target_os = "linux")]
+    #[cfg_attr(miri, ignore)]
+    fn process_death_notification_recovers_before_socket_eof() {
+        let (conn, _still_open_peer) = SeqpacketConn::socketpair().unwrap();
+        let mut transport = SidecarTransport::from(conn);
+        assert!(!transport.is_closed());
+
+        // During exit, the kernel may close the watch writer before the IPC socket.
+        transport.inner.channel.0.mark_closed();
+        let (replacement, peer) = SeqpacketConn::socketpair().unwrap();
+        assert!(transport.reconnect(|| Some(Box::new(SidecarTransport::from(replacement)))));
+        assert!(!transport.is_closed());
+        transport
+            .inner
+            .channel
+            .0
+            .conn
+            .try_send_raw(vec![42], &[])
+            .unwrap();
+        assert_eq!(receive_packet(&peer), [42]);
     }
 
     fn assert_evp_configs(peer: &SeqpacketConn, expected: &[EvpTransportConfigWithIdentity]) {
@@ -850,6 +940,8 @@ mod tests {
                 libdd_ipc::shm_stats::OwnedShmSpanInput {
                     fixed: Default::default(),
                     peer_tags: vec![("db.hostname".into(), "db".into())],
+                    additional_tags: vec![],
+                    additional_tags_cardinality_limit: 100,
                     duration_ns: 42,
                     is_error: false,
                     is_top_level: true,
@@ -868,6 +960,145 @@ mod tests {
                 assert_eq!(span.peer_tags, [("db.hostname".into(), "db".into())]);
             }
             _ => panic!("expected a span"),
+        }
+
+        drop(peer);
+        assert!(!send(&mut transport));
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn dsm_fallback_reports_whether_the_point_was_sent() {
+        let (conn, peer) = SeqpacketConn::socketpair().unwrap();
+        let mut transport = SidecarTransport::from(conn);
+        transport
+            .set_read_timeout(Some(Duration::from_millis(100)))
+            .unwrap();
+        let send = |transport: &mut SidecarTransport| {
+            add_dsm_checkpoint(
+                transport,
+                "env".into(),
+                "v1".into(),
+                "svc".into(),
+                "region:eu".into(),
+                libdd_ipc::shm_dsm_checkpoint::OwnedDsmCheckpoint {
+                    hash: 2,
+                    parent_hash: 3,
+                    edge_tags: vec!["topic:orders".into()],
+                    pathway_latency_ns: 4,
+                    edge_latency_ns: 5,
+                    payload_size_bytes: 6,
+                },
+            )
+            .unwrap()
+        };
+        assert!(send(&mut transport));
+        let mut buf = [0; 1024];
+        let (len, _) = peer.try_recv_raw(&mut buf).unwrap();
+        match libdd_ipc::codec::decode::<SidecarInterfaceRequest>(&buf[..len]).unwrap() {
+            SidecarInterfaceRequest::AddDsmCheckpoint {
+                env,
+                version,
+                service,
+                primary_tag,
+                checkpoint,
+            } => {
+                assert_eq!(env, "env");
+                assert_eq!(version, "v1");
+                assert_eq!(service, "svc");
+                assert_eq!(primary_tag, "region:eu");
+                assert_eq!(checkpoint.hash, 2);
+                assert_eq!(checkpoint.edge_tags, ["topic:orders"]);
+            }
+            _ => panic!("expected a DSM checkpoint"),
+        }
+
+        drop(peer);
+        assert!(!send(&mut transport));
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn dsm_backlog_fallback_reports_whether_the_offset_was_sent() {
+        use libdd_ipc::shm_dsm_backlog::BacklogTag;
+        let (conn, peer) = SeqpacketConn::socketpair().unwrap();
+        let mut transport = SidecarTransport::from(conn);
+        transport
+            .set_read_timeout(Some(Duration::from_millis(100)))
+            .unwrap();
+        let send = |transport: &mut SidecarTransport| {
+            add_dsm_backlog(
+                transport,
+                "env".into(),
+                "v1".into(),
+                "svc".into(),
+                "".into(),
+                libdd_ipc::shm_dsm_backlog::OwnedDsmBacklog {
+                    tags: vec![
+                        (BacklogTag::Topic, "orders".into()),
+                        (BacklogTag::Type, "kafka_produce".into()),
+                    ],
+                    offset: 42,
+                },
+            )
+            .unwrap()
+        };
+        assert!(send(&mut transport));
+        let mut buf = [0; 1024];
+        let (len, _) = peer.try_recv_raw(&mut buf).unwrap();
+        match libdd_ipc::codec::decode::<SidecarInterfaceRequest>(&buf[..len]).unwrap() {
+            SidecarInterfaceRequest::AddDsmBacklog {
+                env,
+                service,
+                backlog,
+                ..
+            } => {
+                assert_eq!(env, "env");
+                assert_eq!(service, "svc");
+                assert_eq!(
+                    backlog.tags,
+                    [
+                        (BacklogTag::Topic, "orders".to_owned()),
+                        (BacklogTag::Type, "kafka_produce".to_owned()),
+                    ]
+                );
+                assert_eq!(backlog.offset, 42);
+            }
+            _ => panic!("expected a DSM backlog"),
+        }
+
+        drop(peer);
+        assert!(!send(&mut transport));
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn kafka_cluster_id_reports_whether_the_id_was_sent() {
+        let (conn, peer) = SeqpacketConn::socketpair().unwrap();
+        let mut transport = SidecarTransport::from(conn);
+        transport
+            .set_read_timeout(Some(Duration::from_millis(100)))
+            .unwrap();
+        let send = |transport: &mut SidecarTransport| {
+            set_kafka_cluster_id(
+                transport,
+                "kafka:9092".into(),
+                "5L6g3nShT-eMCtK--X86sw".into(),
+            )
+            .unwrap()
+        };
+        assert!(send(&mut transport));
+        let mut buf = [0; 1024];
+        let (len, _) = peer.try_recv_raw(&mut buf).unwrap();
+        match libdd_ipc::codec::decode::<SidecarInterfaceRequest>(&buf[..len]).unwrap() {
+            SidecarInterfaceRequest::SetKafkaClusterId {
+                bootstrap_servers,
+                cluster_id,
+            } => {
+                assert_eq!(bootstrap_servers, "kafka:9092");
+                assert_eq!(cluster_id, "5L6g3nShT-eMCtK--X86sw");
+            }
+            _ => panic!("expected a Kafka cluster id"),
         }
 
         drop(peer);

@@ -12,13 +12,15 @@ until `tests/conformance.rs` passes.
 | `provider-token-breakdown/` | `trajectory.gen_ai.client.token_breakdown@0.1.0` |
 | `provider-streaming/` | `gen_ai.client.provider_streaming@0.1.0` |
 | `gateway-request/` | `trajectory.gen_ai.gateway.request@0.1.0` |
-| `datadog/` | the Datadog binding of these metrics (series names, types and tags) |
+| `datadog/` | the Datadog binding of these metrics (series names, types, intervals and tags) |
 | `registry.json` | the metric registry, version 0.1.0 |
 
 ## Source
 
 Every file here except this README is byte-for-byte a file of the
-specification at commit `dac9fe5d4c0287b016fcfa095d72c911c791306f`:
+specification at commit `a1bdc9d6782285d72869a12182787d2f9b466781`
+(https://github.com/ddoghq-sandbox/trajectory-spec/pull/434, which makes
+every Datadog Counter a rate over 10 seconds):
 
 | Here | In the specification |
 | --- | --- |

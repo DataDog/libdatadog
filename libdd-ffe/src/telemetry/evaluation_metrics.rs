@@ -113,21 +113,20 @@ fn metric_attributes(metric: FfeEvaluationMetric) -> BTreeMap<String, String> {
         (ATTR_REASON.to_owned(), reason.clone()),
     ]);
 
-    if let Some(error_type) = metric.error_type {
-        if !error_type.is_empty() {
-            attrs.insert(
-                ATTR_ERROR_TYPE.to_owned(),
-                normalize(&error_type, "general"),
-            );
-        }
+    if let Some(error_type) = metric.error_type
+        && !error_type.is_empty()
+    {
+        attrs.insert(
+            ATTR_ERROR_TYPE.to_owned(),
+            normalize(&error_type, "general"),
+        );
     }
 
-    if let Some(allocation_key) = metric.allocation_key {
-        if !allocation_key.is_empty()
-            && !matches!(reason.as_str(), "error" | "default" | "disabled")
-        {
-            attrs.insert(ATTR_ALLOCATION_KEY.to_owned(), allocation_key);
-        }
+    if let Some(allocation_key) = metric.allocation_key
+        && !allocation_key.is_empty()
+        && !matches!(reason.as_str(), "error" | "default" | "disabled")
+    {
+        attrs.insert(ATTR_ALLOCATION_KEY.to_owned(), allocation_key);
     }
 
     attrs

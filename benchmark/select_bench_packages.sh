@@ -66,7 +66,7 @@ case "${CI_COMMIT_BRANCH:-}" in
     elif grep -qE '^(benchmark/|\.gitlab/benchmarks\.yml|\.gitlab/impacted-crates\.yml)' changed_files.txt 2>/dev/null; then
       log "Benchmark infrastructure changed -> full benchmark suite."
       packages="$all_bench"
-    elif grep -qE '^(Cargo\.lock|Cargo\.toml|rust-toolchain\.toml|nightly-toolchain\.toml)$' changed_files.txt 2>/dev/null; then
+    elif grep -qE '^(Cargo\.lock|Cargo\.toml|rust-toolchain\.toml|ci-toolchain\.toml)$' changed_files.txt 2>/dev/null; then
       # Workspace-level dependency or toolchain changes can affect the performance of every crate,
       # even though crates-reporter maps them to no member crate.
       log "Workspace-level dependency/toolchain change -> full benchmark suite."

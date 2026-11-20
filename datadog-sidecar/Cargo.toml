@@ -23,21 +23,27 @@ anyhow = { workspace = true, default-features = true }
 arc-swap.workspace = true
 priority-queue = { workspace = true, default-features = true }
 libdd-common = { path = "../libdd-common" }
+libdd-networking = { path = "../libdd-networking", default-features = false }
+libdd-process-utils = { path = "../libdd-process-utils" }
 libdd-capabilities = { path = "../libdd-capabilities", version = "4.0.1" }
 datadog-sidecar-macros = { path = "../datadog-sidecar-macros" }
 
 libdd-telemetry = { path = "../libdd-telemetry", features = ["tracing"] }
 libdd-data-pipeline = { path = "../libdd-data-pipeline" }
 libdd-trace-utils = { path = "../libdd-trace-utils" }
+libdd-trace-model = { path = "../libdd-trace-model" }
+libdd-trace-normalization = { path = "../libdd-trace-normalization" }
 libdd-trace-stats = { path = "../libdd-trace-stats", features = ["telemetry", "dogstatsd"] }
 libdd-remote-config = { path = "../libdd-remote-config" }
 libdd-live-debugger = { path = "../libdd-live-debugger" }
-libdd-ffe = { path = "../libdd-ffe", features = ["exposure-events", "evaluation-metrics", "flagevaluation-evp"] }
-libdd-crashtracker = { path = "../libdd-crashtracker" }
+libdd-ffe = { path = "../libdd-ffe", features = ["exposure-events", "evaluation-metrics", "flagevaluation-evp", "cdn"] }
+libdd-crashtracker = { path = "../libdd-crashtracker", default-features = false, features = ["collector", "receiver"] }
 libdd-dogstatsd-client = { path = "../libdd-dogstatsd-client" }
 libdd-tinybytes = { path = "../libdd-tinybytes" }
 
+flate2.workspace = true
 futures.workspace = true
+rmp-serde.workspace = true
 manual_future.workspace = true
 http = { workspace = true, features = ["std"] }
 
@@ -52,6 +58,7 @@ serde_json.workspace = true
 base64 = { workspace = true, features = ["std"] }
 spawn_worker = { path = "../spawn_worker" }
 zwohash = { workspace = true, default-features = true }
+semver.workspace = true
 sha2 = { workspace = true, features = ["std"] }
 tokio = { workspace = true, features = ["fs", "sync", "io-util", "signal", "rt-multi-thread", "time"] }
 tokio-util = { workspace = true, features = ["codec"] }
@@ -88,8 +95,8 @@ libdd-common-ffi = { path = "../libdd-common-ffi", default-features = false, fea
 libdd-crashtracker-ffi = { path = "../libdd-crashtracker-ffi", default-features = false, features = ["collector", "collector_windows"] }
 windows-sys = { workspace = true, features = ["Win32_Foundation", "Win32_Security", "Win32_Security_Authorization", "Win32_System_Threading"] }
 
-
 [dev-dependencies]
+rmpv.workspace = true
 tokio = { workspace = true, features = ["test-util", "macros"] }
 libc.workspace = true
 serial_test.workspace = true
@@ -97,13 +104,6 @@ tempfile.workspace = true
 httpmock.workspace = true
 libdd-remote-config = { path = "../libdd-remote-config", features = ["test"] }
 libdd-trace-utils = { path = "../libdd-trace-utils", features = ["test-utils"] }
-
-[lints.clippy]
-# TODO(paullgdc): This fails a lot because of if-let chaining which became
-# allowed with the 1.91.1 MSRV bump.
-# I am planning to fix each crate as an individual PR in order to not have 
-# too many conflicts
-collapsible_if = "allow"
 
 [lints.rust]
 unexpected_cfgs = { level = "warn", check-cfg = [

@@ -7,14 +7,15 @@ use criterion::{
 use libdd_ffe::telemetry::FfeTelemetryContext;
 use libdd_ffe::telemetry::flagevaluation::{
     AllocationKey, ContextDD, EVP_PAYLOAD_SIZE_LIMIT, FfeFlagEvaluationBatch,
-    FfeFlagEvaluationEvent, FlagEvalEventContext, FlagEvaluationEvpCoalescer, FlagKey, VariantKey,
-    encode_flag_evaluation_payloads,
+    FfeFlagEvaluationEvent, FlagEvalEventContext, FlagEvaluationEvpCoalescer, FlagKey,
+    MAX_FEATURES_BYTES, VariantKey, encode_flag_evaluation_payloads,
 };
 use serde::{Deserialize, Serialize};
 use std::{
     collections::{BTreeMap, HashMap},
     fs,
     sync::Arc,
+    time::Duration,
 };
 
 use libdd_ffe::rules_based::{
@@ -56,14 +57,12 @@ fn load_test_cases() -> Vec<TestCase> {
 
     if let Ok(entries) = fs::read_dir(EVALUATION_CASES_DIR) {
         for entry in entries.flatten() {
-            if let Some(path_str) = entry.path().to_str() {
-                if path_str.ends_with(".json") {
-                    if let Ok(content) = fs::read_to_string(entry.path()) {
-                        if let Ok(cases) = serde_json::from_str::<Vec<TestCase>>(&content) {
-                            test_cases.extend(cases);
-                        }
-                    }
-                }
+            if let Some(path_str) = entry.path().to_str()
+                && path_str.ends_with(".json")
+                && let Ok(content) = fs::read_to_string(entry.path())
+                && let Ok(cases) = serde_json::from_str::<Vec<TestCase>>(&content)
+            {
+                test_cases.extend(cases);
             }
         }
     }
@@ -158,26 +157,50 @@ struct FlagEvalBenchProfile {
     num_flags: usize,
     num_users: usize,
     num_fields: usize,
+    // Distinct users carrying the largest features object the cap accepts.
+    max_features: bool,
+    // Criterion sampling: iteration cost spans three orders of magnitude across profiles
+    // (µs for typical, ~120 ms for stress), so heavy profiles need far fewer samples.
+    sample_size: usize,
+    measurement_time: Duration,
 }
 
-const FLAG_EVAL_BENCH_PROFILES: [FlagEvalBenchProfile; 3] = [
+const FLAG_EVAL_BENCH_PROFILES: [FlagEvalBenchProfile; 4] = [
     FlagEvalBenchProfile {
         name: "typical/100flags_50users_10fields",
+        max_features: false,
         num_flags: 100,
         num_users: 50,
         num_fields: 10,
+        sample_size: 100,
+        measurement_time: Duration::from_secs(2),
     },
     FlagEvalBenchProfile {
         name: "stress/10flags_1000users_250fields",
+        max_features: false,
         num_flags: 10,
         num_users: 1_000,
         num_fields: 250,
+        sample_size: 25,
+        measurement_time: Duration::from_secs(2),
     },
     FlagEvalBenchProfile {
         name: "scale/2500flags_500users_20fields",
+        max_features: false,
         num_flags: 2_500,
         num_users: 500,
         num_fields: 20,
+        sample_size: 50,
+        measurement_time: Duration::from_secs(2),
+    },
+    FlagEvalBenchProfile {
+        name: "features/10flags_1000users_max_features",
+        max_features: true,
+        num_flags: 10,
+        num_users: 1_000,
+        num_fields: 10,
+        sample_size: 25,
+        measurement_time: Duration::from_secs(2),
     },
 ];
 
@@ -201,8 +224,22 @@ fn flag_eval_attrs(num_fields: usize) -> String {
     serde_json::to_string(&attrs).expect("benchmark attrs must encode")
 }
 
+// Twice the byte cap, so the coalescer keeps the largest prefix that fits.
+fn flag_eval_max_features() -> String {
+    let features = (0..2 * MAX_FEATURES_BYTES / 100)
+        .map(|i| {
+            (
+                format!("feature{i:03}"),
+                serde_json::Value::String("v".repeat(80)),
+            )
+        })
+        .collect::<BTreeMap<_, _>>();
+    serde_json::to_string(&features).expect("benchmark features must encode")
+}
+
 fn flag_eval_events(profile: FlagEvalBenchProfile) -> Vec<FfeFlagEvaluationEvent> {
     let attrs = flag_eval_attrs(profile.num_fields);
+    let features = profile.max_features.then(flag_eval_max_features);
     let cycle_count = profile.num_flags.max(profile.num_users);
     (0..cycle_count)
         .map(|i| FfeFlagEvaluationEvent {
@@ -229,6 +266,7 @@ fn flag_eval_events(profile: FlagEvalBenchProfile) -> Vec<FfeFlagEvaluationEvent
             }),
             error: None,
             runtime_default_used: false,
+            features: features.clone(),
             observe_full_evaluation_data: true,
             is_degraded: false,
             field_omissions: Default::default(),
@@ -248,6 +286,8 @@ fn bench_flagevaluation_evp_coalescer(c: &mut Criterion) {
     for profile in FLAG_EVAL_BENCH_PROFILES {
         let batch = flag_eval_batch(profile);
         group.throughput(Throughput::Elements(batch.flag_evaluations.len() as u64));
+        group.sample_size(profile.sample_size);
+        group.measurement_time(profile.measurement_time);
         group.bench_function(profile.name, |b| {
             b.iter_batched(
                 || batch.clone(),
@@ -270,6 +310,8 @@ fn bench_flagevaluation_evp_payloads(c: &mut Criterion) {
     for profile in FLAG_EVAL_BENCH_PROFILES {
         let batch = flag_eval_batch(profile);
         group.throughput(Throughput::Elements(batch.flag_evaluations.len() as u64));
+        group.sample_size(profile.sample_size);
+        group.measurement_time(profile.measurement_time);
         group.bench_function(profile.name, |b| {
             b.iter_batched(
                 || batch.clone(),

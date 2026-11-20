@@ -319,10 +319,10 @@ fn native_delivery_and_external_reports_describe_the_same_send() {
     server.mock(|when, then| {
         when.path("/telemetry/proxy/api/v2/apmtelemetry")
             .is_true(move |request| {
-                if request.uri().path() == "/telemetry/proxy/api/v2/apmtelemetry" {
-                    if let Ok(body) = serde_json::from_slice(request.body().as_ref()) {
-                        received.lock().unwrap().push(body);
-                    }
+                if request.uri().path() == "/telemetry/proxy/api/v2/apmtelemetry"
+                    && let Ok(body) = serde_json::from_slice(request.body().as_ref())
+                {
+                    received.lock().unwrap().push(body);
                 }
                 true
             });

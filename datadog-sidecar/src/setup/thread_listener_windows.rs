@@ -152,6 +152,8 @@ fn run_listener_windows(
         // cross-user connects.
         authorizer: ConnectionAuthorizer::for_in_process_listener(),
         drain_only_own_process: true,
+        enable_cdn_fetching: false,
+        allow_liveness_watch: false,
     };
 
     crate::entry::enter_listener_loop_with_config(

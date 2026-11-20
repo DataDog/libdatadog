@@ -1,0 +1,25 @@
+{
+  "description": "input_tokens without Anthropic's cache members is the Responses shape.",
+  "format": "auto",
+  "operation_name": "chat",
+  "payload": {
+    "usage": {
+      "input_tokens": 30,
+      "output_tokens": 4,
+      "input_tokens_details": {
+        "cached_tokens": 10
+      }
+    }
+  },
+  "expected": {
+    "usage": {
+      "input_tokens": 30,
+      "input_basis": "includes_cache",
+      "output_tokens": 4,
+      "output_basis": "includes_reasoning",
+      "cache_read_input_tokens": 10
+    },
+    "response_model": null,
+    "service_tier": null
+  }
+}

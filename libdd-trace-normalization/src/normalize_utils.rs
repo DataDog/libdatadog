@@ -17,16 +17,26 @@ pub(crate) const DEFAULT_SERVICE_NAME: &str = "unnamed-service";
 /// MAX_NAME_LEN the maximum length a name can have
 pub(crate) const MAX_NAME_LEN: usize = 100;
 /// MAX_SERVICE_LEN the maximum length a service can have
-const MAX_SERVICE_LEN: usize = 100;
+pub(crate) const MAX_SERVICE_LEN: usize = 100;
 /// MAX_SERVICE_LEN the maximum length a tag can have
 const MAX_TAG_LEN: usize = 200;
 
 // normalize_service normalizes a span service
 pub fn normalize_service(svc: &mut String) {
+    normalize_service_with_lang(svc, "");
+}
+
+/// Like [`normalize_service`], but falls back to `unnamed-<lang>-service` as the agent does when
+/// `lang` is not empty.
+pub fn normalize_service_with_lang(svc: &mut String, lang: &str) {
     truncate_utf8(svc, MAX_SERVICE_LEN);
     normalize_tag(svc);
     if svc.is_empty() {
-        DEFAULT_SERVICE_NAME.clone_into(svc);
+        if lang.is_empty() {
+            DEFAULT_SERVICE_NAME.clone_into(svc);
+        } else {
+            *svc = format!("unnamed-{lang}-service");
+        }
     }
 }
 
@@ -184,11 +194,11 @@ pub fn normalize_tag(tag: &mut String) {
         if c.is_uppercase() {
             // Take only first codepoint of the lowercase conversion
             // Lowercase the current character if it has the same width as it's lower
-            if let Some(lower) = c.to_lowercase().next() {
-                if lower.len_utf8() <= len_utf8 {
-                    c = lower;
-                    len_utf8 = c.len_utf8();
-                }
+            if let Some(lower) = c.to_lowercase().next()
+                && lower.len_utf8() <= len_utf8
+            {
+                c = lower;
+                len_utf8 = c.len_utf8();
             }
         }
 

@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use std::env;
+use std::rc::Rc;
 
 use build_common::{OutPaths, determine_paths};
 
@@ -19,6 +20,9 @@ struct ReleaseArgs {
     pub out_dir: Option<String>,
     pub target: Option<String>,
     pub profile: Option<String>,
+    /// Overrides the `FileVersion` of the Windows artifacts, for redistributors
+    /// that ship them under a version of their own. Ignored on other targets.
+    pub file_version: Option<String>,
 }
 
 impl From<pico_args::Arguments> for ReleaseArgs {
@@ -27,6 +31,7 @@ impl From<pico_args::Arguments> for ReleaseArgs {
             out_dir: args.value_from_str("--out").ok(),
             target: args.value_from_str("--target").ok(),
             profile: args.value_from_str("--profile").ok(),
+            file_version: args.value_from_str("--file-version").ok(),
         };
 
         args.finish();
@@ -59,6 +64,11 @@ pub fn main() {
     } else {
         host.clone()
     };
+
+    let file_version: Option<Rc<str>> = args.file_version.clone().map(Rc::from);
+    if let Some(file_version) = &file_version {
+        println!("Overriding the Windows FileVersion of the artifacts with {file_version}");
+    }
 
     let features = profiling_features(&Selection::from_cargo_features());
 
@@ -93,6 +103,7 @@ pub fn main() {
         target_lib: builder.target_lib.clone(),
         target_pkconfig: builder.target_pkconfig.clone(),
         version: builder.version.clone(),
+        file_version: file_version.clone(),
     }));
 
     #[cfg(feature = "crashtracker")]

@@ -11,39 +11,16 @@
 extern crate alloc;
 
 #[cfg(feature = "std")]
-pub mod azure_app_services;
-#[cfg(feature = "std")]
-pub mod config;
-#[cfg(all(feature = "std", not(target_arch = "wasm32")))]
-pub mod connector;
-#[cfg(feature = "reqwest")]
-#[cfg(feature = "http-client")]
-pub mod dump_server;
-#[cfg(feature = "std")]
 mod endpoint;
 #[cfg(feature = "std")]
-pub mod entity_id;
-#[cfg(feature = "std")]
 pub mod error;
-#[cfg(feature = "http-client")]
-pub mod http_common;
 #[cfg(feature = "std")]
 mod lock_ext;
-#[cfg(feature = "std")]
-pub mod machine_id;
 #[cfg(feature = "std")]
 pub mod multipart;
 #[cfg(feature = "std")]
 pub mod mutable_metadata;
-#[cfg(feature = "std")]
-pub mod regex_engine;
 pub mod tag;
-#[cfg(all(feature = "std", not(target_arch = "wasm32"), not(target_os = "aix")))]
-pub mod threading;
-#[cfg(all(feature = "std", not(target_arch = "wasm32")))]
-pub mod timeout;
-#[cfg(feature = "std")]
-pub mod unix_utils;
 
 /// Extension trait that extracts the value from a `Result` whose error type is uninhabited.
 ///
@@ -103,23 +80,6 @@ pub mod header {
         HeaderValue::from_static(APPLICATION_PROTOBUF_STR);
     pub const X_DATADOG_TEST_SESSION_TOKEN: HeaderName =
         HeaderName::from_static("x-datadog-test-session-token");
-}
-
-#[cfg(all(not(target_arch = "wasm32"), feature = "http-client"))]
-pub type HttpClient = http_common::GenericHttpClient<connector::Connector>;
-#[cfg(all(not(target_arch = "wasm32"), feature = "http-client"))]
-pub type HttpResponse = http_common::HttpResponse;
-#[cfg(feature = "std")]
-pub type HttpRequestBuilder = http::request::Builder;
-#[cfg(all(not(target_arch = "wasm32"), feature = "http-client"))]
-pub trait Connect:
-    hyper_util::client::legacy::connect::Connect + Clone + Send + Sync + 'static
-{
-}
-#[cfg(all(not(target_arch = "wasm32"), feature = "http-client"))]
-impl<C: hyper_util::client::legacy::connect::Connect + Clone + Send + Sync + 'static> Connect
-    for C
-{
 }
 
 #[cfg(feature = "std")]

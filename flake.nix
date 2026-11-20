@@ -49,14 +49,25 @@
             pkgs.libtool
           ];
         };
+        # Rust toolchain versions CI uses beyond the workspace MSRV
+        # (./ci-toolchain.toml): pinned latest stable and dated nightly.
+        ciToolchains = builtins.fromTOML (builtins.readFile ./ci-toolchain.toml);
+        nightlyDate = builtins.substring 8
+          (builtins.stringLength ciToolchains.toolchain.nightly - 8)
+          ciToolchains.toolchain.nightly;
       in {
         # Default: the pinned stable toolchain (single source of truth is
         # ./rust-toolchain.toml), matching CI and rustup.
         devShells.default = mkDevShell (pkgs.rust-bin.fromRustupToolchainFile ./rust-toolchain.toml);
 
-        # Nightly toolchain (./nightly-toolchain.toml) for the jobs that
+        # Pinned latest stable (./ci-toolchain.toml) for the CI jobs that run
+        # on latest stable instead of the workspace MSRV.
+        # Use with `nix develop .#stable`.
+        devShells.stable = mkDevShell pkgs.rust-bin.stable."${ciToolchains.toolchain.stable}".default;
+
+        # Nightly toolchain (./ci-toolchain.toml) for the jobs that
         # genuinely need a nightly compiler. Use with `nix develop .#nightly`.
-        devShells.nightly = mkDevShell (pkgs.rust-bin.fromRustupToolchainFile ./nightly-toolchain.toml);
+        devShells.nightly = mkDevShell pkgs.rust-bin.nightly."${nightlyDate}".default;
       }
     );
 }

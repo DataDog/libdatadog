@@ -93,6 +93,7 @@ impl NotifyTarget for RemoteConfigNotifyTarget {
 pub struct RemoteConfigs {
     fetchers: Arc<Mutex<HashMap<ConfigInvariants, ShmRemoteConfigs<RemoteConfigNotifyTarget>>>>,
     limiters: Arc<OnceLock<Arc<ShmLimiters>>>,
+    pub(crate) publications: crate::shm_remote_config::publication::PublicationStore,
 }
 pub type RemoteConfigsGuard = ShmRemoteConfigsGuard<RemoteConfigNotifyTarget>;
 
@@ -121,7 +122,7 @@ impl RemoteConfigs {
             Entry::Vacant(e) => {
                 let this = self.fetchers.clone();
                 let invariants = e.key().clone();
-                e.insert(ShmRemoteConfigs::new(
+                e.insert(ShmRemoteConfigs::with_publications(
                     invariants.clone(),
                     Box::new(move || {
                         // try_lock: if the lock is held _right now_, it means that an insertion is
@@ -129,16 +130,16 @@ impl RemoteConfigs {
                         // Otherwise we have to check whether it's actually really dead and possibly
                         // re-insert.
 
-                        if let Ok(mut unlocked) = this.try_lock() {
-                            if let Some(active) = unlocked.remove(&invariants) {
-                                if !active.is_dead() {
-                                    unlocked.insert(invariants.clone(), active);
-                                }
-                            }
+                        if let Ok(mut unlocked) = this.try_lock()
+                            && let Some(active) = unlocked.remove(&invariants)
+                            && !active.is_dead()
+                        {
+                            unlocked.insert(invariants.clone(), active);
                         }
                     }),
                     poll_interval,
                     self.shm_limiters().probes.clone(),
+                    self.publications.clone(),
                 ))
             }
         }

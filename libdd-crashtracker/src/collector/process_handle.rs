@@ -1,8 +1,8 @@
 // Copyright 2025-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-use libdd_common::timeout::TimeoutManager;
-use libdd_common::unix_utils::{reap_child_non_blocking, wait_for_pollhup};
+use libdd_process_utils::timeout::TimeoutManager;
+use libdd_process_utils::unix_utils::{reap_child_non_blocking, wait_for_pollhup};
 use nix::errno::Errno;
 use nix::unistd::Pid;
 use std::os::unix::io::RawFd;

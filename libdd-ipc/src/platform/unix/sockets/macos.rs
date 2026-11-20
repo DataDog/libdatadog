@@ -131,17 +131,16 @@ impl SeqpacketListener {
     /// Silently discards messages without SCM_RIGHTS (liveness probes from `is_listening`).
     pub fn try_accept(&self) -> io::Result<SeqpacketConn> {
         loop {
-            // Use an 8-byte buffer rather than 1 byte: macOS SOCK_DGRAM uses
-            // non-truncating semantics and returns EMSGSIZE if the data doesn't
-            // fit, even for fractionally larger-than-expected payloads.
+            // Use an 8-byte buffer rather than 1 byte: `recvmsg_raw` rejects a datagram
+            // that doesn't fit with EMSGSIZE, even a fractionally larger-than-expected one.
             let mut buf = [0u8; 8];
             let (_, owned_fds) = match super::recvmsg_raw(
                 self.inner.as_raw_fd(),
                 &mut buf,
                 MsgFlags::MSG_DONTWAIT,
             ) {
-                // macOS SOCK_DGRAM returns EMSGSIZE when the received datagram exceeds
-                // the caller's iov or cmsg buffer — the kernel discards the message.
+                // `recvmsg_raw` returns EMSGSIZE when the kernel truncated the datagram to
+                // the buffer, discarding the rest and closing the fds received with it.
                 // Treat it as a discarded handshake: log and continue so the accept loop
                 // does not die. The client will retry via the reconnect mechanism.
                 Err(ref e) if e.raw_os_error() == Some(libc::EMSGSIZE) => {
@@ -556,5 +555,29 @@ mod tests {
             .await
             .expect("expected the queued message, not BrokenPipe");
         assert_eq!(got, b"final");
+    }
+
+    /// Both ends of a connection get the same buffer size, but macOS queues a datagram on the
+    /// receiving socket along with an address record. A message of the advertised size must still
+    /// fit there, or the send fails with ENOBUFS and the client drops the connection.
+    #[tokio::test]
+    #[cfg_attr(miri, ignore)]
+    async fn test_message_of_max_send_size_is_received() {
+        let tmpdir = tempfile::tempdir().expect("tempdir");
+        let path = tmpdir.path().join("test.sock");
+        let listener = SeqpacketListener::bind(&path).expect("bind");
+        let client = SeqpacketConn::connect(&path).expect("connect");
+        let server = listener.try_accept().expect("try_accept");
+        let server = server.into_async_conn().expect("into_async_conn");
+
+        let mut client = crate::IpcClientConn::new(client);
+        let limit = client.max_send_size();
+        client.try_send(vec![7; limit], &[]).expect("send at limit");
+        assert!(!client.is_closed());
+
+        let (got, _) = crate::recv_raw_async(&server, |buf: &[u8]| buf.len())
+            .await
+            .expect("recv");
+        assert_eq!(got, limit);
     }
 }

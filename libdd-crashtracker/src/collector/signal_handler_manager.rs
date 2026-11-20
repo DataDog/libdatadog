@@ -10,7 +10,7 @@ use libc::{
     MAP_ANON, MAP_FAILED, MAP_PRIVATE, PROT_NONE, PROT_READ, PROT_WRITE, SIGSTKSZ, c_void, mmap,
     sigaltstack, siginfo_t,
 };
-use libdd_common::unix_utils::terminate;
+use libdd_process_utils::unix_utils::terminate;
 use nix::sys::signal::{self, SaFlags, SigAction, SigHandler};
 
 // Linux seems to have the most, supporting up to 64 inclusive

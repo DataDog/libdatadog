@@ -101,7 +101,11 @@ impl UnsyncStringSet {
             let slice_str = unsafe { std::str::from_utf8_unchecked(thin_slice.as_slice()) };
             slice_str == str
         })?;
-        Some(StringRef((*interned_str).into()))
+        // SAFETY: the set only accepts `&str` input, so the interned bytes are
+        // valid UTF-8.
+        Some(StringRef(unsafe {
+            ThinStr::from_utf8_unchecked(*interned_str)
+        }))
     }
 
     /// # Safety
@@ -131,7 +135,9 @@ impl UnsyncStringSet {
             let new_slice = self
                 .0
                 .insert_unique_uncontended_with_hash(hash, str.as_bytes())?;
-            Ok(StringRef(new_slice.into()))
+            // SAFETY: the slice was just created from `str.as_bytes()`, which
+            // is valid UTF-8.
+            Ok(StringRef(ThinStr::from_utf8_unchecked(new_slice)))
         }
     }
 
@@ -167,7 +173,11 @@ impl UnsyncStringSet {
 
     /// Returns an iterator over all strings in the set as [`StringRef`]s.
     pub fn string_ids(&self) -> impl Iterator<Item = StringRef> + '_ {
-        self.0.slices.iter().map(|slice| StringRef((*slice).into()))
+        self.0.slices.iter().map(|slice| {
+            // SAFETY: the set only accepts `&str` input, so the interned bytes
+            // are valid UTF-8.
+            StringRef(unsafe { ThinStr::from_utf8_unchecked(*slice) })
+        })
     }
 
     pub fn len(&self) -> usize {

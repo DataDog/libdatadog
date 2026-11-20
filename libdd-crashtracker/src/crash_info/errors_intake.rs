@@ -3,6 +3,7 @@
 
 use alloc::borrow::Cow;
 use core::time::Duration;
+use libdd_networking::endpoint::EndpointExt;
 use std::time::SystemTime;
 
 use crate::parse_tags;
@@ -16,7 +17,8 @@ use super::{
 use anyhow::Context;
 use chrono::{DateTime, Utc};
 use http::{Uri, uri::PathAndQuery};
-use libdd_common::{Endpoint, config::parse_env, parse_uri};
+use libdd_common::{Endpoint, parse_uri};
+use libdd_env::{env_bool, env_from_str, env_str_not_empty};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
@@ -60,7 +62,8 @@ fn endpoint_with_errors_intake_path(
     Ok(endpoint)
 }
 
-/// Settings gathers configuration options we receive from the environment
+/// Settings gathers configuration options from the environment, plus a
+/// filesystem check for the agent's Unix socket.
 #[derive(Debug, Default)]
 pub struct ErrorsIntakeSettings {
     // Env parameter
@@ -102,19 +105,19 @@ impl ErrorsIntakeSettings {
     pub fn from_env() -> Self {
         let default = Self::default();
         Self {
-            agent_host: parse_env::str_not_empty(Self::DD_AGENT_HOST),
-            trace_agent_port: parse_env::int(Self::DD_TRACE_AGENT_PORT),
-            trace_agent_url: parse_env::str_not_empty(Self::DD_TRACE_AGENT_URL)
+            agent_host: env_str_not_empty(Self::DD_AGENT_HOST),
+            trace_agent_port: env_from_str(Self::DD_TRACE_AGENT_PORT),
+            trace_agent_url: env_str_not_empty(Self::DD_TRACE_AGENT_URL)
                 .or(default.trace_agent_url),
-            trace_pipe_name: parse_env::str_not_empty(Self::DD_TRACE_PIPE_NAME)
+            trace_pipe_name: env_str_not_empty(Self::DD_TRACE_PIPE_NAME)
                 .or(default.trace_pipe_name),
-            direct_submission_enabled: parse_env::bool(Self::_DD_DIRECT_SUBMISSION_ENABLED)
+            direct_submission_enabled: env_bool(Self::_DD_DIRECT_SUBMISSION_ENABLED)
                 .unwrap_or(default.direct_submission_enabled),
-            api_key: parse_env::str_not_empty(Self::DD_API_KEY),
-            site: parse_env::str_not_empty(Self::DD_SITE),
-            errors_intake_dd_url: parse_env::str_not_empty(Self::DD_ERRORS_INTAKE_DD_URL),
-            shared_lib_debug: parse_env::bool(Self::_DD_SHARED_LIB_DEBUG).unwrap_or(false),
-            errors_intake_enabled: parse_env::bool(Self::DD_CRASHTRACKING_ERRORS_INTAKE_ENABLED)
+            api_key: env_str_not_empty(Self::DD_API_KEY),
+            site: env_str_not_empty(Self::DD_SITE),
+            errors_intake_dd_url: env_str_not_empty(Self::DD_ERRORS_INTAKE_DD_URL),
+            shared_lib_debug: env_bool(Self::_DD_SHARED_LIB_DEBUG).unwrap_or(false),
+            errors_intake_enabled: env_bool(Self::DD_CRASHTRACKING_ERRORS_INTAKE_ENABLED)
                 .unwrap_or(true),
 
             agent_uds_socket_found: (|| {
@@ -382,21 +385,8 @@ impl ErrorsIntakePayload {
         ddtags.push(',');
         ddtags.push_str(&crash_info.ddtags());
 
-        let error_type = if let Some(sig_info) = &crash_info.sig_info {
-            Some(format!("{:?}", sig_info.si_signo_human_readable))
-        } else {
-            Some(format!("{:?}", crash_info.error.kind))
-        };
-
-        let error_message = crash_info.error.message.clone().or_else(|| {
-            crash_info.sig_info.as_ref().map(|sig_info| {
-                format!(
-                    "Process terminated with {:?} ({:?})",
-                    sig_info.si_code_human_readable, sig_info.si_signo_human_readable
-                )
-                .to_string()
-            })
-        });
+        let error_type = Some(crash_info.error_type());
+        let error_message = crash_info.error_message();
 
         let error_stack = if !crash_info.error.stack.frames.is_empty() {
             Some(crash_info.error.stack.clone())
@@ -524,8 +514,8 @@ impl ErrorsIntakeUploader {
             let file_path = path.with_extension("errors");
             // Apply the same path policy as the crash JSON output to its .errors companion.
             #[cfg(unix)]
-            let file = if libdd_common::unix_utils::worker_file_outputs_restricted() {
-                libdd_common::unix_utils::open_regular_for_create(&file_path).with_context(
+            let file = if libdd_process_utils::unix_utils::worker_file_outputs_restricted() {
+                libdd_process_utils::unix_utils::open_regular_for_create(&file_path).with_context(
                     || {
                         format!(
                             "Failed to create errors intake file {}",
@@ -581,7 +571,7 @@ impl ErrorsIntakeUploader {
             .body(serde_json::to_string(payload)?.into())?;
 
         // Create HTTP client and send request
-        let client = libdd_common::http_common::new_client_periodic();
+        let client = libdd_networking::http_common::new_client_periodic();
 
         tokio::time::timeout(
             Duration::from_millis(endpoint.timeout_ms),

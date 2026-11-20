@@ -16,7 +16,7 @@ bench = false
 [features]
 default = ["cbindgen"]
 cbindgen = ["build_common/cbindgen", "libdd-common-ffi/cbindgen"]
-regex-lite = ["libdd-common-ffi/regex-lite"]
+regex-lite = ["libdd-regex/regex-lite"]
 
 [build-dependencies]
 build_common = { path = "../build-common" }
@@ -24,5 +24,9 @@ build_common = { path = "../build-common" }
 [dependencies]
 libdd-ddsketch = { path = "../libdd-ddsketch" }
 libdd-common-ffi = { path = "../libdd-common-ffi", default-features = false, features = ["std"] }
+libdd-regex = { path = "../libdd-regex" }
 
 [dev-dependencies]
+
+[package.metadata.cargo-machete]
+ignored = ["libdd-regex"]

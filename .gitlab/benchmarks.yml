@@ -99,6 +99,92 @@ benchmarks:
 
       checkout_source_with_submodules "${UPSTREAM_REPO_URL}" "${CANDIDATE_PATH}" "${CANDIDATE_IDENTIFIER}"
 
+      # Prints the SHA of GitHub's test merge commit (refs/pull/<N>/merge) of the PR whose head is
+      # $1 into the branch $2, or fails if there is none (no such PR, conflicts, PR retargeted).
+      # GitHub recomputes that ref asynchronously after each push to either side, so it may lag:
+      # accept it only once its second parent is our commit, retrying after 10s and then 20s.
+      find_pr_merge_commit() {
+        local repo=$1 head_sha=$2 target_tip=$3 prs pr merge_sha delay
+        # On external-PR pipelines, GitLab tells us which PR this run is about; pin the merge ref
+        # to it. Scanning by head SHA alone would be ambiguous: several open PRs can point at the
+        # same commit, and one whose base merely is an ancestor of the target branch would pass
+        # the checks below, silently benchmarking against the wrong branch.
+        if [[ -n "${CI_EXTERNAL_PULL_REQUEST_IID:-}" ]]; then
+          prs="refs/pull/${CI_EXTERNAL_PULL_REQUEST_IID}"
+        else
+          # No PR context (e.g. a branch pipeline): find candidate PRs by matching the head SHA
+          # against refs/pull/*/head, which needs no GitHub API call (rate limits, tokens). GitHub
+          # keeps those refs after a PR is closed, so several PRs can match (e.g. a PR reopened as
+          # a new one from the same branch). Only open PRs have a merge ref, and the checks below
+          # keep one that merges our head into the target branch.
+          prs="$(git -C "${repo}" ls-remote origin 'refs/pull/*/head' \
+                 | awk -v sha="${head_sha}" '$1 == sha { sub(/\/head$/, "", $2); print $2 }')"
+        fi
+        [[ -n "${prs}" ]] || return 1
+
+        # Try every candidate before waiting, so that closed PRs cost nothing.
+        for delay in 0 10 20; do
+          if (( delay > 0 )); then
+            echo "No up-to-date test merge commit for ${head_sha} yet; retrying in ${delay}s" >&2
+            sleep "${delay}"
+          fi
+
+          for pr in ${prs}; do
+            if git -C "${repo}" fetch --quiet origin "+${pr}/merge:refs/benchmark/pr-merge" 2>/dev/null \
+               && merge_sha="$(git -C "${repo}" rev-parse refs/benchmark/pr-merge)" \
+               && [[ "$(git -C "${repo}" rev-parse "${merge_sha}^2")" == "${head_sha}" ]] \
+               && git -C "${repo}" merge-base --is-ancestor "${merge_sha}^1" "${target_tip}"; then
+              echo "${merge_sha}"
+              return 0
+            fi
+          done
+        done
+        return 1
+      }
+
+      # On PRs, benchmark the PR as it would be merged (GitHub's test merge
+      # commit) against its first parent, i.e. the target branch it was merged
+      # into. This ensures both that we measure the isolated changes of this
+      # PR, and we measure them against a recent main (or whatever is the
+      # target branch): the merge ref can lag a bit behind the target tip, but
+      # its two parents always differ by exactly the PR's changes.
+      #
+      # Falls back to the PR head against the merge-base when there is no merge
+      # ref (conflicts), which isolates the PR's changes just as well but on an
+      # older target.
+      if [[ "${UPSTREAM_BRANCH}" != "main" && -n "${BASELINE_IDENTIFIER:-}" ]]; then
+        target_branch="${BASELINE_IDENTIFIER}"
+        head_sha="$(git -C "${CANDIDATE_PATH}" rev-parse "${CANDIDATE_IDENTIFIER}^{commit}")"
+        target_ref="refs/benchmark/target"
+        if ! git -C "${CANDIDATE_PATH}" fetch --quiet origin "+refs/heads/${target_branch}:${target_ref}"; then
+          echo "WARNING: could not fetch ${target_branch}; comparing the PR head against its tip" >&2
+        elif merge_sha="$(find_pr_merge_commit "${CANDIDATE_PATH}" "${head_sha}" "${target_ref}")"; then
+          merge_parent="$(git -C "${CANDIDATE_PATH}" rev-parse "${merge_sha}^1")"
+          echo "Candidate: ${merge_sha}, test merge of ${head_sha} into ${target_branch}"
+          echo "Baseline: ${merge_parent} (${target_branch}, first parent of the test merge)"
+          git -C "${CANDIDATE_PATH}" checkout --quiet "${merge_sha}"
+          git -C "${CANDIDATE_PATH}" submodule update --init --recursive
+          # Label the results with the PR head, not the throwaway merge commit, so they show up
+          # under the commit the PR comment and the Benchmarking UI are about. Pre-setting these
+          # makes config-benchmark-env.sh keep them instead of reading HEAD.
+          # git_get_information prints "<version> <hash> <time>", where <version> may be empty.
+          head_info="$(git_get_information "${CANDIDATE_PATH}" "${head_sha}")"
+          head_time="${head_info##* }" && head_info="${head_info% *}"
+          head_hash="${head_info##* }" && head_version="${head_info% *}"
+          export CANDIDATE_VERSION="${head_version}~${head_hash}" CANDIDATE_HASH="${head_hash}" CANDIDATE_TIME="${head_time}"
+          export CANDIDATE_LONG_NAME="${head_version}~${head_hash} (${CANDIDATE_IDENTIFIER} merged into ${target_branch})"
+          export BASELINE_BRANCH="${target_branch}"
+          export BASELINE_IDENTIFIER="${merge_parent}"
+        elif merge_base="$(git -C "${CANDIDATE_PATH}" merge-base "${head_sha}" "${target_ref}")"; then
+          echo "No test merge commit found for ${head_sha} into ${target_branch} (conflicts?)"
+          echo "Baseline: merge-base ${merge_base} of ${CANDIDATE_IDENTIFIER} and ${target_branch}"
+          export BASELINE_BRANCH="${target_branch}"
+          export BASELINE_IDENTIFIER="${merge_base}"
+        else
+          echo "WARNING: could not compute the merge-base with ${target_branch}; using its tip" >&2
+        fi
+      fi
+
       # Refresh benchmark-platform's derived baseline after candidate checkout.
       VERBOSE="true" source ./steps/config-benchmark-env.sh
       checkout_source_with_submodules "${UPSTREAM_REPO_URL}" "${BASELINE_PATH}" "${BASELINE_IDENTIFIER}"
@@ -158,6 +244,11 @@ benchmarks:
     SCCACHE_BASEDIRS: /platform/workspace/candidate:/platform/workspace/baseline
     # Incompatible with a shared compiler cache.
     CARGO_INCREMENTAL: "0"
+    # Align every function to 64 bytes so that unchanged code keeps the same placement within
+    # cache lines and uop-cache windows when unrelated code moves. Without it, identical machine
+    # code was measured up to 30% apart (credit_card). Set here, not in run_benchmarks_ci.sh: the
+    # baseline runs its own copy of that script, so a flag added there would apply to only one side.
+    RUSTFLAGS: "-C llvm-args=-align-all-functions=6"
 
 # Merges the parallel benchmark shards and posts a single PR comment. Each shard already uploaded its
 # own results to S3 / the Benchmarking API with correct per-run metadata; this job only assembles the

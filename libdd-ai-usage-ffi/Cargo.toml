@@ -1,0 +1,31 @@
+# Copyright 2026-Present Datadog, Inc. https://www.datadoghq.com/
+# SPDX-License-Identifier: Apache-2.0
+
+[package]
+name = "libdd-ai-usage-ffi"
+version = "0.1.0"
+rust-version.workspace = true
+edition.workspace = true
+license.workspace = true
+homepage = "https://github.com/DataDog/libdatadog/tree/main/libdd-ai-usage-ffi"
+repository = "https://github.com/DataDog/libdatadog/tree/main/libdd-ai-usage-ffi"
+description = "C interface to libdd-ai-usage: LLM usage and cost metrics, provider usage parsing and DogStatsD packing for gateways in any language"
+# The checked-in header is what non-Rust callers compile or dlopen against.
+include = ["src/**/*.rs", "include/*.h", "cbindgen.toml", "Cargo.toml", "README.md"]
+
+[lib]
+# The library has no dependency on libdd-common-ffi, so that it can be
+# published to crates.io and loaded on its own (dlopen, LuaJIT FFI, ctypes).
+# Loaded on its own, it is named for its C prefix: `libdd_ai_usage_ffi.so`
+# (`.dylib`, `.a`; `dd_ai_usage_ffi.dll`), not `liblibdd_ai_usage_ffi.so`.
+name = "dd_ai_usage_ffi"
+crate-type = ["lib", "staticlib", "cdylib"]
+bench = false
+
+[dependencies]
+libdd-ai-usage = { path = "../libdd-ai-usage", version = "0.1.0", default-features = false }
+serde_json = { workspace = true, features = ["std"] }
+
+[dev-dependencies]
+# Regenerates the checked-in header to check that it is current.
+cbindgen = { workspace = true }

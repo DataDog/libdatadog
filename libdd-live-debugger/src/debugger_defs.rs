@@ -25,12 +25,17 @@ pub enum DebuggerData<'a> {
     Diagnostics(Diagnostics<'a>),
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Default, Serialize, Deserialize)]
 pub struct ProbeMetadataLocation<'a> {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub method: Option<Cow<'a, str>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub r#type: Option<Cow<'a, str>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub file: Option<Cow<'a, str>>,
+    /// Each entry as `"N"` or `"A-B"`.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub lines: Vec<Cow<'a, str>>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -135,7 +140,7 @@ pub struct Value<'a> {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub not_captured_reason: Option<Cow<'a, str>>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub size: Option<Cow<'a, str>>,
+    pub size: Option<u64>,
 }
 
 #[derive(Debug, Default, Serialize, Deserialize)]

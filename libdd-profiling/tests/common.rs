@@ -6,7 +6,7 @@
 use std::collections::HashMap;
 
 /// Validates that entity headers (container-id, entity-id, external-env) match
-/// the values provided by libdd_common::entity_id
+/// the values provided by libdd_host_identity::entity_id
 ///
 /// # Current Limitations
 ///
@@ -25,17 +25,17 @@ use std::collections::HashMap;
 ///    present/absent.
 ///
 /// **Future improvement**: The ideal approach would be to refactor the underlying code
-/// (`libdd_common::entity_id::get_container_id()`, `get_entity_id()`, etc.) to be more testable,
-/// perhaps by making them accept injectable dependencies or configuration. Then we could test all
-/// combinations: container-id [Some/None] × entity-id [Some/None] × external-env [Some/None] to
-/// verify correct header inclusion/exclusion in all 8 cases.
+/// (`libdd_host_identity::entity_id::get_container_id()`, `get_entity_id()`, etc.) to be more
+/// testable, perhaps by making them accept injectable dependencies or configuration. Then we could
+/// test all combinations: container-id [Some/None] × entity-id [Some/None] × external-env
+/// [Some/None] to verify correct header inclusion/exclusion in all 8 cases.
 ///
 /// See discussion: https://github.com/DataDog/libdatadog/pull/1493#discussion_r2745712029
 pub fn assert_entity_headers_match(headers: &HashMap<String, String>) {
-    // Check for entity headers and validate their values match what libdd_common provides
-    let expected_container_id = libdd_common::entity_id::get_container_id();
-    let expected_entity_id = libdd_common::entity_id::get_entity_id();
-    let expected_external_env = *libdd_common::entity_id::DD_EXTERNAL_ENV;
+    // Check for entity headers and validate their values match what libdd_host_identity provides
+    let expected_container_id = libdd_host_identity::entity_id::get_container_id();
+    let expected_entity_id = libdd_host_identity::entity_id::get_entity_id();
+    let expected_external_env = *libdd_host_identity::entity_id::DD_EXTERNAL_ENV;
 
     // Validate container ID
     if let Some(expected) = expected_container_id {

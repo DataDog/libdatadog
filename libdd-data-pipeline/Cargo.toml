@@ -35,6 +35,9 @@ tokio-util.workspace = true
 libdd-capabilities = { path = "../libdd-capabilities", version = "4.0.1" }
 libdd-data-pipeline-core = { path = "../libdd-data-pipeline-core", version = "5.0.0" }
 libdd-common = { version = "10.0.0", path = "../libdd-common", default-features = false, features = ["std"] }
+libdd-host-identity = { version = "1.0.0", path = "../libdd-host-identity" }
+libdd-networking = { path = "../libdd-networking", version = "1.0.0", default-features = false }
+libdd-regex = { version = "0.1.0", path = "../libdd-regex" }
 libdd-shared-runtime = { version = "8.0.0", path = "../libdd-shared-runtime", default-features = false }
 libdd-telemetry = { version = "12.0.0", path = "../libdd-telemetry", default-features = false, features = ["std"], optional = true}
 libdd-trace-protobuf = { version = "5.1.1", path = "../libdd-trace-protobuf" }
@@ -93,6 +96,7 @@ serde_ignored.workspace = true
 
 [target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
 h2.workspace = true
+hyper = { workspace = true, features = ["server", "http1"] }
 zstd.workspace = true
 
 [target.'cfg(target_arch = "wasm32")'.dev-dependencies]
@@ -114,13 +118,12 @@ required-features = ["stats-obfuscation"]
 default = ["https", "telemetry"]
 telemetry = ["libdd-telemetry", "libdd-trace-stats/telemetry"]
 https = [
-    "libdd-common/https",
+    "libdd-networking/https",
     "libdd-capabilities-impl/https",
     "libdd-shared-runtime/https",
     "libdd-telemetry?/https",
     "libdd-trace-stats/https",
     "libdd-trace-utils/https",
-    "libdd-dogstatsd-client/https",
 ]
 # Lets hosts that run their own telemetry client collect exporter observations instead of
 # the native telemetry worker. Requires `telemetry`: SDKs compile both and pick one at
@@ -135,16 +138,15 @@ stats-obfuscation = [
 ]
 
 fips = [
-    "libdd-common/fips",
+    "libdd-networking/fips",
     "libdd-capabilities-impl/fips",
     "libdd-shared-runtime/fips",
     "libdd-telemetry?/fips",
     "libdd-trace-stats/fips",
     "libdd-trace-utils/fips",
-    "libdd-dogstatsd-client/fips",
 ]
 test-utils = []
-regex-lite = ["libdd-common/regex-lite"]
+regex-lite = ["libdd-regex/regex-lite"]
 # Enable zstd compression for the agentless trace and stats intake senders.
 compression = [
     "libdd-trace-utils/compression",
@@ -152,9 +154,5 @@ compression = [
     "libdd-data-pipeline-core/compression",
 ]
 
-[lints.clippy]
-# TODO(paullgdc): This fails a lot because of if-let chaining which became
-# allowed with the 1.91.1 MSRV bump.
-# I am planning to fix each crate as an individual PR in order to not have 
-# too many conflicts
-collapsible_if = "allow"
+[package.metadata.cargo-machete]
+ignored = ["libdd-regex"]

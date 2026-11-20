@@ -3,6 +3,7 @@
 
 use crate::{DslString, ProbeCondition, ProbeValue};
 use serde::Deserialize;
+use std::fmt::{Display, Formatter};
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -116,13 +117,38 @@ pub enum InBodyLocation {
     End,
 }
 
+/// One `where.lines` entry: a single line `"N"` (`from == till`) or an inclusive range `"A-B"`.
+#[repr(C)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub struct SourceLine {
+    pub from: u32,
+    pub till: u32,
+}
+
+impl SourceLine {
+    pub fn is_range(&self) -> bool {
+        self.from != self.till
+    }
+}
+
+impl Display for SourceLine {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        if self.is_range() {
+            write!(f, "{}-{}", self.from, self.till)
+        } else {
+            write!(f, "{}", self.from)
+        }
+    }
+}
+
 #[derive(Debug)]
 pub struct ProbeTarget {
     pub type_name: Option<String>,
     pub method_name: Option<String>,
+    /// Directory separators are normalized to `/`.
     pub source_file: Option<String>,
     pub signature: Option<String>,
-    pub lines: Vec<u32>,
+    pub lines: Vec<SourceLine>,
     pub in_body_location: InBodyLocation,
 }
 

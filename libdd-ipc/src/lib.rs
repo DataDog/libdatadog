@@ -14,7 +14,10 @@ pub mod one_way_shared_memory;
 pub mod oversized;
 pub mod platform;
 pub mod rate_limiter;
+pub mod shm_dsm_backlog;
+pub mod shm_dsm_checkpoint;
 pub mod shm_stats;
+mod shm_table;
 
 mod atomic_option_box;
 pub mod client;
