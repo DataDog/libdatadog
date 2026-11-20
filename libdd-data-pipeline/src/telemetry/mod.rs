@@ -304,11 +304,8 @@ impl SendPayloadTelemetry {
 }
 
 impl<C: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static> TelemetryClient<C> {
-    /// Sends metrics to the agent using a telemetry worker handle.
-    ///
-    /// # Arguments:
-    ///
-    /// * `telemetry_handle`: telemetry worker handle used to enqueue metrics.
+    /// Enqueue metrics for the telemetry worker. If the buffer is full, individual points are
+    /// dropped without failing the batch.
     pub fn send(&self, data: &SendPayloadTelemetry) -> Result<(), TelemetryError> {
         if data.requests_count > 0 {
             let key = self.metrics.get(metrics::MetricKind::ApiRequest);
@@ -382,7 +379,8 @@ impl<C: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static> Tel
         Ok(())
     }
 
-    /// Send dropped P0 trace counts to telemetry.
+    /// Enqueue counts of traces dropped by priority sampling or filtering. A full metric buffer
+    /// drops the point without an error.
     pub fn send_client_side_stats_drops(
         &self,
         dropped_p0_traces: usize,
