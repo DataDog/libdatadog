@@ -443,9 +443,10 @@ pub(crate) async fn receive_report_from_stream(
     let mut crash_ping_sent = false;
 
     let mut lines = stream.lines();
-    let mut deadline = None;
-    // Start the timeout counter when the deadline when the first crash message is recieved
-    let mut remaining_timeout = Duration::MAX;
+    // Start the absolute deadline immediately so a collector that never writes
+    // cannot make the receiver wait forever
+    let absolute_deadline = Instant::now() + timeout;
+    let mut per_report_deadline: Option<Instant> = None;
 
     //TODO: This assumes that the input is valid UTF-8.
     loop {
@@ -477,6 +478,15 @@ pub(crate) async fn receive_report_from_stream(
                 eprintln!("No config found, skipping crash ping");
             }
         }
+        // Use the tighter of the two deadlines: the absolute deadline (from
+        // connection accept) prevents infinite waits when the collector never
+        // writes; the per-report deadline (from first data) bounds report
+        // processing time.
+        let effective_deadline = match per_report_deadline {
+            Some(d) => d.min(absolute_deadline),
+            None => absolute_deadline,
+        };
+        let remaining_timeout = effective_deadline.saturating_duration_since(Instant::now());
         let next_line = tokio::time::timeout(remaining_timeout, lines.next_line()).await;
         let Ok(next_line) = next_line else {
             builder.with_log_message(format!("Timeout: {next_line:?}"), true)?;
@@ -532,13 +542,10 @@ pub(crate) async fn receive_report_from_stream(
             }
         }
 
-        if let Some(deadline) = deadline {
-            // The clock was already ticking, update the remaining time
-            remaining_timeout = deadline - Instant::now()
-        } else {
-            // We've recieved the first message from the collector, start the clock ticking.
-            deadline = Some(Instant::now() + timeout);
-            remaining_timeout = timeout;
+        if per_report_deadline.is_none() {
+            // We've received the first message from the collector. Start the
+            // per-report clock so that slow report processing is also bounded.
+            per_report_deadline = Some(Instant::now() + timeout);
         }
     }
 
@@ -604,11 +611,11 @@ pub(crate) async fn receive_report_from_stream(
     {
         let parent_pid = proc_info.pid;
         let crashing_tid = proc_info.tid;
-        // If we never received a first line (deadline is None) use zero so
-        // collection is skipped; there is nothing to attach to anyway.
-        let remaining_budget = deadline
-            .map(|d| d.saturating_duration_since(Instant::now()))
-            .unwrap_or(Duration::ZERO);
+        // If we never received a first line (per_report_deadline is None)
+        // use the absolute deadline; fall back to zero if that also passed.
+        let remaining_budget = per_report_deadline
+            .unwrap_or(absolute_deadline)
+            .saturating_duration_since(Instant::now());
         if let Err(e) = collect_and_add_thread_contexts(
             &mut builder,
             &config,
