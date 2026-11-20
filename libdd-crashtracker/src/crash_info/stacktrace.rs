@@ -532,14 +532,18 @@ mod unix_test {
     use super::*;
     use crate::{SharedLibrary, get_tests_folder_path};
 
+    /// A shared library built by build.rs into this profile's `OUT_DIR`.
+    fn fixture(name: &str) -> std::path::PathBuf {
+        std::path::Path::new(env!("OUT_DIR"))
+            .join(name)
+            .canonicalize()
+            .unwrap()
+    }
+
     #[test]
     #[cfg_attr(miri, ignore)]
     fn test_normalize_ip() {
-        let test_so = get_tests_folder_path()
-            .expect("Failed to get the tests folder path")
-            .join("libtest.so")
-            .canonicalize()
-            .unwrap();
+        let test_so = fixture("libtest.so");
 
         let libtest_so =
             SharedLibrary::open(test_so.to_str().unwrap()).expect("Failed to open library");
@@ -570,11 +574,7 @@ mod unix_test {
     #[test]
     #[cfg_attr(miri, ignore)]
     fn test_normalize_ip_cpp() {
-        let test_so = get_tests_folder_path()
-            .expect("Failed to get the tests folder path")
-            .join("libtest_cpp.so")
-            .canonicalize()
-            .unwrap();
+        let test_so = fixture("libtest_cpp.so");
 
         let libtest_so =
             SharedLibrary::open(test_so.to_str().unwrap()).expect("Failed to open library");
@@ -605,11 +605,7 @@ mod unix_test {
     #[test]
     #[cfg_attr(miri, ignore)]
     fn test_symbolization() {
-        let test_so = get_tests_folder_path()
-            .expect("Failed to get the tests folder path")
-            .join("libtest.so")
-            .canonicalize()
-            .unwrap();
+        let test_so = fixture("libtest.so");
 
         let libtest_so =
             SharedLibrary::open(test_so.to_str().unwrap()).expect("Failed to open library");
@@ -624,8 +620,7 @@ mod unix_test {
         frame.resolve_names(&src, &symbolizer).unwrap();
 
         assert_eq!(frame.function, Some("my_function".to_string()));
-        let parent_dir = test_so.parent().unwrap();
-        let c_file = parent_dir.join("libtest.c");
+        let c_file = get_tests_folder_path().unwrap().join("libtest.c");
         assert_eq!(frame.file, Some(c_file.to_string_lossy().to_string()));
     }
 
@@ -635,11 +630,7 @@ mod unix_test {
     #[test]
     #[cfg_attr(miri, ignore)]
     fn test_symbolization_after_process_exit() {
-        let test_so = get_tests_folder_path()
-            .expect("Failed to get the tests folder path")
-            .join("libtest.so")
-            .canonicalize()
-            .unwrap();
+        let test_so = fixture("libtest.so");
 
         let libtest_so =
             SharedLibrary::open(test_so.to_str().unwrap()).expect("Failed to open library");
@@ -673,11 +664,7 @@ mod unix_test {
     #[test]
     #[cfg_attr(miri, ignore)]
     fn test_symbolization_cpp() {
-        let test_so = get_tests_folder_path()
-            .expect("Failed to get the tests folder path")
-            .join("libtest_cpp.so")
-            .canonicalize()
-            .unwrap();
+        let test_so = fixture("libtest_cpp.so");
 
         let libtest_so =
             SharedLibrary::open(test_so.to_str().unwrap()).expect("Failed to open library");
@@ -701,8 +688,7 @@ mod unix_test {
                 "MyNamespace::ClassInNamespace::InnerClassInNamespace::InnerMethod1()".to_string()
             )
         );
-        let parent_dir = test_so.parent().unwrap();
-        let c_file = parent_dir.join("libtest_cpp.cpp");
+        let c_file = get_tests_folder_path().unwrap().join("libtest_cpp.cpp");
         assert_eq!(frame.file, Some(c_file.to_string_lossy().to_string()));
     }
 }
