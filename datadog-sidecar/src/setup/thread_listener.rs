@@ -474,19 +474,26 @@ mod tests {
 
     const TEST: &str =
         "setup::thread_listener::tests::a_failed_thread_listener_releases_clients_and_registration";
+    const STALLED_FLUSH_TEST: &str =
+        "setup::thread_listener::tests::a_flush_cut_short_by_a_stalled_agent_stops_the_watchdog";
 
-    /// An in-process listener out of descriptors must never end its host, a PHP-FPM master. It
-    /// closes its clients, releases its registration so that a new listener can start, and
-    /// forked workers must leave alone the descriptor now reusing its number.
-    #[test]
-    #[cfg_attr(miri, ignore)]
-    fn a_failed_thread_listener_releases_clients_and_registration() {
+    /// Reports to the test from its re-run process.
+    fn say(line: &str) {
+        let line = format!("{line}\n");
+        // SAFETY: writes a live buffer to stdout, which needs no new descriptor.
+        unsafe { libc::write(1, line.as_ptr().cast(), line.len()) };
+    }
+
+    /// Re-runs `test` as the host of a listener, which reports READY once it has no descriptor
+    /// left, then queues a connection the listener cannot accept. Returns the line the host
+    /// reports starting with `report`, and how the host ended.
+    fn fail_the_listener_of(
+        test: &str,
+        report: &str,
+    ) -> (Option<String>, std::process::ExitStatus) {
         use std::io::{BufRead, BufReader};
 
-        if is_rerun(TEST) {
-            host_a_failing_listener();
-        }
-        let mut host = rerun(TEST)
+        let mut host = rerun(test)
             .stdout(std::process::Stdio::piped())
             .spawn()
             .unwrap();
@@ -507,8 +514,20 @@ mod tests {
         // Queued, but the listener has no descriptor left to accept it with.
         let _queued =
             SeqpacketConn::connect_abstract(name.path().as_os_str().as_encoded_bytes()).unwrap();
-        let result = lines.find(|line| line.starts_with("closed="));
-        let status = host.wait().unwrap();
+        let result = lines.find(|line| line.starts_with(report));
+        (result, host.wait().unwrap())
+    }
+
+    /// An in-process listener out of descriptors must never end its host, a PHP-FPM master. It
+    /// closes its clients, releases its registration so that a new listener can start, and
+    /// forked workers must leave alone the descriptor now reusing its number.
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn a_failed_thread_listener_releases_clients_and_registration() {
+        if is_rerun(TEST) {
+            host_a_failing_listener();
+        }
+        let (result, status) = fail_the_listener_of(TEST, "closed=");
         assert_eq!(
             result.as_deref(),
             Some("closed=true released=true fd_kept_in_forks=true restarted=true"),
@@ -519,11 +538,6 @@ mod tests {
 
     /// The re-run test process: a PHP-FPM master with a listener that runs out of descriptors.
     fn host_a_failing_listener() -> ! {
-        let say = |line: &str| {
-            let line = format!("{line}\n");
-            // SAFETY: writes a live buffer to stdout, which needs no new descriptor.
-            unsafe { libc::write(1, line.as_ptr().cast(), line.len()) };
-        };
         let pid = std::process::id();
         let config = crate::config::FromEnv::config();
         MasterListener::start(config.clone()).unwrap();
@@ -606,6 +620,107 @@ mod tests {
              restarted={restarted}"
         ));
         // Bypass the test harness, and any listener thread left.
+        unsafe { libc::_exit(0) }
+    }
+
+    /// Once the listener failed, a stalled agent cuts the flush short. The watchdog must stop all
+    /// the same: its thread outlives the listener's runtime, and would abort the host.
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn a_flush_cut_short_by_a_stalled_agent_stops_the_watchdog() {
+        if is_rerun(STALLED_FLUSH_TEST) {
+            host_a_listener_failing_with_a_stalled_agent();
+        }
+        let (result, status) = fail_the_listener_of(STALLED_FLUSH_TEST, "cut_short=");
+        assert_eq!(
+            result.as_deref(),
+            Some("cut_short=true watchdog_stopped=true"),
+            "host status {status:?}"
+        );
+        assert_eq!(status.code(), Some(0), "the host process did not stay up");
+    }
+
+    /// The re-run test process: a host whose listener fails while a trace is sent to an agent
+    /// that never answers.
+    fn host_a_listener_failing_with_a_stalled_agent() -> ! {
+        use crate::service::{InstanceId, SerializedTracerHeaderTags, SessionConfig, blocking};
+        use libdd_common::Endpoint;
+        use libdd_trace_utils::msgpack_encoder::v04::to_vec_from_v04;
+        use libdd_trace_utils::test_utils::create_test_no_alloc_span;
+        use libdd_trace_utils::trace_utils::TracerHeaderTags;
+
+        let agent = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let url = format!("http://{}/", agent.local_addr().unwrap());
+        let (connected, sending) = std::sync::mpsc::channel();
+        // Holds the first connection without ever answering it, nor accepting any other.
+        std::thread::spawn(move || {
+            let _held = agent.accept();
+            let _ = connected.send(());
+            loop {
+                std::thread::park();
+            }
+        });
+        let pid = std::process::id();
+        MasterListener::start(crate::config::FromEnv::config()).unwrap();
+        let mut transport = connect_to_master(pid as i32).unwrap();
+        transport
+            .set_read_timeout(Some(Duration::from_secs(10)))
+            .unwrap();
+        blocking::set_connection_config(
+            &mut transport,
+            InstanceId::new("session", "runtime"),
+            SessionConfig {
+                endpoint: Endpoint {
+                    url: url.parse().unwrap(),
+                    ..Endpoint::default()
+                },
+                flush_interval: Duration::from_millis(100),
+                ..SessionConfig::for_test()
+            },
+        )
+        .unwrap();
+        let headers = SerializedTracerHeaderTags::try_from(TracerHeaderTags {
+            lang: "php",
+            ..Default::default()
+        })
+        .unwrap();
+        let trace = to_vec_from_v04(&[vec![create_test_no_alloc_span(1, 2, 0, 3, true)]]);
+        blocking::send_trace_v04_bytes(&mut transport, trace, headers).unwrap();
+        sending
+            .recv_timeout(Duration::from_secs(10))
+            .expect("the trace was not sent");
+
+        let soft = set_soft_nofile(lowest_free_fd() as libc::rlim_t);
+        say("READY");
+        let ready = Instant::now();
+        let listener_ended = || {
+            let master = MASTER_LISTENER.get().unwrap().lock().unwrap();
+            let thread = &master.as_ref().unwrap().thread_handle;
+            thread.as_ref().is_some_and(JoinHandle::is_finished)
+        };
+        while !listener_ended() && ready.elapsed() < Duration::from_secs(20) {
+            std::thread::sleep(Duration::from_millis(100));
+        }
+        let cut_short = listener_ended() && ready.elapsed() >= crate::entry::FAILED_FLUSH_TIMEOUT;
+        set_soft_nofile(soft);
+        // Its thread aborts the process unless the watchdog saw the shutdown.
+        let watchdog_running = || {
+            std::fs::read_dir("/proc/self/task")
+                .unwrap()
+                .flatten()
+                .any(|task| {
+                    std::fs::read_to_string(task.path().join("comm"))
+                        .is_ok_and(|name| name.trim_end() == "dd-watchdog")
+                })
+        };
+        while watchdog_running() && ready.elapsed() < Duration::from_secs(45) {
+            std::thread::sleep(Duration::from_millis(100));
+        }
+        say(&format!(
+            "cut_short={cut_short} watchdog_stopped={}",
+            !watchdog_running()
+        ));
+        // Bypass the test harness, and the threads left.
         unsafe { libc::_exit(0) }
     }
 }

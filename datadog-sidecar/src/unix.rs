@@ -84,9 +84,10 @@ pub extern "C" fn ddog_daemon_entry_point(trampoline_data: &TrampolineData) {
                 let shutdown = shutdown.clone();
                 async move {
                     if termsig.recv().await.is_some() {
+                        // Armed first: logging blocks if its destination stalls.
+                        crate::entry::exit_after_deadline("SIGTERM");
                         info!("Received SIGTERM, shutting down");
                         shutdown.notify_one();
-                        crate::entry::exit_after_deadline("SIGTERM");
                     }
                 }
             });
@@ -358,6 +359,15 @@ mod tests {
         /// soft descriptor limit if given, or `None` in the sidecar process itself, which has
         /// then served as the sidecar and never returns.
         fn start(test: &str, soft_nofile: Option<libc::rlim_t>) -> Option<Self> {
+            Self::start_with(test, soft_nofile, None)
+        }
+
+        /// [`Self::start`], logging to `stderr` rather than to a file if given.
+        fn start_with(
+            test: &str,
+            soft_nofile: Option<libc::rlim_t>,
+            stderr: Option<std::process::Stdio>,
+        ) -> Option<Self> {
             use std::time::Duration;
 
             let test = format!("unix::tests::{test}");
@@ -381,6 +391,11 @@ mod tests {
                 .env("_DD_DEBUG_SIDECAR_LOG_LEVEL", "info");
             if let Some(soft) = soft_nofile {
                 command.env(TEST_SIDECAR_SOFT_NOFILE, soft.to_string());
+            }
+            if let Some(stderr) = stderr {
+                command
+                    .env("_DD_DEBUG_SIDECAR_LOG_METHOD", "stderr")
+                    .stderr(stderr);
             }
             let mut sidecar = TestSidecar {
                 process: command.spawn().unwrap(),
@@ -805,6 +820,56 @@ mod tests {
         assert!(
             elapsed >= deadline && elapsed < deadline + std::time::Duration::from_secs(5),
             "exited {elapsed:?} after SIGTERM, the deadline being {deadline:?}"
+        );
+    }
+
+    /// SIGTERM must end the sidecar within its deadline even when its log stalls, like a pipe
+    /// nobody reads: logging then blocks, so neither arming the deadline nor exiting may wait.
+    #[test]
+    #[cfg(target_os = "linux")]
+    #[cfg_attr(miri, ignore)]
+    fn sigterm_ends_the_sidecar_despite_a_stalled_log() {
+        use std::io::Write;
+        use std::os::unix::fs::OpenOptionsExt;
+
+        let mut pipe = [0; 2];
+        // SAFETY: pipe2 only writes the two descriptors it creates.
+        assert_eq!(
+            unsafe { libc::pipe2(pipe.as_mut_ptr(), libc::O_CLOEXEC) },
+            0
+        );
+        // SAFETY: both descriptors were just created, and are owned here only.
+        let (_unread, log) =
+            unsafe { (OwnedFd::from_raw_fd(pipe[0]), OwnedFd::from_raw_fd(pipe[1])) };
+        // A file description of its own: non-blocking, unlike the one the sidecar writes to.
+        let mut filler = std::fs::OpenOptions::new()
+            .write(true)
+            .custom_flags(libc::O_NONBLOCK)
+            .open(format!("/proc/self/fd/{}", pipe[1]))
+            .unwrap();
+        let Some(mut sidecar) = TestSidecar::start_with(
+            "sigterm_ends_the_sidecar_despite_a_stalled_log",
+            None,
+            Some(log.into()),
+        ) else {
+            return;
+        };
+        // Filled up: whichever line the sidecar logs next blocks.
+        for chunk in [&[0u8; 4096][..], &[0]] {
+            while filler.write(chunk).is_ok() {}
+        }
+        let sent = Instant::now();
+        assert_eq!(
+            unsafe { libc::kill(sidecar.pid() as i32, libc::SIGTERM) },
+            0
+        );
+        let status =
+            sidecar.wait(crate::entry::SHUTDOWN_DEADLINE + std::time::Duration::from_secs(5));
+        assert_eq!(
+            status.and_then(|status| status.code()),
+            Some(1),
+            "the sidecar still runs {:?} after SIGTERM, or ended otherwise",
+            sent.elapsed()
         );
     }
 

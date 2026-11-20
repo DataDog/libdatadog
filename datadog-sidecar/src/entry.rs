@@ -38,7 +38,7 @@ pub(crate) const SHUTDOWN_DEADLINE: Duration = Duration::from_secs(10);
 
 /// Flush budget once the listener failed: short, as the usual cause of a full descriptor table,
 /// a stalled agent, would otherwise keep the dying sidecar around.
-const FAILED_FLUSH_TIMEOUT: Duration = Duration::from_secs(5);
+pub(crate) const FAILED_FLUSH_TIMEOUT: Duration = Duration::from_secs(5);
 
 /// Exits the process after [`SHUTDOWN_DEADLINE`] unless it ends by itself first. A plain thread,
 /// so that it fires even if the runtime is stuck.
@@ -47,9 +47,14 @@ pub(crate) fn exit_after_deadline(cause: &'static str) {
         .name("ddog-shutdown-deadline".to_owned())
         .spawn(move || {
             std::thread::sleep(SHUTDOWN_DEADLINE);
-            tracing::warn!(
-                "Shutdown still incomplete {SHUTDOWN_DEADLINE:?} after {cause}, exiting"
-            );
+            // Logged by a thread of its own, given a moment: logging blocks if its destination
+            // stalls, like a pipe nobody reads.
+            let _ = std::thread::Builder::new().spawn(move || {
+                tracing::warn!(
+                    "Shutdown still incomplete {SHUTDOWN_DEADLINE:?} after {cause}, exiting"
+                );
+            });
+            std::thread::sleep(Duration::from_millis(100));
             // _exit: atexit handlers would race the threads still running.
             #[cfg(unix)]
             unsafe {
@@ -189,7 +194,7 @@ where
         watchdog.max_memory_usage_bytes = config.max_memory;
     }
     let watchdog_handle = watchdog.spawn_watchdog(server.clone());
-    let telemetry_handle = self_telemetry(server.clone(), watchdog_handle);
+    let telemetry_handle = self_telemetry(server.clone(), watchdog_handle.clone());
 
     let authorizer = loop_config.authorizer;
     let drain_only_own_process = loop_config.drain_only_own_process;
@@ -284,6 +289,9 @@ where
     {
         tracing::warn!("Flush incomplete {FAILED_FLUSH_TIMEOUT:?} after the listener failed");
     }
+    // A flush cut short dropped the sender before the watchdog could see it, which needs this
+    // runtime: its thread outlives an in-process listener's, and would abort the host.
+    watchdog_handle.wait_for_shutdown().await;
 
     listener_result
 }
