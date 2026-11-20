@@ -410,6 +410,10 @@ const TESTS: &[(&str, fn())] = &[
     ("contract::drop_cancel", || {
         contract(lifecycle::CONTRACT_DROP_CANCEL)
     }),
+    (
+        "release::chaos_marker",
+        arena::assert_chaos_marker_matches_build,
+    ),
 ];
 
 fn main() {

@@ -4,7 +4,7 @@
 use crate::arch;
 use crate::module::Module;
 use crate::utils::{adjust_extern_symbols, project_root, wait_for_success};
-use anyhow::Result;
+use anyhow::{Result, bail};
 use serde::Deserialize;
 use std::ffi::OsStr;
 use std::fs;
@@ -14,6 +14,49 @@ use std::rc::Rc;
 use tools::headers::dedup_headers;
 
 const CRATE_FOLDER: &str = "libdd-profiling-ffi";
+
+/// `no_mangle` static defined by `libdd-profiling` only under `allocation_chaos_test`.
+/// Must match `ALLOC_CHAOS_OBSERVER` in `libdd-profiling/src/arena.rs`.
+const CHAOS_MARKER: &[u8] = b"ALLOC_CHAOS_OBSERVER";
+
+/// The release `cargo rustc` is a separate invocation from the allocation-failure harness.
+/// Chaos is a cfg (`LIBDD_ALLOCATION_CHAOS_TEST=1`), not a Cargo feature, so feature
+/// unification cannot enable it here. Refuse the env and the old feature name anyway:
+/// a distributable artifact must not be a chaos build.
+fn reject_allocation_chaos(features: &str, chaos_env: Option<&OsStr>) -> Result<()> {
+    if chaos_env.is_some() {
+        bail!(
+            "refusing to build distributable profiling artifacts: LIBDD_ALLOCATION_CHAOS_TEST is set. \
+             The allocation-failure harness is a separate Cargo invocation"
+        );
+    }
+    if features
+        .split(',')
+        .any(|feature| feature.trim() == "allocation-chaos-test")
+    {
+        bail!(
+            "refusing to build distributable profiling artifacts: allocation-chaos-test is test-only"
+        );
+    }
+    Ok(())
+}
+
+fn contains_chaos_marker(bytes: &[u8]) -> bool {
+    bytes
+        .windows(CHAOS_MARKER.len())
+        .any(|window| window == CHAOS_MARKER)
+}
+
+fn assert_no_chaos_marker(path: &Path) -> Result<()> {
+    let bytes = fs::read(path).map_err(|err| anyhow::anyhow!("read {}: {err}", path.display()))?;
+    if contains_chaos_marker(&bytes) {
+        bail!(
+            "released library {} contains the allocation-chaos marker ALLOC_CHAOS_OBSERVER",
+            path.display()
+        );
+    }
+    Ok(())
+}
 
 #[derive(Deserialize)]
 struct CargoFile {
@@ -106,7 +149,7 @@ impl Profiling {
             .iter()
             .collect();
 
-        fs::copy(from_dyn, to_dyn).expect("unable to copy dynamic lib");
+        fs::copy(from_dyn, &to_dyn).expect("unable to copy dynamic lib");
 
         let from_static: PathBuf = [&self.source_lib, arch::PROF_STATIC_LIB_FFI]
             .iter()
@@ -115,7 +158,12 @@ impl Profiling {
             .iter()
             .collect();
 
-        fs::copy(from_static, to_static).expect("unable to copy static lib");
+        fs::copy(from_static, &to_static).expect("unable to copy static lib");
+
+        // Scan the bytes that will be shipped. Strip keeps the symbol name, and a chaos
+        // build always contains this marker, so its absence means the original allocator.
+        assert_no_chaos_marker(&to_dyn)?;
+        assert_no_chaos_marker(&to_static)?;
 
         arch::add_additional_files(&self.source_lib, lib_dir.as_os_str());
 
@@ -135,7 +183,14 @@ impl Profiling {
 
 impl Module for Profiling {
     fn build(&self) -> Result<()> {
+        reject_allocation_chaos(
+            &self.features,
+            std::env::var_os("LIBDD_ALLOCATION_CHAOS_TEST").as_deref(),
+        )?;
+
         // Using rustc instead of build in order to overcome issues with LTO optimization.
+        // This invocation is not the harness (`cargo test -p libdd-profiling-ffi --test
+        // allocation_failure`), so a chaos cfg enabled for the harness is not unified in.
         let mut cargo_args = vec![
             "rustc",
             "-p",
@@ -176,6 +231,7 @@ impl Module for Profiling {
             let mut cargo = Command::new("cargo");
             cargo
                 .env("RUSTFLAGS", arch::RUSTFLAGS.join(" "))
+                .env_remove("LIBDD_ALLOCATION_CHAOS_TEST")
                 .current_dir(project_root())
                 .args(args);
             if let Some(file_version) = &self.file_version {
@@ -193,5 +249,37 @@ impl Module for Profiling {
         self.add_libs()?;
         self.add_pkg_config()?;
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{contains_chaos_marker, reject_allocation_chaos};
+    use std::ffi::OsStr;
+
+    #[test]
+    fn release_build_rejects_the_chaos_env() {
+        let err = reject_allocation_chaos("cbindgen,ddcommon-ffi", Some(OsStr::new("1")))
+            .expect_err("chaos env");
+        assert!(err.to_string().contains("LIBDD_ALLOCATION_CHAOS_TEST"));
+    }
+
+    #[test]
+    fn release_build_rejects_the_chaos_feature() {
+        let err =
+            reject_allocation_chaos("cbindgen,allocation-chaos-test", None).expect_err("feature");
+        assert!(err.to_string().contains("allocation-chaos-test"));
+    }
+
+    #[test]
+    fn release_build_allows_a_normal_feature_list() {
+        reject_allocation_chaos("cbindgen,ddcommon-ffi", None).expect("normal features");
+    }
+
+    #[test]
+    fn chaos_marker_scan_matches_the_symbol_name() {
+        assert!(!contains_chaos_marker(b""));
+        assert!(!contains_chaos_marker(b"ALLOC_CHAOS"));
+        assert!(contains_chaos_marker(b"xxALLOC_CHAOS_OBSERVERyy"));
     }
 }

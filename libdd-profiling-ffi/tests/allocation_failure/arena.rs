@@ -18,6 +18,43 @@ use std::ptr::NonNull;
 /// Whether `libdd-profiling` arenas report to the harness in this build.
 pub const PROFILING_ARENAS_OBSERVED: bool = cfg!(allocation_chaos_test);
 
+/// The chaos build links `ALLOC_CHAOS_OBSERVER`. A production build of this binary does not.
+/// `nm` reads the symbol table, so the name used in this check is not itself a marker.
+pub fn assert_chaos_marker_matches_build() {
+    #[cfg(unix)]
+    {
+        let exe = std::env::current_exe().expect("current_exe");
+        let present = chaos_marker_defined(&exe);
+        assert_eq!(
+            present, PROFILING_ARENAS_OBSERVED,
+            "ALLOC_CHAOS_OBSERVER linked={present} cfg={PROFILING_ARENAS_OBSERVED}"
+        );
+    }
+}
+
+#[cfg(unix)]
+fn chaos_marker_defined(path: &std::path::Path) -> bool {
+    let mut command = std::process::Command::new("nm");
+    if cfg!(target_os = "macos") {
+        // `-U` hides undefined symbols; `-j` prints the name, including a local one.
+        command.args(["-Uj"]);
+    } else {
+        command.arg("--defined-only");
+    }
+    let output = command.arg(path).output().expect("nm");
+    assert!(
+        output.status.success(),
+        "nm {}: {}",
+        path.display(),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    stdout.lines().any(|line| {
+        let symbol = line.split_whitespace().next_back().unwrap_or(line);
+        symbol == "ALLOC_CHAOS_OBSERVER" || symbol == "_ALLOC_CHAOS_OBSERVER"
+    })
+}
+
 #[cfg(allocation_chaos_test)]
 unsafe extern "Rust" {
     static ALLOC_CHAOS_OBSERVER: std::sync::atomic::AtomicPtr<()>;

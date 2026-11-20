@@ -3,8 +3,9 @@
 
 fn main() {
     // Test-only: `LIBDD_ALLOCATION_CHAOS_TEST=1` wraps the profiling arenas for the
-    // allocation-failure harness of libdd-profiling-ffi. A cfg rather than a Cargo feature, so
-    // feature unification can never turn it on in a shipped build.
+    // allocation-failure harness of libdd-profiling-ffi. That harness is its own Cargo
+    // invocation, and this is a cfg rather than a Cargo feature, so feature unification
+    // cannot turn it on in a shipped build. The release builder also rejects the variable.
     println!("cargo:rerun-if-changed=build.rs");
     println!("cargo:rerun-if-env-changed=LIBDD_ALLOCATION_CHAOS_TEST");
     println!("cargo:rustc-check-cfg=cfg(allocation_chaos_test)");

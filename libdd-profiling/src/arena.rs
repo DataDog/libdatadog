@@ -122,3 +122,18 @@ pub(crate) mod chaos {
 
     impl<A: Allocator + Clone> ArenaAllocator for ChaosAllocator<ChainAllocator<A>, ArenaRequest> {}
 }
+
+/// Production builds compile only `ChainAllocator::new_in`. The chaos wrapper, its observer
+/// load, and `ALLOC_CHAOS_OBSERVER` are not in this crate unless `allocation_chaos_test` is set,
+/// so there is no runtime flag, branch, or TLS on the allocator path.
+#[cfg(all(test, not(allocation_chaos_test)))]
+mod production {
+    use super::profiling_arena;
+    use libdd_alloc::{ChainAllocator, VirtualAllocator};
+
+    #[test]
+    fn arena_is_the_original_allocator() {
+        let arena = profiling_arena(4096);
+        let _typed: &ChainAllocator<VirtualAllocator> = &arena;
+    }
+}
