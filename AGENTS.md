@@ -151,6 +151,14 @@ workspace MSRV). Run it locally the same way:
 - FIPS (US government cloud) builds: aws-lc-rs via `fips` feature flag
 - Windows FIPS requires env var: `AWS_LC_FIPS_SYS_NO_ASM=1`
 
+### Benchmarks
+Criterion benches run in CI on every PR that touches an impacted crate and on every main push, **twice per pipeline** (candidate and baseline side). CI invokes criterion with fixed args (`--warm-up-time 1 --measurement-time 5 --sample-size 200`, `benchmark/run_benchmarks_ci.sh`), so a wall-time bench costs ~7 s of runner time per function no matter how stable it is — and that price repeats on every affected PR.
+
+- Not every function needs a bench. Add one when there is a performance question someone will act on, not by default.
+- Expensive iterations (ms-scale per sample: big payloads, per-batch setup, sleeps) make the 200-sample budget overshoot — the wall time grows with the sample count, not the 5 s budget. Before landing a bench, check what it actually costs in the benchmark shard job log in CI, and keep it near the suite norm (~7 s/fn).
+- Per-benchmark sampling can be tuned in code: `BenchmarkGroup::sample_size` / `measurement_time` **override the CLI flags**, so they work under the CI args. A `config =` in `criterion_group!` does **not** — the CLI flags replace it (see `tools::bench_utils` for the allocation-measured pattern that bypasses the macro for that reason).
+- Bench names (group + id) are keys in the Benchmarking Platform's history: renaming a bench orphans its past results. Keep names stable when touching an existing bench.
+
 ### Commit Messages
 PR titles and commits must follow **Conventional Commits**: `<type>([scope]): <description>`  
 Common types: `feat`, `fix`, `docs`, `refactor`, `perf`, `test`, `build`, `ci`, `chore`  

@@ -102,6 +102,7 @@ fn samples(dist: &Distribution, n: usize) -> Vec<f64> {
 /// over a realistic batch.
 fn bench_add(c: &mut Criterion) {
     let mut group = c.benchmark_group("ddsketch_add");
+    group.sample_size(100);
     group.throughput(Throughput::Elements(ADD_BATCH as u64));
 
     for dist in DISTRIBUTIONS {

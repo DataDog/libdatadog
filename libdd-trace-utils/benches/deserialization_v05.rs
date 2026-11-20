@@ -169,6 +169,7 @@ fn build_v05_payload(num_traces: usize, spans_per_trace: usize, unique_per_span:
 fn bench_v05_matrix<M: criterion::measurement::Measurement>(
     c: &mut Criterion<M>,
     group_name: &str,
+    sample_size: usize,
 ) {
     // A representative chunked payload: 20 traces (the upper-bound trace count for a tracer flush)
     // with a varying number of spans each. Span counts stay realistic for a single flush while
@@ -177,6 +178,8 @@ fn bench_v05_matrix<M: criterion::measurement::Measurement>(
     let span_counts = [10, 100, 500];
 
     let mut group = c.benchmark_group(group_name);
+
+    group.sample_size(sample_size);
 
     for &spans_per_trace in &span_counts {
         for (sharing_label, unique_per_span) in [("high_sharing", false), ("low_sharing", true)] {
@@ -207,14 +210,14 @@ fn bench_v05_matrix<M: criterion::measurement::Measurement>(
 }
 
 fn deserialize_msgpack_v05(c: &mut Criterion) {
-    bench_v05_matrix(c, "msgpack_decoder::v05");
+    bench_v05_matrix(c, "msgpack_decoder::v05", 100);
 }
 
 /// Allocation-measured counterpart. The dictionary-dedup path clones a `Bytes` slice for every
 /// string slot, so the amount allocated per decode is the metric most directly affected by the
 /// sharing ratio.
 fn deserialize_msgpack_v05_allocs(c: &mut Criterion<AllocatedBytesMeasurement<System>>) {
-    bench_v05_matrix(c, "msgpack_decoder::v05 (allocs)");
+    bench_v05_matrix(c, "msgpack_decoder::v05 (allocs)", 10);
 }
 
 criterion_group!(deserialize_v05_benches, deserialize_msgpack_v05);
