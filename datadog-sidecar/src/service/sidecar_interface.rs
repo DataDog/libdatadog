@@ -335,9 +335,8 @@ pub trait SidecarInterface {
         client_init: bool,
     ) -> (Vec<u8>, bool);
 
-    /// Sends a ping to the service.
-    #[blocking]
-    async fn ping();
+    /// Returns capability bits. Legacy sidecars acknowledge this opcode with a zero byte.
+    async fn ping() -> u8;
 
     /// Dumps the current state of the service.
     ///
@@ -369,7 +368,16 @@ pub trait SidecarInterface {
     /// Queue CDN configuration for this connection. No acknowledgement or returned handle:
     /// readers open the ordinary RC directory immediately using registration.invariants().
     /// Replay after reconnect. In-process listeners reject this to keep CDN HTTP out of PHP.
+    #[oversized_after]
     async fn set_cdn_configuration(config: Option<crate::shm_remote_config::CdnRegistration>);
+
+    async fn admit_ffe_exposure_v1(
+        context: crate::service::FfeTelemetryContext,
+        event: crate::service::FfeExposure,
+        deliver: bool,
+    ) -> crate::service::ExposureVerdict;
+
+    async fn submit_deferred_ffe_v1(batch: crate::service::FfeExposureBatch) -> bool;
 }
 
 #[cfg(test)]

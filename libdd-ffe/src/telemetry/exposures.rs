@@ -84,32 +84,87 @@ impl ExposureDeduplicator {
         context: &FfeTelemetryContext,
         exposure: &FfeExposure,
     ) -> bool {
+        self.try_record_in_scope(scope, context, exposure, || {
+            Ok::<_, std::convert::Infallible>(())
+        })
+        .unwrap_or_else(|never| match never {})
+    }
+
+    /// Publishes a changed assignment under the cache lock. A failed publication preserves the
+    /// prior value.
+    pub fn try_record_in_scope<E>(
+        &self,
+        scope: &str,
+        context: &FfeTelemetryContext,
+        exposure: &FfeExposure,
+        publish: impl FnOnce() -> Result<(), E>,
+    ) -> Result<bool, E> {
         let Some(cache) = &self.cache else {
-            return true;
+            return publish().map(|()| true);
         };
 
-        let key = ExposureCacheKey {
-            scope: scope.to_owned(),
-            service: context.service.clone(),
-            env: context.env.clone(),
-            version: context.version.clone(),
-            flag_key: exposure.flag_key.clone(),
-            subject_id: exposure.subject_id.clone(),
-        };
-        let value = ExposureCacheValue {
-            allocation_key: exposure.allocation_key.clone(),
-            variant: exposure.variant.clone(),
-            serial_id: exposure.serial_id,
-        };
+        let (key, value) = assignment(scope, context, exposure);
 
         let mut cache = cache.lock().unwrap_or_else(|e| e.into_inner());
         if cache.get(&key).is_some_and(|cached| cached == &value) {
-            return false;
+            return Ok(false);
         }
 
+        publish()?;
         cache.put(key, value);
-        true
+        Ok(true)
     }
+    /// Publishes one ordered delivery chunk into capacity already reserved by the caller.
+    /// Single admissions and chunk publications are serialized by the same assignment lock.
+    pub fn publish_reserved_batch(
+        &self,
+        scope: &str,
+        mut batch: FfeExposureBatch,
+        publish: impl FnOnce(FfeExposureBatch),
+    ) {
+        let mut guard = self
+            .cache
+            .as_ref()
+            .map(|c| c.lock().unwrap_or_else(|e| e.into_inner()));
+        batch.exposures.retain(|event| {
+            if !is_complete(event) {
+                return false;
+            }
+            let Some(cache) = guard.as_mut() else {
+                return true;
+            };
+            let (key, value) = assignment(scope, &batch.context, event);
+            if cache.get(&key) == Some(&value) {
+                return false;
+            }
+            cache.put(key, value);
+            true
+        });
+        if !batch.exposures.is_empty() {
+            publish(batch);
+        }
+    }
+}
+
+fn assignment(
+    scope: &str,
+    context: &FfeTelemetryContext,
+    exposure: &FfeExposure,
+) -> (ExposureCacheKey, ExposureCacheValue) {
+    let key = ExposureCacheKey {
+        scope: scope.to_owned(),
+        service: context.service.clone(),
+        env: context.env.clone(),
+        version: context.version.clone(),
+        flag_key: exposure.flag_key.clone(),
+        subject_id: exposure.subject_id.clone(),
+    };
+    let value = ExposureCacheValue {
+        allocation_key: exposure.allocation_key.clone(),
+        variant: exposure.variant.clone(),
+        serial_id: exposure.serial_id,
+    };
+    (key, value)
 }
 
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
@@ -143,11 +198,20 @@ pub fn encode_exposure_batch_in_scope(
     scope: &str,
     batch: FfeExposureBatch,
 ) -> Result<Option<String>, serde_json::Error> {
+    let mut batch = batch;
+    batch.exposures.retain(|event| {
+        is_complete(event) && deduplicator.should_send_in_scope(scope, &batch.context, event)
+    });
+    encode_admitted_exposure_batch(batch)
+}
+
+/// Serializes exposures already admitted by the shared authority.
+pub fn encode_admitted_exposure_batch(
+    batch: FfeExposureBatch,
+) -> Result<Option<String>, serde_json::Error> {
     let exposures = batch
         .exposures
         .into_iter()
-        .filter(is_complete)
-        .filter(|exposure| deduplicator.should_send_in_scope(scope, &batch.context, exposure))
         .map(ExposureEvent::from)
         .collect::<Vec<_>>();
 
@@ -162,7 +226,51 @@ pub fn encode_exposure_batch_in_scope(
     serde_json::to_string(&payload).map(Some)
 }
 
-fn is_complete(exposure: &FfeExposure) -> bool {
+/// Serializes ordered, previously admitted rows into independently valid HTTP bodies.
+/// Callers validate that each individual row fits `limit` before admission.
+pub fn admitted_exposure_payloads(
+    batch: FfeExposureBatch,
+    limit: usize,
+) -> Result<impl Iterator<Item = Result<String, serde_json::Error>>, serde_json::Error> {
+    use serde::ser::Error;
+    let context = serde_json::to_string(&ExposurePayloadContext::from(batch.context))?;
+    let prefix = format!(r#"{{"context":{context},"exposures":["#);
+    let mut rows = batch
+        .exposures
+        .into_iter()
+        .map(|row| serde_json::to_string(&ExposureEvent::from(row)));
+    let mut pending = None;
+    Ok(std::iter::from_fn(move || {
+        let mut body = prefix.clone();
+        while let Some(row) = pending.take().or_else(|| rows.next()) {
+            let row = match row {
+                Ok(row) => row,
+                Err(e) => return Some(Err(e)),
+            };
+            let comma = body.len() != prefix.len();
+            if body.len() + usize::from(comma) + row.len() + 2 > limit {
+                if !comma {
+                    return Some(Err(serde_json::Error::custom(
+                        "exposure exceeds HTTP payload limit",
+                    )));
+                }
+                pending = Some(Ok(row));
+                break;
+            }
+            if comma {
+                body.push(',');
+            }
+            body.push_str(&row);
+        }
+        if body.len() == prefix.len() {
+            return None;
+        }
+        body.push_str("]}");
+        Some(Ok(body))
+    }))
+}
+
+pub fn is_complete(exposure: &FfeExposure) -> bool {
     // `subject_id` is intentionally not required here; empty targeting keys
     // are valid evaluation inputs and must not suppress exposure logging.
     !exposure.flag_key.is_empty()
@@ -302,6 +410,39 @@ mod tests {
     }
 
     #[test]
+    fn http_batches_fit_the_encoded_byte_limit_and_preserve_all_rows() {
+        let row = exposure("tab\tquote\"", "alloc", "on");
+        let make = |n| FfeExposureBatch {
+            context: context(),
+            exposures: vec![row.clone(); n],
+        };
+        let exact = encode_admitted_exposure_batch(make(2)).unwrap().unwrap();
+        let bodies: Vec<_> = admitted_exposure_payloads(make(5), exact.len())
+            .unwrap()
+            .collect::<Result<_, _>>()
+            .unwrap();
+        assert_eq!(
+            bodies,
+            [
+                exact.clone(),
+                exact.clone(),
+                encode_admitted_exposure_batch(make(1)).unwrap().unwrap()
+            ]
+        );
+        let one = encode_admitted_exposure_batch(make(1))
+            .unwrap()
+            .unwrap()
+            .len();
+        assert!(
+            admitted_exposure_payloads(make(1), one - 1)
+                .unwrap()
+                .next()
+                .unwrap()
+                .is_err()
+        );
+    }
+
+    #[test]
     fn exposure_batch_debug_redacts_identity_and_attributes() {
         let batch = FfeExposureBatch {
             context: context(),
@@ -323,6 +464,38 @@ mod tests {
         )
         .unwrap()
         .map(|payload| serde_json::from_str(&payload).unwrap())
+    }
+
+    #[test]
+    fn failed_publication_preserves_the_last_admitted_assignment() {
+        let cache = ExposureDeduplicator::new(1);
+        let ctx = context();
+        let a = exposure("user", "alloc", "a");
+        let b = exposure("user", "alloc", "b");
+        assert!(cache.should_send_in_scope("scope", &ctx, &a));
+        assert_eq!(
+            cache.try_record_in_scope("scope", &ctx, &b, || Err(())),
+            Err(())
+        );
+        assert!(!cache.should_send_in_scope("scope", &ctx, &a));
+        assert!(cache.should_send_in_scope("scope", &ctx, &b));
+    }
+
+    #[test]
+    fn reserved_batch_commits_ordered_changes_to_the_delivery_cache() {
+        let cache = ExposureDeduplicator::new(1);
+        let a = exposure("user", "alloc", "a");
+        let b = exposure("user", "alloc", "b");
+        assert!(cache.should_send_in_scope("route", &context(), &a));
+        let batch = FfeExposureBatch {
+            context: context(),
+            exposures: vec![a.clone(), b.clone(), b.clone(), a.clone()],
+        };
+        let mut sent = Vec::new();
+        cache.publish_reserved_batch("route", batch, |chunk| sent = chunk.exposures);
+        assert_eq!(sent, [b, a.clone()]);
+        assert!(!cache.should_send_in_scope("route", &context(), &a));
+        assert!(cache.should_send_in_scope("other", &context(), &a));
     }
 
     #[test]

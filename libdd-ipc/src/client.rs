@@ -11,7 +11,13 @@ use std::os::unix::io::{OwnedFd, RawFd};
 use std::os::windows::io::{OwnedHandle as OwnedFd, RawHandle as RawFd};
 
 use std::io;
-use std::time::Duration;
+use std::time::{Duration, Instant};
+
+#[derive(Debug, PartialEq, Eq)]
+pub enum DeadlineCallError {
+    NotSent,
+    Uncertain,
+}
 use tracing::{trace, warn};
 
 /// Client-side state for a single IPC connection.
@@ -25,6 +31,8 @@ pub struct IpcClientConn {
     send_count: u64,
     /// Number of server replies received (acks or typed responses).
     ack_count: u64,
+    // A timed-out request still owns its ordered reply on this stream.
+    abandoned_reply: u64,
     /// Reusable receive buffer.  Sized to hold a maximum payload plus the platform wire overhead
     /// (`HANDLE_SUFFIX_SIZE`), so that messages can be read directly without an intermediate copy.
     recv_buf: Vec<u8>,
@@ -41,6 +49,7 @@ impl IpcClientConn {
             conn,
             send_count: 0,
             ack_count: 0,
+            abandoned_reply: 0,
             recv_buf: vec![0u8; max_message_size() + HANDLE_SUFFIX_SIZE],
             closed: false,
         }
@@ -88,6 +97,9 @@ impl IpcClientConn {
     /// needed and skips the final `WouldBlock` probe when all expected acks have arrived.
     /// On Linux uses `recvmmsg` to batch-receive up to 100 acks per syscall.
     pub fn drain_acks(&mut self) {
+        if self.ack_count < self.abandoned_reply && !self.drain_abandoned_reply() {
+            return;
+        }
         let max = self.outstanding() as usize;
         match self.conn.drain_acks_nonblocking(max) {
             Ok(count) => self.ack_count += count as u64,
@@ -121,6 +133,82 @@ impl IpcClientConn {
                 Err(e)
             }
         }
+    }
+
+    /// Sends once and waits for its ordered reply up to an absolute deadline.
+    pub fn call_until(
+        &mut self,
+        data: Vec<u8>,
+        deadline: Instant,
+    ) -> Result<Vec<u8>, DeadlineCallError> {
+        self.call_with_handles_until(data, &[], deadline)
+    }
+
+    /// Sends one request with its transferred handles and waits for its ordered reply.
+    pub fn call_with_handles_until(
+        &mut self,
+        data: Vec<u8>,
+        fds: &[RawFd],
+        deadline: Instant,
+    ) -> Result<Vec<u8>, DeadlineCallError> {
+        if self.closed
+            || (self.ack_count < self.abandoned_reply && !self.drain_abandoned_reply())
+            || Instant::now() >= deadline
+        {
+            return Err(DeadlineCallError::NotSent);
+        }
+        self.try_send(data, fds).map_err(|_| {
+            if self.closed {
+                DeadlineCallError::Uncertain
+            } else {
+                DeadlineCallError::NotSent
+            }
+        })?;
+        while Instant::now() < deadline {
+            match self.conn.try_recv_raw(&mut self.recv_buf) {
+                Ok((len, _)) => {
+                    self.ack_count += 1;
+                    if self.ack_count == self.send_count {
+                        return Ok(self.recv_buf[..len].to_vec());
+                    }
+                }
+                Err(e) if e.kind() == io::ErrorKind::WouldBlock => {
+                    #[cfg(unix)]
+                    if self.conn.wait_for_packet(deadline).is_err() {
+                        self.closed = true;
+                        return Err(DeadlineCallError::Uncertain);
+                    }
+                    #[cfg(windows)]
+                    std::thread::yield_now();
+                }
+                Err(e) if e.kind() == io::ErrorKind::Interrupted => continue,
+                Err(_) => {
+                    self.closed = true;
+                    return Err(DeadlineCallError::Uncertain);
+                }
+            }
+        }
+        self.abandoned_reply = self.send_count;
+        Err(DeadlineCallError::Uncertain)
+    }
+
+    fn drain_abandoned_reply(&mut self) -> bool {
+        // A typed reply can exceed the single-byte buffers used by drain_acks_nonblocking.
+        for _ in 0..64 {
+            match self.conn.try_recv_raw(&mut self.recv_buf) {
+                Ok(_) => self.ack_count += 1,
+                Err(e) if e.kind() == io::ErrorKind::WouldBlock => break,
+                Err(e) if e.kind() == io::ErrorKind::Interrupted => continue,
+                Err(_) => {
+                    self.closed = true;
+                    break;
+                }
+            }
+            if self.ack_count == self.abandoned_reply {
+                return true;
+            }
+        }
+        false
     }
 
     /// Blocking send (no response wait).

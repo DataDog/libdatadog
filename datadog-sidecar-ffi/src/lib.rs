@@ -1044,6 +1044,7 @@ pub unsafe extern "C" fn ddog_sidecar_session_set_evp_transport(
 
 #[repr(C)]
 /// C representation of a Feature Flags exposure event.
+#[derive(Clone, Copy)]
 pub struct FfeExposure<'a> {
     pub timestamp_ms: u64,
     pub flag_key: CharSlice<'a>,
@@ -1134,6 +1135,245 @@ pub unsafe extern "C" fn ddog_sidecar_send_ffe_exposure_batch(
             "ddog_sidecar_send_ffe_exposure_batch",
         ))
     })
+}
+
+pub type FfeAdmission = u32;
+pub const FFE_ADMISSION_UNAVAILABLE: FfeAdmission = 0;
+pub const FFE_ADMISSION_ADMITTED: FfeAdmission = 1;
+pub const FFE_ADMISSION_REPEAT: FfeAdmission = 2;
+pub const FFE_ADMISSION_UNKNOWN: FfeAdmission = 3;
+/// Queue capacity prevented admission. The producer may submit the observation in a batch.
+pub const FFE_ADMISSION_QUEUE_FULL: FfeAdmission = 4;
+
+const fn admission_status(verdict: datadog_sidecar::service::ExposureVerdict) -> FfeAdmission {
+    use datadog_sidecar::service::ExposureVerdict::*;
+    match verdict {
+        Unavailable => FFE_ADMISSION_UNAVAILABLE,
+        Admitted => FFE_ADMISSION_ADMITTED,
+        Repeat => FFE_ADMISSION_REPEAT,
+        Unknown => FFE_ADMISSION_UNKNOWN,
+        QueueFull => FFE_ADMISSION_QUEUE_FULL,
+    }
+}
+
+const _: () = {
+    use datadog_sidecar::service::ExposureVerdict::*;
+    assert!(admission_status(Unavailable) == Unavailable as u32);
+    assert!(admission_status(Admitted) == Admitted as u32);
+    assert!(admission_status(Repeat) == Repeat as u32);
+    assert!(admission_status(Unknown) == Unknown as u32);
+    assert!(admission_status(QueueFull) == QueueFull as u32);
+};
+
+/// Records an assignment in the delivery or hook-only cache selected by `deliver`.
+/// The first eligible call negotiates support within the same IPC budget (maximum 50 ms).
+/// An absent transport, zero budget or more than 65,536 text bytes yields UNAVAILABLE before IPC.
+/// Delivery includes the subject attributes and feature JSON in the byte count.
+///
+/// ADMITTED records the assignment and queues it when delivery is enabled. REPEAT matches the
+/// resident assignment. QUEUE_FULL permits batched fallback. UNAVAILABLE indicates a definitive
+/// refusal. UNKNOWN means the sidecar may have applied the observation: keep it terminal.
+/// A late reply must drain before a new call can proceed. Conversion errors set a MaybeError
+/// and leave the output at UNAVAILABLE.
+///
+/// # Safety
+/// A populated transport slot must point to a live, exclusively borrowed transport. Supply writable
+/// storage for `out` and valid borrowed input slices for the duration of the call. Text identity
+/// fields must contain UTF-8.
+#[unsafe(no_mangle)]
+// allow(ffi-panic-boundary): This crate uses the sidecar's abort-on-panic ABI.
+pub unsafe extern "C" fn ddog_sidecar_ffe_admit_v1(
+    transport: *mut *mut SidecarTransport,
+    context: &FfeTelemetryContext<'_>,
+    exposure: &FfeExposure<'_>,
+    deliver: bool,
+    budget_us: u32,
+    out: *mut FfeAdmission,
+) -> MaybeError {
+    let out = try_c!(
+        unsafe { out.cast::<std::mem::MaybeUninit<FfeAdmission>>().as_mut() }
+            .ok_or("missing exposure admission output")
+    );
+    out.write(FFE_ADMISSION_UNAVAILABLE);
+    let Some(transport) = (unsafe { transport.as_ref().and_then(|slot| (*slot).as_mut()) }) else {
+        return MaybeError::None;
+    };
+    let deadline = std::time::Instant::now()
+        + std::time::Duration::from_micros(u64::from(budget_us.min(50_000)));
+    if budget_us == 0 {
+        return MaybeError::None;
+    }
+    let Some((context, event)) = try_c!(exposure.admission_input(context, deliver)) else {
+        return MaybeError::None;
+    };
+    out.write(admission_status(
+        transport
+            .inner
+            .admit_ffe_exposure_v1(context, event, deliver, deadline),
+    ));
+    MaybeError::None
+}
+
+impl FfeExposure<'_> {
+    /// Builds the wire input, returning `None` when the admission payload exceeds its byte budget.
+    pub fn admission_input(
+        &self,
+        context: &FfeTelemetryContext<'_>,
+        deliver: bool,
+    ) -> Result<Option<(SidecarFfeTelemetryContext, SidecarFfeExposure)>, String> {
+        if exposure_text_bytes(context, self, deliver) > 65536 {
+            return Ok(None);
+        }
+        let mut fields = *self;
+        if !deliver {
+            fields.subject_attributes_json = CharSlice::empty();
+            fields.features_json = CharSlice::empty();
+        }
+        Ok(Some((
+            ffe_context_from_ffi(context)?,
+            ffe_exposure_from_ffi(&fields)?,
+        )))
+    }
+}
+
+fn exposure_text_bytes(
+    context: &FfeTelemetryContext<'_>,
+    exposure: &FfeExposure<'_>,
+    deliver: bool,
+) -> usize {
+    let mut size = 0usize;
+    for len in [
+        context.service.len(),
+        context.env.len(),
+        context.version.len(),
+        exposure.flag_key.len(),
+        exposure.subject_id.len(),
+        exposure.allocation_key.len(),
+        exposure.variant.len(),
+        if deliver {
+            exposure.subject_attributes_json.len()
+        } else {
+            0
+        },
+        if deliver {
+            exposure.features_json.len()
+        } else {
+            0
+        },
+    ] {
+        size = size.saturating_add(len);
+    }
+    size
+}
+
+#[repr(C)]
+pub struct FfeDeferredHandoff {
+    pub status: u32,
+    pub rows: u32,
+}
+
+pub const FFE_DEFERRED_REFUSED: u32 = 0;
+pub const FFE_DEFERRED_CONFIRMED: u32 = 1;
+pub const FFE_DEFERRED_LEGACY_SUBMITTED: u32 = 2;
+pub const FFE_DEFERRED_UNKNOWN: u32 = 3;
+pub const FFE_DEFERRED_INVALID: u32 = 4;
+
+/// Attempts one wire-sized prefix within the supplied IPC budget (maximum 50 ms).
+/// CONFIRMED includes repeats. LEGACY_SUBMITTED confirms a socket write. UNKNOWN applies to
+/// the reported prefix; resume only at its suffix. INVALID identifies one rejected row.
+/// REFUSED leaves the entire input eligible for a later handoff.
+///
+/// # Safety
+/// Supply valid borrowed slices, writable output storage and a live, exclusively borrowed
+/// transport in each populated transport slot.
+#[unsafe(no_mangle)]
+// allow(ffi-panic-boundary): This crate uses the sidecar's abort-on-panic ABI.
+pub unsafe extern "C" fn ddog_sidecar_ffe_submit_deferred_v1(
+    transport: *mut *mut SidecarTransport,
+    context: &FfeTelemetryContext<'_>,
+    exposures: Slice<FfeExposure<'_>>,
+    budget_us: u32,
+    out: *mut FfeDeferredHandoff,
+) -> MaybeError {
+    let out = try_c!(
+        unsafe {
+            out.cast::<std::mem::MaybeUninit<FfeDeferredHandoff>>()
+                .as_mut()
+        }
+        .ok_or("missing deferred handoff output")
+    );
+    let out = out.write(FfeDeferredHandoff {
+        status: FFE_DEFERRED_REFUSED,
+        rows: 0,
+    });
+    let Some(transport) = (unsafe { transport.as_ref().and_then(|p| (*p).as_mut()) }) else {
+        return MaybeError::None;
+    };
+    if budget_us == 0 {
+        return MaybeError::None;
+    }
+    let deadline = std::time::Instant::now()
+        + std::time::Duration::from_micros(u64::from(budget_us.min(50_000)));
+    deferred_handoff(transport, context, exposures, Some(deadline), out)
+}
+
+#[doc(hidden)]
+pub fn submit_deferred_for_test(
+    transport: &mut SidecarTransport,
+    context: &FfeTelemetryContext<'_>,
+    exposures: Slice<FfeExposure<'_>>,
+    out: &mut FfeDeferredHandoff,
+) -> MaybeError {
+    *out = FfeDeferredHandoff {
+        status: FFE_DEFERRED_REFUSED,
+        rows: 0,
+    };
+    deferred_handoff(transport, context, exposures, None, out)
+}
+
+fn deferred_handoff(
+    transport: &mut SidecarTransport,
+    context: &FfeTelemetryContext<'_>,
+    exposures: Slice<FfeExposure<'_>>,
+    deadline: Option<std::time::Instant>,
+    out: &mut FfeDeferredHandoff,
+) -> MaybeError {
+    use datadog_sidecar::service::ffe_deferred::ChunkOutcome;
+    let rows = try_c!(
+        exposures
+            .try_as_slice()
+            .map_err(|e| format!("Invalid deferred exposure slice: {e}"))
+    );
+    let max = libdd_ipc::max_message_size();
+    if rows
+        .first()
+        .is_some_and(|row| exposure_text_bytes(context, row, true) > max)
+    {
+        *out = FfeDeferredHandoff {
+            status: FFE_DEFERRED_INVALID,
+            rows: 1,
+        };
+        return MaybeError::None;
+    }
+    let ctx = try_c!(ffe_context_from_ffi(context));
+    let rows = rows.iter().map(|r| {
+        (exposure_text_bytes(context, r, true) <= max)
+            .then(|| ffe_exposure_from_ffi(r).ok())
+            .flatten()
+    });
+    let (outcome, rows) = match deadline {
+        Some(deadline) => transport.inner.submit_deferred_chunk(ctx, rows, deadline),
+        None => transport.inner.submit_deferred_chunk_for_test(ctx, rows),
+    };
+    let status = match outcome {
+        ChunkOutcome::Confirmed => FFE_DEFERRED_CONFIRMED,
+        ChunkOutcome::LegacySubmitted => FFE_DEFERRED_LEGACY_SUBMITTED,
+        ChunkOutcome::Refused => FFE_DEFERRED_REFUSED,
+        ChunkOutcome::Unknown => FFE_DEFERRED_UNKNOWN,
+        ChunkOutcome::Invalid => FFE_DEFERRED_INVALID,
+    };
+    *out = FfeDeferredHandoff { status, rows };
+    MaybeError::None
 }
 
 fn ddog_sidecar_send_ffe_exposure_batch_impl(

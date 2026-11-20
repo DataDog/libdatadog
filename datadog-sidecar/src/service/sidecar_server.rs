@@ -36,7 +36,7 @@ use std::collections::HashMap;
 #[cfg(unix)]
 use std::os::unix::ffi::OsStringExt;
 use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
-use std::sync::{Arc, Mutex, Weak};
+use std::sync::{Arc, Mutex, OnceLock, Weak};
 use std::time::{Duration, SystemTime};
 use tracing::{debug, error, info, trace, warn};
 
@@ -80,6 +80,8 @@ use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct SidecarStats {
+    #[serde(default)]
+    ffe_exposures: ffe_exposures_flusher::AdmissionStats,
     trace_flusher: TraceFlusherStats,
     active_connections: u32,
     active_telemetry_clients: u32,
@@ -135,6 +137,8 @@ pub struct SidecarServer {
     pub(crate) ffe_http_client: NativeCapabilities,
     /// Sidecar-owned exposure cache, shared across sessions/connections.
     pub(crate) ffe_exposure_deduplicator: ffe_exposures_flusher::ExposureDeduplicator,
+    ffe_hook_exposure_deduplicator: Arc<OnceLock<ffe_exposures_flusher::ExposureDeduplicator>>,
+    ffe_admission_queue: ffe_exposures_flusher::AdmissionQueue,
     /// AppSec lifecycle and active backend, when supplied by the embedding application.
     #[cfg(unix)]
     appsec: Option<Arc<AppSecManager>>,
@@ -326,18 +330,14 @@ impl ConnectionSidecarHandler {
             .filter_map(|a| match a {
                 SidecarAction::FfeExposureBatch(batch) => {
                     if let Some(transport) = evp_transport.clone() {
-                        let batch = batch.clone();
-                        let client = ffe_http_client.clone();
-                        let deduplicator = self.server.ffe_exposure_deduplicator.clone();
-                        tokio::spawn(async move {
-                            ffe_exposures_flusher::send_batch(
-                                &client,
-                                &transport,
-                                &deduplicator,
-                                batch,
-                            )
-                            .await;
-                        });
+                        if !self.server.ffe_admission_queue.submit_deferred(
+                            &ffe_http_client,
+                            &transport,
+                            &self.server.ffe_exposure_deduplicator,
+                            batch,
+                        ) {
+                            debug!("ffe_exposures_flusher: deferred exposure queue full");
+                        }
                     } else {
                         debug!("ffe_exposures_flusher: no connection transport, dropping batch");
                     }
@@ -926,6 +926,7 @@ impl SidecarServer {
         let connection_stats = &self.connection_stats;
 
         SidecarStats {
+            ffe_exposures: self.ffe_admission_queue.stats(),
             trace_flusher: self.trace_flusher.stats(),
             active_connections: connection_stats.connections.load(Ordering::Relaxed),
             active_telemetry_clients,
@@ -1570,7 +1571,62 @@ impl SidecarInterface for ConnectionSidecarHandler {
         });
     }
 
-    async fn ping(&mut self) {}
+    async fn admit_ffe_exposure_v1(
+        &mut self,
+        context: crate::service::FfeTelemetryContext,
+        event: crate::service::FfeExposure,
+        deliver: bool,
+    ) -> crate::service::ExposureVerdict {
+        let Some(transport) = self.session.load().as_ref().and_then(|session| {
+            session.get_evp_transport(evp_proxy::EVENT_PLATFORM_INTAKE_SUBDOMAIN)
+        }) else {
+            self.server.ffe_admission_queue.missing_transport();
+            return crate::service::ExposureVerdict::Unavailable;
+        };
+        let cache = if deliver {
+            &self.server.ffe_exposure_deduplicator
+        } else {
+            self.server
+                .ffe_hook_exposure_deduplicator
+                .get_or_init(Default::default)
+        };
+        self.server.ffe_admission_queue.admit(
+            &self.server.ffe_http_client,
+            &transport,
+            cache,
+            context,
+            event,
+            deliver,
+        )
+    }
+
+    async fn submit_deferred_ffe_v1(&mut self, batch: crate::service::FfeExposureBatch) -> bool {
+        if batch.exposures.len() > super::ffe_deferred::MAX_CHUNK_ROWS
+            || !batch
+                .exposures
+                .iter()
+                .all(libdd_ffe::telemetry::exposures::is_complete)
+        {
+            self.server.ffe_admission_queue.invalid();
+            return false;
+        }
+        let Some(transport) = self.session.load().as_ref().and_then(|session| {
+            session.get_evp_transport(evp_proxy::EVENT_PLATFORM_INTAKE_SUBDOMAIN)
+        }) else {
+            self.server.ffe_admission_queue.missing_transport();
+            return false;
+        };
+        self.server.ffe_admission_queue.submit_deferred(
+            &self.server.ffe_http_client,
+            &transport,
+            &self.server.ffe_exposure_deduplicator,
+            batch,
+        )
+    }
+
+    async fn ping(&mut self) -> u8 {
+        super::FFE_ADMISSION_V1_CAPABILITY | super::FFE_DEFERRED_V1_CAPABILITY
+    }
 
     async fn dump(&mut self) -> String {
         crate::dump::dump().await
@@ -1642,6 +1698,8 @@ mod cdn_tests;
 
 #[cfg(test)]
 mod tests {
+    #[cfg(unix)]
+    mod admission;
     use super::*;
     use crate::service::evp_proxy;
     use crate::service::{

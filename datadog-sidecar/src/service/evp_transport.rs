@@ -544,6 +544,10 @@ impl EvpTransport {
         self.config == other.config && self.producer == other.producer
     }
 
+    pub(super) fn scope_handle(&self) -> Arc<str> {
+        self.deduplication_scope.clone()
+    }
+
     pub(crate) fn deduplication_scope(&self) -> &str {
         &self.deduplication_scope
     }

@@ -563,8 +563,8 @@ pub(crate) fn enable_logging() -> anyhow::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::{
-        AppSecLogFormatter, AppSecLogWriter, MULTI_LOG_FILTER, TemporarilyRetainedKeyParser,
-        TemporarilyRetainedMap, enable_logging, is_sidecar_log_path,
+        AppSecLogFormatter, AppSecLogWriter, TemporarilyRetainedKeyParser, TemporarilyRetainedMap,
+        is_sidecar_log_path,
     };
     use crate::log::MultiEnvFilter;
     use std::collections::HashMap;
@@ -679,21 +679,27 @@ mod tests {
 
     #[test]
     #[cfg_attr(miri, ignore)]
-    #[serial_test::serial(log_counter)]
     fn test_logs_created_counter() {
-        enable_logging().ok();
+        use tracing_subscriber::prelude::*;
 
-        let _filter = MULTI_LOG_FILTER.add("warn".to_string());
-
-        // Start from a known point; anything emitted before now is not ours.
-        let _ = MULTI_LOG_FILTER.collect_logs_created_count();
+        static FILTER: LazyLock<MultiEnvFilter> = LazyLock::new(MultiEnvFilter::default);
+        let _level = FILTER.add("warn".to_owned());
+        let subscriber = tracing_subscriber::registry().with(
+            tracing_subscriber::fmt::layer()
+                .with_writer(std::io::sink)
+                .with_filter(&*FILTER),
+        );
+        let _guard = tracing::subscriber::set_default(subscriber);
+        std::thread::spawn(|| warn!("unrelated warning"))
+            .join()
+            .unwrap();
 
         warn!("Bim");
         error!("Boom");
         debug!("hi");
 
         assert_eq!(
-            MULTI_LOG_FILTER.collect_logs_created_count(),
+            FILTER.collect_logs_created_count(),
             HashMap::from([(Level::WARN, 1), (Level::ERROR, 1)])
         );
 
@@ -701,10 +707,10 @@ mod tests {
         debug!("hi");
 
         assert_eq!(
-            MULTI_LOG_FILTER.collect_logs_created_count(),
+            FILTER.collect_logs_created_count(),
             HashMap::from([(Level::WARN, 1)])
         );
-        assert!(MULTI_LOG_FILTER.collect_logs_created_count().is_empty());
+        assert!(FILTER.collect_logs_created_count().is_empty());
     }
 
     #[test]

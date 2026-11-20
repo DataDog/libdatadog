@@ -187,6 +187,7 @@ impl ConnectionState {
 pub struct SidecarSender {
     pub channel: SidecarInterfaceChannel,
     state: ConnectionState,
+    ffe_capabilities: Option<u8>,
     /// Maximum allowed outstanding (sent-but-not-acked) messages before state drain is skipped
     /// and fire-and-forget sends are blocked.
     pub max_outstanding: u64,
@@ -202,6 +203,7 @@ impl SidecarSender {
         Self {
             channel,
             state: ConnectionState::default(),
+            ffe_capabilities: None,
             max_outstanding: 100,
             enqueue_actions_counter: 0,
             metric_registrations: HashMap::new(),
@@ -230,6 +232,10 @@ impl SidecarSender {
 
     /// Non-blocking drain of pending state messages.  Returns `true` if all messages were sent.
     fn try_drain_outbox(&mut self) -> bool {
+        self.try_drain_outbox_while(|| true)
+    }
+
+    fn try_drain_outbox_while(&mut self, within_budget: impl Fn() -> bool) -> bool {
         // Drain pending acks when approaching the throttle threshold so the socket
         // receive buffer doesn't fill up and block the sidecar from sending more acks.
         if self.channel.0.outstanding() >= self.max_outstanding / 2 {
@@ -237,7 +243,9 @@ impl SidecarSender {
         }
         let (channel, max_outstanding) = (&mut self.channel, self.max_outstanding);
         self.state.send_pending(|request| {
-            channel.0.outstanding() < max_outstanding && channel.try_send_request(request).is_ok()
+            within_budget()
+                && channel.0.outstanding() < max_outstanding
+                && channel.try_send_request(request).is_ok()
         })
     }
 
@@ -458,9 +466,93 @@ impl SidecarSender {
         self.channel.call_flush(options)
     }
 
+    pub(super) fn ffe_capabilities_until(&mut self, deadline: std::time::Instant) -> Option<u8> {
+        if std::time::Instant::now() >= deadline
+            || self.channel.0.is_closed()
+            || !self.try_drain_outbox_while(|| std::time::Instant::now() < deadline)
+        {
+            return None;
+        }
+        if self.ffe_capabilities.is_none() {
+            let bytes = self
+                .channel
+                .0
+                .call_until(
+                    libdd_ipc::codec::encode(&SidecarInterfaceRequest::Ping {}),
+                    deadline,
+                )
+                .ok()?;
+            let [bits] = bytes.as_slice() else {
+                return None;
+            };
+            self.ffe_capabilities = Some(*bits);
+        }
+        self.ffe_capabilities
+    }
+
+    pub fn admit_ffe_exposure_v1(
+        &mut self,
+        context: crate::service::FfeTelemetryContext,
+        mut event: crate::service::FfeExposure,
+        deliver: bool,
+        deadline: std::time::Instant,
+    ) -> crate::service::ExposureVerdict {
+        use crate::service::ExposureVerdict;
+        use libdd_ipc::codec::{decode, encode};
+        if self
+            .ffe_capabilities_until(deadline)
+            .is_none_or(|bits| bits & super::FFE_ADMISSION_V1_CAPABILITY == 0)
+        {
+            return ExposureVerdict::Unavailable;
+        }
+        if !deliver {
+            event.subject_attributes_json.clear();
+            event.features_json.clear();
+        }
+        let data = encode(&SidecarInterfaceRequest::AdmitFfeExposureV1 {
+            context,
+            event,
+            deliver,
+        });
+        match self.channel.0.call_until(data, deadline) {
+            Ok(bytes) => decode(&bytes).unwrap_or(ExposureVerdict::Unknown),
+            Err(libdd_ipc::client::DeadlineCallError::NotSent) => ExposureVerdict::Unavailable,
+            Err(libdd_ipc::client::DeadlineCallError::Uncertain) => ExposureVerdict::Unknown,
+        }
+    }
+
+    /// Issues one admission to a negotiated peer using the socket's blocking reply path.
+    /// Semantic test fixtures supply a supervised connection with an outer liveness watchdog.
+    #[doc(hidden)]
+    pub fn admit_ffe_exposure_for_test(
+        &mut self,
+        context: crate::service::FfeTelemetryContext,
+        event: crate::service::FfeExposure,
+        deliver: bool,
+    ) -> crate::service::ExposureVerdict {
+        use crate::service::ExposureVerdict;
+        if !self.fixture_peer_supports(super::FFE_ADMISSION_V1_CAPABILITY) {
+            return ExposureVerdict::Unavailable;
+        }
+        self.channel
+            .call_admit_ffe_exposure_v1(context, event, deliver)
+            .unwrap_or(ExposureVerdict::Unknown)
+    }
+
+    pub(super) fn fixture_peer_supports(&mut self, capability: u8) -> bool {
+        self.drain_outbox_blocking().is_ok()
+            && self
+                .channel
+                .call_ping()
+                .is_ok_and(|bits| bits & capability != 0)
+    }
+
     pub fn ping(&mut self) -> io::Result<()> {
         self.drain_outbox_blocking()?;
-        self.channel.call_ping()
+        self.channel.call_ping().map(|_| ()).map_err(|e| match e {
+            libdd_ipc::codec::DecodeError::Io(e) => e,
+            e => io::Error::new(io::ErrorKind::InvalidData, e),
+        })
     }
 
     pub fn dump(&mut self) -> Result<String, libdd_ipc::codec::DecodeError> {

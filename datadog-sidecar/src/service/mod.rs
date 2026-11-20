@@ -47,6 +47,7 @@ pub(crate) mod evp_proxy;
 pub(crate) mod evp_transport;
 pub mod exception_hash_rate_limiter;
 pub(crate) mod ffe_config;
+pub mod ffe_deferred;
 pub(crate) mod ffe_exposures_flusher;
 pub(crate) mod ffe_flagevaluation_flusher;
 pub(crate) mod ffe_metrics_flusher;
@@ -158,6 +159,19 @@ pub struct ApplicationConfig {
     /// Global tags which need to be propagated.
     pub global_tags: Vec<Tag>,
     pub dynamic_instrumentation_state: DynamicInstrumentationConfigState,
+}
+
+pub(crate) const FFE_ADMISSION_V1_CAPABILITY: u8 = 1;
+pub(crate) const FFE_DEFERRED_V1_CAPABILITY: u8 = 2;
+
+#[repr(u32)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize, Serialize)]
+pub enum ExposureVerdict {
+    Unavailable = 0,
+    Admitted = 1,
+    Repeat = 2,
+    Unknown = 3,
+    QueueFull = 4,
 }
 
 #[derive(Debug, Deserialize, Serialize)]
