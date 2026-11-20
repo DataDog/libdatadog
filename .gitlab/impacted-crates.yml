@@ -82,3 +82,83 @@ compute_impacted_crates:
     paths:
       - changed_files.txt
     expire_in: 1 week
+
+# Collect per-cluster coverage and intersect it with changed lines/dependencies.
+# Missing or failed selection falls back to crate-level selection downstream.
+compute_bench_selection:
+  stage: test
+  tags: ["arch:amd64"]
+  image:
+    name: $BASE_CI_IMAGE
+  needs:
+    - job: compute_impacted_crates
+      artifacts: true
+      optional: true
+  rules:
+    - !reference [.untrusted_ref_guard, rules]
+    - if: '$CI_COMMIT_BRANCH == "main"'
+      when: never
+    - if: '$CI_COMMIT_BRANCH =~ /^(release|hotfix)\//'
+      when: never
+    - if: '$CI_EXTERNAL_PULL_REQUEST_SOURCE_BRANCH_NAME =~ /^(release|hotfix)\//'
+      when: never
+    - if: '$CI_COMMIT_BRANCH =~ /^mq-working-branch-/'
+      when: never
+    - if: '$CI_PIPELINE_SOURCE == "schedule"'
+      when: never
+    - when: on_success
+  variables:
+    GIT_DEPTH: 0
+    # Separate instrumented-build cache; BASEDIRS allows cross-runner hits.
+    SCCACHE_BUCKET: dd-sccache-storage-us1-ddbuild-io
+    SCCACHE_REGION: us-east-1
+    SCCACHE_S3_KEY_PREFIX: libdatadog/bench-selection/sccache
+    SCCACHE_ERROR_LOG: /tmp/sccache.log
+    SCCACHE_IGNORE_SERVER_IO_ERROR: "1"
+    SCCACHE_BASEDIRS: $CI_PROJECT_DIR
+    CARGO_INCREMENTAL: "0"
+  allow_failure: true
+  script:
+    - |
+      set -eu
+      if [[ "${IMPACTED_STATUS:-}" != "success" || -z "${AFFECTED_CRATES:-}" ]]; then
+        echo "Impacted crates undetermined -> benchmarks fall back to crate-level selection."
+        exit 0
+      fi
+      # Root manifests/lockfiles are scoped by the selector; toolchain/config
+      # changes are not. WORKSPACE_LEVEL_CHANGE includes both, so is unsuitable.
+      if grep -qE '^(rust-toolchain\.toml|ci-toolchain\.toml)$' changed_files.txt 2>/dev/null \
+         || grep -qE '^(\.cargo/|\.config/nextest\.toml)' changed_files.txt 2>/dev/null; then
+        echo "Workspace-level profile/toolchain change -> full benchmark suite."
+        exit 0
+      fi
+      # Coverage tools must match the active rustc's profile format.
+      rustup component add llvm-tools-preview
+      # Cache failures must not fail selection.
+      if command -v sccache > /dev/null 2>&1 && sccache --start-server > /dev/null 2>&1; then
+        export RUSTC_WRAPPER=sccache
+      else
+        echo "sccache unavailable or failed to start; building without a compiler cache"
+      fi
+      (cd .github/actions && cargo build -p bench-selector)
+      # Lockfile changes need all crates; otherwise restrict to affected crates.
+      CRATES_ARGS=()
+      if ! grep -qE '^Cargo\.lock$' changed_files.txt 2>/dev/null; then
+        CRATES="$(jq -r '.[]' <<< "${AFFECTED_CRATES}" | paste -sd ',')"
+        if [[ -z "$CRATES" ]]; then
+          # Nothing to scope; downstream guards still widen tooling-only PRs.
+          exit 0
+        fi
+        CRATES_ARGS=(--crates "$CRATES")
+      fi
+      ./.github/actions/target/debug/bench-selector "${CRATES_ARGS[@]}" \
+        --target-dir target/bench-selection \
+        --base-ref main \
+        --out bench-selection.json
+      sccache --show-stats || :
+      sccache --stop-server > /dev/null 2>&1 || :
+  artifacts:
+    when: always
+    paths:
+      - bench-selection.json
+    expire_in: 1 week

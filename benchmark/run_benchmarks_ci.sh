@@ -45,6 +45,34 @@ bench_features_for_crate() {
   esac
 }
 
+# Features needed to build one bench target in THIS checkout. BENCH_SELECTION carries the
+# candidate's feature list, but a PR can add, remove, or rename a bench target's required feature:
+# reusing the candidate's list for the baseline checkout either errors on a candidate-only feature
+# (a failure the --list guard below would silently swallow) or starves the baseline target of a
+# feature it still requires. Resolve the target's required-features from this checkout's metadata
+# instead, plus the supplemental features bench_features_for_crate lists that this checkout
+# actually declares.
+bench_features_for_target() {
+  local crate=$1 target=$2 feature name
+  local -a features
+  # Word-split on purpose: cargo feature names never contain whitespace.
+  features=($(jq -r --arg c "${crate}" --arg t "${target}" \
+    '.packages[] | select(.name == $c) | .targets[]
+     | select(.name == $t and any(.kind[]?; . == "bench"))
+     | ."required-features"[]?' <<< "${metadata}"))
+  for feature in $(bench_features_for_crate "${crate}"); do
+    name="${feature#*/}" # bench_features_for_crate yields crate-qualified names
+    if [[ " ${features[*]:-} " == *" ${name} "* ]]; then
+      continue
+    fi
+    if jq -e --arg c "${crate}" --arg f "${name}" \
+      'any(.packages[]; .name == $c and (.features | has($f)))' <<< "${metadata}" > /dev/null; then
+      features+=("${name}")
+    fi
+  done
+  (IFS=,; echo "${features[*]:-}")
+}
+
 # Run benchmarks.
 message "Running benchmarks"
 
@@ -56,7 +84,26 @@ metadata="$(cargo metadata --no-deps --format-version 1)"
 # BENCH_PACKAGES (optional, space-separated crate names) scopes the run to specific crates -- set by
 # the GitLab benchmarks job so a PR only benchmarks the crates it impacts. When empty (e.g. a local
 # run) default to every crate that declares a benchmark target, which is equivalent to --workspace.
-if [[ -z "${BENCH_PACKAGES:-}" ]]; then
+#
+# BENCH_SELECTION supplies {crate, target, features, filter} specs and takes
+# precedence over BENCH_PACKAGES. The features field is informational only: required features are
+# re-resolved from each checkout's own metadata (bench_features_for_target), because a PR may add,
+# remove, or rename them and the baseline must build with its own declarations. Specs whose crate
+# or bench target is missing in this checkout, and filtered --list checks that match no benchmarks,
+# are skipped (new benches may have no baseline).
+BENCH_SELECTION="${BENCH_SELECTION:-}"
+spec_mode=false
+if [[ -n "${BENCH_SELECTION}" ]]; then
+  if jq -e 'type == "array" and all(.[]; .filter | type == "string")' <<< "${BENCH_SELECTION}" >/dev/null 2>&1; then
+    spec_mode=true
+    message "Bench-level selection: $(jq 'length' <<< "${BENCH_SELECTION}") benchmark binary(ies)."
+  else
+    message "BENCH_SELECTION is not an array of filtered specs; falling back to crate-level selection."
+    BENCH_SELECTION=""
+  fi
+fi
+
+if [[ "${spec_mode}" != true && -z "${BENCH_PACKAGES:-}" ]]; then
   BENCH_PACKAGES="$(jq -r '.packages[] | select(any(.targets[]?; .kind[]? == "bench")) | .name' <<< "$metadata" | tr '\n' ' ')"
 fi
 
@@ -109,7 +156,82 @@ dump_compiler_cache_diagnostics() {
   fi
 }
 
-if (( ${#package_args[@]} == 0 )); then
+# Storage IO errors during the build (e.g. S3 hiccup) only show up in these
+# counters; surface them loudly instead of letting them read as cache misses.
+check_sccache_io_errors() {
+  sccache --show-stats || :
+  local stats io_errors io_detail
+  stats="$(sccache --show-stats --stats-format json 2>/dev/null || echo '{}')"
+  io_errors="$(jq -r '[.stats.cache_write_errors, .stats.cache_read_errors, .stats.cache_timeouts] | add // 0' <<< "${stats}")"
+  if (( io_errors > 0 )); then
+    io_detail="$(jq -r '"cache write errors=\(.stats.cache_write_errors), cache read errors=\(.stats.cache_read_errors), cache timeouts=\(.stats.cache_timeouts)"' <<< "${stats}")"
+    record_cache_failure "SCCACHE SERVER FAILURE: ${io_errors} cache storage IO errors during this job — ${io_detail}"
+  fi
+}
+
+criterion_args=(--warm-up-time 1 --measurement-time 5 --sample-size=200)
+
+if [[ "${spec_mode}" == true ]]; then
+  spec_crate=()
+  spec_target=()
+  spec_features=()
+  spec_filter=()
+  spec_count="$(jq 'length' <<< "${BENCH_SELECTION}")"
+  for ((i = 0; i < spec_count; i++)); do
+    crate="$(jq -r ".[$i].crate" <<< "${BENCH_SELECTION}")"
+    target="$(jq -r ".[$i].target" <<< "${BENCH_SELECTION}")"
+    if ! grep -qxF "${crate}" <<< "${members}"; then
+      message "Skipping '${crate}/${target}': not a member of this checkout"
+      continue
+    fi
+    if ! jq -e --arg c "${crate}" --arg t "${target}" \
+      'any(.packages[]; .name == $c and any(.targets[]?; .name == $t and any(.kind[]?; . == "bench")))' \
+      <<< "${metadata}" > /dev/null; then
+      message "Skipping '${crate}/${target}': not a bench target in this checkout"
+      continue
+    fi
+    spec_crate+=("${crate}")
+    spec_target+=("${target}")
+    spec_features+=("$(bench_features_for_target "${crate}" "${target}")")
+    spec_filter+=("$(jq -r ".[$i].filter" <<< "${BENCH_SELECTION}")")
+  done
+
+  if (( ${#spec_crate[@]} == 0 )); then
+    message "No selected benchmark binaries present in this checkout; nothing to run."
+  else
+    # Stop sccache before measuring, as in the crate-level path.
+    if start_compiler_cache; then
+      for j in "${!spec_crate[@]}"; do
+        spec_args=(-p "${spec_crate[$j]}" --bench "${spec_target[$j]}")
+        if [[ -n "${spec_features[$j]}" ]]; then
+          spec_args+=(--features "${spec_features[$j]}")
+        fi
+        if ! RUSTC_WRAPPER=sccache cargo bench "${spec_args[@]}" --no-run; then
+          message "sccache: compilation via the wrapper failed; the measuring run continues without a compiler cache"
+          record_cache_failure "SCCACHE SERVER FAILURE: compilation via the wrapper failed; the measuring run continues without a compiler cache"
+        fi
+      done
+      check_sccache_io_errors
+      sccache --stop-server > /dev/null 2>&1 || :
+    fi
+
+    # Criterion applies the same exact filter to listing and measurement.
+    for j in "${!spec_crate[@]}"; do
+      spec_args=(-p "${spec_crate[$j]}" --bench "${spec_target[$j]}")
+      if [[ -n "${spec_features[$j]}" ]]; then
+        spec_args+=(--features "${spec_features[$j]}")
+      fi
+      filter="${spec_filter[$j]}"
+      listed="$(cargo bench "${spec_args[@]}" -- --list --format terse "$filter" 2>/dev/null || true)"
+      if ! grep -q ': benchmark$' <<< "${listed}"; then
+        message "Skipping '${spec_crate[$j]}/--bench ${spec_target[$j]}': none of the selected benchmark IDs exist in this checkout"
+        continue
+      fi
+      message "Benchmarking ${spec_crate[$j]}/--bench ${spec_target[$j]} with selection filter ${filter}"
+      cargo bench "${spec_args[@]}" -- "${criterion_args[@]}" "$filter"
+    done
+  fi
+elif (( ${#package_args[@]} == 0 )); then
   message "No benchmarkable crates present in this checkout; nothing to run."
 else
   feature_args=()
@@ -117,8 +239,6 @@ else
     feature_args=(--features "$(IFS=,; echo "${features[*]}")")
   fi
   message "Benchmarking crates:${package_args[*]}"
-
-  criterion_args=(--warm-up-time 1 --measurement-time 5 --sample-size=200)
 
   # Compile and measure in separate invocations so no sccache server is alive while anything is
   # timed. Safe only because cargo does not treat a RUSTC_WRAPPER change as a fingerprint change
@@ -128,15 +248,7 @@ else
       message "sccache: compilation via the wrapper failed; retrying without a compiler cache"
       record_cache_failure "SCCACHE SERVER FAILURE: compilation via the wrapper failed; the measuring run continues without a compiler cache"
     fi
-    # Storage IO errors during the build (e.g. S3 hiccup) only show up in these
-    # counters; surface them loudly instead of letting them read as cache misses.
-    sccache --show-stats || :
-    sccache_stats="$(sccache --show-stats --stats-format json 2>/dev/null || echo '{}')"
-    sccache_io_errors="$(jq -r '[.stats.cache_write_errors, .stats.cache_read_errors, .stats.cache_timeouts] | add // 0' <<< "${sccache_stats}")"
-    if (( sccache_io_errors > 0 )); then
-      sccache_io_detail="$(jq -r '"cache write errors=\(.stats.cache_write_errors), cache read errors=\(.stats.cache_read_errors), cache timeouts=\(.stats.cache_timeouts)"' <<< "${sccache_stats}")"
-      record_cache_failure "SCCACHE SERVER FAILURE: ${sccache_io_errors} cache storage IO errors during this job — ${sccache_io_detail}"
-    fi
+    check_sccache_io_errors
     sccache --stop-server > /dev/null 2>&1 || :
   fi
 

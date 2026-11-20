@@ -37,6 +37,10 @@ benchmarks:
     - job: compute_impacted_crates
       artifacts: true
       optional: true
+    # Optional selection; missing output falls back to crate-level/full-suite runs.
+    - job: compute_bench_selection
+      artifacts: true
+      optional: true
   image:
     name: $BASE_CI_IMAGE
   rules: *benchmark_run_rules
@@ -70,8 +74,16 @@ benchmarks:
           export BENCH_PACKAGES=""
           ;;
         *)
-          export BENCH_PACKAGES="$DECISION"
-          echo "Shard ${CI_NODE_INDEX:-1}/${CI_NODE_TOTAL:-1} crates: $BENCH_PACKAGES"
+          if [[ "$DECISION" == \[* ]]; then
+            # Both checkouts intersect these specs with their own --list.
+            export BENCH_SELECTION="$DECISION"
+            # Keep a crate-level fallback if BENCH_SELECTION is lost.
+            export BENCH_PACKAGES="$(jq -r '[.[].crate] | unique | join(" ")' <<< "$BENCH_SELECTION")"
+            echo "Shard ${CI_NODE_INDEX:-1}/${CI_NODE_TOTAL:-1}: bench-level selection, $(jq 'length' <<< "$BENCH_SELECTION") benchmark binary(ies): $BENCH_PACKAGES"
+          else
+            export BENCH_PACKAGES="$DECISION"
+            echo "Shard ${CI_NODE_INDEX:-1}/${CI_NODE_TOTAL:-1} crates: $BENCH_PACKAGES"
+          fi
           ;;
       esac
     - export CACHE_FAILURES_LOG="${CI_PROJECT_DIR}/.cache-failures.log" && rm -f "${CACHE_FAILURES_LOG}"
