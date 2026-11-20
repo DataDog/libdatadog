@@ -62,6 +62,12 @@ fn prefix(
 }
 
 impl SidecarSender {
+    /// Negotiates whether a deferred reply fences later admissions on this connection.
+    pub fn supports_ordered_ffe_handoff_until(&mut self, deadline: Instant) -> bool {
+        self.ffe_capabilities_until(deadline)
+            .is_some_and(|bits| bits & FFE_DEFERRED_V1_CAPABILITY != 0)
+    }
+
     /// Submits at most one ordered prefix. Confirmed and legacy counts cover submitted rows;
     /// unknown counts cover the possibly applied chunk, invalid counts identify one rejected row.
     pub fn submit_deferred_chunk(

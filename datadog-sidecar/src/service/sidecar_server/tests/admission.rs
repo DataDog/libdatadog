@@ -390,6 +390,7 @@ fn deferred_outcome_tracks_only_the_attempted_prefix() {
     use crate::service::ffe_deferred::ChunkOutcome::*;
     for (caps, reply, expected) in [
         (0, Some(false), (LegacySubmitted, 2)),
+        (1, Some(false), (LegacySubmitted, 2)),
         (3, Some(false), (Refused, 0)),
         (3, None, (Unknown, 2)),
     ] {
@@ -397,7 +398,7 @@ fn deferred_outcome_tracks_only_the_attempted_prefix() {
             let mut buf = [0; 4096];
             let (len, _) = peer.recv_raw_blocking(&mut buf).unwrap();
             match decode::<SidecarInterfaceRequest>(&buf[..len]).unwrap() {
-                SidecarInterfaceRequest::EnqueueActions { actions } if caps == 0 => assert!(
+                SidecarInterfaceRequest::EnqueueActions { actions } if caps < 2 => assert!(
                     matches!(actions.as_slice(), [SidecarAction::FfeExposureBatch(b)] if b.exposures.len() == 2)
                 ),
                 SidecarInterfaceRequest::SubmitDeferredFfeV1 { batch } if caps == 3 => {
@@ -409,6 +410,10 @@ fn deferred_outcome_tracks_only_the_attempted_prefix() {
                 _ => panic!("unexpected deferred wire opcode"),
             }
         });
+        assert_eq!(
+            sender.supports_ordered_ffe_handoff_until(Instant::now() + Duration::from_secs(5)),
+            caps == 3
+        );
         assert_eq!(
             submit(&mut sender, &[ffe_exposure("a"), ffe_exposure("b")]),
             expected
