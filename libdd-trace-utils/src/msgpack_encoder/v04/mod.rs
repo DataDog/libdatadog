@@ -266,10 +266,39 @@ fn encode_payload_from_v1<W: RmpWrite, T: TraceData>(
     payload: &TracerPayload<T>,
     opts: V1DowngradeOptions,
 ) -> Result<(), ValueWriteError<W::Error>> {
+    encode_selected_from_v1(
+        writer,
+        payload,
+        payload.chunks.iter().map(|chunk| super::split::ChunkView {
+            chunk,
+            spans: &chunk.spans,
+        }),
+        opts,
+    )
+}
+
+pub(super) fn encode_selection<'a, T: TraceData + 'a>(
+    payload: &TracerPayload<T>,
+    chunks: impl ExactSizeIterator<Item = super::split::ChunkView<'a, T>>,
+) -> Vec<u8> {
+    let mut buf = ByteBuf::with_capacity(0);
+    encode_selected_from_v1(&mut buf, payload, chunks, V1DowngradeOptions::default())
+        .map_err(super::flatten_value_write_infallible)
+        .unwrap_infallible();
+    buf.into_vec()
+}
+
+fn encode_selected_from_v1<'a, W: RmpWrite, T: TraceData + 'a>(
+    writer: &mut W,
+    payload: &TracerPayload<T>,
+    chunks: impl ExactSizeIterator<Item = super::split::ChunkView<'a, T>>,
+    opts: V1DowngradeOptions,
+) -> Result<(), ValueWriteError<W::Error>> {
     use span_v1::{ChunkContext, encode_span};
 
-    write_array_len(writer, payload.chunks.len() as u32)?;
-    for chunk in &payload.chunks {
+    write_array_len(writer, chunks.len() as u32)?;
+    for view in chunks {
+        let chunk = view.chunk;
         // `dropped_trace` is agent-owned and not mapped, see `TraceChunk::dropped_trace`.
         let ctx = ChunkContext::new(
             &chunk.trace_id,
@@ -282,9 +311,9 @@ fn encode_payload_from_v1<W: RmpWrite, T: TraceData>(
             &payload.hostname,
             &payload.attributes,
         );
-        let root_idx = get_root_span_index(&chunk.spans).unwrap_or(0);
-        write_array_len(writer, chunk.spans.len() as u32)?;
-        for (i, span) in chunk.spans.iter().enumerate() {
+        let root_idx = get_root_span_index(view.spans).unwrap_or(0);
+        write_array_len(writer, view.spans.len() as u32)?;
+        for (i, span) in view.spans.iter().enumerate() {
             encode_span(writer, span, &ctx, i == root_idx, i == 0, opts)?;
         }
     }
