@@ -20,8 +20,10 @@ use libdd_capabilities::{HttpClientCapability, SleepCapability};
 use libdd_capabilities_impl::NativeCapabilities;
 pub(crate) use libdd_ffe::telemetry::exposures::ExposureDeduplicator;
 #[cfg(test)]
+use libdd_ffe::telemetry::exposures::encode_admitted_exposure_batch;
+#[cfg(test)]
 use libdd_ffe::telemetry::exposures::encode_exposure_batch_in_scope;
-use libdd_ffe::telemetry::exposures::{encode_admitted_exposure_batch, is_complete};
+use libdd_ffe::telemetry::exposures::{admitted_exposure_payloads, is_complete};
 mod dispatch;
 
 use dispatch::{Capacity, Credit};
@@ -84,19 +86,53 @@ async fn send_encoded<C: HttpClientCapability + SleepCapability>(
 
 pub(super) type Job = (EvpTransport, FfeExposureBatch, Option<Credit>);
 
-const DEFERRED_SLOTS: usize = 32;
+const DEFERRED_ROWS: usize = 32 * 1024;
+const HTTP_PAYLOAD_BYTES: usize = 4 * 1024 * 1024;
 const DEFERRED_BYTES: usize = 16 * 1024 * 1024;
 
 const ADMISSION_QUEUE_CAPACITY: usize = 1024;
 const MAX_BATCH_ROWS: usize = 64;
 const COALESCE_WINDOW: Duration = Duration::from_millis(1);
+const FAST_ROW_BYTES: usize = 64 * 1024;
+
+fn text_bytes(ctx: &FfeTelemetryContext, row: &FfeExposure) -> usize {
+    ctx.service.len()
+        + ctx.env.len()
+        + ctx.version.len()
+        + row.flag_key.len()
+        + row.subject_id.len()
+        + row.allocation_key.len()
+        + row.variant.len()
+        + row.features_json.len()
+        + row.subject_attributes_json.len()
+}
+
+pub(super) fn fits_http(ctx: &FfeTelemetryContext, row: &FfeExposure) -> bool {
+    // Even fully escaped fast-path text fits one 4 MiB body. Measure larger rows exactly.
+    text_bytes(ctx, row) <= FAST_ROW_BYTES
+        || admitted_exposure_payloads(
+            FfeExposureBatch {
+                context: ctx.clone(),
+                exposures: vec![row.clone()],
+            },
+            HTTP_PAYLOAD_BYTES,
+        )
+        .is_ok_and(|mut bodies| matches!(bodies.next(), Some(Ok(_))))
+}
 
 async fn drain_admissions<C: HttpClientCapability + SleepCapability>(
     client: &C,
     rx: mpsc::Receiver<Job>,
 ) {
     dispatch::dispatch(rx, |route, batch| async move {
-        send_encoded(client, &route, encode_admitted_exposure_batch(batch)).await;
+        match admitted_exposure_payloads(batch, HTTP_PAYLOAD_BYTES) {
+            Ok(payloads) => {
+                for body in payloads {
+                    send_encoded(client, &route, body.map(Some)).await;
+                }
+            }
+            Err(e) => debug!("ffe_exposures_flusher: failed to encode exposure context: {e:?}"),
+        }
     })
     .await;
 }
@@ -118,6 +154,8 @@ fn count(counter: &AtomicU64, reason: &'static str) {
 
 #[derive(Default, Debug, serde::Serialize, serde::Deserialize)]
 pub(super) struct AdmissionStats {
+    #[serde(default)]
+    pub(super) outstanding_rows: usize,
     pub(super) full: u64,
     pub(super) closed: u64,
     pub(super) invalid: u64,
@@ -134,6 +172,7 @@ pub(crate) struct AdmissionQueue {
 impl AdmissionQueue {
     pub(super) fn stats(&self) -> AdmissionStats {
         AdmissionStats {
+            outstanding_rows: self.capacity.outstanding_rows(),
             full: self.counters.full.load(Ordering::Relaxed),
             closed: self.counters.closed.load(Ordering::Relaxed),
             invalid: self.counters.invalid.load(Ordering::Relaxed),
@@ -164,7 +203,7 @@ impl AdmissionQueue {
 
     #[cfg(test)]
     pub(super) fn capture(capacity: usize) -> (Self, mpsc::Receiver<Job>) {
-        let (sender, receiver) = mpsc::channel(2 * (capacity + DEFERRED_SLOTS));
+        let (sender, receiver) = mpsc::channel(2 * (capacity + DEFERRED_ROWS));
         (
             Self {
                 writer: Arc::new(OnceLock::from(sender)),
@@ -177,7 +216,7 @@ impl AdmissionQueue {
 
     fn writer(&self, client: &NativeCapabilities) -> &mpsc::Sender<Job> {
         self.writer.get_or_init(|| {
-            let (tx, rx) = mpsc::channel(2 * (ADMISSION_QUEUE_CAPACITY + DEFERRED_SLOTS));
+            let (tx, rx) = mpsc::channel(2 * (ADMISSION_QUEUE_CAPACITY + DEFERRED_ROWS));
             let client = client.clone();
             tokio::spawn(async move { drain_admissions(&client, rx).await });
             tx
@@ -191,13 +230,20 @@ impl AdmissionQueue {
         cache: &ExposureDeduplicator,
         batch: FfeExposureBatch,
     ) -> bool {
-        let Some(bytes) = libdd_ipc::codec::encoded_size(&batch)
-            .ok()
-            .and_then(|n| usize::try_from(n).ok())
-        else {
+        let charge = dispatch::DeferredCharge::for_batch(&batch);
+        if charge.bytes > FAST_ROW_BYTES
+            && batch
+                .exposures
+                .iter()
+                .any(|row| !fits_http(&batch.context, row))
+        {
+            self.invalid();
             return false;
-        };
-        let Some(budget) = self.capacity.reserve(transport.scope_handle(), Some(bytes)) else {
+        }
+        let Some(budget) = self
+            .capacity
+            .reserve(transport.scope_handle(), Some(charge))
+        else {
             self.refusal(mpsc::error::TrySendError::Full(()));
             return false;
         };
@@ -223,23 +269,7 @@ impl AdmissionQueue {
         event: FfeExposure,
         deliver: bool,
     ) -> ExposureVerdict {
-        if !is_complete(&event)
-            || [
-                &context.service,
-                &context.env,
-                &context.version,
-                &event.flag_key,
-                &event.subject_id,
-                &event.allocation_key,
-                &event.variant,
-                &event.features_json,
-                &event.subject_attributes_json,
-            ]
-            .iter()
-            .map(|s| s.len())
-            .sum::<usize>()
-                > 65536
-        {
+        if !is_complete(&event) || text_bytes(&context, &event) > FAST_ROW_BYTES {
             self.invalid();
             return ExposureVerdict::Unavailable;
         }
@@ -375,10 +405,17 @@ mod tests {
             };
             encode_admitted_exposure_batch(batch).unwrap().unwrap()
         };
+        let first = a
+            .mock_async(|when, then| {
+                when.method(httpmock::Method::POST)
+                    .body(expected("svc", &["A"]));
+                then.status(202);
+            })
+            .await;
         let abc = a
             .mock_async(|when, then| {
                 when.method(httpmock::Method::POST)
-                    .body(expected("svc", &["A", "B", "A", "C"]));
+                    .body(expected("svc", &["B", "A", "C"]));
                 then.status(202);
             })
             .await;
@@ -409,6 +446,7 @@ mod tests {
         }
         drop(tx);
         drain_admissions(&NativeCapabilities::new_client(), rx).await;
+        first.assert_calls_async(1).await;
         abc.assert_calls_async(1).await;
         other.assert_calls_async(1).await;
         second.assert_calls_async(1).await;
@@ -531,6 +569,145 @@ mod tests {
         assert!(observed.try_recv().is_err());
     }
 
+    #[test]
+    fn small_checked_prefixes_pack_in_order_and_oversized_storage_cannot_commit() {
+        tokio::runtime::Builder::new_current_thread()
+            .enable_time()
+            .start_paused(true)
+            .build()
+            .unwrap()
+            .block_on(async {
+                let route = EvpTransport::agent_only(
+                    Endpoint {
+                        url: "http://localhost:8080/".parse().unwrap(),
+                        ..Endpoint::default()
+                    },
+                    EVP_SUBDOMAIN_VALUE,
+                )
+                .unwrap();
+                let cache = ExposureDeduplicator::new(1024);
+                let (queue, rx) = AdmissionQueue::capture(1);
+                let client = NativeCapabilities::new_client();
+                let mut large = exposure("large", "alloc", "A");
+                large.features_json = String::with_capacity(DEFERRED_BYTES / 2);
+                let batch = |exposures| FfeExposureBatch {
+                    context: context(),
+                    exposures,
+                };
+                assert!(!queue.submit_deferred(&client, &route, &cache, batch(vec![large])));
+                assert_eq!(queue.stats().outstanding_rows, 0);
+                for i in 0..40 {
+                    let rows = (i * 16..(i + 1) * 16)
+                        .map(|n| exposure(&n.to_string(), "alloc", "A"))
+                        .collect();
+                    assert!(queue.submit_deferred(&client, &route, &cache, batch(rows)));
+                }
+                assert_eq!(
+                    queue.admit(
+                        &client,
+                        &route,
+                        &cache,
+                        context(),
+                        exposure("large", "alloc", "A"),
+                        true
+                    ),
+                    ExposureVerdict::Admitted
+                );
+                assert_eq!(queue.stats().outstanding_rows, 641);
+                let capacity = queue.capacity.clone();
+                drop(queue);
+                let (writes, mut received) = mpsc::unbounded_channel();
+                dispatch::dispatch(rx, |_, batch| {
+                    writes.send(batch).unwrap();
+                    std::future::ready(())
+                })
+                .await;
+                let mut sizes = vec![];
+                let mut ids = vec![];
+                while let Ok(batch) = received.try_recv() {
+                    sizes.push(batch.exposures.len());
+                    ids.extend(batch.exposures.into_iter().map(|e| e.subject_id));
+                }
+                assert_eq!(sizes, [512, 129]);
+                assert_eq!(ids.pop().as_deref(), Some("large"));
+                assert_eq!(ids, (0..640).map(|n| n.to_string()).collect::<Vec<_>>());
+                assert_eq!(capacity.outstanding_rows(), 0);
+            });
+    }
+
+    #[test]
+    fn held_sink_delivers_disjoint_work_before_the_first_reply() {
+        tokio::runtime::Builder::new_current_thread()
+            .enable_time()
+            .start_paused(true)
+            .build()
+            .unwrap()
+            .block_on(async {
+                let route = EvpTransport::agent_only(
+                    Endpoint {
+                        url: "http://localhost:8080/".parse().unwrap(),
+                        ..Endpoint::default()
+                    },
+                    EVP_SUBDOMAIN_VALUE,
+                )
+                .unwrap();
+                let cache = ExposureDeduplicator::new(8);
+                let (queue, rx) = AdmissionQueue::capture(8);
+                let client = NativeCapabilities::new_client();
+                let (writes, mut started) = mpsc::unbounded_channel();
+                let gate = Arc::new(tokio::sync::Notify::new());
+                let held = gate.clone();
+                let writer = tokio::spawn(async move {
+                    dispatch::dispatch(rx, |_, batch| {
+                        let (writes, held) = (writes.clone(), held.clone());
+                        async move {
+                            let event = &batch.exposures[0];
+                            writes.send(event.variant.clone()).unwrap();
+                            if event.variant == "A" {
+                                held.notified().await;
+                            }
+                        }
+                    })
+                    .await;
+                });
+                let record = |subject, variant| {
+                    queue.admit(
+                        &client,
+                        &route,
+                        &cache,
+                        context(),
+                        exposure(subject, "alloc", variant),
+                        true,
+                    )
+                };
+                assert_eq!(record("held", "A"), ExposureVerdict::Admitted);
+                assert_eq!(started.recv().await.as_deref(), Some("A"));
+                assert_eq!(record("disjoint", "X"), ExposureVerdict::Admitted);
+                let later = tokio::time::timeout(Duration::from_secs(1), started.recv()).await;
+                assert_eq!(
+                    later.ok().flatten().as_deref(),
+                    Some("X"),
+                    "disjoint delivery waited for the first reply"
+                );
+                assert_eq!(queue.stats().outstanding_rows, 1);
+                assert_eq!(record("held", "B"), ExposureVerdict::Admitted);
+                assert_eq!(record("held", "B"), ExposureVerdict::Repeat);
+                assert!(
+                    tokio::time::timeout(Duration::from_secs(1), started.recv())
+                        .await
+                        .is_err(),
+                    "a newer assignment overtook its earlier delivery"
+                );
+                assert_eq!(queue.stats().outstanding_rows, 2);
+                gate.notify_one();
+                assert_eq!(started.recv().await.as_deref(), Some("B"));
+                assert_eq!(record("held", "B"), ExposureVerdict::Repeat);
+                assert_eq!(queue.stats().outstanding_rows, 0);
+                drop(queue);
+                writer.await.unwrap();
+            });
+    }
+
     #[tokio::test]
     #[cfg_attr(miri, ignore)]
     async fn later_route_progresses_while_first_writer_is_held() {
@@ -540,7 +717,7 @@ mod tests {
         let b = EvpTransport::agent_only(endpoint_for(&second), EVP_SUBDOMAIN_VALUE).unwrap();
         let (tx, rx) = mpsc::channel(4);
         let (observed, mut started) = mpsc::unbounded_channel();
-        let release = Arc::new(tokio::sync::Notify::new());
+        let release = Arc::new(tokio::sync::Semaphore::new(0));
         let gate = release.clone();
         let task = tokio::spawn(async move {
             dispatch::dispatch(rx, move |_, batch| {
@@ -549,35 +726,38 @@ mod tests {
                 async move {
                     let id = &batch.exposures[0].variant;
                     observed.send(id.clone()).unwrap();
-                    if id == "A1" {
-                        gate.notified().await;
+                    if id.starts_with("slow-") {
+                        gate.acquire().await.unwrap().forget();
                     }
                 }
             })
             .await;
         });
-        let job = |route, v| {
+        let job = |route, v: &str| {
             (
                 route,
                 FfeExposureBatch {
                     context: context(),
-                    exposures: vec![exposure("user", "alloc", v)],
+                    exposures: vec![exposure(v, "alloc", v)],
                 },
                 None,
             )
         };
-        tx.send(job(a.clone(), "A1")).await.unwrap();
         async fn next(rx: &mut mpsc::UnboundedReceiver<String>) -> String {
             tokio::time::timeout(Duration::from_secs(3), rx.recv())
                 .await
                 .unwrap()
                 .unwrap()
         }
-        assert_eq!(next(&mut started).await, "A1");
+        for i in 0..dispatch::ROUTE_WRITERS {
+            let variant = format!("slow-{i}");
+            tx.send(job(a.clone(), &variant)).await.unwrap();
+            assert_eq!(next(&mut started).await, variant);
+        }
         tx.send(job(a, "A2")).await.unwrap();
         tx.send(job(b, "B")).await.unwrap();
         assert_eq!(next(&mut started).await, "B");
-        release.notify_one();
+        release.add_permits(dispatch::ROUTE_WRITERS);
         assert_eq!(next(&mut started).await, "A2");
         drop(tx);
         task.await.unwrap();

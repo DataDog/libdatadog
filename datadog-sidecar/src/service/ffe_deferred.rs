@@ -45,7 +45,9 @@ fn prefix(
     let mut remaining = (max as u64).checked_sub(overhead)?;
     for row in rows.take(MAX_CHUNK_ROWS) {
         let Some(row) = row else { break };
-        if !libdd_ffe::telemetry::exposures::is_complete(&row) {
+        if !libdd_ffe::telemetry::exposures::is_complete(&row)
+            || (checked && !super::ffe_exposures_flusher::fits_http(&batch.context, &row))
+        {
             break;
         }
         let Some(rest) = codec::encoded_size(&row)

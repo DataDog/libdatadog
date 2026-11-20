@@ -226,6 +226,50 @@ pub fn encode_admitted_exposure_batch(
     serde_json::to_string(&payload).map(Some)
 }
 
+/// Serializes ordered, previously admitted rows into independently valid HTTP bodies.
+/// Callers validate that each individual row fits `limit` before admission.
+pub fn admitted_exposure_payloads(
+    batch: FfeExposureBatch,
+    limit: usize,
+) -> Result<impl Iterator<Item = Result<String, serde_json::Error>>, serde_json::Error> {
+    use serde::ser::Error;
+    let context = serde_json::to_string(&ExposurePayloadContext::from(batch.context))?;
+    let prefix = format!(r#"{{"context":{context},"exposures":["#);
+    let mut rows = batch
+        .exposures
+        .into_iter()
+        .map(|row| serde_json::to_string(&ExposureEvent::from(row)));
+    let mut pending = None;
+    Ok(std::iter::from_fn(move || {
+        let mut body = prefix.clone();
+        while let Some(row) = pending.take().or_else(|| rows.next()) {
+            let row = match row {
+                Ok(row) => row,
+                Err(e) => return Some(Err(e)),
+            };
+            let comma = body.len() != prefix.len();
+            if body.len() + usize::from(comma) + row.len() + 2 > limit {
+                if !comma {
+                    return Some(Err(serde_json::Error::custom(
+                        "exposure exceeds HTTP payload limit",
+                    )));
+                }
+                pending = Some(Ok(row));
+                break;
+            }
+            if comma {
+                body.push(',');
+            }
+            body.push_str(&row);
+        }
+        if body.len() == prefix.len() {
+            return None;
+        }
+        body.push_str("]}");
+        Some(Ok(body))
+    }))
+}
+
 pub fn is_complete(exposure: &FfeExposure) -> bool {
     // `subject_id` is intentionally not required here; empty targeting keys
     // are valid evaluation inputs and must not suppress exposure logging.
@@ -363,6 +407,39 @@ mod tests {
             serial_id: Some(serial_id),
             ..exposure(subject_id, allocation_key, variant)
         }
+    }
+
+    #[test]
+    fn http_batches_fit_the_encoded_byte_limit_and_preserve_all_rows() {
+        let row = exposure("tab\tquote\"", "alloc", "on");
+        let make = |n| FfeExposureBatch {
+            context: context(),
+            exposures: vec![row.clone(); n],
+        };
+        let exact = encode_admitted_exposure_batch(make(2)).unwrap().unwrap();
+        let bodies: Vec<_> = admitted_exposure_payloads(make(5), exact.len())
+            .unwrap()
+            .collect::<Result<_, _>>()
+            .unwrap();
+        assert_eq!(
+            bodies,
+            [
+                exact.clone(),
+                exact.clone(),
+                encode_admitted_exposure_batch(make(1)).unwrap().unwrap()
+            ]
+        );
+        let one = encode_admitted_exposure_batch(make(1))
+            .unwrap()
+            .unwrap()
+            .len();
+        assert!(
+            admitted_exposure_payloads(make(1), one - 1)
+                .unwrap()
+                .next()
+                .unwrap()
+                .is_err()
+        );
     }
 
     #[test]

@@ -3,46 +3,85 @@
 
 use super::super::evp_transport::EvpTransport;
 use super::{
-    ADMISSION_QUEUE_CAPACITY, COALESCE_WINDOW, DEFERRED_BYTES, DEFERRED_SLOTS, Job, MAX_BATCH_ROWS,
+    ADMISSION_QUEUE_CAPACITY, COALESCE_WINDOW, DEFERRED_BYTES, DEFERRED_ROWS, Job, MAX_BATCH_ROWS,
 };
-use crate::service::FfeExposureBatch;
+use crate::service::{FfeExposure, FfeExposureBatch};
 use futures::{StreamExt, stream::FuturesUnordered};
-use std::collections::{HashMap, VecDeque};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::future::Future;
+use std::hash::{BuildHasher, RandomState};
 use std::sync::{Arc, Mutex};
 use tokio::sync::mpsc;
 
-const WRITERS: usize = 8;
+const WRITERS: usize = 16;
+pub(super) const ROUTE_WRITERS: usize = 4;
+const HTTP_BATCH_ROWS: usize = 512;
+
+#[derive(Clone, Copy)]
+pub(super) struct DeferredCharge {
+    rows: usize,
+    pub(super) bytes: usize,
+}
+
+impl DeferredCharge {
+    pub(super) fn for_batch(batch: &FfeExposureBatch) -> Self {
+        let ctx = &batch.context;
+        let rows = batch.exposures.len();
+        let mut bytes = ctx.service.capacity()
+            + ctx.env.capacity()
+            + ctx.version.capacity()
+            + size_of::<Job>()
+            + size_of::<Credit>()
+            + size_of::<Work>()
+            + batch.exposures.capacity() * size_of::<FfeExposure>();
+        for row in &batch.exposures {
+            // Allow for the packed row-vector's spare capacity and the in-flight key index.
+            bytes += size_of::<FfeExposure>()
+                + 32
+                + row.flag_key.capacity()
+                + row.subject_id.capacity()
+                + row.variant.capacity()
+                + row.allocation_key.capacity()
+                + row.features_json.capacity()
+                + row.subject_attributes_json.capacity();
+        }
+        Self { rows, bytes }
+    }
+}
 
 #[derive(Default, Clone, Copy, PartialEq, Eq)]
 struct Usage {
     singles: usize,
-    chunks: usize,
+    rows: usize,
     bytes: usize,
 }
 
 impl Usage {
-    fn add(&mut self, bytes: Option<usize>) {
-        match bytes {
-            Some(n) => {
-                self.chunks += 1;
-                self.bytes += n;
-            }
-            None => self.singles += 1,
+    fn add(&mut self, charge: Option<DeferredCharge>) {
+        if let Some(c) = charge {
+            self.rows += c.rows;
+            self.bytes += c.bytes;
+        } else {
+            self.singles += 1;
         }
     }
-    fn release(&mut self, bytes: Option<usize>) {
-        match bytes {
-            Some(n) => {
-                self.chunks -= 1;
-                self.bytes -= n;
-            }
-            None => self.singles -= 1,
+    fn release(&mut self, charge: Option<DeferredCharge>) {
+        if let Some(c) = charge {
+            self.rows -= c.rows;
+            self.bytes -= c.bytes;
+        } else {
+            self.singles -= 1;
         }
     }
-    fn fits(&self, bytes: Option<usize>, singles: usize, chunks: usize, byte_limit: usize) -> bool {
-        match bytes {
-            Some(n) => self.chunks < chunks && n <= byte_limit.saturating_sub(self.bytes),
+    fn fits(
+        &self,
+        charge: Option<DeferredCharge>,
+        singles: usize,
+        rows: usize,
+        bytes: usize,
+    ) -> bool {
+        match charge {
+            Some(c) => c.rows > 0 && c.rows <= rows - self.rows && c.bytes <= bytes - self.bytes,
             None => self.singles < singles,
         }
     }
@@ -59,13 +98,11 @@ pub(super) struct Capacity {
     state: Arc<Mutex<Ledger>>,
     singles: usize,
 }
-
 impl Default for Capacity {
     fn default() -> Self {
         Self::new(ADMISSION_QUEUE_CAPACITY)
     }
 }
-
 impl Capacity {
     pub(super) fn new(singles: usize) -> Self {
         Self {
@@ -73,59 +110,43 @@ impl Capacity {
             singles,
         }
     }
-    pub(super) fn reserve(&self, key: Arc<str>, bytes: Option<usize>) -> Option<Credit> {
+    pub(super) fn outstanding_rows(&self) -> usize {
+        let usage = self.state.lock().unwrap_or_else(|e| e.into_inner()).total;
+        usage.singles + usage.rows
+    }
+    pub(super) fn reserve(&self, key: Arc<str>, charge: Option<DeferredCharge>) -> Option<Credit> {
         let mut ledger = self.state.lock().unwrap_or_else(|e| e.into_inner());
         if !ledger
             .total
-            .fits(bytes, 2 * self.singles, 2 * DEFERRED_SLOTS, DEFERRED_BYTES)
+            .fits(charge, 2 * self.singles, 2 * DEFERRED_ROWS, DEFERRED_BYTES)
         {
             return None;
         }
         let usage = ledger.routes.get(&key).copied().unwrap_or_default();
-        if !usage.fits(bytes, self.singles, DEFERRED_SLOTS, DEFERRED_BYTES / 2) {
+        if !usage.fits(charge, self.singles, DEFERRED_ROWS, DEFERRED_BYTES / 2) {
             return None;
         }
-        ledger.routes.entry(key.clone()).or_default().add(bytes);
-        ledger.total.add(bytes);
+        ledger.routes.entry(key.clone()).or_default().add(charge);
+        ledger.total.add(charge);
         Some(Credit {
             state: self.state.clone(),
             key,
-            bytes,
+            charge,
         })
     }
-}
-
-#[test]
-fn quotas_hold_until_delivery_and_release_idle_routes() {
-    let capacity = Capacity::new(1);
-    let a: Arc<str> = "a".into();
-    let b: Arc<str> = "b".into();
-    let one = capacity.reserve(a.clone(), None).unwrap();
-    assert!(capacity.reserve(a.clone(), None).is_none());
-    let two = capacity.reserve(b.clone(), None).unwrap();
-    assert!(capacity.reserve("c".into(), None).is_none());
-    let chunk_a = capacity
-        .reserve(a.clone(), Some(DEFERRED_BYTES / 2))
-        .unwrap();
-    assert!(capacity.reserve(a, Some(1)).is_none());
-    let chunk_b = capacity.reserve(b, Some(DEFERRED_BYTES / 2)).unwrap();
-    assert!(capacity.reserve("c".into(), Some(1)).is_none());
-    drop((one, two, chunk_a, chunk_b));
-    assert!(capacity.state.lock().unwrap().routes.is_empty());
 }
 
 pub(in crate::service) struct Credit {
     state: Arc<Mutex<Ledger>>,
     key: Arc<str>,
-    bytes: Option<usize>,
+    charge: Option<DeferredCharge>,
 }
-
 impl Drop for Credit {
     fn drop(&mut self) {
         let mut ledger = self.state.lock().unwrap_or_else(|e| e.into_inner());
-        ledger.total.release(self.bytes);
+        ledger.total.release(self.charge);
         if let Some(usage) = ledger.routes.get_mut(&self.key) {
-            usage.release(self.bytes);
+            usage.release(self.charge);
             if *usage == Usage::default() {
                 ledger.routes.remove(&self.key);
             }
@@ -133,14 +154,67 @@ impl Drop for Credit {
     }
 }
 
-type Work = (EvpTransport, FfeExposureBatch, Vec<Credit>);
+struct Work {
+    route: EvpTransport,
+    batch: FfeExposureBatch,
+    credits: Vec<Credit>,
+    keys: Vec<u64>,
+}
+#[derive(Default)]
+struct Lane {
+    queue: VecDeque<Work>,
+    in_flight: usize,
+    active_keys: HashSet<u64>,
+    ready: bool,
+}
+impl Lane {
+    fn push(&mut self, job: Job, hashes: &RandomState) {
+        let (route, mut batch, credit) = job;
+        // A hash collision serializes two unrelated keys. Assignment equality stays in the LRU.
+        let keys = batch
+            .exposures
+            .iter()
+            .map(|e| hashes.hash_one((&batch.context, &e.flag_key, &e.subject_id)));
+        if let Some(tail) = self.queue.back_mut()
+            && tail.batch.context == batch.context
+            && tail.batch.exposures.len() + batch.exposures.len() <= HTTP_BATCH_ROWS
+        {
+            tail.keys.extend(keys);
+            tail.batch.exposures.append(&mut batch.exposures);
+            tail.credits.extend(credit);
+        } else {
+            let keys = keys.collect();
+            self.queue.push_back(Work {
+                route,
+                batch,
+                credits: credit.into_iter().collect(),
+                keys,
+            });
+        }
+    }
+    fn can_start(&self) -> bool {
+        self.in_flight < ROUTE_WRITERS
+            && self
+                .queue
+                .front()
+                .is_some_and(|w| w.keys.iter().all(|k| !self.active_keys.contains(k)))
+    }
+
+    fn schedule(&mut self, key: &Arc<str>, ready: &mut VecDeque<Arc<str>>) {
+        if !self.ready && self.can_start() {
+            self.ready = true;
+            ready.push_back(key.clone());
+        }
+    }
+}
 
 pub(super) async fn dispatch<F, Fut>(rx: mpsc::Receiver<Job>, send: F)
 where
     F: Fn(EvpTransport, FfeExposureBatch) -> Fut,
     Fut: Future<Output = ()>,
 {
-    let mut lanes: HashMap<Arc<str>, VecDeque<Work>> = HashMap::new();
+    let mut lanes: HashMap<Arc<str>, Lane> = HashMap::new();
+    let hashes = RandomState::new();
     let mut ready = VecDeque::new();
     let mut pending = FuturesUnordered::new();
     let bursts = futures::stream::unfold(rx, |mut rx| async move {
@@ -160,15 +234,25 @@ where
     loop {
         while pending.len() < WRITERS {
             let Some(key) = ready.pop_front() else { break };
-            let Some((route, batch, credits)) = lanes.get_mut(&key).and_then(VecDeque::pop_front)
-            else {
+            let Some(lane) = lanes.get_mut(&key) else {
                 continue;
             };
-            let write = send(route, batch);
+            lane.ready = false;
+            // A tail-merge can add a conflicting key while this lane waits for a global writer.
+            if !lane.can_start() {
+                continue;
+            }
+            let Some(work) = lane.queue.pop_front() else {
+                continue;
+            };
+            lane.in_flight += 1;
+            lane.active_keys.extend(work.keys.iter().copied());
+            lane.schedule(&key, &mut ready);
+            let write = send(work.route, work.batch);
             pending.push(async move {
                 write.await;
-                drop(credits);
-                key
+                drop(work.credits);
+                (key, work.keys)
             });
         }
         if closed && pending.is_empty() {
@@ -176,31 +260,48 @@ where
         }
         tokio::select! {
             biased;
-            Some(key) = pending.next(), if !pending.is_empty() => {
-                if lanes.get(&key).is_some_and(VecDeque::is_empty) { lanes.remove(&key); } else { ready.push_back(key); }
+            Some((key, keys)) = pending.next(), if !pending.is_empty() => {
+                if let Some(lane) = lanes.get_mut(&key) {
+                    lane.in_flight -= 1;
+                    for k in keys { lane.active_keys.remove(&k); }
+                    if lane.queue.is_empty() && lane.in_flight == 0 { lanes.remove(&key); }
+                    else { lane.schedule(&key, &mut ready); }
+                }
             },
             burst = bursts.next(), if !closed => {
                 let Some(jobs) = burst else { closed = true; continue; };
-                let mut groups = HashMap::new();
-                let mut batches: Vec<Work> = Vec::new();
-                for (route, mut batch, credit) in jobs {
-                    // A deferred chunk already occupies its own wire-sized batch.
-                    let chunk = credit.as_ref().is_some_and(|c| c.bytes.is_some());
-                    let group = (route.scope_handle(), batch.context.clone());
-                    if !chunk && let Some(&i) = groups.get(&group) {
-                        let existing: &mut Work = &mut batches[i];
-                        existing.1.exposures.append(&mut batch.exposures);
-                        existing.2.extend(credit);
-                    } else {
-                        if chunk { groups.remove(&group); } else { groups.insert(group, batches.len()); }
-                        batches.push((route,batch,credit.into_iter().collect()));
-                    }
-                }
-                for work in batches {
-                    let key = work.0.scope_handle();
-                    lanes.entry(key.clone()).or_insert_with(|| { ready.push_back(key); VecDeque::new() }).push_back(work);
+                for job in jobs {
+                    let key = job.0.scope_handle();
+                    let lane = lanes.entry(key.clone()).or_default();
+                    lane.push(job, &hashes);
+                    lane.schedule(&key, &mut ready);
                 }
             }
         }
     }
+}
+
+#[test]
+fn quotas_hold_until_delivery_and_release_idle_routes() {
+    let cap = Capacity::new(1);
+    let a: Arc<str> = "a".into();
+    let b: Arc<str> = "b".into();
+    let x = cap.reserve(a.clone(), None).unwrap();
+    assert!(cap.reserve(a.clone(), None).is_none());
+    let y = cap.reserve(b.clone(), None).unwrap();
+    assert!(cap.reserve("c".into(), None).is_none());
+    let charge = |rows, bytes| Some(DeferredCharge { rows, bytes });
+    let z = cap.reserve(a.clone(), charge(DEFERRED_ROWS, 1)).unwrap();
+    assert!(cap.reserve(a, charge(1, 1)).is_none());
+    let w = cap
+        .reserve(b.clone(), charge(1, DEFERRED_BYTES / 2))
+        .unwrap();
+    assert!(cap.reserve(b, charge(1, 1)).is_none());
+    let last = cap
+        .reserve("c".into(), charge(1, DEFERRED_BYTES / 2 - 1))
+        .unwrap();
+    assert!(cap.reserve("d".into(), charge(1, 1)).is_none());
+    drop((x, y, z, w, last));
+    assert_eq!(cap.outstanding_rows(), 0);
+    assert!(cap.state.lock().unwrap().routes.is_empty());
 }
