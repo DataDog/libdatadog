@@ -29,7 +29,7 @@ pub enum Mode {
 }
 
 impl Mode {
-    fn as_str(self) -> &'static str {
+    pub fn as_str(self) -> &'static str {
         match self {
             Mode::Baseline => "baseline",
             Mode::FailOnce => "fail-once",
@@ -153,11 +153,13 @@ pub fn worker_main(args: &[String]) -> ! {
     }
     let expected: Vec<Event> = input.lines().filter_map(parse_event).collect();
 
-    // The hook writes a fixed marker without allocating, so it still works when every
-    // allocation fails.
-    std::panic::set_hook(Box::new(|_| {
+    // The marker is written without allocating, so it still works when every allocation fails.
+    // The previous hook prints the `RUST_BACKTRACE` trace.
+    let previous_hook = std::panic::take_hook();
+    std::panic::set_hook(Box::new(move |info| {
         PANICKED.store(true, Ordering::Relaxed);
         let _ = std::io::stderr().write_all(b"alloc-chaos: panic\n");
+        previous_hook(info);
     }));
 
     allocator::reset();
@@ -189,6 +191,10 @@ pub fn worker_main(args: &[String]) -> ! {
     let result = match result {
         Ok(()) => "ok",
         Err(ScenarioError::Oom) => "oom-error",
+        Err(ScenarioError::Rejected) => {
+            eprintln!("the call rejected its input");
+            std::process::exit(2);
+        }
     };
     let _ = writeln!(out, "result {result}");
     let _ = writeln!(out, "injected {}", allocator::injected());
@@ -257,6 +263,7 @@ pub fn run_worker(
     let exe = std::env::current_exe().map_err(|e| format!("current_exe: {e}"))?;
     let mut child = Command::new(exe)
         .args([WORKER_ARG, scenario, mode.as_str(), &ordinal.to_string()])
+        .env("RUST_BACKTRACE", "1")
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -344,6 +351,10 @@ pub struct Finding {
     pub ordinal: u64,
     pub event: Event,
     pub run: WorkerRun,
+    /// First stack frame in libdatadog code, from a debugger stopped on the injection hook.
+    pub call_site: Option<String>,
+    /// Frame lines of that stack.
+    pub allocation_stack: Option<String>,
 }
 
 #[derive(Debug)]
@@ -385,6 +396,25 @@ impl Report {
                 f.run.detail
             );
         }
+        for f in &self.runs {
+            if f.call_site.is_none() && f.allocation_stack.is_none() {
+                continue;
+            }
+            let _ = writeln!(
+                s,
+                "\n### {} #{} {}\n\nCall site: {}\n",
+                f.mode.as_str(),
+                f.ordinal,
+                f.run.outcome.as_str(),
+                f.call_site.as_deref().unwrap_or("(none)")
+            );
+            if let Some(stack) = &f.allocation_stack {
+                let _ = writeln!(s, "```\n{stack}\n```");
+            }
+            if let Some(panic) = f.run.stderr.split("stack backtrace:").nth(1) {
+                let _ = writeln!(s, "\nPanic backtrace:\n```\nstack backtrace:{panic}\n```");
+            }
+        }
         s
     }
 }
@@ -392,6 +422,15 @@ impl Report {
 /// Runs the baseline twice (it must succeed and be stable), then one worker per ordinal and
 /// mode. Returns `Err` only for harness errors.
 pub fn enumerate(scenario: &'static str) -> Result<Report, String> {
+    enumerate_inner(scenario, false)
+}
+
+/// Like [`enumerate`], then captures the allocation stack of every run that is not `oom-error`.
+pub fn enumerate_with_stacks(scenario: &'static str) -> Result<Report, String> {
+    enumerate_inner(scenario, true)
+}
+
+fn enumerate_inner(scenario: &'static str, stacks: bool) -> Result<Report, String> {
     let baseline = run_worker(scenario, Mode::Baseline, 0, &[])?;
     if baseline.outcome != Outcome::SuccessFallback {
         return Err(format!(
@@ -434,8 +473,13 @@ pub fn enumerate(scenario: &'static str) -> Result<Report, String> {
                 ordinal: event.ordinal,
                 event: *event,
                 run,
+                call_site: None,
+                allocation_stack: None,
             });
         }
+    }
+    if stacks {
+        capture_stacks(scenario, &baseline.trace, &mut runs);
     }
     let report = Report {
         scenario,
@@ -458,4 +502,199 @@ fn write_report(report: &Report) {
     } else {
         println!("report: {}", path.display());
     }
+}
+
+fn capture_stacks(scenario: &str, baseline: &[Event], runs: &mut [Finding]) {
+    let Some(debugger) = debugger() else {
+        eprintln!("{scenario}: no gdb or lldb, allocation stacks were not captured");
+        return;
+    };
+    let dir = std::path::Path::new(env!("CARGO_TARGET_TMPDIR")).join("allocation_failure");
+    if std::fs::create_dir_all(&dir).is_err() {
+        return;
+    }
+    for finding in runs {
+        if matches!(
+            finding.run.outcome,
+            Outcome::OomError | Outcome::Nondeterministic | Outcome::Timeout
+        ) {
+            continue;
+        }
+        let input = dir.join(format!(
+            "stdin-{}-{}-{}-{}.txt",
+            scenario,
+            finding.mode.as_str(),
+            finding.ordinal,
+            std::process::id()
+        ));
+        let mut text = String::new();
+        for event in baseline {
+            let _ = writeln!(text, "{}", format_event(event));
+        }
+        if std::fs::write(&input, text).is_err() {
+            continue;
+        }
+        match debugger_backtrace(debugger, scenario, finding.mode, finding.ordinal, &input) {
+            Ok(raw) => {
+                let frames = frame_lines(&raw);
+                finding.call_site = frames.iter().find(|line| is_owned_frame(line)).cloned();
+                finding.allocation_stack = Some(frames.join("\n"));
+            }
+            Err(error) => finding.allocation_stack = Some(error),
+        }
+    }
+}
+
+fn debugger() -> Option<&'static str> {
+    if command_ok("gdb") {
+        Some("gdb")
+    } else if command_ok("lldb") {
+        Some("lldb")
+    } else {
+        None
+    }
+}
+
+fn command_ok(program: &str) -> bool {
+    Command::new(program)
+        .arg("--version")
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+        .is_ok_and(|status| status.success())
+}
+
+fn debugger_backtrace(
+    debugger: &str,
+    scenario: &str,
+    mode: Mode,
+    ordinal: u64,
+    input: &std::path::Path,
+) -> Result<String, String> {
+    let exe = std::env::current_exe().map_err(|e| format!("current_exe: {e}"))?;
+    let mut cmd = Command::new(debugger);
+    let ordinal = ordinal.to_string();
+    match debugger {
+        "gdb" => {
+            // `run < file` replaces the inferior arguments, so the redirect goes in `set args`.
+            // The executable has to come before `-ex`, or gdb runs those commands too early.
+            cmd.arg("-nx")
+                .arg("-batch")
+                .arg(&exe)
+                .arg("-ex")
+                .arg("set pagination off")
+                .arg("-ex")
+                .arg("set confirm off")
+                .arg("-ex")
+                .arg("set debuginfod enabled off")
+                .arg("-ex")
+                .arg(format!(
+                    "set args {WORKER_ARG} {scenario} {} {ordinal} < \"{}\"",
+                    mode.as_str(),
+                    input.display()
+                ))
+                .arg("-ex")
+                .arg("break alloc_chaos_injection_hook")
+                .arg("-ex")
+                .arg("run")
+                .arg("-ex")
+                .arg("bt 80");
+        }
+        "lldb" => {
+            cmd.arg("-b")
+                .arg("-o")
+                .arg("settings set auto-confirm true")
+                .arg("-o")
+                .arg("breakpoint set --name alloc_chaos_injection_hook")
+                .arg("-o")
+                .arg(format!(
+                    "process launch -i {} -- {} {} {} {}",
+                    input.display(),
+                    WORKER_ARG,
+                    scenario,
+                    mode.as_str(),
+                    ordinal
+                ))
+                .arg("-o")
+                .arg("bt")
+                .arg("-o")
+                .arg("quit")
+                .arg(&exe);
+        }
+        other => return Err(format!("unknown debugger {other}")),
+    }
+    cmd.env("RUST_BACKTRACE", "1");
+    let (status, stdout, stderr) = output_with_timeout(&mut cmd, Duration::from_secs(120))?;
+    if status.is_none() {
+        return Err("debugger timed out".to_string());
+    }
+    let combined = format!("{stdout}\n{stderr}");
+    if !combined.contains("alloc_chaos_injection_hook") {
+        return Err(format!("debugger did not stop on the hook\n{combined}"));
+    }
+    Ok(combined)
+}
+
+fn output_with_timeout(
+    cmd: &mut Command,
+    limit: Duration,
+) -> Result<(Option<ExitStatus>, String, String), String> {
+    let mut child = cmd
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(|e| format!("cannot start the debugger: {e}"))?;
+    let stdout = spawn_reader(child.stdout.take().ok_or("no debugger stdout")?);
+    let stderr = spawn_reader(child.stderr.take().ok_or("no debugger stderr")?);
+    let deadline = Instant::now() + limit;
+    let status = loop {
+        match child.try_wait().map_err(|e| format!("wait: {e}"))? {
+            Some(status) => break Some(status),
+            None if Instant::now() >= deadline => {
+                let _ = child.kill();
+                let _ = child.wait();
+                break None;
+            }
+            None => std::thread::sleep(Duration::from_millis(20)),
+        }
+    };
+    Ok((
+        status,
+        stdout.join().unwrap_or_default(),
+        stderr.join().unwrap_or_default(),
+    ))
+}
+
+fn frame_lines(raw: &str) -> Vec<String> {
+    raw.lines()
+        .filter_map(|line| {
+            let trimmed = line.trim();
+            let marker = trimmed.trim_start_matches('*').trim();
+            if marker.starts_with('#') || marker.starts_with("frame #") {
+                Some(trimmed.to_string())
+            } else {
+                None
+            }
+        })
+        .take(80)
+        .collect()
+}
+
+/// A frame in libdatadog code. Runtime frames are skipped even when a generic argument names one
+/// of our types, and harness frames are skipped too.
+fn is_owned_frame(line: &str) -> bool {
+    if line.contains("allocation_failure::") || line.contains("/allocation_failure/") {
+        return false;
+    }
+    if let Some((_, file)) = line.rsplit_once(" at ") {
+        return file.contains("libdd-") || file.contains("libdd_");
+    }
+    line.split(" in ").nth(1).is_some_and(|rest| {
+        rest.split('(')
+            .next()
+            .unwrap_or(rest)
+            .trim_start()
+            .starts_with("libdd_")
+    })
 }

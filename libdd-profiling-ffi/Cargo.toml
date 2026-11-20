@@ -94,6 +94,10 @@ libdd-ffe-ffi = { path = "../libdd-ffe-ffi", default-features = false, optional 
 libdd-shared-runtime-ffi = { path = "../libdd-shared-runtime-ffi", default-features = false, optional = true }
 libdd-otel-thread-ctx-ffi = { path = "../libdd-otel-thread-ctx-ffi", default-features = false, optional = true }
 
+[dev-dependencies]
+libdd-common = { path = "../libdd-common" }
+libdd-common-ffi = { path = "../libdd-common-ffi", features = ["std"] }
+
 # Experimental allocation-failure harness: replaces the global allocator of its own binary.
 [[test]]
 name = "allocation_failure"

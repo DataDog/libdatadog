@@ -11,8 +11,9 @@
 //! per-test selection with `--exact`. Started with `__worker`, the binary is a worker process of
 //! the controller (see `controller.rs`).
 //!
-//! Contract and toy-scenario tests are strict. Debugging an injected failure: run a worker under
-//! a debugger with a breakpoint on `alloc_chaos_injection_hook`.
+//! Contract and toy-scenario tests are strict. Discovery scenarios record each outcome, including
+//! a crash, and fail only on a harness error. For those, a debugger stopped on
+//! `alloc_chaos_injection_hook` records the stack and the owned call site.
 
 mod allocator;
 mod contract;
@@ -25,6 +26,51 @@ use std::alloc::System;
 
 #[global_allocator]
 static ALLOCATOR: ScopedFailingAllocator<System> = ScopedFailingAllocator(System);
+
+/// Discovery scenario: every ordinal in both modes is recorded. A crash is a finding.
+/// A nondeterministic trace is a harness error.
+fn discover(name: &'static str) {
+    let report =
+        controller::enumerate_with_stacks(name).unwrap_or_else(|e| panic!("harness error: {e}"));
+    let nondeterministic: Vec<_> = report
+        .runs
+        .iter()
+        .filter(|finding| finding.run.outcome == Outcome::Nondeterministic)
+        .map(|finding| {
+            format!(
+                "{} #{} {}",
+                finding.mode.as_str(),
+                finding.ordinal,
+                finding.run.detail
+            )
+        })
+        .collect();
+    assert!(
+        nondeterministic.is_empty(),
+        "{name}: nondeterministic trace: {nondeterministic:?}"
+    );
+    let missing: Vec<String> = report
+        .runs
+        .iter()
+        .filter(|finding| {
+            let needs_stack = !matches!(
+                finding.run.outcome,
+                Outcome::OomError | Outcome::Nondeterministic | Outcome::Timeout
+            );
+            needs_stack
+                && finding.allocation_stack.is_some()
+                && !finding
+                    .call_site
+                    .as_deref()
+                    .is_some_and(|site| site.contains("libdd"))
+        })
+        .map(|finding| format!("{} #{}", finding.mode.as_str(), finding.ordinal))
+        .collect();
+    assert!(
+        missing.is_empty(),
+        "{name}: no owned call site for {missing:?}"
+    );
+}
 
 /// Enumerates a toy scenario and checks every run has the `expected` outcome.
 fn toy(name: &'static str, expected: Outcome) {
@@ -64,6 +110,15 @@ const TESTS: &[(&str, fn())] = &[
     }),
     ("toy::string_format", || {
         toy(scenarios::TOY_STRING_FORMAT, Outcome::Abort)
+    }),
+    ("scenario::tag_push_empty", || {
+        discover(scenarios::TAG_PUSH_EMPTY)
+    }),
+    ("scenario::tag_push_at_capacity", || {
+        discover(scenarios::TAG_PUSH_AT_CAPACITY)
+    }),
+    ("scenario::tag_push_long", || {
+        discover(scenarios::TAG_PUSH_LONG)
     }),
 ];
 
