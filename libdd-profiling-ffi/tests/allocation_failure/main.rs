@@ -40,6 +40,17 @@ fn discover(name: &'static str) {
     let _ = load_discovery(name, false);
 }
 
+/// Runs the call and its post-failure contract. Ordinals are enumerated only when the baseline
+/// allocates: a call that does not allocate has nothing to fail.
+fn contract(name: &'static str) {
+    let report = load_discovery(name, false);
+    assert_eq!(
+        report.runs.len(),
+        report.baseline.len() * 2,
+        "{name}: enumeration does not match the baseline"
+    );
+}
+
 /// Same as [`discover`] for a call whose allocations depend on I/O timing (a request to a
 /// local endpoint). An unstable baseline and nondeterministic runs are reported, not errors.
 fn discover_io(name: &'static str) {
@@ -67,6 +78,15 @@ fn discover_arena(name: &'static str, required: &[Domain], absent: &[Domain]) ->
 
 /// Arena domains a `libdd-profiling` collection must show, when its arenas are observed.
 fn profiling_arena_domains() -> &'static [Domain] {
+    if arena::PROFILING_ARENAS_OBSERVED {
+        &[Domain::ArenaRequest, Domain::ArenaBacking]
+    } else {
+        &[]
+    }
+}
+
+/// Neither arena domain: a call that does not touch a profiling arena.
+fn no_arena_domains() -> &'static [Domain] {
     if arena::PROFILING_ARENAS_OBSERVED {
         &[Domain::ArenaRequest, Domain::ArenaBacking]
     } else {
@@ -306,6 +326,89 @@ const TESTS: &[(&str, fn())] = &[
     }),
     ("lifecycle::exporter_send_warm", || {
         discover_io(lifecycle::EXPORTER_SEND_WARM)
+    }),
+    ("metadata::set_endpoint_first", || {
+        discover_arena(
+            lifecycle::SET_ENDPOINT_FIRST,
+            profiling_arena_request(),
+            &[],
+        );
+    }),
+    ("metadata::set_endpoint_interned", || {
+        discover_arena(lifecycle::SET_ENDPOINT_INTERNED, &[], no_arena_domains());
+    }),
+    ("metadata::set_endpoint_new", || {
+        discover_arena(lifecycle::SET_ENDPOINT_NEW, profiling_arena_request(), &[]);
+    }),
+    ("metadata::set_endpoint_growth", || {
+        discover_arena(
+            lifecycle::SET_ENDPOINT_GROWTH,
+            profiling_arena_request(),
+            &[],
+        );
+    }),
+    ("metadata::endpoint_count_first", || {
+        discover_arena(lifecycle::ENDPOINT_COUNT_FIRST, &[], no_arena_domains());
+    }),
+    ("metadata::endpoint_count_existing", || {
+        discover_arena(lifecycle::ENDPOINT_COUNT_EXISTING, &[], no_arena_domains());
+    }),
+    ("metadata::endpoint_count_growth", || {
+        discover_arena(lifecycle::ENDPOINT_COUNT_GROWTH, &[], no_arena_domains());
+    }),
+    ("metadata::upscaling_proportional_first", || {
+        discover_arena(
+            lifecycle::UPSCALING_PROPORTIONAL_FIRST,
+            profiling_arena_request(),
+            &[],
+        );
+    }),
+    ("metadata::upscaling_proportional_again", || {
+        discover_arena(
+            lifecycle::UPSCALING_PROPORTIONAL_AGAIN,
+            &[],
+            no_arena_domains(),
+        );
+    }),
+    ("metadata::upscaling_poisson_first", || {
+        discover_arena(
+            lifecycle::UPSCALING_POISSON_FIRST,
+            profiling_arena_request(),
+            &[],
+        );
+    }),
+    ("metadata::upscaling_poisson_again", || {
+        discover_arena(lifecycle::UPSCALING_POISSON_AGAIN, &[], no_arena_domains());
+    }),
+    ("contract::endpoint_agent", || {
+        contract(lifecycle::CONTRACT_ENDPOINT_AGENT)
+    }),
+    ("contract::endpoint_agentless", || {
+        contract(lifecycle::CONTRACT_ENDPOINT_AGENTLESS)
+    }),
+    ("contract::encoded_bytes", || {
+        contract(lifecycle::CONTRACT_ENCODED_BYTES)
+    }),
+    ("contract::vec_tag_new", || {
+        contract(lifecycle::CONTRACT_VEC_TAG_NEW)
+    }),
+    ("contract::drop_profile", || {
+        contract(lifecycle::CONTRACT_DROP_PROFILE)
+    }),
+    ("contract::drop_encoded", || {
+        contract(lifecycle::CONTRACT_DROP_ENCODED)
+    }),
+    ("contract::drop_exporter", || {
+        contract(lifecycle::CONTRACT_DROP_EXPORTER)
+    }),
+    ("contract::drop_error", || {
+        contract(lifecycle::CONTRACT_DROP_ERROR)
+    }),
+    ("contract::drop_vec_tag", || {
+        contract(lifecycle::CONTRACT_DROP_VEC_TAG)
+    }),
+    ("contract::drop_cancel", || {
+        contract(lifecycle::CONTRACT_DROP_CANCEL)
     }),
 ];
 

@@ -124,6 +124,9 @@ mod ffi {
     #[repr(C)]
     pub struct HttpStatus(pub u16);
 
+    /// Stand-in for `tokio_util::sync::CancellationToken`. `Handle<T>` is one pointer.
+    pub enum CancellationToken {}
+
     unsafe extern "C" {
         pub fn ddog_prof_Profile_new(
             sample_types: Slice<SampleType>,
@@ -153,12 +156,37 @@ mod ffi {
             total_sampled: u64,
             total_real: u64,
         ) -> ProfileResult;
+        pub fn ddog_prof_Profile_add_upscaling_rule_poisson(
+            profile: *mut Profile,
+            offset_values: Slice<usize>,
+            label_name: CharSlice,
+            label_value: CharSlice,
+            sum_value_offset: usize,
+            count_value_offset: usize,
+            sampling_distance: u64,
+        ) -> ProfileResult;
         pub fn ddog_prof_Profile_serialize(
             profile: *mut Profile,
             start_time: Option<&Timespec>,
             end_time: Option<&Timespec>,
         ) -> SerializeResult;
         pub fn ddog_prof_EncodedProfile_drop(profile: *mut Handle<EncodedProfile>);
+        pub fn ddog_prof_EncodedProfile_bytes(
+            encoded_profile: *mut Handle<EncodedProfile>,
+        ) -> libdd_common_ffi::Result<Slice<'static, u8>>;
+        pub fn ddog_prof_Endpoint_agent(
+            base_url: CharSlice,
+            timeout_ms: u64,
+            use_system_resolver: bool,
+        ) -> ProfilingEndpoint<'static>;
+        pub fn ddog_prof_Endpoint_agentless(
+            site: CharSlice,
+            api_key: CharSlice,
+            timeout_ms: u64,
+            use_system_resolver: bool,
+        ) -> ProfilingEndpoint<'static>;
+        pub fn ddog_CancellationToken_new() -> Handle<CancellationToken>;
+        pub fn ddog_CancellationToken_drop(token: *mut Handle<CancellationToken>);
         pub fn ddog_prof_Exporter_new(
             profiling_library_name: CharSlice,
             profiling_library_version: CharSlice,
@@ -199,6 +227,40 @@ pub const PROFILE_SERIALIZE_LARGE: &str = "profile_serialize_large";
 pub const EXPORTER_NEW: &str = "exporter_new";
 pub const EXPORTER_SEND_COLD: &str = "exporter_send_cold";
 pub const EXPORTER_SEND_WARM: &str = "exporter_send_warm";
+
+pub const SET_ENDPOINT_FIRST: &str = "set_endpoint_first";
+pub const SET_ENDPOINT_INTERNED: &str = "set_endpoint_interned";
+pub const SET_ENDPOINT_NEW: &str = "set_endpoint_new";
+pub const SET_ENDPOINT_GROWTH: &str = "set_endpoint_growth";
+pub const ENDPOINT_COUNT_FIRST: &str = "endpoint_count_first";
+pub const ENDPOINT_COUNT_EXISTING: &str = "endpoint_count_existing";
+pub const ENDPOINT_COUNT_GROWTH: &str = "endpoint_count_growth";
+pub const UPSCALING_PROPORTIONAL_FIRST: &str = "upscaling_proportional_first";
+pub const UPSCALING_PROPORTIONAL_AGAIN: &str = "upscaling_proportional_again";
+pub const UPSCALING_POISSON_FIRST: &str = "upscaling_poisson_first";
+pub const UPSCALING_POISSON_AGAIN: &str = "upscaling_poisson_again";
+
+pub const CONTRACT_ENDPOINT_AGENT: &str = "contract_endpoint_agent";
+pub const CONTRACT_ENDPOINT_AGENTLESS: &str = "contract_endpoint_agentless";
+pub const CONTRACT_ENCODED_BYTES: &str = "contract_encoded_bytes";
+pub const CONTRACT_VEC_TAG_NEW: &str = "contract_vec_tag_new";
+pub const CONTRACT_DROP_PROFILE: &str = "contract_drop_profile";
+pub const CONTRACT_DROP_ENCODED: &str = "contract_drop_encoded";
+pub const CONTRACT_DROP_EXPORTER: &str = "contract_drop_exporter";
+pub const CONTRACT_DROP_ERROR: &str = "contract_drop_error";
+pub const CONTRACT_DROP_VEC_TAG: &str = "contract_drop_vec_tag";
+pub const CONTRACT_DROP_CANCEL: &str = "contract_drop_cancel";
+
+/// Mappings or counts already stored before the growth call.
+///
+/// `HashMap::try_reserve(1)` grows when `len` is 0, 3, 7, 14 or 28, so 28 leaves the table
+/// exactly full: the call under test is the one that grows it.
+const METADATA_GROWTH: u32 = 28;
+const LABEL_NAME: &str = "thread name";
+const LABEL_VALUE: &str = ".NET ThreadPool Worker";
+const OFFSETS_WIDE: [usize; 2] = [0, 1];
+const OFFSETS_HEAD: [usize; 1] = [0];
+const OFFSETS_TAIL: [usize; 1] = [2];
 
 /// Distinct samples already in the profile before the growth sample is added.
 pub const GROWTH_SAMPLES: u32 = 28;
@@ -835,4 +897,835 @@ pub const SCENARIOS: &[Scenario] = &[
         run: run_send,
         check: Some(check_send),
     },
+    Scenario {
+        name: SET_ENDPOINT_FIRST,
+        setup: || meta_profile(fresh_profile(), Meta::set(1, ENDPOINT)),
+        run: run_meta,
+        check: Some(check_meta),
+    },
+    Scenario {
+        name: SET_ENDPOINT_INTERNED,
+        setup: || {
+            // Three mappings fill the table. The call sets the already-interned endpoint on a
+            // new span, so only the table grows.
+            let mut profile = fresh_profile();
+            set_endpoint(&mut profile, 1, ENDPOINT).expect("setup endpoint");
+            for n in 0..2 {
+                set_endpoint(&mut profile, 100 + u64::from(n), endpoint_name(n))
+                    .expect("setup endpoint");
+            }
+            meta_profile(profile, Meta::set(2, ENDPOINT))
+        },
+        run: run_meta,
+        check: Some(check_meta),
+    },
+    Scenario {
+        name: SET_ENDPOINT_NEW,
+        setup: || {
+            let mut profile = fresh_profile();
+            set_endpoint(&mut profile, 1, ENDPOINT).expect("setup endpoint");
+            meta_profile(profile, Meta::set(2, endpoint_name(1)))
+        },
+        run: run_meta,
+        check: Some(check_meta),
+    },
+    Scenario {
+        name: SET_ENDPOINT_GROWTH,
+        setup: || {
+            meta_profile(
+                profile_with_endpoints(METADATA_GROWTH),
+                Meta::set(50_000, endpoint_name(METADATA_GROWTH)),
+            )
+        },
+        run: run_meta,
+        check: Some(check_meta),
+    },
+    Scenario {
+        name: ENDPOINT_COUNT_FIRST,
+        setup: || meta_profile(fresh_profile(), Meta::count(ENDPOINT, 3)),
+        run: run_meta,
+        check: Some(check_meta),
+    },
+    Scenario {
+        name: ENDPOINT_COUNT_EXISTING,
+        setup: || {
+            let mut profile = fresh_profile();
+            add_count(&mut profile, ENDPOINT, 1).expect("setup count");
+            meta_profile(profile, Meta::count(ENDPOINT, 4))
+        },
+        run: run_meta,
+        check: Some(check_meta),
+    },
+    Scenario {
+        name: ENDPOINT_COUNT_GROWTH,
+        setup: || {
+            meta_profile(
+                profile_with_counts(METADATA_GROWTH),
+                Meta::count(endpoint_name(METADATA_GROWTH), 1),
+            )
+        },
+        run: run_meta,
+        check: Some(check_meta),
+    },
+    Scenario {
+        name: UPSCALING_PROPORTIONAL_FIRST,
+        setup: || {
+            meta_profile(
+                fresh_profile(),
+                Meta::proportional(&OFFSETS_WIDE, LABEL_NAME, LABEL_VALUE),
+            )
+        },
+        run: run_meta,
+        check: Some(check_meta),
+    },
+    Scenario {
+        name: UPSCALING_PROPORTIONAL_AGAIN,
+        setup: || {
+            let mut profile = fresh_profile();
+            add_proportional(&mut profile, &OFFSETS_WIDE, LABEL_NAME, LABEL_VALUE)
+                .expect("setup rule");
+            meta_profile(
+                profile,
+                Meta::proportional(&OFFSETS_TAIL, LABEL_NAME, LABEL_VALUE),
+            )
+        },
+        run: run_meta,
+        check: Some(check_meta),
+    },
+    Scenario {
+        name: UPSCALING_POISSON_FIRST,
+        setup: || {
+            meta_profile(
+                fresh_profile(),
+                Meta::poisson(&OFFSETS_HEAD, LABEL_NAME, LABEL_VALUE, 0, 1, 1_024),
+            )
+        },
+        run: run_meta,
+        check: Some(check_meta),
+    },
+    Scenario {
+        name: UPSCALING_POISSON_AGAIN,
+        setup: || {
+            let mut profile = fresh_profile();
+            add_poisson(
+                &mut profile,
+                &OFFSETS_HEAD,
+                LABEL_NAME,
+                LABEL_VALUE,
+                0,
+                1,
+                1_024,
+            )
+            .expect("setup rule");
+            meta_profile(
+                profile,
+                Meta::poisson(&OFFSETS_TAIL, LABEL_NAME, LABEL_VALUE, 2, 3, 1_024),
+            )
+        },
+        run: run_meta,
+        check: Some(check_meta),
+    },
+    Scenario {
+        name: CONTRACT_ENDPOINT_AGENT,
+        setup: || {
+            Box::new(EndpointContract {
+                url: "http://127.0.0.1:8126",
+                site: "",
+                api_key: "",
+                endpoint: None,
+            })
+        },
+        run: run_endpoint_agent,
+        check: Some(check_endpoint_agent),
+    },
+    Scenario {
+        name: CONTRACT_ENDPOINT_AGENTLESS,
+        setup: || {
+            Box::new(EndpointContract {
+                url: "",
+                site: "datadoghq.com",
+                api_key: "0123456789abcdef0123456789abcdef",
+                endpoint: None,
+            })
+        },
+        run: run_endpoint_agentless,
+        check: Some(check_endpoint_agentless),
+    },
+    Scenario {
+        name: CONTRACT_ENCODED_BYTES,
+        setup: || {
+            Box::new(BytesContract {
+                encoded: encoded_profile(),
+                len: None,
+            })
+        },
+        run: run_encoded_bytes,
+        check: Some(check_encoded_bytes),
+    },
+    Scenario {
+        name: CONTRACT_VEC_TAG_NEW,
+        setup: || Box::new(TagContract { tags: None }),
+        run: run_vec_tag_new,
+        check: Some(check_vec_tag_new),
+    },
+    Scenario {
+        name: CONTRACT_DROP_PROFILE,
+        setup: || {
+            Box::new(DropProfile {
+                profile: take_profile(profile_with(1)),
+            })
+        },
+        run: run_drop_profile,
+        check: Some(check_drop_profile),
+    },
+    Scenario {
+        name: CONTRACT_DROP_ENCODED,
+        setup: || {
+            Box::new(DropEncoded {
+                encoded: encoded_profile(),
+            })
+        },
+        run: run_drop_encoded,
+        check: Some(check_drop_encoded),
+    },
+    Scenario {
+        name: CONTRACT_DROP_EXPORTER,
+        setup: || {
+            let mut fx = exporter_fixture(agent_endpoint(local_agent()));
+            fx.exporter = new_exporter(&fx).expect("setup exporter");
+            Box::new(fx)
+        },
+        run: run_drop_exporter,
+        check: Some(check_drop_exporter),
+    },
+    Scenario {
+        name: CONTRACT_DROP_ERROR,
+        setup: || {
+            Box::new(DropError {
+                error: profile_error(),
+            })
+        },
+        run: run_drop_error,
+        check: Some(check_drop_error),
+    },
+    Scenario {
+        name: CONTRACT_DROP_VEC_TAG,
+        setup: || {
+            Box::new(DropTags {
+                tags: Some(populated_tags()),
+            })
+        },
+        run: run_drop_tags,
+        check: Some(check_drop_tags),
+    },
+    Scenario {
+        name: CONTRACT_DROP_CANCEL,
+        setup: || {
+            Box::new(DropCancel {
+                token: unsafe { ffi::ddog_CancellationToken_new() },
+            })
+        },
+        run: run_drop_cancel,
+        check: Some(check_drop_cancel),
+    },
 ];
+
+// ---------------------------------------------------------------------------------------------
+// Tier 2 metadata
+// ---------------------------------------------------------------------------------------------
+
+#[derive(Clone, Copy)]
+enum Meta {
+    SetEndpoint {
+        span: u64,
+        endpoint: &'static str,
+    },
+    Count {
+        endpoint: &'static str,
+        value: i64,
+    },
+    Proportional {
+        offsets: &'static [usize],
+        name: &'static str,
+        value: &'static str,
+    },
+    Poisson {
+        offsets: &'static [usize],
+        name: &'static str,
+        value: &'static str,
+        sum: usize,
+        count: usize,
+        distance: u64,
+    },
+}
+
+impl Meta {
+    fn set(span: u64, endpoint: &'static str) -> Self {
+        Meta::SetEndpoint { span, endpoint }
+    }
+
+    fn count(endpoint: &'static str, value: i64) -> Self {
+        Meta::Count { endpoint, value }
+    }
+
+    fn proportional(offsets: &'static [usize], name: &'static str, value: &'static str) -> Self {
+        Meta::Proportional {
+            offsets,
+            name,
+            value,
+        }
+    }
+
+    fn poisson(
+        offsets: &'static [usize],
+        name: &'static str,
+        value: &'static str,
+        sum: usize,
+        count: usize,
+        distance: u64,
+    ) -> Self {
+        Meta::Poisson {
+            offsets,
+            name,
+            value,
+            sum,
+            count,
+            distance,
+        }
+    }
+}
+
+struct MetaFx {
+    profile: ffi::Profile,
+    call: Meta,
+    probe: DotnetSample,
+    encoded: Handle<EncodedProfile>,
+}
+
+impl Drop for MetaFx {
+    fn drop(&mut self) {
+        // SAFETY: both come from this API, and the drop functions accept empty handles.
+        unsafe {
+            ffi::ddog_prof_EncodedProfile_drop(&mut self.encoded);
+            ffi::ddog_prof_Profile_drop(&mut self.profile);
+        }
+    }
+}
+
+fn meta_profile(profile: ffi::Profile, call: Meta) -> Box<MetaFx> {
+    Box::new(MetaFx {
+        profile,
+        call,
+        probe: DotnetSample::new(1_000_000),
+        encoded: Handle::empty(),
+    })
+}
+
+fn endpoint_name(n: u32) -> &'static str {
+    leak(format!("GET /items/{n}"))
+}
+
+fn fresh_profile() -> ffi::Profile {
+    new_profile().expect("setup profile")
+}
+
+/// Moves the profile out and leaves the fixture's handle null, so its drop is a no-op.
+fn take_profile(mut fixture: ProfileFixture) -> ffi::Profile {
+    let profile = ffi::Profile {
+        inner: fixture.profile.inner,
+    };
+    fixture.profile.inner = std::ptr::null_mut();
+    profile
+}
+
+fn profile_with_endpoints(n: u32) -> ffi::Profile {
+    let mut profile = fresh_profile();
+    for i in 0..n {
+        set_endpoint(&mut profile, 10_000 + u64::from(i), endpoint_name(i))
+            .expect("setup endpoint");
+    }
+    profile
+}
+
+fn profile_with_counts(n: u32) -> ffi::Profile {
+    let mut profile = fresh_profile();
+    for i in 0..n {
+        add_count(&mut profile, endpoint_name(i), 1).expect("setup count");
+    }
+    profile
+}
+
+fn set_endpoint(profile: &mut ffi::Profile, span: u64, endpoint: &str) -> Result<(), String> {
+    // SAFETY: `profile` comes from `ddog_prof_Profile_new`; the slice is live.
+    match unsafe { ffi::ddog_prof_Profile_set_endpoint(profile, span, CharSlice::from(endpoint)) } {
+        ffi::ProfileResult::Ok(_) => Ok(()),
+        ffi::ProfileResult::Err(error) => Err(error_text(error)),
+    }
+}
+
+fn add_count(profile: &mut ffi::Profile, endpoint: &str, value: i64) -> Result<(), String> {
+    // SAFETY: `profile` comes from `ddog_prof_Profile_new`; the slice is live.
+    match unsafe {
+        ffi::ddog_prof_Profile_add_endpoint_count(profile, CharSlice::from(endpoint), value)
+    } {
+        ffi::ProfileResult::Ok(_) => Ok(()),
+        ffi::ProfileResult::Err(error) => Err(error_text(error)),
+    }
+}
+
+fn add_proportional(
+    profile: &mut ffi::Profile,
+    offsets: &[usize],
+    name: &str,
+    value: &str,
+) -> Result<(), String> {
+    // SAFETY: `profile` comes from `ddog_prof_Profile_new`; the slices are live.
+    match unsafe {
+        ffi::ddog_prof_Profile_add_upscaling_rule_proportional(
+            profile,
+            Slice::from(offsets),
+            CharSlice::from(name),
+            CharSlice::from(value),
+            10,
+            100,
+        )
+    } {
+        ffi::ProfileResult::Ok(_) => Ok(()),
+        ffi::ProfileResult::Err(error) => Err(error_text(error)),
+    }
+}
+
+fn add_poisson(
+    profile: &mut ffi::Profile,
+    offsets: &[usize],
+    name: &str,
+    value: &str,
+    sum: usize,
+    count: usize,
+    distance: u64,
+) -> Result<(), String> {
+    // SAFETY: `profile` comes from `ddog_prof_Profile_new`; the slices are live.
+    match unsafe {
+        ffi::ddog_prof_Profile_add_upscaling_rule_poisson(
+            profile,
+            Slice::from(offsets),
+            CharSlice::from(name),
+            CharSlice::from(value),
+            sum,
+            count,
+            distance,
+        )
+    } {
+        ffi::ProfileResult::Ok(_) => Ok(()),
+        ffi::ProfileResult::Err(error) => Err(error_text(error)),
+    }
+}
+
+fn apply_meta(profile: &mut ffi::Profile, call: Meta) -> Result<(), String> {
+    match call {
+        Meta::SetEndpoint { span, endpoint } => set_endpoint(profile, span, endpoint),
+        Meta::Count { endpoint, value } => add_count(profile, endpoint, value),
+        Meta::Proportional {
+            offsets,
+            name,
+            value,
+        } => add_proportional(profile, offsets, name, value),
+        Meta::Poisson {
+            offsets,
+            name,
+            value,
+            sum,
+            count,
+            distance,
+        } => add_poisson(profile, offsets, name, value, sum, count, distance),
+    }
+}
+
+fn meta_fx(fixture: &mut Box<dyn Any>) -> &mut MetaFx {
+    fixture.downcast_mut::<MetaFx>().unwrap()
+}
+
+fn run_meta(fixture: &mut Box<dyn Any>) -> Result<(), ScenarioError> {
+    let fx = meta_fx(fixture);
+    apply_meta(&mut fx.profile, fx.call).map_err(|_| ScenarioError::Oom)
+}
+
+/// After a failure the same call can be retried, and the profile can take a sample.
+fn check_meta(fixture: &mut Box<dyn Any>, failed: bool) -> Result<(), String> {
+    let fx = meta_fx(fixture);
+    if fx.profile.inner.is_null() {
+        return Err("the profile handle is null".to_string());
+    }
+    if failed {
+        apply_meta(&mut fx.profile, fx.call)
+            .map_err(|e| format!("the call cannot be retried: {e}"))?;
+    }
+    add(&mut fx.profile, &fx.probe, None).map_err(|e| format!("add after the call: {e}"))?;
+    let mut encoded =
+        serialize(&mut fx.profile).map_err(|e| format!("serialize after the call: {e}"))?;
+    // SAFETY: `encoded` comes from `ddog_prof_Profile_serialize`.
+    unsafe { ffi::ddog_prof_EncodedProfile_drop(&mut encoded) };
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------------------------
+// Contract-only calls: enumerated only when the baseline allocates.
+// ---------------------------------------------------------------------------------------------
+
+fn same_chars(slice: CharSlice, text: &str) -> bool {
+    let (ptr, len) = slice.as_raw_parts();
+    len == text.len() && ptr.cast() == text.as_ptr()
+}
+
+struct EndpointContract {
+    url: &'static str,
+    site: &'static str,
+    api_key: &'static str,
+    endpoint: Option<ffi::ProfilingEndpoint<'static>>,
+}
+
+fn run_endpoint_agent(fixture: &mut Box<dyn Any>) -> Result<(), ScenarioError> {
+    let fx = fixture.downcast_mut::<EndpointContract>().unwrap();
+    // SAFETY: the slice is live for the duration of the call, and the result borrows it.
+    fx.endpoint =
+        Some(unsafe { ffi::ddog_prof_Endpoint_agent(CharSlice::from(fx.url), 10_000, false) });
+    Ok(())
+}
+
+fn check_endpoint_agent(fixture: &mut Box<dyn Any>, failed: bool) -> Result<(), String> {
+    let fx = fixture.downcast_mut::<EndpointContract>().unwrap();
+    if failed {
+        return Err("Endpoint_agent does not report errors".to_string());
+    }
+    match fx.endpoint {
+        Some(ffi::ProfilingEndpoint::Agent(url, timeout, resolver))
+            if same_chars(url, fx.url) && timeout == 10_000 && !resolver =>
+        {
+            Ok(())
+        }
+        _ => Err("Endpoint_agent did not return the url, timeout and resolver".to_string()),
+    }
+}
+
+fn run_endpoint_agentless(fixture: &mut Box<dyn Any>) -> Result<(), ScenarioError> {
+    let fx = fixture.downcast_mut::<EndpointContract>().unwrap();
+    // SAFETY: both slices are live for the duration of the call, and the result borrows them.
+    fx.endpoint = Some(unsafe {
+        ffi::ddog_prof_Endpoint_agentless(
+            CharSlice::from(fx.site),
+            CharSlice::from(fx.api_key),
+            10_000,
+            false,
+        )
+    });
+    Ok(())
+}
+
+fn check_endpoint_agentless(fixture: &mut Box<dyn Any>, failed: bool) -> Result<(), String> {
+    let fx = fixture.downcast_mut::<EndpointContract>().unwrap();
+    if failed {
+        return Err("Endpoint_agentless does not report errors".to_string());
+    }
+    match fx.endpoint {
+        Some(ffi::ProfilingEndpoint::Agentless(site, key, timeout, resolver))
+            if same_chars(site, fx.site)
+                && same_chars(key, fx.api_key)
+                && timeout == 10_000
+                && !resolver =>
+        {
+            Ok(())
+        }
+        _ => {
+            Err("Endpoint_agentless did not return the site, key, timeout and resolver".to_string())
+        }
+    }
+}
+
+struct BytesContract {
+    encoded: Handle<EncodedProfile>,
+    len: Option<usize>,
+}
+
+impl Drop for BytesContract {
+    fn drop(&mut self) {
+        // SAFETY: the handle comes from `ddog_prof_Profile_serialize`, or it is empty.
+        unsafe { ffi::ddog_prof_EncodedProfile_drop(&mut self.encoded) };
+    }
+}
+
+fn encoded_owned(encoded: &mut Handle<EncodedProfile>) -> bool {
+    let mut handle: *mut Handle<EncodedProfile> = encoded;
+    // SAFETY: the handle is empty or holds the profile from `ddog_prof_Profile_serialize`.
+    unsafe { handle.to_inner_mut() }.is_ok()
+}
+
+fn run_encoded_bytes(fixture: &mut Box<dyn Any>) -> Result<(), ScenarioError> {
+    let fx = fixture.downcast_mut::<BytesContract>().unwrap();
+    // SAFETY: the handle comes from `ddog_prof_Profile_serialize`.
+    match unsafe { ffi::ddog_prof_EncodedProfile_bytes(&mut fx.encoded) } {
+        libdd_common_ffi::Result::Ok(bytes) => {
+            let (ptr, len) = bytes.as_raw_parts();
+            if ptr.is_null() && len > 0 {
+                return Err(ScenarioError::Rejected);
+            }
+            fx.len = Some(len);
+            Ok(())
+        }
+        libdd_common_ffi::Result::Err(error) => {
+            drop_error(error);
+            Err(ScenarioError::Oom)
+        }
+    }
+}
+
+/// `bytes` borrows the encoded profile: the handle still owns it afterwards.
+fn check_encoded_bytes(fixture: &mut Box<dyn Any>, failed: bool) -> Result<(), String> {
+    let fx = fixture.downcast_mut::<BytesContract>().unwrap();
+    if !encoded_owned(&mut fx.encoded) {
+        return Err("EncodedProfile_bytes took the handle".to_string());
+    }
+    if !failed {
+        match fx.len {
+            Some(len) if len > 0 => {}
+            _ => return Err("EncodedProfile_bytes returned an empty slice".to_string()),
+        }
+    }
+    Ok(())
+}
+
+struct TagContract {
+    tags: Option<libdd_common_ffi::Vec<Tag>>,
+}
+
+fn run_vec_tag_new(fixture: &mut Box<dyn Any>) -> Result<(), ScenarioError> {
+    let fx = fixture.downcast_mut::<TagContract>().unwrap();
+    fx.tags = Some(libdd_common_ffi::tags::ddog_Vec_Tag_new());
+    Ok(())
+}
+
+/// A new tag vector is empty, and a tag can be pushed into it.
+fn check_vec_tag_new(fixture: &mut Box<dyn Any>, _failed: bool) -> Result<(), String> {
+    let fx = fixture.downcast_mut::<TagContract>().unwrap();
+    let tags = fx.tags.as_mut().ok_or("Vec_Tag_new returned nothing")?;
+    if !tags.is_empty() {
+        return Err(format!("Vec_Tag_new returned {} tags", tags.len()));
+    }
+    // SAFETY: `tags` comes from `ddog_Vec_Tag_new`; both slices are live.
+    let result = unsafe {
+        libdd_common_ffi::tags::ddog_Vec_Tag_push(
+            tags,
+            CharSlice::from("env"),
+            CharSlice::from("prod"),
+        )
+    };
+    if matches!(result, libdd_common_ffi::tags::PushTagResult::Ok) && tags.len() == 1 {
+        Ok(())
+    } else {
+        Err("a tag cannot be pushed into the new vector".to_string())
+    }
+}
+
+struct DropProfile {
+    profile: ffi::Profile,
+}
+
+impl Drop for DropProfile {
+    fn drop(&mut self) {
+        // SAFETY: the profile comes from `ddog_prof_Profile_new`, or it was already dropped.
+        unsafe { ffi::ddog_prof_Profile_drop(&mut self.profile) };
+    }
+}
+
+fn run_drop_profile(fixture: &mut Box<dyn Any>) -> Result<(), ScenarioError> {
+    let fx = fixture.downcast_mut::<DropProfile>().unwrap();
+    // SAFETY: the profile comes from `ddog_prof_Profile_new`.
+    unsafe { ffi::ddog_prof_Profile_drop(&mut fx.profile) };
+    Ok(())
+}
+
+/// Drop nulls the handle, and a second drop is a no-op.
+fn check_drop_profile(fixture: &mut Box<dyn Any>, _failed: bool) -> Result<(), String> {
+    let fx = fixture.downcast_mut::<DropProfile>().unwrap();
+    if !fx.profile.inner.is_null() {
+        return Err("Profile_drop left the profile handle set".to_string());
+    }
+    // SAFETY: the handle is null, which `ddog_prof_Profile_drop` accepts.
+    unsafe { ffi::ddog_prof_Profile_drop(&mut fx.profile) };
+    if fx.profile.inner.is_null() {
+        Ok(())
+    } else {
+        Err("the second Profile_drop restored a handle".to_string())
+    }
+}
+
+struct DropEncoded {
+    encoded: Handle<EncodedProfile>,
+}
+
+impl Drop for DropEncoded {
+    fn drop(&mut self) {
+        // SAFETY: the handle comes from `ddog_prof_Profile_serialize`, or it is empty.
+        unsafe { ffi::ddog_prof_EncodedProfile_drop(&mut self.encoded) };
+    }
+}
+
+fn run_drop_encoded(fixture: &mut Box<dyn Any>) -> Result<(), ScenarioError> {
+    let fx = fixture.downcast_mut::<DropEncoded>().unwrap();
+    // SAFETY: the handle comes from `ddog_prof_Profile_serialize`.
+    unsafe { ffi::ddog_prof_EncodedProfile_drop(&mut fx.encoded) };
+    Ok(())
+}
+
+fn check_drop_encoded(fixture: &mut Box<dyn Any>, _failed: bool) -> Result<(), String> {
+    let fx = fixture.downcast_mut::<DropEncoded>().unwrap();
+    if encoded_owned(&mut fx.encoded) {
+        return Err("EncodedProfile_drop left the handle set".to_string());
+    }
+    // SAFETY: the handle is empty, which `ddog_prof_EncodedProfile_drop` accepts.
+    unsafe { ffi::ddog_prof_EncodedProfile_drop(&mut fx.encoded) };
+    if encoded_owned(&mut fx.encoded) {
+        Err("the second EncodedProfile_drop restored a handle".to_string())
+    } else {
+        Ok(())
+    }
+}
+
+fn exporter_owned(exporter: &mut Handle<ProfileExporter>) -> bool {
+    let mut handle: *mut Handle<ProfileExporter> = exporter;
+    // SAFETY: the handle is empty or holds the exporter from `ddog_prof_Exporter_new`.
+    unsafe { handle.to_inner_mut() }.is_ok()
+}
+
+fn run_drop_exporter(fixture: &mut Box<dyn Any>) -> Result<(), ScenarioError> {
+    let fx = fixture.downcast_mut::<ExporterFixture>().unwrap();
+    // SAFETY: the exporter comes from `ddog_prof_Exporter_new`.
+    unsafe { ffi::ddog_prof_Exporter_drop(&mut fx.exporter) };
+    Ok(())
+}
+
+fn check_drop_exporter(fixture: &mut Box<dyn Any>, _failed: bool) -> Result<(), String> {
+    let fx = fixture.downcast_mut::<ExporterFixture>().unwrap();
+    if exporter_owned(&mut fx.exporter) {
+        return Err("Exporter_drop left the handle set".to_string());
+    }
+    // SAFETY: the handle is empty, which `ddog_prof_Exporter_drop` accepts.
+    unsafe { ffi::ddog_prof_Exporter_drop(&mut fx.exporter) };
+    if exporter_owned(&mut fx.exporter) {
+        Err("the second Exporter_drop restored a handle".to_string())
+    } else {
+        Ok(())
+    }
+}
+
+struct DropError {
+    error: libdd_common_ffi::Error,
+}
+
+fn profile_error() -> libdd_common_ffi::Error {
+    let bad = unsafe { Slice::<ffi::SampleType>::from_raw_parts(std::ptr::null(), 1) };
+    // SAFETY: a null pointer with a non-zero length is the documented invalid slice.
+    match unsafe { ffi::ddog_prof_Profile_new(bad, None) } {
+        ffi::ProfileNewResult::Err(error) => error,
+        ffi::ProfileNewResult::Ok(mut profile) => {
+            // SAFETY: the profile comes from `ddog_prof_Profile_new`.
+            unsafe { ffi::ddog_prof_Profile_drop(&mut profile) };
+            panic!("Profile_new accepted an invalid slice");
+        }
+    }
+}
+
+fn run_drop_error(fixture: &mut Box<dyn Any>) -> Result<(), ScenarioError> {
+    let fx = fixture.downcast_mut::<DropError>().unwrap();
+    // SAFETY: `error` is a valid error returned by the FFI.
+    unsafe { libdd_common_ffi::ddog_Error_drop(Some(&mut fx.error)) };
+    Ok(())
+}
+
+/// Drop clears the message, and a second drop stays cleared.
+fn check_drop_error(fixture: &mut Box<dyn Any>, _failed: bool) -> Result<(), String> {
+    let fx = fixture.downcast_mut::<DropError>().unwrap();
+    if !fx.error.as_ref().is_empty() {
+        return Err("Error_drop left a message".to_string());
+    }
+    // SAFETY: the error is still a valid (cleared) error.
+    unsafe { libdd_common_ffi::ddog_Error_drop(Some(&mut fx.error)) };
+    if fx.error.as_ref().is_empty() {
+        Ok(())
+    } else {
+        Err("the second Error_drop restored a message".to_string())
+    }
+}
+
+fn populated_tags() -> libdd_common_ffi::Vec<Tag> {
+    let mut tags = libdd_common_ffi::tags::ddog_Vec_Tag_new();
+    // SAFETY: `tags` comes from `ddog_Vec_Tag_new`; both slices are live.
+    let result = unsafe {
+        libdd_common_ffi::tags::ddog_Vec_Tag_push(
+            &mut tags,
+            CharSlice::from("env"),
+            CharSlice::from("prod"),
+        )
+    };
+    assert!(
+        matches!(result, libdd_common_ffi::tags::PushTagResult::Ok),
+        "setup tag push"
+    );
+    tags
+}
+
+struct DropTags {
+    tags: Option<libdd_common_ffi::Vec<Tag>>,
+}
+
+fn run_drop_tags(fixture: &mut Box<dyn Any>) -> Result<(), ScenarioError> {
+    let fx = fixture.downcast_mut::<DropTags>().unwrap();
+    libdd_common_ffi::tags::ddog_Vec_Tag_drop(fx.tags.take().expect("tags"));
+    Ok(())
+}
+
+fn check_drop_tags(fixture: &mut Box<dyn Any>, _failed: bool) -> Result<(), String> {
+    let fx = fixture.downcast_mut::<DropTags>().unwrap();
+    if fx.tags.is_some() {
+        Err("Vec_Tag_drop did not consume the vector".to_string())
+    } else {
+        Ok(())
+    }
+}
+
+struct DropCancel {
+    token: Handle<ffi::CancellationToken>,
+}
+
+impl Drop for DropCancel {
+    fn drop(&mut self) {
+        // SAFETY: the handle comes from `ddog_CancellationToken_new`, or it is empty.
+        unsafe { ffi::ddog_CancellationToken_drop(&mut self.token) };
+    }
+}
+
+fn cancel_owned(token: &mut Handle<ffi::CancellationToken>) -> bool {
+    let mut handle: *mut Handle<ffi::CancellationToken> = token;
+    // SAFETY: the handle is empty or holds the token from `ddog_CancellationToken_new`.
+    unsafe { handle.to_inner_mut() }.is_ok()
+}
+
+fn run_drop_cancel(fixture: &mut Box<dyn Any>) -> Result<(), ScenarioError> {
+    let fx = fixture.downcast_mut::<DropCancel>().unwrap();
+    // SAFETY: the token comes from `ddog_CancellationToken_new`.
+    unsafe { ffi::ddog_CancellationToken_drop(&mut fx.token) };
+    Ok(())
+}
+
+fn check_drop_cancel(fixture: &mut Box<dyn Any>, _failed: bool) -> Result<(), String> {
+    let fx = fixture.downcast_mut::<DropCancel>().unwrap();
+    if cancel_owned(&mut fx.token) {
+        return Err("CancellationToken_drop left the handle set".to_string());
+    }
+    // SAFETY: the handle is empty, which `ddog_CancellationToken_drop` accepts.
+    unsafe { ffi::ddog_CancellationToken_drop(&mut fx.token) };
+    if cancel_owned(&mut fx.token) {
+        Err("the second CancellationToken_drop restored a handle".to_string())
+    } else {
+        Ok(())
+    }
+}
