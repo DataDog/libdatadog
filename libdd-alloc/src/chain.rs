@@ -66,7 +66,10 @@ impl<A: Allocator> ChainNode<A> {
     }
 }
 
-unsafe impl<A: Allocator + Clone> Send for ChainAllocator<A> {}
+// SAFETY: The allocator owns the list of chunks that back the allocated memory and may thus be
+// entirely moved to and used on another thread, as long as `A` can be as well. It is *not* `Sync`
+// though, since it uses unsynchronized interior mutability.
+unsafe impl<A: Allocator + Clone + Send> Send for ChainAllocator<A> {}
 
 impl<A: Allocator> ChainNode<A> {
     fn remaining_capacity(&self) -> usize {

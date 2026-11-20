@@ -1,9 +1,7 @@
 // Copyright 2025-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-use crate::profiles::collections::{
-    Set, SetError, SetHasher as Hasher, SetId, SliceSet, ThinSlice,
-};
+use crate::profiles::collections::{Set, SetError, SetId, SliceSet, ThinSlice};
 use core::hash::Hash;
 use core::mem::MaybeUninit;
 use crossbeam_utils::CachePadded;
@@ -12,12 +10,12 @@ use parking_lot::RwLock;
 /// Operations a set must provide for so that a sharded set can be built on
 /// top of it.
 ///
-/// # Safety
-///
-/// Implementors must ensure that all methods which take `&self` are safe to
-/// call under a read-lock, and all `&mut self` methods are safe to call under
-/// a write-lock, and are safe for `Send` and `Sync`.
-pub unsafe trait SetOps {
+/// Thread-safety is handled by the auto traits: [`Sharded`] wraps each shard
+/// in a [`RwLock`], so it is `Send` when `Self: Send` and `Sync` when
+/// `Self: Send + Sync`, as derived automatically by the compiler. Types that
+/// are thread-safe but hold raw pointers should implement `Send`/`Sync`
+/// themselves (see [`Set`] and [`SliceSet`]).
+pub trait SetOps {
     type Lookup<'a>: Copy
     where
         Self: 'a;
@@ -98,44 +96,9 @@ impl<S: SetOps, const N: usize> Sharded<S, N> {
         // there's at least one.
         Ok(Self { shards })
     }
-
-    pub fn try_insert_common<'a>(
-        &self,
-        lookup: S::Lookup<'a>,
-        owned: S::Owned<'a>,
-    ) -> Result<S::Id, SetError>
-    where
-        S::Lookup<'a>: Hash + PartialEq,
-    {
-        use std::hash::BuildHasher;
-        let hash = Hasher::default().hash_one(lookup);
-        let idx = Self::select_shard(hash);
-        let lock = &self.shards[idx];
-
-        let read_len = {
-            let guard = lock.read();
-            if let Some(id) = unsafe { guard.find_with_hash(hash, lookup) } {
-                return Ok(id);
-            }
-            guard.len()
-        };
-
-        let mut guard = lock.write();
-        if guard.len() != read_len
-            && let Some(id) = unsafe { guard.find_with_hash(hash, lookup) }
-        {
-            return Ok(id);
-        }
-
-        unsafe { guard.insert_unique_uncontended_with_hash(hash, owned) }
-    }
 }
 
-// SAFETY: relies on safety requirements of `SetOps`.
-unsafe impl<S: SetOps, const N: usize> Send for Sharded<S, N> {}
-unsafe impl<S: SetOps, const N: usize> Sync for Sharded<S, N> {}
-
-unsafe impl<T: Hash + Eq + 'static> SetOps for Set<T> {
+impl<T: Hash + Eq + 'static> SetOps for Set<T> {
     type Lookup<'a> = &'a T;
     type Owned<'a> = T;
     type Id = SetId<T>;
@@ -161,7 +124,7 @@ unsafe impl<T: Hash + Eq + 'static> SetOps for Set<T> {
     }
 }
 
-unsafe impl<T: Copy + Hash + Eq + 'static> SetOps for SliceSet<T> {
+impl<T: Copy + Hash + Eq + 'static> SetOps for SliceSet<T> {
     type Lookup<'a> = &'a [T];
     type Owned<'a> = &'a [T];
     type Id = ThinSlice<'static, T>;

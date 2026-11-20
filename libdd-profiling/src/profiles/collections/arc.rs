@@ -120,10 +120,12 @@ impl<T, A: Allocator> Arc<T, A> {
     }
 
     pub fn into_inner(this: Self) -> Option<T> {
-        // Prevent running Drop; we will manage the refcount and allocation manually.
-        let this = ManuallyDrop::new(this);
+        // Prevent running Drop; manage the refcount and allocation manually.
+        let mut this = ManuallyDrop::new(this);
         let inner = unsafe { this.ptr.as_ref() };
         if inner.refcount.fetch_sub(1, Ordering::Release) != 1 {
+            // SAFETY: refcount already decremented, only drop allocator.
+            unsafe { ptr::drop_in_place(&mut this.alloc) };
             return None;
         }
         fence(Ordering::Acquire);
@@ -164,9 +166,10 @@ impl<T, A: Allocator> Arc<T, A> {
     }
 }
 
-// SAFETY: `Arc<T, A>` is Send and Sync iff `T` is Send and Sync.
-unsafe impl<T: Send + Sync, A: Allocator> Send for Arc<T, A> {}
-unsafe impl<T: Send + Sync, A: Allocator> Sync for Arc<T, A> {}
+// SAFETY: as in `std`, both impls require `T: Send + Sync`. Moving the Arc
+// requires `A: Send`, while sharing it requires `A: Sync`.
+unsafe impl<T: Send + Sync, A: Allocator + Send> Send for Arc<T, A> {}
+unsafe impl<T: Send + Sync, A: Allocator + Send + Sync> Sync for Arc<T, A> {}
 
 impl<T, A: Allocator> Arc<T, A> {
     #[inline]
@@ -215,11 +218,10 @@ impl<T, A: Allocator> Drop for Arc<T, A> {
             // Raymond Chen wrote a little blog article about it:
             // https://devblogs.microsoft.com/oldnewthing/20251015-00/?p=111686
             fence(Ordering::Acquire);
-            // SAFETY: this was the last strong reference; reclaim allocation
+            // SAFETY: this was the last strong reference. Borrow the allocator
+            // to reclaim the allocation; the Arc's field is dropped afterwards.
             let ptr = self.ptr.as_ptr();
-            // Move out allocator for deallocation, but prevent double-drop of `alloc`
-            let alloc: A = unsafe { ptr::read(&self.alloc) };
-            unsafe { drop(Box::<ArcInner<T>, A>::from_raw_in(ptr, alloc)) };
+            unsafe { drop(Box::<ArcInner<T>, &A>::from_raw_in(ptr, &self.alloc)) };
         }
     }
 }
@@ -288,6 +290,60 @@ impl<T> Arc<T> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[derive(Clone)]
+    struct CountingAllocator<'a>(&'a AtomicUsize);
+
+    impl Drop for CountingAllocator<'_> {
+        fn drop(&mut self) {
+            self.0.fetch_add(1, Ordering::Relaxed);
+        }
+    }
+
+    // SAFETY: All allocations and deallocations are delegated to Global.
+    unsafe impl Allocator for CountingAllocator<'_> {
+        fn allocate(&self, layout: Layout) -> Result<NonNull<[u8]>, AllocError> {
+            Global.allocate(layout)
+        }
+
+        unsafe fn deallocate(&self, ptr: NonNull<u8>, layout: Layout) {
+            unsafe { Global.deallocate(ptr, layout) }
+        }
+    }
+
+    #[test]
+    fn allocator_is_dropped_once() {
+        let drops = AtomicUsize::new(0);
+        let arc = Arc::try_new_in(42_u32, CountingAllocator(&drops)).unwrap();
+
+        drop(arc);
+
+        assert_eq!(drops.load(Ordering::Relaxed), 1);
+    }
+
+    #[test]
+    fn cloned_allocators_are_each_dropped_once() {
+        let drops = AtomicUsize::new(0);
+        let arc = Arc::try_new_in(42_u32, CountingAllocator(&drops)).unwrap();
+        let clone = arc.try_clone().unwrap();
+
+        drop(arc);
+        assert_eq!(drops.load(Ordering::Relaxed), 1);
+        drop(clone);
+        assert_eq!(drops.load(Ordering::Relaxed), 2);
+    }
+
+    #[test]
+    fn into_inner_drops_each_allocator() {
+        let drops = AtomicUsize::new(0);
+        let arc = Arc::try_new_in(42_u32, CountingAllocator(&drops)).unwrap();
+        let clone = arc.try_clone().unwrap();
+
+        assert_eq!(Arc::into_inner(arc), None);
+        assert_eq!(drops.load(Ordering::Relaxed), 1);
+        assert_eq!(Arc::into_inner(clone), Some(42));
+        assert_eq!(drops.load(Ordering::Relaxed), 2);
+    }
 
     #[test]
     fn try_new_and_unwrap_unique() {
