@@ -22,10 +22,13 @@ pub(crate) use libdd_ffe::telemetry::exposures::ExposureDeduplicator;
 #[cfg(test)]
 use libdd_ffe::telemetry::exposures::encode_exposure_batch_in_scope;
 use libdd_ffe::telemetry::exposures::{encode_admitted_exposure_batch, is_complete};
-use std::collections::HashMap;
+mod dispatch;
+
+use dispatch::{Capacity, Credit};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, OnceLock};
 use std::time::Duration;
-use tokio::sync::{OwnedSemaphorePermit, Semaphore, mpsc};
+use tokio::sync::mpsc;
 use tracing::debug;
 
 /// Historical Agent-only EVP v2 path for Feature Flags exposure intake.
@@ -79,7 +82,7 @@ async fn send_encoded<C: HttpClientCapability + SleepCapability>(
         .await;
 }
 
-pub(super) type Job = (EvpTransport, FfeExposureBatch, Option<OwnedSemaphorePermit>);
+pub(super) type Job = (EvpTransport, FfeExposureBatch, Option<Credit>);
 
 const DEFERRED_SLOTS: usize = 32;
 const DEFERRED_BYTES: usize = 16 * 1024 * 1024;
@@ -90,61 +93,82 @@ const COALESCE_WINDOW: Duration = Duration::from_millis(1);
 
 async fn drain_admissions<C: HttpClientCapability + SleepCapability>(
     client: &C,
-    mut rx: mpsc::Receiver<Job>,
+    rx: mpsc::Receiver<Job>,
 ) {
-    let mut jobs = Vec::with_capacity(MAX_BATCH_ROWS);
-    while rx.recv_many(&mut jobs, MAX_BATCH_ROWS).await > 0 {
-        if jobs.len() < MAX_BATCH_ROWS && !rx.is_closed() {
-            // One timer wake collects a burst while the producers keep serving evaluations.
-            tokio::time::sleep(COALESCE_WINDOW).await;
-            let remaining = MAX_BATCH_ROWS - jobs.len();
-            jobs.extend(std::iter::from_fn(|| rx.try_recv().ok()).take(remaining));
-        }
-        let mut destinations = HashMap::new();
-        let mut batches: Vec<(EvpTransport, FfeExposureBatch)> = Vec::new();
-        let mut reservations = Vec::new();
-        for (route, mut batch, budget) in jobs.drain(..) {
-            reservations.extend(budget);
-            // Workers with equivalent routes and telemetry context share one payload.
-            let key = (
-                route.deduplication_scope().to_owned(),
-                batch.context.clone(),
-            );
-            let i = *destinations.entry(key).or_insert(batches.len());
-            if let Some((_, existing)) = batches.get_mut(i) {
-                existing.exposures.append(&mut batch.exposures);
-            } else {
-                batches.push((route, batch));
-            }
-        }
-        for (route, batch) in batches {
-            send_encoded(client, &route, encode_admitted_exposure_batch(batch)).await;
-        }
+    dispatch::dispatch(rx, |route, batch| async move {
+        send_encoded(client, &route, encode_admitted_exposure_batch(batch)).await;
+    })
+    .await;
+}
+
+#[derive(Default)]
+struct Counters {
+    full: AtomicU64,
+    closed: AtomicU64,
+    invalid: AtomicU64,
+    missing_transport: AtomicU64,
+}
+
+fn count(counter: &AtomicU64, reason: &'static str) {
+    let total = counter.fetch_add(1, Ordering::Relaxed).wrapping_add(1);
+    if total.is_power_of_two() {
+        debug!(reason, total, "FFE exposure submission refused");
     }
 }
 
-#[derive(Clone)]
+#[derive(Default, Debug, serde::Serialize, serde::Deserialize)]
+pub(super) struct AdmissionStats {
+    pub(super) full: u64,
+    pub(super) closed: u64,
+    pub(super) invalid: u64,
+    pub(super) missing_transport: u64,
+}
+
+#[derive(Clone, Default)]
 pub(crate) struct AdmissionQueue {
     writer: Arc<OnceLock<mpsc::Sender<Job>>>,
-    deferred_bytes: Arc<Semaphore>,
-}
-
-impl Default for AdmissionQueue {
-    fn default() -> Self {
-        Self {
-            writer: Arc::default(),
-            deferred_bytes: Arc::new(Semaphore::new(DEFERRED_BYTES)),
-        }
-    }
+    capacity: Capacity,
+    counters: Arc<Counters>,
 }
 
 impl AdmissionQueue {
+    pub(super) fn stats(&self) -> AdmissionStats {
+        AdmissionStats {
+            full: self.counters.full.load(Ordering::Relaxed),
+            closed: self.counters.closed.load(Ordering::Relaxed),
+            invalid: self.counters.invalid.load(Ordering::Relaxed),
+            missing_transport: self.counters.missing_transport.load(Ordering::Relaxed),
+        }
+    }
+
+    pub(super) fn missing_transport(&self) {
+        count(&self.counters.missing_transport, "missing_transport");
+    }
+
+    pub(super) fn invalid(&self) {
+        count(&self.counters.invalid, "invalid");
+    }
+
+    fn refusal(&self, reason: mpsc::error::TrySendError<()>) -> ExposureVerdict {
+        match reason {
+            mpsc::error::TrySendError::Full(()) => {
+                count(&self.counters.full, "full");
+                ExposureVerdict::QueueFull
+            }
+            mpsc::error::TrySendError::Closed(()) => {
+                count(&self.counters.closed, "closed");
+                ExposureVerdict::Unavailable
+            }
+        }
+    }
+
     #[cfg(test)]
     pub(super) fn capture(capacity: usize) -> (Self, mpsc::Receiver<Job>) {
-        let (sender, receiver) = mpsc::channel(capacity + DEFERRED_SLOTS);
+        let (sender, receiver) = mpsc::channel(2 * (capacity + DEFERRED_SLOTS));
         (
             Self {
                 writer: Arc::new(OnceLock::from(sender)),
+                capacity: Capacity::new(capacity),
                 ..Self::default()
             },
             receiver,
@@ -153,7 +177,7 @@ impl AdmissionQueue {
 
     fn writer(&self, client: &NativeCapabilities) -> &mpsc::Sender<Job> {
         self.writer.get_or_init(|| {
-            let (tx, rx) = mpsc::channel(ADMISSION_QUEUE_CAPACITY + DEFERRED_SLOTS);
+            let (tx, rx) = mpsc::channel(2 * (ADMISSION_QUEUE_CAPACITY + DEFERRED_SLOTS));
             let client = client.clone();
             tokio::spawn(async move { drain_admissions(&client, rx).await });
             tx
@@ -169,15 +193,20 @@ impl AdmissionQueue {
     ) -> bool {
         let Some(bytes) = libdd_ipc::codec::encoded_size(&batch)
             .ok()
-            .and_then(|n| u32::try_from(n).ok())
+            .and_then(|n| usize::try_from(n).ok())
         else {
             return false;
         };
-        let Ok(budget) = self.deferred_bytes.clone().try_acquire_many_owned(bytes) else {
+        let Some(budget) = self.capacity.reserve(transport.scope_handle(), Some(bytes)) else {
+            self.refusal(mpsc::error::TrySendError::Full(()));
             return false;
         };
-        let Ok(slot) = self.writer(client).try_reserve() else {
-            return false;
+        let slot = match self.writer(client).try_reserve() {
+            Ok(slot) => slot,
+            Err(reason) => {
+                self.refusal(reason);
+                return false;
+            }
         };
         cache.publish_reserved_batch(transport.deduplication_scope(), batch, |changed| {
             slot.send((transport.clone(), changed, Some(budget)));
@@ -211,14 +240,16 @@ impl AdmissionQueue {
             .sum::<usize>()
                 > 65536
         {
+            self.invalid();
             return ExposureVerdict::Unavailable;
         }
         match cache.try_record_in_scope(transport.deduplication_scope(), &context, &event, || {
             if deliver {
                 let queue = self.writer(client);
-                if queue.capacity() <= DEFERRED_SLOTS {
-                    return Err(mpsc::error::TrySendError::Full(()));
-                }
+                let credit = self
+                    .capacity
+                    .reserve(transport.scope_handle(), None)
+                    .ok_or(mpsc::error::TrySendError::Full(()))?;
                 let permit = queue.try_reserve()?;
                 permit.send((
                     transport.clone(),
@@ -226,15 +257,14 @@ impl AdmissionQueue {
                         context: context.clone(),
                         exposures: vec![event.clone()],
                     },
-                    None,
+                    Some(credit),
                 ));
             }
             Ok::<_, mpsc::error::TrySendError<()>>(())
         }) {
             Ok(true) => ExposureVerdict::Admitted,
             Ok(false) => ExposureVerdict::Repeat,
-            Err(mpsc::error::TrySendError::Full(())) => ExposureVerdict::QueueFull,
-            Err(mpsc::error::TrySendError::Closed(())) => ExposureVerdict::Unavailable,
+            Err(reason) => self.refusal(reason),
         }
     }
 }
@@ -427,6 +457,58 @@ mod tests {
         drop(queue);
         consumer.await.unwrap();
         posts.assert_calls_async(3).await;
+    }
+
+    #[tokio::test]
+    #[cfg_attr(miri, ignore)]
+    async fn later_route_progresses_while_first_writer_is_held() {
+        let first = MockServer::start_async().await;
+        let second = MockServer::start_async().await;
+        let a = EvpTransport::agent_only(endpoint_for(&first), EVP_SUBDOMAIN_VALUE).unwrap();
+        let b = EvpTransport::agent_only(endpoint_for(&second), EVP_SUBDOMAIN_VALUE).unwrap();
+        let (tx, rx) = mpsc::channel(4);
+        let (observed, mut started) = mpsc::unbounded_channel();
+        let release = Arc::new(tokio::sync::Notify::new());
+        let gate = release.clone();
+        let task = tokio::spawn(async move {
+            dispatch::dispatch(rx, move |_, batch| {
+                let gate = gate.clone();
+                let observed = observed.clone();
+                async move {
+                    let id = &batch.exposures[0].variant;
+                    observed.send(id.clone()).unwrap();
+                    if id == "A1" {
+                        gate.notified().await;
+                    }
+                }
+            })
+            .await;
+        });
+        let job = |route, v| {
+            (
+                route,
+                FfeExposureBatch {
+                    context: context(),
+                    exposures: vec![exposure("user", "alloc", v)],
+                },
+                None,
+            )
+        };
+        tx.send(job(a.clone(), "A1")).await.unwrap();
+        async fn next(rx: &mut mpsc::UnboundedReceiver<String>) -> String {
+            tokio::time::timeout(Duration::from_secs(3), rx.recv())
+                .await
+                .unwrap()
+                .unwrap()
+        }
+        assert_eq!(next(&mut started).await, "A1");
+        tx.send(job(a, "A2")).await.unwrap();
+        tx.send(job(b, "B")).await.unwrap();
+        assert_eq!(next(&mut started).await, "B");
+        release.notify_one();
+        assert_eq!(next(&mut started).await, "A2");
+        drop(tx);
+        task.await.unwrap();
     }
 
     #[tokio::test]

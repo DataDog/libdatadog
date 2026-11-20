@@ -80,6 +80,8 @@ use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct SidecarStats {
+    #[serde(default)]
+    ffe_exposures: ffe_exposures_flusher::AdmissionStats,
     trace_flusher: TraceFlusherStats,
     active_connections: u32,
     active_telemetry_clients: u32,
@@ -924,6 +926,7 @@ impl SidecarServer {
         let connection_stats = &self.connection_stats;
 
         SidecarStats {
+            ffe_exposures: self.ffe_admission_queue.stats(),
             trace_flusher: self.trace_flusher.stats(),
             active_connections: connection_stats.connections.load(Ordering::Relaxed),
             active_telemetry_clients,
@@ -1577,6 +1580,7 @@ impl SidecarInterface for ConnectionSidecarHandler {
         let Some(transport) = self.session.load().as_ref().and_then(|session| {
             session.get_evp_transport(evp_proxy::EVENT_PLATFORM_INTAKE_SUBDOMAIN)
         }) else {
+            self.server.ffe_admission_queue.missing_transport();
             return crate::service::ExposureVerdict::Unavailable;
         };
         let cache = if deliver {
@@ -1603,11 +1607,13 @@ impl SidecarInterface for ConnectionSidecarHandler {
                 .iter()
                 .all(libdd_ffe::telemetry::exposures::is_complete)
         {
+            self.server.ffe_admission_queue.invalid();
             return false;
         }
         let Some(transport) = self.session.load().as_ref().and_then(|session| {
             session.get_evp_transport(evp_proxy::EVENT_PLATFORM_INTAKE_SUBDOMAIN)
         }) else {
+            self.server.ffe_admission_queue.missing_transport();
             return false;
         };
         self.server.ffe_admission_queue.submit_deferred(

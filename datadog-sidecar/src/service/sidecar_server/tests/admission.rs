@@ -143,6 +143,40 @@ async fn hook_only_observations_preserve_delivery_and_its_capacity() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 #[cfg_attr(miri, ignore = "requires native sequenced-packet sockets")]
+async fn refusal_stats_distinguish_the_failure_phase() {
+    let (server, rx) = authority(1, 1);
+    let mut handler = test_handler(server.clone());
+    assert_eq!(
+        handler
+            .admit_ffe_exposure_v1(ffe_context(), ffe_exposure("no-route"), true)
+            .await,
+        Unavailable
+    );
+    let mut worker = client(server.clone());
+    let mut bad = ffe_exposure("invalid");
+    bad.variant.clear();
+    assert_eq!(record(&mut worker, bad, true), Unavailable);
+    assert_eq!(record(&mut worker, ffe_exposure("first"), true), Admitted);
+    assert_eq!(record(&mut worker, ffe_exposure("next"), true), QueueFull);
+    drop(rx);
+    assert_eq!(
+        record(&mut worker, ffe_exposure("stopped"), true),
+        Unavailable
+    );
+    let stats = server.compute_stats().await.ffe_exposures;
+    assert_eq!(
+        (
+            stats.missing_transport,
+            stats.invalid,
+            stats.full,
+            stats.closed
+        ),
+        (1, 1, 1, 1)
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[cfg_attr(miri, ignore = "requires native sequenced-packet sockets")]
 async fn queue_full_preserves_assignment() {
     let (server, mut rx) = authority(4, 1);
     let mut worker = client(server);
