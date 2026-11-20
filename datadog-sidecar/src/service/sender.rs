@@ -499,9 +499,9 @@ impl SidecarSender {
     ) -> crate::service::ExposureVerdict {
         use crate::service::ExposureVerdict;
         use libdd_ipc::codec::{decode, encode};
-        if !self
+        if self
             .ffe_capabilities_until(deadline)
-            .is_some_and(|bits| bits & super::FFE_ADMISSION_V1_CAPABILITY != 0)
+            .is_none_or(|bits| bits & super::FFE_ADMISSION_V1_CAPABILITY == 0)
         {
             return ExposureVerdict::Unavailable;
         }
