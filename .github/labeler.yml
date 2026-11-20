@@ -57,6 +57,7 @@ data-pipeline:
   - any-glob-to-any-file: [
       'libdd-data-pipeline/**/*',
       'libdd-data-pipeline-ffi/**/*',
+      'libdd-trace-semantics/**/*',
     ]
 
 crashtracker:
