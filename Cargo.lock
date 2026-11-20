@@ -3197,6 +3197,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "libdd-http-client-ffi"
+version = "50.0.0"
+dependencies = [
+ "build_common",
+ "httpmock",
+ "libdd-common-ffi",
+ "libdd-http-client",
+ "libdd-shared-runtime",
+ "rustls",
+ "tempfile",
+ "tokio-util",
+ "tracing",
+ "url",
+]
+
+[[package]]
 name = "libdd-ipc"
 version = "2.0.0"
 dependencies = [
@@ -3469,6 +3485,7 @@ dependencies = [
  "libdd-data-pipeline-ffi",
  "libdd-ddsketch-ffi",
  "libdd-ffe-ffi",
+ "libdd-http-client-ffi",
  "libdd-library-config-ffi",
  "libdd-log-ffi",
  "libdd-networking",
