@@ -583,12 +583,22 @@ fn capture_with_retry(
 /// The callback owns each capture, or receives None if attachment or unwinding failed.
 /// Each stop also has a STOP_TIMEOUT_PER_THREAD limit. Returns true if threads were left
 /// unvisited.
+///
+/// When `skip_crashing_ptrace` is true the crashing thread is emitted via the
+/// callback with a `None` capture instead of being ptraced.  The collector
+/// child sets this because the crashing thread is running the signal handler
+/// in the parent process; ptracing it would put it in ptrace-stop, preventing
+/// the parent from executing the SIGKILL/reap cleanup path and creating a
+/// deadlock when the collector itself is stuck (e.g. post-fork malloc
+/// deadlock).  The receiver (a separate exec'd process) passes false so it
+/// can still ptrace-unwind the crashing thread from the saved ucontext.
 pub(crate) fn stream_thread_contexts<F>(
     parent_pid: libc::pid_t,
     crashing_tid: libc::pid_t,
     max_threads: usize,
     timeout: Duration,
     crashing_context: Option<&Ucontext>,
+    skip_crashing_ptrace: bool,
     mut callback: F,
 ) -> Result<bool, PtraceError>
 where
@@ -609,13 +619,19 @@ where
 
     // Process the crashing thread first so it is never dropped by the cap.
     if crashing_tid != 0 && tids.contains(&crashing_tid) {
-        let context = capture_with_retry(
-            crashing_tid,
-            &addr_space,
-            overall_deadline,
-            crashing_context,
-        );
-        callback(crashing_tid, context);
+        if skip_crashing_ptrace {
+            // Emit the crashing thread without ptracing it.  Its stack comes
+            // from the saved ucontext emitted separately by the collector.
+            callback(crashing_tid, None);
+        } else {
+            let context = capture_with_retry(
+                crashing_tid,
+                &addr_space,
+                overall_deadline,
+                crashing_context,
+            );
+            callback(crashing_tid, context);
+        }
         processed += 1;
     }
 
@@ -833,6 +849,7 @@ mod tests {
             2,
             Duration::from_secs(5),
             None,
+            false,
             |_tid, _ctx| collected += 1,
         );
 
@@ -866,6 +883,7 @@ mod tests {
             64,
             Duration::from_secs(5),
             None,
+            false,
             |tid, _ctx| {
                 if tid == worker_tid {
                     seen_worker = true;
