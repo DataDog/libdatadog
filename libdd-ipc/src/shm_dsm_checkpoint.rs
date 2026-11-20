@@ -39,9 +39,15 @@ pub const MAX_EDGE_TAGS: usize = 16;
 pub const DSM_BUCKET_NANOS: u64 = 10_000_000_000;
 /// Default checkpoints per bucket.
 pub const DEFAULT_DSM_CHECKPOINT_SLOT_COUNT: usize = 128;
+/// Most checkpoints per bucket a table can be configured with. A slot takes about 39 KiB of
+/// shared memory (its three histograms in each of the two buckets, and its share of their
+/// string pools), so a table this large takes about 10 MiB.
+pub const MAX_DSM_CHECKPOINT_SLOT_COUNT: usize = 256;
+/// Per-bucket string pool bytes per checkpoint slot, for edge tags.
+pub const DSM_CHECKPOINT_STRING_POOL_BYTES_PER_SLOT: usize = 1024;
 /// Default per-bucket string pool size, for edge tags: 1 KiB per checkpoint.
 pub const DEFAULT_DSM_CHECKPOINT_STRING_POOL_BYTES: usize =
-    DEFAULT_DSM_CHECKPOINT_SLOT_COUNT * 1024;
+    DEFAULT_DSM_CHECKPOINT_SLOT_COUNT * DSM_CHECKPOINT_STRING_POOL_BYTES_PER_SLOT;
 
 /// Backend bin of 1 µs, the lowest latency binned on its own.
 const LATENCY_MIN_INDEX: i32 = -890;
