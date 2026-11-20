@@ -7,9 +7,10 @@ use super::WorkerHandleError;
 use crate::weak_waker::WeakWakerFuture;
 use crate::worker::Worker;
 use core::pin::Pin;
+use futures_util::FutureExt;
+use futures_util::future::Shared;
 use libdd_capabilities::MaybeSend;
 use libdd_capabilities::maybe_send::MaybeSync;
-use libdd_capabilities::spawn::SpawnError;
 use std::fmt::Display;
 use std::future::Future;
 use tokio::select;
@@ -22,21 +23,48 @@ type WorkerFuture<T> = Pin<Box<dyn Future<Output = T> + Send + 'static>>;
 type WorkerFuture<T> = Pin<Box<dyn Future<Output = T> + 'static>>;
 
 #[cfg(not(target_arch = "wasm32"))]
-type WorkerJoinHandle<T> = Pin<Box<dyn Future<Output = Result<T, SpawnError>> + Send>>;
+type WorkerJoinHandle<T> = Pin<Box<dyn Future<Output = Result<T, TaskJoinError>> + Send>>;
 #[cfg(target_arch = "wasm32")]
-type WorkerJoinHandle<T> = Pin<Box<dyn Future<Output = Result<T, SpawnError>>>>;
+type WorkerJoinHandle<T> = Pin<Box<dyn Future<Output = Result<T, TaskJoinError>>>>;
+
+/// Cancels a running worker task for discard. Native uses tokio's abort handle; on wasm32,
+/// dropping the task's remote handle cancels it, so no separate handle is needed.
+#[cfg(not(target_arch = "wasm32"))]
+pub(super) type TaskAbort = tokio::task::AbortHandle;
+#[cfg(target_arch = "wasm32")]
+pub(super) type TaskAbort = ();
+
+/// Why a worker task ended without returning its state.
+// Only the native tokio spawn closure constructs these; the wasm32 closure always succeeds.
+#[cfg_attr(target_arch = "wasm32", allow(dead_code))]
+#[derive(Debug)]
+pub(crate) enum TaskJoinError {
+    /// The executor cancelled the task (discard or runtime shutdown).
+    Cancelled,
+    /// The task failed, e.g. it panicked.
+    Failed,
+}
 
 /// Build the spawn closure used by [`PausableWorker::start`] on native, backed by
-/// `tokio::runtime::Handle::spawn`. Maps tokio's `JoinError` into the
-/// executor-agnostic [`SpawnError`].
+/// `tokio::runtime::Handle::spawn`. Maps tokio's `JoinError` into [`TaskJoinError`].
 #[cfg(not(target_arch = "wasm32"))]
 pub(super) fn tokio_spawn_fn<T: Send + 'static>(
     handle: &tokio::runtime::Handle,
-) -> impl FnOnce(WorkerFuture<T>) -> WorkerJoinHandle<T> {
+) -> impl FnOnce(WorkerFuture<T>) -> (WorkerJoinHandle<T>, TaskAbort) {
     let h = handle.clone();
     move |future| {
         let jh = h.spawn(future);
-        Box::pin(async { jh.await.map_err(|e| SpawnError::new(e.to_string())) })
+        let abort = jh.abort_handle();
+        let join: WorkerJoinHandle<T> = Box::pin(async {
+            jh.await.map_err(|e| {
+                if e.is_cancelled() {
+                    TaskJoinError::Cancelled
+                } else {
+                    TaskJoinError::Failed
+                }
+            })
+        });
+        (join, abort)
     }
 }
 
@@ -55,6 +83,8 @@ type CommandReceiver = mpsc::UnboundedReceiver<WorkerCommand>;
 /// Output of the worker task: the worker state and the command receiver.
 pub(crate) type TaskOutput<T> = (T, CommandReceiver);
 
+pub(crate) type DiscardFuture = Shared<WorkerFuture<Result<(), PausableWorkerError>>>;
+
 /// A pausable worker which can be paused and restarted on forks.
 ///
 /// Used to allow a [`super::Worker`] to be paused while saving its state when
@@ -68,11 +98,17 @@ pub enum PausableWorker<T: Worker + MaybeSend + MaybeSync + 'static> {
         handle: WorkerJoinHandle<TaskOutput<T>>,
         sender: CommandSender,
         pause_requested: bool,
+        // `()` on wasm32, where discard cancels by dropping `handle` instead.
+        #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
+        abort: TaskAbort,
     },
     Paused {
         worker: T,
         sender: CommandSender,
         receiver: CommandReceiver,
+    },
+    Discarding {
+        completion: DiscardFuture,
     },
     InvalidState,
 }
@@ -90,12 +126,13 @@ impl<T: Worker + MaybeSend + MaybeSync + 'static> std::fmt::Debug for PausableWo
                 .debug_struct("PausableWorker::Paused")
                 .field("worker", worker)
                 .finish(),
+            Self::Discarding { .. } => write!(f, "PausableWorker::Discarding"),
             Self::InvalidState => write!(f, "PausableWorker::InvalidState"),
         }
     }
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub enum PausableWorkerError {
     InvalidState,
     TaskAborted,
@@ -166,10 +203,12 @@ impl<T: Worker + MaybeSend + MaybeSync + 'static> PausableWorker<T> {
     /// closure (tokio on native, spawn_local on wasm).
     pub fn start(
         &mut self,
-        spawn_fn: impl FnOnce(WorkerFuture<TaskOutput<T>>) -> WorkerJoinHandle<TaskOutput<T>>,
+        spawn_fn: impl FnOnce(
+            WorkerFuture<TaskOutput<T>>,
+        ) -> (WorkerJoinHandle<TaskOutput<T>>, TaskAbort),
     ) -> Result<(), PausableWorkerError> {
         match self {
-            PausableWorker::Running { .. } => Ok(()),
+            PausableWorker::Running { .. } | PausableWorker::Discarding { .. } => Ok(()),
             PausableWorker::Paused { .. } => {
                 debug!(?self, "Starting pausable worker");
                 let PausableWorker::Paused {
@@ -181,11 +220,12 @@ impl<T: Worker + MaybeSend + MaybeSync + 'static> PausableWorker<T> {
                     // Unreachable
                     return Ok(());
                 };
-                let handle = spawn_fn(Box::pin(run_worker(worker, receiver)));
+                let (handle, abort) = spawn_fn(Box::pin(run_worker(worker, receiver)));
                 *self = PausableWorker::Running {
                     handle,
                     sender,
                     pause_requested: false,
+                    abort,
                 };
                 Ok(())
             }
@@ -209,6 +249,7 @@ impl<T: Worker + MaybeSend + MaybeSync + 'static> PausableWorker<T> {
                 handle,
                 sender,
                 pause_requested,
+                ..
             } => {
                 debug!("Waiting for worker to pause");
                 if !*pause_requested {
@@ -219,6 +260,7 @@ impl<T: Worker + MaybeSend + MaybeSync + 'static> PausableWorker<T> {
                 handle.await
             }
             PausableWorker::Paused { .. } => return Ok(()),
+            PausableWorker::Discarding { completion } => return completion.clone().await,
             PausableWorker::InvalidState => return Err(PausableWorkerError::InvalidState),
         };
         let PausableWorker::Running { sender, .. } =
@@ -253,7 +295,9 @@ impl<T: Worker + MaybeSend + MaybeSync + 'static> PausableWorker<T> {
             PausableWorker::Running { sender, .. } | PausableWorker::Paused { sender, .. } => {
                 sender
             }
-            PausableWorker::InvalidState => return Err(PausableWorkerError::InvalidState),
+            PausableWorker::Discarding { .. } | PausableWorker::InvalidState => {
+                return Err(PausableWorkerError::InvalidState);
+            }
         };
         let (tx, rx) = oneshot::channel();
         sender
@@ -286,6 +330,80 @@ impl<T: Worker + MaybeSend + MaybeSync + 'static> PausableWorker<T> {
                 }
             }
         }
+    }
+
+    /// Cancel in-flight work and retain the completion future until the worker is dropped.
+    ///
+    /// Cancellation drops the entire worker, so run/flush state is never resumed. Keeping a
+    /// clone here lets fork and shutdown await destruction even if the original caller stops
+    /// waiting. A task that completed a pause before cancellation is dropped through its handle.
+    pub(crate) fn request_discard(&mut self) -> DiscardFuture {
+        let completion: WorkerFuture<Result<(), PausableWorkerError>> =
+            match std::mem::replace(self, Self::InvalidState) {
+                #[cfg(not(target_arch = "wasm32"))]
+                Self::Running { handle, abort, .. } => {
+                    // Tokio drops the task's future before the join handle resolves.
+                    abort.abort();
+                    Box::pin(async move {
+                        match handle.await {
+                            Ok(_) | Err(TaskJoinError::Cancelled) => Ok(()),
+                            Err(TaskJoinError::Failed) => Err(PausableWorkerError::TaskAborted),
+                        }
+                    })
+                }
+                #[cfg(target_arch = "wasm32")]
+                Self::Running { handle, sender, .. } => Box::pin(async move {
+                    // Dropping the remote handle cancels the task on a later executor turn. The
+                    // task owns the only command receiver, so `closed` resolves once the worker
+                    // has been destroyed.
+                    drop(handle);
+                    sender.closed().await;
+                    Ok(())
+                }),
+                Self::Discarding { completion } => {
+                    *self = Self::Discarding {
+                        completion: completion.clone(),
+                    };
+                    return completion;
+                }
+                // Drop the worker on first poll, after the caller releases the registry lock.
+                Self::Paused {
+                    worker,
+                    sender,
+                    receiver,
+                } => Box::pin(async move {
+                    drop((worker, sender, receiver));
+                    Ok(())
+                }),
+                Self::InvalidState => Box::pin(async { Err(PausableWorkerError::InvalidState) }),
+            };
+        let completion = completion.shared();
+        *self = Self::Discarding {
+            completion: completion.clone(),
+        };
+        completion
+    }
+
+    pub(crate) fn is_discarding(&self) -> bool {
+        matches!(self, Self::Discarding { .. })
+    }
+
+    /// True once a discard has finished destroying the worker.
+    pub(crate) fn is_retired(&self) -> bool {
+        matches!(self, Self::Discarding { completion } if completion.peek().is_some())
+    }
+
+    /// The retirement future of a worker that is being discarded.
+    pub(crate) fn discard_completion(&self) -> Option<DiscardFuture> {
+        match self {
+            Self::Discarding { completion } => Some(completion.clone()),
+            _ => None,
+        }
+    }
+
+    #[cfg(test)]
+    async fn discard(mut self) -> Result<(), PausableWorkerError> {
+        self.request_discard().await
     }
 
     /// Returns true if a pause command is queued in the paused receiver.
@@ -528,5 +646,163 @@ mod tests {
             pw.request_flush(),
             Err(PausableWorkerError::InvalidState)
         ));
+    }
+
+    /// Worker whose first `run` blocks until released, counting flushes and shutdowns.
+    #[derive(Debug)]
+    struct BlockingWorker {
+        triggered: bool,
+        run_started: Sender<()>,
+        release_run: Arc<tokio::sync::Notify>,
+        runs: Arc<AtomicU32>,
+        flushes: Arc<AtomicU32>,
+        shutdowns: Arc<AtomicU32>,
+    }
+
+    #[async_trait]
+    impl Worker for BlockingWorker {
+        async fn run(&mut self) {
+            self.runs.fetch_add(1, Ordering::SeqCst);
+            let _ = self.run_started.send(());
+            self.release_run.notified().await;
+        }
+
+        async fn trigger(&mut self) {
+            if self.triggered {
+                std::future::pending::<()>().await;
+            }
+            self.triggered = true;
+        }
+
+        async fn flush(&mut self) {
+            self.flushes.fetch_add(1, Ordering::SeqCst);
+        }
+
+        async fn shutdown(&mut self) {
+            self.shutdowns.fetch_add(1, Ordering::SeqCst);
+        }
+    }
+
+    struct BlockingSetup {
+        worker: PausableWorker<Box<dyn Worker>>,
+        run_started: Receiver<()>,
+        runs: Arc<AtomicU32>,
+        flushes: Arc<AtomicU32>,
+        shutdowns: Arc<AtomicU32>,
+    }
+
+    fn blocking_setup() -> BlockingSetup {
+        let (sender, run_started) = channel();
+        let release_run = Arc::new(tokio::sync::Notify::new());
+        let runs = Arc::new(AtomicU32::new(0));
+        let flushes = Arc::new(AtomicU32::new(0));
+        let shutdowns = Arc::new(AtomicU32::new(0));
+        let worker = BlockingWorker {
+            triggered: false,
+            run_started: sender,
+            release_run: release_run.clone(),
+            runs: runs.clone(),
+            flushes: flushes.clone(),
+            shutdowns: shutdowns.clone(),
+        };
+        BlockingSetup {
+            worker: PausableWorker::new(Box::new(worker)),
+            run_started,
+            runs,
+            flushes,
+            shutdowns,
+        }
+    }
+
+    // Discard cancels a pending run without releasing it, flushing, or running shutdown.
+    #[test]
+    fn test_discard_skips_queued_flush_and_shutdown() {
+        let mut setup = blocking_setup();
+        let runtime = Builder::new_multi_thread().enable_time().build().unwrap();
+        setup
+            .worker
+            .start(tokio_spawn_fn(runtime.handle()))
+            .unwrap();
+        setup
+            .run_started
+            .recv_timeout(Duration::from_secs(2))
+            .expect("worker did not run");
+
+        let token = setup.worker.request_flush().unwrap();
+        runtime.block_on(async {
+            tokio::time::timeout(Duration::from_secs(1), setup.worker.discard())
+                .await
+                .expect("discard waited for the blocked run")
+                .unwrap();
+        });
+
+        assert_eq!(setup.runs.load(Ordering::SeqCst), 1);
+        assert_eq!(setup.flushes.load(Ordering::SeqCst), 0);
+        assert_eq!(setup.shutdowns.load(Ordering::SeqCst), 0);
+        assert!(matches!(
+            runtime.block_on(token.wait()),
+            Err(WorkerHandleError::FlushAborted)
+        ));
+    }
+
+    // Discarding a paused worker drops it without flushing or shutting it down.
+    #[test]
+    fn test_discard_paused_worker() {
+        let setup = blocking_setup();
+        let runtime = Builder::new_current_thread().build().unwrap();
+        let token = setup.worker.request_flush().unwrap();
+
+        runtime.block_on(setup.worker.discard()).unwrap();
+
+        assert_eq!(setup.runs.load(Ordering::SeqCst), 0);
+        assert_eq!(setup.flushes.load(Ordering::SeqCst), 0);
+        assert_eq!(setup.shutdowns.load(Ordering::SeqCst), 0);
+        assert!(matches!(
+            runtime.block_on(token.wait()),
+            Err(WorkerHandleError::FlushAborted)
+        ));
+    }
+    #[test]
+    fn test_discard_cancels_in_flight_flush() {
+        #[derive(Debug)]
+        struct PendingFlush {
+            started: Sender<()>,
+            shutdowns: Arc<AtomicU32>,
+        }
+        #[async_trait]
+        impl Worker for PendingFlush {
+            async fn trigger(&mut self) {
+                std::future::pending::<()>().await;
+            }
+            async fn run(&mut self) {}
+            async fn flush(&mut self) {
+                let _ = self.started.send(());
+                std::future::pending::<()>().await;
+            }
+            async fn shutdown(&mut self) {
+                self.shutdowns.fetch_add(1, Ordering::SeqCst);
+            }
+        }
+        let runtime = Builder::new_multi_thread().enable_time().build().unwrap();
+        let (started, receiver) = channel();
+        let shutdowns = Arc::new(AtomicU32::new(0));
+        let mut worker = PausableWorker::new(PendingFlush {
+            started,
+            shutdowns: shutdowns.clone(),
+        });
+        worker.start(tokio_spawn_fn(runtime.handle())).unwrap();
+        let token = worker.request_flush().unwrap();
+        receiver.recv_timeout(Duration::from_secs(1)).unwrap();
+        runtime.block_on(async {
+            tokio::time::timeout(Duration::from_secs(1), worker.discard())
+                .await
+                .expect("discard waited for the blocked flush")
+                .unwrap();
+            assert!(matches!(
+                token.wait().await,
+                Err(WorkerHandleError::FlushAborted)
+            ));
+        });
+        assert_eq!(shutdowns.load(Ordering::SeqCst), 0);
     }
 }

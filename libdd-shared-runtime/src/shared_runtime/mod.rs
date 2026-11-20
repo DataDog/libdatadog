@@ -26,8 +26,13 @@ use libdd_capabilities::MaybeSend;
 use libdd_common::MutexExt;
 pub use pausable_worker::FlushToken;
 use pausable_worker::{PausableWorker, PausableWorkerError};
+use std::sync::atomic::{AtomicU8, Ordering};
 use std::sync::{Arc, Mutex};
 use std::{fmt, io};
+
+const ACTIVE: u8 = 0;
+const DISCARD_CLAIMED: u8 = 1;
+const STOP_CLAIMED: u8 = 2;
 
 /// A worker registered on a [`SharedRuntime`].
 pub(crate) type BoxedWorker = Box<dyn Worker>;
@@ -37,6 +42,52 @@ pub(crate) struct WorkerEntry {
     pub(crate) id: u64,
     pub(crate) restart_on_fork: bool,
     pub(crate) worker: PausableWorker<BoxedWorker>,
+    pub(crate) disposition: Arc<AtomicU8>,
+}
+
+/// Takes the workers that shutdown stops. Discarding workers stay registered and only their
+/// retirement futures are returned, so a cancelled shutdown cannot drop the only record of a
+/// retirement that is still in progress. Finished retirements are unregistered here.
+pub(crate) fn take_for_shutdown(
+    workers: &Mutex<Vec<WorkerEntry>>,
+) -> (Vec<WorkerEntry>, Vec<pausable_worker::DiscardFuture>) {
+    let mut workers = workers.lock_or_panic();
+    for entry in workers.iter_mut() {
+        if entry.disposition.compare_exchange(
+            ACTIVE,
+            STOP_CLAIMED,
+            Ordering::AcqRel,
+            Ordering::Acquire,
+        ) == Err(DISCARD_CLAIMED)
+            && !entry.worker.is_discarding()
+        {
+            drop(entry.worker.request_discard());
+        }
+    }
+    workers.retain(|entry| !entry.worker.is_retired());
+    let retirements: Vec<_> = workers
+        .iter()
+        .filter_map(|entry| entry.worker.discard_completion())
+        .collect();
+    if retirements.is_empty() {
+        return (std::mem::take(&mut *workers), retirements);
+    }
+    let taken = workers
+        .extract_if(.., |entry| !entry.worker.is_discarding())
+        .collect();
+    (taken, retirements)
+}
+
+/// Waits for the retirements returned by [`take_for_shutdown`].
+///
+/// The registry is not touched after the await (see [`WorkerHandle::discard`]); the next
+/// discard, fork or shutdown unregisters the retired entries.
+pub(crate) async fn finish_retirements(retirements: Vec<pausable_worker::DiscardFuture>) {
+    for retirement in retirements {
+        if let Err(e) = retirement.await {
+            tracing::error!("Discarded worker failed: {:?}", e);
+        }
+    }
 }
 
 /// Common interface for all [`SharedRuntime`] implementations.
@@ -186,6 +237,7 @@ pub trait BlockingRuntime: SharedRuntime {
 pub struct WorkerHandle {
     pub(crate) worker_id: u64,
     pub(crate) workers: Arc<Mutex<Vec<WorkerEntry>>>,
+    pub(crate) disposition: Arc<AtomicU8>,
 }
 
 #[derive(Debug)]
@@ -217,6 +269,26 @@ impl From<PausableWorkerError> for WorkerHandleError {
 }
 
 impl WorkerHandle {
+    /// Claim non-flushing retirement without waiting for the worker registry or executor.
+    ///
+    /// This records ownership only; cancellation begins when discard is polled or when
+    /// shutdown or fork processes the claim. Shutdown and fork will not gracefully stop or
+    /// restart a claimed worker, even if the discard future is never polled.
+    ///
+    /// # Errors
+    /// Returns an error if graceful stop or shutdown already claimed the worker.
+    pub fn claim_discard(&self) -> Result<(), WorkerHandleError> {
+        match self.disposition.compare_exchange(
+            ACTIVE,
+            DISCARD_CLAIMED,
+            Ordering::AcqRel,
+            Ordering::Acquire,
+        ) {
+            Ok(_) | Err(DISCARD_CLAIMED) => Ok(()),
+            Err(_) => Err(WorkerHandleError::AlreadyStopped),
+        }
+    }
+
     /// Configure whether this worker restarts in a fork child.
     ///
     /// When disabled, the next [`ForkSafeRuntime::after_fork_child`] call drops the worker without
@@ -233,6 +305,9 @@ impl WorkerHandle {
         else {
             return Err(WorkerHandleError::AlreadyStopped);
         };
+        if entry.disposition.load(Ordering::Acquire) != ACTIVE || entry.worker.is_discarding() {
+            return Err(WorkerHandleError::AlreadyStopped);
+        }
         entry.restart_on_fork = restart_on_fork;
         Ok(())
     }
@@ -251,6 +326,9 @@ impl WorkerHandle {
         let Some(entry) = workers_lock.iter().find(|entry| entry.id == self.worker_id) else {
             return Err(WorkerHandleError::AlreadyStopped);
         };
+        if entry.disposition.load(Ordering::Acquire) != ACTIVE || entry.worker.is_discarding() {
+            return Err(WorkerHandleError::AlreadyStopped);
+        }
         Ok(entry.worker.request_flush()?)
     }
 
@@ -272,12 +350,64 @@ impl WorkerHandle {
             else {
                 return Err(WorkerHandleError::AlreadyStopped);
             };
+            if workers_lock[position]
+                .disposition
+                .compare_exchange(ACTIVE, STOP_CLAIMED, Ordering::AcqRel, Ordering::Acquire)
+                .is_err()
+                || workers_lock[position].worker.is_discarding()
+            {
+                return Err(WorkerHandleError::AlreadyStopped);
+            }
             let WorkerEntry { worker, .. } = workers_lock.swap_remove(position);
             worker
         };
         worker.pause().await?;
         worker.shutdown().await;
         Ok(())
+    }
+
+    /// Cancel the worker and drop it without executing its shutdown logic.
+    ///
+    /// In-flight run and flush futures are dropped instead of waiting for network I/O. Queued
+    /// flushes are aborted and shutdown is never called. Work already sent cannot be recalled.
+    /// Cancellation is cooperative: synchronous code and destructors must return for retirement
+    /// to complete. Callers may bound their wait with `BlockingRuntime::block_on_with_timeout`
+    /// on native targets.
+    ///
+    /// # Cancel safety
+    /// On the first poll, the worker stops accepting flush/restart requests. It stays tracked
+    /// until destruction completes, so fork and shutdown can finish retirement if this future
+    /// is dropped. Calling discard again resumes the same retirement.
+    ///
+    /// # Fork safety
+    /// Only the first poll locks the worker registry. The rest of the wait never touches it, so
+    /// a discard that is already waiting when [`ForkSafeRuntime::before_fork`] runs is safe.
+    /// While a fork is in progress, from `before_fork` until the matching `after_fork_*` call,
+    /// no other thread may make that first poll: if it holds the registry lock when `fork()`
+    /// runs, [`ForkSafeRuntime::after_fork_child`] deadlocks. The thread running the fork hooks
+    /// may call discard. The same rule applies to the other registry operations, such as
+    /// [`flush`](Self::flush), [`stop`](Self::stop), `spawn_worker` and `shutdown_async`.
+    ///
+    /// # Errors
+    /// Returns an error if the worker has already been removed or its task failed. A discard
+    /// called after retirement has finished returns `AlreadyStopped`.
+    pub async fn discard(self) -> Result<(), WorkerHandleError> {
+        self.claim_discard()?;
+        let completion = {
+            let mut workers = self.workers.lock_or_panic();
+            // Unregister finished retirements, including this worker's own.
+            workers.retain(|entry| !entry.worker.is_retired());
+            let entry = workers
+                .iter_mut()
+                .find(|entry| entry.id == self.worker_id)
+                .ok_or(WorkerHandleError::AlreadyStopped)?;
+            entry.worker.request_discard()
+        };
+        // Do not touch the registry after this await. before_fork can finish the retirement
+        // and wake this waiter just before fork(), and a lock taken then could be held at the
+        // fork instant, deadlocking after_fork_child. The next discard, fork or shutdown
+        // unregisters the retired entry.
+        completion.await.map_err(WorkerHandleError::from)
     }
 }
 
