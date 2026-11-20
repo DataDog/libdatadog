@@ -58,6 +58,8 @@ pub enum Outcome {
     OomError,
     /// The API succeeded despite the failed allocation.
     SuccessFallback,
+    /// The API returned, but its handles are not in their documented state afterwards.
+    ContractViolation,
     Panic,
     Abort,
     Timeout,
@@ -72,6 +74,7 @@ impl Outcome {
         match self {
             Outcome::OomError => "oom-error",
             Outcome::SuccessFallback => "success-fallback",
+            Outcome::ContractViolation => "contract-violation",
             Outcome::Panic => "panic",
             Outcome::Abort => "abort",
             Outcome::Timeout => "timeout",
@@ -165,6 +168,7 @@ pub fn worker_main(args: &[String]) -> ! {
     }));
 
     allocator::reset();
+    allocator::write_stack_on_first_failure();
     if mode != Mode::Baseline
         && let Err(e) = allocator::set_expected(&expected)
     {
@@ -177,6 +181,10 @@ pub fn worker_main(args: &[String]) -> ! {
         let _scope = Scope::enter(mode.policy(ordinal));
         (scenario.run)(&mut fixture)
     };
+    let (other_threads, other_overflow) = allocator::other_threads();
+    let contract = scenario
+        .check
+        .map(|check| check(&mut fixture, result.is_err()));
     drop(fixture);
 
     let trace = match allocator::recorded() {
@@ -199,6 +207,18 @@ pub fn worker_main(args: &[String]) -> ! {
         }
     };
     let _ = writeln!(out, "result {result}");
+    match contract {
+        None | Some(Ok(())) => {}
+        Some(Err(violation)) => {
+            let _ = writeln!(out, "contract {}", violation.replace('\n', " "));
+        }
+    }
+    for (thread, count, bytes) in other_threads {
+        let _ = writeln!(out, "other-thread {thread} {count} {bytes}");
+    }
+    if other_overflow > 0 {
+        let _ = writeln!(out, "other-thread-overflow {other_overflow}");
+    }
     let _ = writeln!(out, "injected {}", allocator::injected());
     if let Some(at) = allocator::diverged_at() {
         let _ = writeln!(out, "diverged {at}");
@@ -219,6 +239,10 @@ pub struct WorkerRun {
     /// Exit status, signal, or the reason of the classification.
     pub detail: String,
     pub stderr: String,
+    /// Allocations of other threads during the scope: `(thread, count, bytes)`.
+    pub other_threads: Vec<(u32, u64, u64)>,
+    /// Other-thread allocations that could not be attributed to a thread.
+    pub other_threads_unattributed: u64,
 }
 
 fn timeout() -> Duration {
@@ -325,6 +349,11 @@ pub fn run_worker(
                 )
             } else if panicked {
                 (Outcome::Panic, format!("panic caught, result {result}"))
+            } else if let Some(violation) = field("contract") {
+                (
+                    Outcome::ContractViolation,
+                    format!("result {result}: {violation}"),
+                )
             } else if result == "oom-error" {
                 (Outcome::OomError, String::new())
             } else if result == "ok" {
@@ -339,11 +368,27 @@ pub fn run_worker(
         Some(status) if is_abort(&status) => (Outcome::Abort, status.to_string()),
         Some(status) => (Outcome::Crash, status.to_string()),
     };
+    let other_threads = stdout
+        .lines()
+        .filter_map(|line| {
+            let mut it = line.strip_prefix("other-thread ")?.split(' ');
+            Some((
+                it.next()?.parse().ok()?,
+                it.next()?.parse().ok()?,
+                it.next()?.parse().ok()?,
+            ))
+        })
+        .collect();
+    let other_threads_unattributed = field("other-thread-overflow")
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(0);
     Ok(WorkerRun {
         outcome,
         trace,
         detail,
         stderr,
+        other_threads,
+        other_threads_unattributed,
     })
 }
 
@@ -363,6 +408,12 @@ pub struct Finding {
 pub struct Report {
     pub scenario: &'static str,
     pub baseline: Vec<Event>,
+    /// Allocations of other threads during the baseline scope: `(thread, count, bytes)`.
+    /// They are reported, not enumerated.
+    pub other_threads: Vec<(u32, u64, u64)>,
+    pub other_threads_unattributed: u64,
+    /// Set for an I/O-bound scenario whose two baselines differ.
+    pub unstable_baseline: Option<String>,
     pub runs: Vec<Finding>,
 }
 
@@ -379,6 +430,30 @@ impl Report {
         let mut s = String::new();
         let _ = writeln!(s, "## {}\n", self.scenario);
         let _ = writeln!(s, "Baseline: {} events.\n", self.baseline.len());
+        if let Some(reason) = &self.unstable_baseline {
+            let _ = writeln!(
+                s,
+                "I/O-bound scenario: {reason}. Runs past the common prefix can be \
+                 nondeterministic.\n"
+            );
+        }
+        if !self.other_threads.is_empty() || self.other_threads_unattributed > 0 {
+            let _ = writeln!(
+                s,
+                "Other threads during the baseline (not enumerated, never failed):\n"
+            );
+            for (thread, count, bytes) in &self.other_threads {
+                let _ = writeln!(s, "- thread {thread}: {count} allocations, {bytes} bytes");
+            }
+            if self.other_threads_unattributed > 0 {
+                let _ = writeln!(
+                    s,
+                    "- unattributed: {} allocations",
+                    self.other_threads_unattributed
+                );
+            }
+            let _ = writeln!(s);
+        }
         let _ = writeln!(
             s,
             "| mode | ordinal | domain | operation | size | align | thread | outcome | detail |"
@@ -425,15 +500,17 @@ impl Report {
 /// Runs the baseline twice (it must succeed and be stable), then one worker per ordinal and
 /// mode. Returns `Err` only for harness errors.
 pub fn enumerate(scenario: &'static str) -> Result<Report, String> {
-    enumerate_inner(scenario, false)
+    enumerate_inner(scenario, false, false)
 }
 
 /// Like [`enumerate`], then captures the allocation stack of every run that is not `oom-error`.
-pub fn enumerate_with_stacks(scenario: &'static str) -> Result<Report, String> {
-    enumerate_inner(scenario, true)
+/// With `io_bound`, the trace depends on I/O timing: an unstable baseline is reported, not a
+/// harness error.
+pub fn enumerate_with_stacks(scenario: &'static str, io_bound: bool) -> Result<Report, String> {
+    enumerate_inner(scenario, true, io_bound)
 }
 
-fn enumerate_inner(scenario: &'static str, stacks: bool) -> Result<Report, String> {
+fn enumerate_inner(scenario: &'static str, stacks: bool, io_bound: bool) -> Result<Report, String> {
     let baseline = run_worker(scenario, Mode::Baseline, 0, &[])?;
     if baseline.outcome != Outcome::SuccessFallback {
         return Err(format!(
@@ -450,12 +527,17 @@ fn enumerate_inner(scenario: &'static str, stacks: bool) -> Result<Report, Strin
             .iter()
             .zip(&baseline.trace)
             .all(|(a, b)| a.same_request(b));
-    if !stable {
-        return Err(format!(
-            "{scenario}: baseline trace is not stable ({} then {} events)",
+    let unstable_baseline = (!stable).then(|| {
+        format!(
+            "baseline trace is not stable ({} then {} events)",
             baseline.trace.len(),
             again.trace.len()
-        ));
+        )
+    });
+    if let Some(reason) = &unstable_baseline
+        && !io_bound
+    {
+        return Err(format!("{scenario}: {reason}"));
     }
     if let Some(e) = baseline
         .trace
@@ -467,19 +549,24 @@ fn enumerate_inner(scenario: &'static str, stacks: bool) -> Result<Report, Strin
         ));
     }
 
-    let mut runs = Vec::new();
-    for event in &baseline.trace {
-        for mode in [Mode::FailOnce, Mode::FailFrom] {
-            let run = run_worker(scenario, mode, event.ordinal, &baseline.trace)?;
-            runs.push(Finding {
-                mode,
-                ordinal: event.ordinal,
-                event: *event,
-                run,
-                call_site: None,
-                allocation_stack: None,
-            });
-        }
+    let jobs: Vec<(Event, Mode)> = baseline
+        .trace
+        .iter()
+        .flat_map(|event| [(*event, Mode::FailOnce), (*event, Mode::FailFrom)])
+        .collect();
+    let results = run_parallel(&jobs, |&(event, mode)| {
+        run_worker(scenario, mode, event.ordinal, &baseline.trace)
+    });
+    let mut runs = Vec::with_capacity(jobs.len());
+    for ((event, mode), run) in jobs.into_iter().zip(results) {
+        runs.push(Finding {
+            mode,
+            ordinal: event.ordinal,
+            event,
+            run: run?,
+            call_site: None,
+            allocation_stack: None,
+        });
     }
     if stacks {
         capture_stacks(scenario, &baseline.trace, &mut runs);
@@ -487,6 +574,9 @@ fn enumerate_inner(scenario: &'static str, stacks: bool) -> Result<Report, Strin
     let report = Report {
         scenario,
         baseline: baseline.trace,
+        other_threads: baseline.other_threads,
+        other_threads_unattributed: baseline.other_threads_unattributed,
+        unstable_baseline,
         runs,
     };
     write_report(&report);
@@ -507,22 +597,140 @@ fn write_report(report: &Report) {
     }
 }
 
-fn capture_stacks(scenario: &str, baseline: &[Event], runs: &mut [Finding]) {
-    let Some(debugger) = debugger() else {
-        eprintln!("{scenario}: no gdb or lldb, allocation stacks were not captured");
-        return;
+/// Worker processes started at the same time: `ALLOC_CHAOS_JOBS`, or the available parallelism.
+fn jobs() -> usize {
+    std::env::var("ALLOC_CHAOS_JOBS")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .or_else(|| std::thread::available_parallelism().ok().map(usize::from))
+        .unwrap_or(1)
+        .max(1)
+}
+
+/// Runs `f` on every item on [`jobs`] threads. Results keep the order of `items`.
+fn run_parallel<T: Sync, R: Send>(items: &[T], f: impl Fn(&T) -> R + Sync) -> Vec<R> {
+    let next = std::sync::atomic::AtomicUsize::new(0);
+    let results: Vec<std::sync::Mutex<Option<R>>> =
+        items.iter().map(|_| std::sync::Mutex::new(None)).collect();
+    std::thread::scope(|scope| {
+        for _ in 0..jobs().min(items.len()) {
+            scope.spawn(|| {
+                loop {
+                    let index = next.fetch_add(1, Ordering::Relaxed);
+                    let Some(item) = items.get(index) else {
+                        break;
+                    };
+                    let result = f(item);
+                    *results[index].lock().unwrap_or_else(|e| e.into_inner()) = Some(result);
+                }
+            });
+        }
+    });
+    results
+        .into_iter()
+        .map(|slot| {
+            slot.into_inner()
+                .unwrap_or_else(|e| e.into_inner())
+                .expect("every item ran")
+        })
+        .collect()
+}
+
+/// Symbolizes the stack a worker wrote on its first injected failure. The addresses are mapped
+/// into this process with the address of `alloc_chaos_injection_hook`: same executable.
+fn worker_stack(stderr: &str) -> Option<Vec<String>> {
+    let parse = |line: &str, prefix: &str| {
+        line.strip_prefix(prefix)
+            .and_then(|hex| usize::from_str_radix(hex.trim(), 16).ok())
     };
-    let dir = std::path::Path::new(env!("CARGO_TARGET_TMPDIR")).join("allocation_failure");
-    if std::fs::create_dir_all(&dir).is_err() {
-        return;
+    let base = stderr
+        .lines()
+        .find_map(|line| parse(line, allocator::STACK_BASE_PREFIX))?;
+    let here = allocator::alloc_chaos_injection_hook as *const () as usize;
+    let mut frames = Vec::new();
+    for (i, ip) in stderr
+        .lines()
+        .filter_map(|line| parse(line, allocator::STACK_FRAME_PREFIX))
+        .enumerate()
+    {
+        let addr = ip.wrapping_add(here).wrapping_sub(base);
+        // A return address points after the call: look up the call itself.
+        let lookup = if i == 0 { addr } else { addr.wrapping_sub(1) };
+        let before = frames.len();
+        backtrace::resolve(lookup as *mut std::ffi::c_void, |symbol| {
+            let name = symbol
+                .name()
+                .map(|name| format!("{name:#}"))
+                .unwrap_or_else(|| "??".to_string());
+            let frame = match (symbol.filename(), symbol.lineno()) {
+                (Some(file), Some(line)) => {
+                    format!("#{} {name} at {}:{line}", frames.len(), file.display())
+                }
+                _ => format!("#{} {name}", frames.len()),
+            };
+            frames.push(frame);
+        });
+        if frames.len() == before {
+            frames.push(format!("#{} 0x{addr:x}", frames.len()));
+        }
     }
-    for finding in runs {
+    (!frames.is_empty()).then_some(frames)
+}
+
+/// Maximum number of runs replayed under a debugger when their own stack has no owned frame.
+const REPLAY_LIMIT: usize = 32;
+
+/// Takes each run's stack from the worker's own output. A run without an owned frame there, or
+/// every run with `ALLOC_CHAOS_DEBUGGER=gdb|lldb`, is replayed under a debugger stopped on
+/// `alloc_chaos_injection_hook`.
+fn capture_stacks(scenario: &str, baseline: &[Event], runs: &mut [Finding]) {
+    let force_debugger = std::env::var_os("ALLOC_CHAOS_DEBUGGER").is_some();
+    let mut replay = Vec::new();
+    for (index, finding) in runs.iter_mut().enumerate() {
         if matches!(
             finding.run.outcome,
             Outcome::OomError | Outcome::Nondeterministic | Outcome::Timeout
         ) {
             continue;
         }
+        if !force_debugger {
+            match worker_stack(&finding.run.stderr) {
+                Some(frames) => {
+                    finding.call_site = frames.iter().find(|line| is_owned_frame(line)).cloned();
+                    finding.allocation_stack = Some(frames.join("\n"));
+                }
+                None => {
+                    finding.allocation_stack = Some("the worker wrote no stack".to_string());
+                }
+            }
+            if finding.call_site.is_some() {
+                continue;
+            }
+        }
+        replay.push(index);
+    }
+    if replay.is_empty() {
+        return;
+    }
+    // A debugger run takes seconds. When symbolization fails for many runs, report the missing
+    // call sites rather than replaying for hours.
+    if !force_debugger && replay.len() > REPLAY_LIMIT {
+        eprintln!(
+            "{scenario}: {} runs have no owned frame, more than {REPLAY_LIMIT}: not replayed",
+            replay.len()
+        );
+        return;
+    }
+    let Some(debugger) = debugger() else {
+        eprintln!("{scenario}: no gdb or lldb, allocation stacks were not replayed");
+        return;
+    };
+    let dir = std::path::Path::new(env!("CARGO_TARGET_TMPDIR")).join("allocation_failure");
+    if std::fs::create_dir_all(&dir).is_err() {
+        return;
+    }
+    for index in replay {
+        let finding = &mut runs[index];
         let input = dir.join(format!(
             "stdin-{}-{}-{}-{}.txt",
             scenario,
@@ -548,7 +756,7 @@ fn capture_stacks(scenario: &str, baseline: &[Event], runs: &mut [Finding]) {
     }
 }
 
-/// `ALLOC_CHAOS_DEBUGGER=gdb|lldb` forces one; otherwise gdb, then lldb.
+/// `ALLOC_CHAOS_DEBUGGER=gdb|lldb` picks one; otherwise gdb, then lldb.
 fn debugger() -> Option<&'static str> {
     match std::env::var("ALLOC_CHAOS_DEBUGGER").as_deref() {
         Ok("gdb") => return command_ok("gdb").then_some("gdb"),

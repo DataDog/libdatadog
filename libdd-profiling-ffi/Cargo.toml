@@ -95,9 +95,12 @@ libdd-shared-runtime-ffi = { path = "../libdd-shared-runtime-ffi", default-featu
 libdd-otel-thread-ctx-ffi = { path = "../libdd-otel-thread-ctx-ffi", default-features = false, optional = true }
 
 [dev-dependencies]
+backtrace = "0.3.74"
 libdd-alloc = { path = "../libdd-alloc" }
 libdd-common = { path = "../libdd-common" }
 libdd-common-ffi = { path = "../libdd-common-ffi", features = ["std"] }
+# zstd contexts allocate through the Rust global allocator, so the harness can fail them.
+zstd = { workspace = true, features = ["with-rust-allocator"] }
 
 # Experimental allocation-failure harness: replaces the global allocator of its own binary.
 [[test]]

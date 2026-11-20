@@ -18,7 +18,12 @@ pub struct Scenario {
     pub name: &'static str,
     pub setup: fn() -> Box<dyn Any>,
     pub run: fn(&mut Box<dyn Any>) -> Result<(), ScenarioError>,
+    /// Post-failure contract, checked once the scope has ended (allocations work again). The
+    /// flag is `true` when `run` returned an error. `Err` describes the violation.
+    pub check: Option<PostCheck>,
 }
+
+pub type PostCheck = fn(&mut Box<dyn Any>, bool) -> Result<(), String>;
 
 fn no_fixture() -> Box<dyn Any> {
     Box::new(())
@@ -29,6 +34,16 @@ pub const TOY_BOX_NEW: &str = "toy_box_new";
 pub const TOY_VEC_PUSH: &str = "toy_vec_push";
 pub const TOY_VEC_TRY_RESERVE: &str = "toy_vec_try_reserve";
 pub const TOY_STRING_FORMAT: &str = "toy_string_format";
+/// Like [`TOY_VEC_TRY_RESERVE`], with a post-failure check that rejects every failed call.
+pub const TOY_CONTRACT_VIOLATION: &str = "toy_contract_violation";
+
+fn run_try_reserve(_: &mut Box<dyn Any>) -> Result<(), ScenarioError> {
+    let mut v: Vec<u8> = Vec::new();
+    v.try_reserve(black_box(1024))
+        .map_err(|_| ScenarioError::Oom)?;
+    black_box(v);
+    Ok(())
+}
 
 pub const SCENARIOS: &[Scenario] = &[
     Scenario {
@@ -38,6 +53,7 @@ pub const SCENARIOS: &[Scenario] = &[
             black_box(Box::new(black_box([7u8; 64])));
             Ok(())
         },
+        check: None,
     },
     Scenario {
         name: TOY_VEC_PUSH,
@@ -50,17 +66,25 @@ pub const SCENARIOS: &[Scenario] = &[
             black_box(v);
             Ok(())
         },
+        check: None,
     },
     Scenario {
         name: TOY_VEC_TRY_RESERVE,
         setup: no_fixture,
-        run: |_| {
-            let mut v: Vec<u8> = Vec::new();
-            v.try_reserve(black_box(1024))
-                .map_err(|_| ScenarioError::Oom)?;
-            black_box(v);
-            Ok(())
-        },
+        run: run_try_reserve,
+        check: None,
+    },
+    Scenario {
+        name: TOY_CONTRACT_VIOLATION,
+        setup: no_fixture,
+        run: run_try_reserve,
+        check: Some(|_, failed| {
+            if failed {
+                Err("rejected by the toy check".to_string())
+            } else {
+                Ok(())
+            }
+        }),
     },
     Scenario {
         name: TOY_STRING_FORMAT,
@@ -69,6 +93,7 @@ pub const SCENARIOS: &[Scenario] = &[
             black_box(format!("{}-{}", black_box(42), black_box("forty-two")));
             Ok(())
         },
+        check: None,
     },
 ];
 
@@ -147,6 +172,7 @@ pub fn find(name: &str) -> Option<&'static Scenario> {
         .iter()
         .chain(TAG_SCENARIOS)
         .chain(ARENA_SCENARIOS)
+        .chain(crate::lifecycle::SCENARIOS)
         .find(|s| s.name == name)
 }
 
@@ -161,11 +187,13 @@ const TAG_SCENARIOS: &[Scenario] = &[
             ))
         },
         run: run_tag_push,
+        check: None,
     },
     Scenario {
         name: TAG_PUSH_AT_CAPACITY,
         setup: || Box::new(tag_push("env", "prod", fill_to_capacity())),
         run: run_tag_push,
+        check: None,
     },
     Scenario {
         name: TAG_PUSH_LONG,
@@ -177,6 +205,7 @@ const TAG_SCENARIOS: &[Scenario] = &[
             })
         },
         run: run_tag_push,
+        check: None,
     },
 ];
 
@@ -249,26 +278,31 @@ const ARENA_SCENARIOS: &[Scenario] = &[
         name: ARENA_FIRST,
         setup: || Box::new(request_arena()),
         run: run_arena_8,
+        check: None,
     },
     Scenario {
         name: ARENA_SPARE,
         setup: || Box::new(arena_leaving(1024)),
         run: run_arena_8,
+        check: None,
     },
     Scenario {
         name: ARENA_EXHAUSTED,
         setup: || Box::new(arena_leaving(32)),
         run: run_arena_32,
+        check: None,
     },
     Scenario {
         name: ARENA_GROW,
         setup: || Box::new(arena_leaving(0)),
         run: run_arena_1,
+        check: None,
     },
     Scenario {
         name: ARENA_OVERSIZED,
         setup: || Box::new(request_arena()),
         run: run_arena_oversized,
+        check: None,
     },
     Scenario {
         name: ARENA_STRING_TABLE,
@@ -282,6 +316,7 @@ const ARENA_SCENARIOS: &[Scenario] = &[
                 .map(|_| ())
                 .map_err(|_| ScenarioError::Oom)
         },
+        check: None,
     },
     Scenario {
         name: ARENA_SET,
@@ -298,6 +333,7 @@ const ARENA_SCENARIOS: &[Scenario] = &[
                 .map(|_| ())
                 .map_err(|_| ScenarioError::Oom)
         },
+        check: None,
     },
     Scenario {
         name: ARENA_SLICE_SET,
@@ -315,5 +351,6 @@ const ARENA_SCENARIOS: &[Scenario] = &[
                 .map(|_| ())
                 .map_err(|_| ScenarioError::Oom)
         },
+        check: None,
     },
 ];

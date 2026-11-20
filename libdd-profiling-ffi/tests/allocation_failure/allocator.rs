@@ -7,7 +7,8 @@
 //! Outside a scope, every call is forwarded unchanged. Inside a scope (per thread), every
 //! allocation attempt (`alloc`, `alloc_zeroed`, `realloc`) gets an ordinal, is recorded in a
 //! preallocated trace, and fails when the scope's policy says so. `dealloc` is never counted and
-//! never fails.
+//! never fails. While a scope is active, allocations of the other threads are only counted per
+//! thread: they are forwarded unchanged and never fail.
 //!
 //! The allocator callbacks only use constant-initialized thread-locals and atomics: no
 //! allocation, formatting, logging, stack walking or panic.
@@ -145,6 +146,29 @@ static DIVERGED_AT: AtomicU64 = AtomicU64::new(u64::MAX);
 static INJECTED: AtomicU64 = AtomicU64::new(0);
 static NEXT_THREAD_ID: AtomicU32 = AtomicU32::new(1);
 
+/// Number of threads currently inside a scope.
+static ACTIVE_SCOPES: AtomicU32 = AtomicU32::new(0);
+
+/// Maximum number of other threads whose allocations are counted while a scope is active.
+pub const OTHER_THREAD_CAPACITY: usize = 16;
+
+/// Allocations made by threads outside any scope while another thread is in one. They are
+/// counted per thread and never fail: they are reported, not enumerated.
+struct OtherThread {
+    thread: AtomicU32,
+    count: AtomicU64,
+    bytes: AtomicU64,
+}
+
+static OTHER_THREADS: [OtherThread; OTHER_THREAD_CAPACITY] = [const {
+    OtherThread {
+        thread: AtomicU32::new(0),
+        count: AtomicU64::new(0),
+        bytes: AtomicU64::new(0),
+    }
+}; OTHER_THREAD_CAPACITY];
+static OTHER_THREADS_OVERFLOW: AtomicU64 = AtomicU64::new(0);
+
 thread_local! {
     static DEPTH: Cell<u32> = const { Cell::new(0) };
     static POLICY: Cell<Policy> = const { Cell::new(Policy::Observe) };
@@ -157,6 +181,59 @@ thread_local! {
 #[inline(never)]
 pub fn alloc_chaos_injection_hook(ordinal: u64) {
     std::hint::black_box(ordinal);
+}
+
+static WRITE_STACK: AtomicBool = AtomicBool::new(false);
+
+/// Workers write the stack of their first injected failure to stderr.
+pub fn write_stack_on_first_failure() {
+    WRITE_STACK.store(true, Ordering::Relaxed);
+}
+
+/// Maximum number of return addresses written for the first injected failure.
+const STACK_FRAMES: usize = 128;
+pub const STACK_BASE_PREFIX: &str = "alloc-chaos-base ";
+pub const STACK_FRAME_PREFIX: &str = "alloc-chaos-frame ";
+
+/// Writes `prefix`, `value` in hexadecimal and a newline to stderr, without allocating.
+fn write_hex_line(prefix: &str, value: usize) {
+    use std::io::Write;
+    let mut line = [0u8; 64];
+    let prefix = prefix.as_bytes();
+    line[..prefix.len()].copy_from_slice(prefix);
+    let mut len = prefix.len();
+    let digits = (usize::BITS as usize / 4).max(1);
+    let mut started = false;
+    for shift in (0..digits).rev() {
+        let nibble = (value >> (shift * 4)) & 0xf;
+        if nibble != 0 || started || shift == 0 {
+            started = true;
+            line[len] = b"0123456789abcdef"[nibble];
+            len += 1;
+        }
+    }
+    line[len] = b'\n';
+    let _ = std::io::stderr().write_all(&line[..=len]);
+}
+
+/// Writes the return addresses of the current stack to stderr, with the address of
+/// [`alloc_chaos_injection_hook`] so the controller can map them into its own address space.
+/// Written right away: the process may abort just after.
+fn write_stack() {
+    write_hex_line(
+        STACK_BASE_PREFIX,
+        alloc_chaos_injection_hook as *const () as usize,
+    );
+    let mut frames = 0;
+    // SAFETY: the closure only formats into a stack buffer and writes to stderr. Concurrent
+    // unsynchronized traces are allowed on the supported platforms.
+    unsafe {
+        backtrace::trace_unsynchronized(|frame| {
+            write_hex_line(STACK_FRAME_PREFIX, frame.ip() as usize);
+            frames += 1;
+            frames < STACK_FRAMES
+        });
+    }
 }
 
 fn thread_id() -> u32 {
@@ -191,6 +268,31 @@ pub fn observe(domain: Domain, operation: Operation, size: usize, align: usize) 
     on_allocation(domain, operation, size, align)
 }
 
+fn count_other_thread(size: usize) {
+    let thread = thread_id();
+    if thread == 0 {
+        // The thread-local is gone: the thread is exiting.
+        OTHER_THREADS_OVERFLOW.fetch_add(1, Ordering::Relaxed);
+        return;
+    }
+    for slot in &OTHER_THREADS {
+        let owner =
+            match slot
+                .thread
+                .compare_exchange(0, thread, Ordering::Relaxed, Ordering::Relaxed)
+            {
+                Ok(_) => thread,
+                Err(owner) => owner,
+            };
+        if owner == thread {
+            slot.count.fetch_add(1, Ordering::Relaxed);
+            slot.bytes.fetch_add(size as u64, Ordering::Relaxed);
+            return;
+        }
+    }
+    OTHER_THREADS_OVERFLOW.fetch_add(1, Ordering::Relaxed);
+}
+
 /// Counts and records one allocation attempt of the current thread. Returns `true` if it must
 /// fail. Returns `false` outside a scope.
 fn on_allocation(domain: Domain, operation: Operation, size: usize, align: usize) -> bool {
@@ -206,6 +308,9 @@ fn on_allocation(domain: Domain, operation: Operation, size: usize, align: usize
         });
         Some((policy, ordinal))
     }) else {
+        if ACTIVE_SCOPES.load(Ordering::Relaxed) > 0 {
+            count_other_thread(size);
+        }
         return false;
     };
 
@@ -239,7 +344,9 @@ fn on_allocation(domain: Domain, operation: Operation, size: usize, align: usize
     }
 
     if policy.fails(ordinal) && DIVERGED_AT.load(Ordering::Relaxed) == u64::MAX {
-        INJECTED.fetch_add(1, Ordering::Relaxed);
+        if INJECTED.fetch_add(1, Ordering::Relaxed) == 0 && WRITE_STACK.load(Ordering::Relaxed) {
+            write_stack();
+        }
         alloc_chaos_injection_hook(ordinal);
         return true;
     }
@@ -299,6 +406,7 @@ impl Scope {
             if depth.get() == 0 {
                 POLICY.with(|p| p.set(policy));
                 ORDINAL.with(|o| o.set(0));
+                ACTIVE_SCOPES.fetch_add(1, Ordering::Relaxed);
             }
             depth.set(depth.get() + 1);
         });
@@ -310,8 +418,32 @@ impl Scope {
 
 impl Drop for Scope {
     fn drop(&mut self) {
-        DEPTH.with(|depth| depth.set(depth.get() - 1));
+        DEPTH.with(|depth| {
+            depth.set(depth.get() - 1);
+            if depth.get() == 0 {
+                ACTIVE_SCOPES.fetch_sub(1, Ordering::Relaxed);
+            }
+        });
     }
+}
+
+/// Allocations of other threads while a scope was active: `(thread, count, bytes)`, plus the
+/// number of allocations from threads past [`OTHER_THREAD_CAPACITY`].
+pub fn other_threads() -> (Vec<(u32, u64, u64)>, u64) {
+    let threads = OTHER_THREADS
+        .iter()
+        .filter_map(|slot| {
+            let thread = slot.thread.load(Ordering::Relaxed);
+            (thread != 0).then(|| {
+                (
+                    thread,
+                    slot.count.load(Ordering::Relaxed),
+                    slot.bytes.load(Ordering::Relaxed),
+                )
+            })
+        })
+        .collect();
+    (threads, OTHER_THREADS_OVERFLOW.load(Ordering::Relaxed))
 }
 
 /// Clears the trace, the expected trace and the counters. Call it outside any scope.
