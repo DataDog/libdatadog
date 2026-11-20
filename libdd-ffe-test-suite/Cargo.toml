@@ -28,3 +28,8 @@ serde_json = { workspace = true, features = ["std", "raw_value"] }
 name = "ffe-eval"
 harness = false
 path = "benches/eval.rs"
+
+[[bench]]
+name = "ffe-scale"
+harness = false
+path = "benches/scale.rs"
