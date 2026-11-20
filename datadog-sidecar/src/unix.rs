@@ -355,19 +355,20 @@ mod tests {
 
     #[cfg(target_os = "linux")]
     impl TestSidecar {
-        /// The sidecar of `test` (its name in this module), started with `soft_nofile` as its
-        /// soft descriptor limit if given, or `None` in the sidecar process itself, which has
-        /// then served as the sidecar and never returns.
-        fn start(test: &str, soft_nofile: Option<libc::rlim_t>) -> Option<Self> {
-            Self::start_with(test, soft_nofile, None)
+        /// The sidecar of `test` (its name in this module), started with `nofile` as its soft
+        /// and hard descriptor limits if given, or `None` in the sidecar process itself, which
+        /// has then served as the sidecar and never returns.
+        fn start(test: &str, nofile: Option<(libc::rlim_t, libc::rlim_t)>) -> Option<Self> {
+            Self::start_with(test, nofile, None)
         }
 
         /// [`Self::start`], logging to `stderr` rather than to a file if given.
         fn start_with(
             test: &str,
-            soft_nofile: Option<libc::rlim_t>,
+            nofile: Option<(libc::rlim_t, libc::rlim_t)>,
             stderr: Option<std::process::Stdio>,
         ) -> Option<Self> {
+            use std::os::unix::process::CommandExt;
             use std::time::Duration;
 
             let test = format!("unix::tests::{test}");
@@ -389,8 +390,21 @@ mod tests {
                     format!("file://{}", log.display()),
                 )
                 .env("_DD_DEBUG_SIDECAR_LOG_LEVEL", "info");
-            if let Some(soft) = soft_nofile {
-                command.env(TEST_SIDECAR_SOFT_NOFILE, soft.to_string());
+            if let Some((soft, hard)) = nofile {
+                let limit = libc::rlimit {
+                    rlim_cur: soft,
+                    rlim_max: hard,
+                };
+                // SAFETY: setrlimit is async-signal-safe, and only reads `limit`.
+                unsafe {
+                    command.pre_exec(move || {
+                        if libc::setrlimit(libc::RLIMIT_NOFILE, &limit) == 0 {
+                            Ok(())
+                        } else {
+                            Err(io::Error::last_os_error())
+                        }
+                    });
+                }
             }
             if let Some(stderr) = stderr {
                 command
@@ -428,12 +442,6 @@ mod tests {
 
         /// Runs the entry point of a spawned sidecar, on the listener it would be passed.
         fn serve() -> ! {
-            if let Some(soft) = std::env::var(TEST_SIDECAR_SOFT_NOFILE)
-                .ok()
-                .and_then(|soft| soft.parse().ok())
-            {
-                crate::test_util::set_soft_nofile(soft);
-            }
             let name = std::env::var(TEST_SIDECAR_LISTENER).unwrap();
             let listener = SeqpacketListener::bind_abstract(name.as_bytes()).unwrap();
             // Passed as spawn_worker does, by a dup2 that leaves it inherited on exec; the SHM
@@ -525,8 +533,6 @@ mod tests {
     #[cfg(target_os = "linux")]
     const TEST_SIDECAR_LISTENER: &str = "_DD_TEST_SIDECAR_LISTENER";
     #[cfg(target_os = "linux")]
-    const TEST_SIDECAR_SOFT_NOFILE: &str = "_DD_TEST_SIDECAR_SOFT_NOFILE";
-    #[cfg(target_os = "linux")]
     const TEST_SIDECAR_PASSED_FD: RawFd = 100;
 
     /// A queued payload must not hold the descriptor of its shared memory: payloads queue up
@@ -596,29 +602,61 @@ mod tests {
     }
 
     /// The sidecar serves all clients, so it must not keep the soft descriptor limit of the one
-    /// that spawned it, which is often 1024.
+    /// that spawned it, which is often 1024. It raises it up to the hard limit, short of a cap
+    /// that leaves room to notice a leak, and never lowers it.
     #[test]
     #[cfg(target_os = "linux")]
     #[cfg_attr(miri, ignore)]
     fn the_sidecar_lifts_its_soft_open_files_limit() {
-        let Some(sidecar) =
-            TestSidecar::start("the_sidecar_lifts_its_soft_open_files_limit", Some(256))
-        else {
-            return;
+        const TEST: &str = "the_sidecar_lifts_its_soft_open_files_limit";
+        if crate::test_util::is_rerun(&format!("unix::tests::{TEST}")) {
+            TestSidecar::serve();
+        }
+        let mut own = libc::rlimit {
+            rlim_cur: 0,
+            rlim_max: 0,
         };
-        let limits = std::fs::read_to_string(format!("/proc/{}/limits", sidecar.pid())).unwrap();
-        let line = limits
-            .lines()
-            .find(|line| line.starts_with("Max open files"))
-            .unwrap();
-        let fields: Vec<_> = line.split_whitespace().collect();
-        assert_eq!(fields[3], fields[4], "the soft limit was kept: {line}");
-        let log = sidecar.log();
-        assert!(
-            log.contains("At startup, RLIMIT_NOFILE soft=256 hard=")
-                && log.contains("Raised the RLIMIT_NOFILE soft limit from 256 to "),
-            "the limits were not logged: {log}"
-        );
+        // SAFETY: getrlimit only writes `own`.
+        assert_eq!(unsafe { libc::getrlimit(libc::RLIMIT_NOFILE, &mut own) }, 0);
+        // The soft and hard limits at startup, and the soft limit expected then.
+        for (soft, hard, expected) in [
+            (256, 1_048_576, 100_000),
+            (256, 4096, 4096),
+            (200_000, 1_048_576, 200_000),
+        ] {
+            if hard > own.rlim_max {
+                // Raising a hard limit takes privileges.
+                eprintln!(
+                    "skipped soft={soft} hard={hard}: the hard limit is {}",
+                    own.rlim_max
+                );
+                continue;
+            }
+            let sidecar = TestSidecar::start(TEST, Some((soft, hard))).unwrap();
+            let limits =
+                std::fs::read_to_string(format!("/proc/{}/limits", sidecar.pid())).unwrap();
+            let line = limits
+                .lines()
+                .find(|line| line.starts_with("Max open files"))
+                .unwrap();
+            let fields: Vec<_> = line.split_whitespace().collect();
+            assert_eq!(
+                (fields[3], fields[4]),
+                (expected.to_string().as_str(), hard.to_string().as_str()),
+                "started with soft={soft} hard={hard}: {line}"
+            );
+            let log = sidecar.log();
+            let outcome = if expected == soft {
+                format!("Left the RLIMIT_NOFILE soft limit at {soft}")
+            } else {
+                format!("Raised the RLIMIT_NOFILE soft limit from {soft} to {expected}")
+            };
+            let startup = format!("At startup, RLIMIT_NOFILE soft={soft} hard={hard}");
+            assert!(
+                log.contains(&startup) && log.contains(&outcome),
+                "{startup:?} or {outcome:?} was not logged: {log}"
+            );
+        }
     }
 
     /// A child the sidecar execs, like the crashtracker receiver, must inherit neither its

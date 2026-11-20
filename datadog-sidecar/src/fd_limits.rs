@@ -21,6 +21,15 @@ use tracing::{info, warn};
 #[cfg(target_os = "linux")]
 const LOW_SOFT_LIMIT: libc::rlim_t = 4096;
 
+/// The highest soft limit raised to: headroom, so that a descriptor leak still hits the limit and
+/// hands the clients over to a fresh sidecar.
+#[cfg(target_os = "linux")]
+const SOFT_LIMIT_CAP: libc::rlim_t = 100_000;
+
+// Otherwise every capped sidecar would warn of a low limit.
+#[cfg(target_os = "linux")]
+const _: () = assert!(LOW_SOFT_LIMIT <= SOFT_LIMIT_CAP);
+
 /// The limits before the raise: a PHP-spawned sidecar logs nothing at startup, so the exhaustion
 /// reports repeat them.
 #[cfg(unix)]
@@ -79,8 +88,16 @@ fn describe_limits() -> String {
     "RLIMIT_NOFILE unavailable".to_owned()
 }
 
+/// The soft limit to raise to, if any: the hard limit, at most [`SOFT_LIMIT_CAP`], and never a
+/// lower one. An unlimited hard limit is above the cap.
+#[cfg(target_os = "linux")]
+fn raised_soft_limit(limit: &libc::rlimit) -> Option<libc::rlim_t> {
+    let target = limit.rlim_max.min(SOFT_LIMIT_CAP);
+    (limit.rlim_cur < target).then_some(target)
+}
+
 /// The sidecar serves every client, yet inherits the soft limit of the one that spawned it,
-/// often 1024. Only the hard limit is meant as a ceiling.
+/// often 1024: raised as far as [`raised_soft_limit`] allows.
 #[cfg(target_os = "linux")]
 pub(crate) fn raise_open_files_limit() {
     let mut limit = match open_files_limit() {
@@ -92,23 +109,28 @@ pub(crate) fn raise_open_files_limit() {
     };
     _ = STARTUP_LIMITS.set((limit.rlim_cur, limit.rlim_max));
     info!("At startup, {}", describe_limits());
-    if limit.rlim_cur < limit.rlim_max {
+    if let Some(target) = raised_soft_limit(&limit) {
         let soft = limit.rlim_cur;
-        limit.rlim_cur = limit.rlim_max;
+        limit.rlim_cur = target;
         // SAFETY: setrlimit only reads `limit`.
         if unsafe { libc::setrlimit(libc::RLIMIT_NOFILE, &limit) } == 0 {
             info!(
-                "Raised the RLIMIT_NOFILE soft limit from {soft} to {}",
-                display(limit.rlim_max)
+                "Raised the RLIMIT_NOFILE soft limit from {soft} to {target}, capped at \
+                 {SOFT_LIMIT_CAP}"
             );
         } else {
             warn!(
-                "Could not raise the RLIMIT_NOFILE soft limit from {soft} to {}: {}",
-                display(limit.rlim_max),
+                "Could not raise the RLIMIT_NOFILE soft limit from {soft} to {target}: {}",
                 io::Error::last_os_error()
             );
             limit.rlim_cur = soft;
         }
+    } else {
+        info!(
+            "Left the RLIMIT_NOFILE soft limit at {}: already the hard limit, or at least \
+             {SOFT_LIMIT_CAP}",
+            display(limit.rlim_cur)
+        );
     }
     if limit.rlim_cur < LOW_SOFT_LIMIT {
         warn!(
@@ -164,7 +186,8 @@ pub(crate) fn prepare_diagnostics() {
     }
 }
 
-/// One readlink per descriptor: with a raised limit the table can hold a million of them.
+/// One readlink per descriptor: the table can hold [`SOFT_LIMIT_CAP`] of them, more if the
+/// inherited limit was higher.
 #[cfg(target_os = "linux")]
 const SCAN_BUDGET: Duration = Duration::from_millis(100);
 
@@ -231,4 +254,26 @@ fn describe_descriptors() -> String {
 #[cfg(not(target_os = "linux"))]
 fn describe_descriptors() -> String {
     "open_fds=unavailable".to_owned()
+}
+
+#[cfg(all(test, target_os = "linux"))]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_soft_limit_is_raised_up_to_the_hard_limit_and_the_cap_never_lowered() {
+        let raised = |soft, hard| {
+            raised_soft_limit(&libc::rlimit {
+                rlim_cur: soft,
+                rlim_max: hard,
+            })
+        };
+        assert_eq!(raised(256, 1_048_576), Some(100_000));
+        assert_eq!(raised(256, 4096), Some(4096));
+        assert_eq!(raised(200_000, 1_048_576), None);
+        // Not settable for RLIMIT_NOFILE on Linux, which caps it at fs.nr_open.
+        assert_eq!(raised(256, libc::RLIM_INFINITY), Some(100_000));
+        assert_eq!(raised(4096, 4096), None);
+        assert_eq!(raised(libc::RLIM_INFINITY, libc::RLIM_INFINITY), None);
+    }
 }
