@@ -218,8 +218,6 @@ struct ConnectionSidecarHandler {
     metric_registrations: HashMap<String, MetricContext>,
     /// The connection this handler serves.
     connection: OwnedServerConn,
-    /// The receive error that ended the connection, if any.
-    receive_error: Option<std::io::Error>,
     /// The AppSec client of this connection.
     #[cfg(unix)]
     appsec: AppSecConnection,
@@ -253,7 +251,6 @@ impl ConnectionSidecarHandler {
             application,
             metric_registrations: Default::default(),
             connection,
-            receive_error: None,
         }
     }
 
@@ -621,19 +618,16 @@ impl SidecarServer {
     /// # Arguments
     ///
     /// * `conn`: The connection to the client.
-    ///
-    /// Returns the receive error that ended the connection, if any.
-    pub async fn accept_connection(self, conn: SeqpacketConn) -> Option<std::io::Error> {
+    pub async fn accept_connection(self, conn: SeqpacketConn) {
         let server_conn = match OwnedServerConn::new(conn) {
             Ok(c) => c,
             Err(e) => {
                 error!("IPC serve: failed to set up connection: {e}");
-                return None;
+                return;
             }
         };
-        let mut handler = ConnectionSidecarHandler::new(self, server_conn);
-        serve_sidecar_interface_connection(&mut handler).await;
-        handler.receive_error.take()
+        serve_sidecar_interface_connection(&mut ConnectionSidecarHandler::new(self, server_conn))
+            .await;
     }
 
     /// Returns the number of open connections.
@@ -1004,10 +998,6 @@ impl SidecarInterface for ConnectionSidecarHandler {
 
     fn connection(&self) -> &OwnedServerConn {
         &self.connection
-    }
-
-    fn receive_failed(&mut self, error: std::io::Error) {
-        self.receive_error = Some(error);
     }
 
     async fn enter_crashtracker_receiver(&mut self) {

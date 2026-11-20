@@ -6,10 +6,11 @@
 use std::fmt;
 #[cfg(unix)]
 use std::io;
+#[cfg(target_os = "linux")]
 use std::sync::Mutex;
 #[cfg(unix)]
 use std::sync::OnceLock;
-use std::sync::atomic::{AtomicUsize, Ordering};
+#[cfg(target_os = "linux")]
 use std::time::{Duration, Instant};
 use tracing::error;
 #[cfg(target_os = "linux")]
@@ -119,31 +120,9 @@ pub(crate) fn raise_open_files_limit() {
     }
 }
 
-/// At most one report per interval: a full descriptor table fails every accept, and every
-/// message carrying a descriptor, at once.
-const REPORT_INTERVAL: Duration = Duration::from_secs(5);
-static LAST_REPORT: Mutex<Option<Instant>> = Mutex::new(None);
-static SUPPRESSED: AtomicUsize = AtomicUsize::new(0);
-
 /// Logs `cause` at error level, with the limits and what fills the descriptor table.
 pub(crate) fn report_exhaustion(cause: fmt::Arguments) {
-    if let Ok(mut last) = LAST_REPORT.lock() {
-        let now = Instant::now();
-        if (*last).is_some_and(|last| now.duration_since(last) < REPORT_INTERVAL) {
-            SUPPRESSED.fetch_add(1, Ordering::Relaxed);
-            return;
-        }
-        *last = Some(now);
-    }
-    let suppressed = match SUPPRESSED.swap(0, Ordering::Relaxed) {
-        0 => String::new(),
-        n => format!(" ({n} similar errors suppressed)"),
-    };
-    error!(
-        "{cause}; {}; {}{suppressed}",
-        describe_descriptors(),
-        describe_limits()
-    );
+    error!("{cause}; {}; {}", describe_descriptors(), describe_limits());
 }
 
 /// Kept open from startup: once the descriptor table is full, opening /proc/self/fd fails too.

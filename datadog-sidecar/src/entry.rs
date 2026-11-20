@@ -16,7 +16,7 @@ use std::{
     },
     time::{Duration, Instant},
 };
-use tokio::sync::{Notify, mpsc, oneshot};
+use tokio::sync::{mpsc, oneshot};
 use tokio::time::Instant as TokioInstant;
 use tokio_util::sync::CancellationToken;
 
@@ -197,12 +197,10 @@ where
     let defer_shm_init = !loop_config.init_shm_eagerly;
     // Closed on failure rather than drained, so that they reconnect to a fresh listener.
     let close_clients = CancellationToken::new();
-    let descriptors_dropped = Arc::new(Notify::new());
-    let accept = listener(Box::new({
+    let listener_result = listener(Box::new({
         let shutdown_complete_tx = shutdown_complete_tx.clone();
         let server = server.clone();
         let close_clients = close_clients.clone();
-        let descriptors_dropped = descriptors_dropped.clone();
         move |socket| {
             let peer = match socket.peer_credentials() {
                 Ok(peer) => peer,
@@ -233,28 +231,20 @@ where
             let shutdown_complete_tx = (!drain_only_own_process || peer.pid == std::process::id())
                 .then(|| shutdown_complete_tx.clone());
             let close_clients = close_clients.clone();
-            let descriptors_dropped = descriptors_dropped.clone();
             tokio::spawn(async move {
-                let ended_by = tokio::select! {
-                    ended_by = server.accept_connection(socket) => ended_by,
-                    _ = close_clients.cancelled() => None,
-                };
+                tokio::select! {
+                    _ = server.accept_connection(socket) => {}
+                    _ = close_clients.cancelled() => {}
+                }
                 drop(connection);
                 tracing::info!("connection closed");
-                if ended_by.is_some_and(|e| libdd_ipc::descriptors_dropped(&e)) {
-                    descriptors_dropped.notify_one();
-                }
 
                 // Once all tx/senders are dropped the receiver will complete
                 drop(shutdown_complete_tx);
             });
         }
-    }));
-    let listener_result = tokio::select! {
-        result = accept => result,
-        // Dropping the listener closes it, which frees its name for a fresh listener.
-        _ = descriptors_dropped.notified() => Err(io::Error::other(libdd_ipc::DescriptorsDropped)),
-    };
+    }))
+    .await;
     // The listener can also end on a signal or an error: an idle check left running would only
     // log a stray "No active connections" later.
     idle_shutdown.abort();
@@ -270,12 +260,7 @@ where
         } else {
             "the listener closes, its clients reconnect"
         };
-        let kind = if libdd_ipc::descriptors_dropped(e) {
-            "IPC receive error: "
-        } else {
-            ""
-        };
-        crate::fd_limits::report_exhaustion(format_args!("{kind}{e}; {outcome}"));
+        crate::fd_limits::report_exhaustion(format_args!("{e}; {outcome}"));
     }
 
     // Wait for the drained connections independently of the watchdog. Outgoing work can

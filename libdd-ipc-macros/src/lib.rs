@@ -409,10 +409,6 @@ fn gen_handler_trait(
             /// Storage for the connection to read from.
             fn connection(&self) -> &libdd_ipc::ipc_server::OwnedServerConn;
 
-            /// Called with the receive error that ends the connection; a peer that closed it
-            /// shows as `BrokenPipe`. Does nothing by default.
-            fn receive_failed(&mut self, _error: ::std::io::Error) {}
-
             #(#handler_methods)*
         }
     }
@@ -529,7 +525,6 @@ fn gen_serve_fn(
                     }
                     Err(e) => {
                         ::tracing::trace!("IPC serve: recv (connection closed?): {e}");
-                        handler.receive_failed(e);
                         break;
                     }
                 };

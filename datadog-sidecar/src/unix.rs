@@ -651,8 +651,9 @@ mod tests {
             return;
         };
         sidecar.exhaust_descriptors();
-        // Queued, but there is no descriptor left to accept it with.
-        let _queued = SeqpacketConn::connect_abstract(sidecar.name.as_bytes()).unwrap();
+        // Queued, but there is no descriptor left to accept it with. Refused if accept() already
+        // failed: at the limit it does even with nothing queued.
+        let _queued = SeqpacketConn::connect_abstract(sidecar.name.as_bytes());
         let status = sidecar.wait(std::time::Duration::from_secs(5));
         assert_eq!(
             status.and_then(|status| status.code()),
@@ -672,25 +673,33 @@ mod tests {
         );
     }
 
-    /// Descriptors dropped on receive for lack of slots mean the same: the sidecar must hand all
-    /// its clients over, not just lose that connection.
+    /// Out of descriptors, a message passing some ends only its own connection: accept() alone
+    /// decides that the sidecar hands its clients over, and a client reconnecting makes it fail.
     #[test]
     #[cfg(target_os = "linux")]
     #[cfg_attr(miri, ignore)]
-    fn a_sidecar_dropping_passed_descriptors_hands_its_clients_over() {
+    fn a_sidecar_dropping_passed_descriptors_hands_over_once_accept_fails() {
         use crate::service::{SerializedTracerHeaderTags, blocking};
         use libdd_ipc::platform::ShmHandle;
         use libdd_trace_utils::trace_utils::TracerHeaderTags;
+        use std::time::Duration;
 
         let Some(mut sidecar) = TestSidecar::start(
-            "a_sidecar_dropping_passed_descriptors_hands_its_clients_over",
+            "a_sidecar_dropping_passed_descriptors_hands_over_once_accept_fails",
             None,
         ) else {
             return;
         };
+        let mut other = blocking::SidecarTransport::from(
+            SeqpacketConn::connect_abstract(sidecar.name.as_bytes()).unwrap(),
+        );
+        other
+            .set_read_timeout(Some(Duration::from_secs(10)))
+            .unwrap();
+        blocking::ping(&mut other).expect("the other client is served");
         // accept() fails with EMFILE once at the limit even with nothing queued: let the accept
         // loop settle first, so that the receive is what runs into the limit.
-        std::thread::sleep(std::time::Duration::from_millis(200));
+        std::thread::sleep(Duration::from_millis(200));
         sidecar.exhaust_descriptors();
         let headers = SerializedTracerHeaderTags::try_from(TracerHeaderTags {
             lang: "php",
@@ -700,7 +709,30 @@ mod tests {
         let shm = ShmHandle::new(4096).unwrap();
         let transport = sidecar.transport.as_mut().unwrap();
         blocking::send_trace_v04_shm(transport, shm, 4096, headers).unwrap();
-        let status = sidecar.wait(std::time::Duration::from_secs(5));
+        assert!(
+            sidecar.wait(Duration::from_secs(2)).is_none(),
+            "the sidecar shut down on a receive: {}",
+            sidecar.log()
+        );
+        assert!(!sidecar.name_is_free(), "the sidecar released its name");
+        blocking::ping(&mut other).expect("the other client is still served");
+        let transport = sidecar.transport.as_mut().unwrap();
+        assert!(
+            blocking::ping(transport).is_err(),
+            "the connection survived its dropped descriptors"
+        );
+        assert!(
+            sidecar
+                .log()
+                .contains("the descriptors passed with a message were dropped"),
+            "the dropped descriptors were not reported: {}",
+            sidecar.log()
+        );
+
+        // Queued like a worker reconnecting on its next request: there is no descriptor left to
+        // accept it with.
+        let _reconnecting = SeqpacketConn::connect_abstract(sidecar.name.as_bytes()).unwrap();
+        let status = sidecar.wait(Duration::from_secs(5));
         assert_eq!(
             status.and_then(|status| status.code()),
             Some(0),
@@ -712,8 +744,8 @@ mod tests {
         );
         let log = sidecar.log();
         assert!(
-            log.contains("IPC receive error:") && log.contains("open_fds="),
-            "the dropped descriptors were not reported: {log}"
+            log.contains("IPC accept error:") && log.contains("open_fds="),
+            "the exhaustion was not reported: {log}"
         );
     }
 
