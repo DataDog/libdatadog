@@ -153,11 +153,7 @@ impl TelemetryClientBuilder {
 
         builder.mutable_metadata = self.mutable_metadata;
 
-        // No cancellation runtime handle: telemetry workers driven by SharedRuntime
-        // handle shutdown via WorkerHandle::stop, not the per-handle deadline path.
-        #[cfg(not(target_arch = "wasm32"))]
-        let (worker_handle, worker) = builder.build_worker::<C>(None);
-        #[cfg(target_arch = "wasm32")]
+        // The worker runs on a SharedRuntime; stop it with TelemetryWorkerHandle::stop_worker.
         let (worker_handle, worker) = builder.build_worker::<C>();
 
         Ok((
@@ -190,6 +186,11 @@ impl<C: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static> std
 }
 
 impl<C: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static> TelemetryClient<C> {
+    /// The handle the worker was built with; pass it the worker's `WorkerHandle` to stop it.
+    pub(crate) fn worker_handle(&self) -> &TelemetryWorkerHandle<C> {
+        &self.worker
+    }
+
     /// Allow sharing a telemetry worker with data-pipeline
     pub fn with_handle(handle: TelemetryWorkerHandle<C>) -> Self {
         TelemetryClient {

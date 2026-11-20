@@ -41,7 +41,7 @@ catch_panic = [
   "libdd-shared-runtime-ffi?/catch_panic",
 ]
 cbindgen = ["build_common/cbindgen", "libdd-common-ffi/cbindgen", "libdd-shared-runtime-ffi?/cbindgen", "libdd-otel-thread-ctx-ffi?/cbindgen"]
-ddtelemetry-ffi = ["dep:libdd-telemetry-ffi"]
+ddtelemetry-ffi = ["dep:libdd-telemetry-ffi", "shared-runtime"]
 datadog-log-ffi = ["dep:libdd-log-ffi"]
 symbolizer = ["symbolizer-ffi"]
 data-pipeline-ffi = ["dep:libdd-data-pipeline-ffi"]
