@@ -61,7 +61,7 @@ fn strings(value: Option<&Json>) -> BTreeSet<String> {
 const PROFILE_DIRS: [(&str, Profile, usize, usize); 4] = [
     ("provider-attempt", Profile::ProviderAttempt, 100, 83),
     ("provider-streaming", Profile::ProviderStreaming, 2, 7),
-    ("provider-token-breakdown", Profile::TokenBreakdown, 42, 14),
+    ("provider-token-breakdown", Profile::TokenBreakdown, 44, 14),
     ("gateway-request", Profile::GatewayRequest, 22, 15),
 ];
 
@@ -190,7 +190,7 @@ fn the_corpus_has_the_stated_number_of_cases() {
         );
         total += valid + invalid;
     }
-    assert_eq!(total, 285);
+    assert_eq!(total, 287);
 }
 
 #[test]

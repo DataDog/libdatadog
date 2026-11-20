@@ -1,0 +1,49 @@
+{
+  "$schema": "../../../../schema/provider-token-breakdown-metric-fixture.schema.json",
+  "profile": "trajectory.gen_ai.client.token_breakdown@0.1.0",
+  "case": "no-cache-writes-lifetime-reported",
+  "description": "azure.ai.openai is a provider without cache writes, but this observation reports a cache-write lifetime part without a cache-write total. A cache-write field is reported, so the usual rule holds: the part is recorded under its lifetime, cache writes are not known, the uncached input is not recorded, and cache_write_missing is raised.",
+  "observation": {
+    "operation_name": "chat",
+    "provider_name": "azure.ai.openai",
+    "request_model": "gpt-4o-mini",
+    "input_tokens": 1000,
+    "input_basis": "includes_cache",
+    "output_tokens": 10,
+    "cache_read_input_tokens": 600,
+    "cache_write_5m_input_tokens": 100,
+    "observation_point": "gateway"
+  },
+  "expected_metrics": [
+    {
+      "name": "gen_ai.client.inference.usage.cache_read.input_tokens",
+      "instrument": "counter",
+      "unit": "{token}",
+      "value": 600,
+      "attributes": {
+        "gen_ai.operation.name": "chat",
+        "gen_ai.provider.name": "azure.ai.openai",
+        "gen_ai.request.model": "gpt-4o-mini",
+        "gen_ai.token.modality": "unknown",
+        "trajectory.observation.point": "gateway"
+      }
+    },
+    {
+      "name": "gen_ai.client.inference.usage.cache_write.input_tokens",
+      "instrument": "counter",
+      "unit": "{token}",
+      "value": 100,
+      "attributes": {
+        "gen_ai.operation.name": "chat",
+        "gen_ai.provider.name": "azure.ai.openai",
+        "gen_ai.request.model": "gpt-4o-mini",
+        "gen_ai.token.modality": "unknown",
+        "trajectory.cache.lifetime": "5m",
+        "trajectory.observation.point": "gateway"
+      }
+    }
+  ],
+  "expected_issues": [
+    "cache_write_missing"
+  ]
+}

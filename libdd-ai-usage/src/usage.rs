@@ -276,6 +276,18 @@ fn by_modality(
     increments
 }
 
+/// The `gen_ai.provider.name` of each provider without cache writes
+/// (`PORTABLE-METRICS.md#providers-without-cache-writes`): its usage reports
+/// and bills cache reads, and has no cache-write count, because no operation
+/// writes to a cache that is billed.
+pub const PROVIDERS_WITHOUT_CACHE_WRITES: [&str; 3] = ["azure.ai.openai", "gcp.gemini", "openai"];
+
+/// Whether `provider_name`, a `gen_ai.provider.name`, is a provider without
+/// cache writes.
+pub fn has_no_cache_writes(provider_name: &str) -> bool {
+    PROVIDERS_WITHOUT_CACHE_WRITES.contains(&provider_name)
+}
+
 /// Normalize the usage of one operation. `embeddings` is true for an
 /// `embeddings` operation, which has no provider cache.
 ///
@@ -285,6 +297,20 @@ fn by_modality(
 pub fn normalize_usage(
     usage: &ReportedUsage,
     embeddings: bool,
+) -> Result<NormalizedUsage, MetricError> {
+    normalize_provider_usage(usage, embeddings, None)
+}
+
+/// [`normalize_usage`] for an operation of `provider_name`, its
+/// `gen_ai.provider.name`. For a provider without cache writes
+/// ([`has_no_cache_writes`]) that reports no cache-write field, cache writes
+/// count as zero in the sums, as an absent cache part does for `embeddings`:
+/// the uncached input is known once cache reads are, `cache_write_missing`
+/// is not raised, and no cache-write point is recorded.
+pub fn normalize_provider_usage(
+    usage: &ReportedUsage,
+    embeddings: bool,
+    provider_name: Option<&str>,
 ) -> Result<NormalizedUsage, MetricError> {
     usage.check_counts()?;
     usage.check_values()?;
@@ -310,6 +336,13 @@ pub fn normalize_usage(
     // An `embeddings` operation has no provider cache: an absent cache part
     // is zero in sums, and is still no point.
     let in_sums = |part: Option<u64>| if embeddings { part.or(Some(0)) } else { part };
+    // A provider without cache writes that reports none wrote nothing: its
+    // cache writes are zero in sums, and are still no point.
+    let no_writes = provider_name.is_some_and(has_no_cache_writes)
+        && usage.cache_write_input_tokens.is_none()
+        && usage.cache_write_5m_input_tokens.is_none()
+        && usage.cache_write_1h_input_tokens.is_none();
+    let write_in_sums = if no_writes { Some(0) } else { in_sums(write) };
 
     if cache_part_known && input_basis.is_none() {
         issues.insert(IssueCode::InputBasisMissing);
@@ -321,7 +354,7 @@ pub fn normalize_usage(
         if read.is_none() {
             issues.insert(IssueCode::CacheReadMissing);
         }
-        if write.is_none() {
+        if write.is_none() && !no_writes {
             issues.insert(IssueCode::CacheWriteMissing);
         }
     }
@@ -329,7 +362,7 @@ pub fn normalize_usage(
     let inclusive_input = match (cache_part_known, input_basis) {
         (false, _) | (true, Some(InputBasis::IncludesCache)) => input,
         (true, None) => None,
-        (true, Some(InputBasis::ExcludesCache)) => match (input, in_sums(read), in_sums(write)) {
+        (true, Some(InputBasis::ExcludesCache)) => match (input, in_sums(read), write_in_sums) {
             (Some(input), Some(read), Some(write)) => {
                 bounded_sum(&[input, read, write], &mut issues)
             }
@@ -394,7 +427,7 @@ pub fn normalize_usage(
             (true, None) => None,
             (true, Some(InputBasis::ExcludesCache)) => input,
             (true, Some(InputBasis::IncludesCache)) => {
-                match (inclusive_input, in_sums(read), in_sums(write)) {
+                match (inclusive_input, in_sums(read), write_in_sums) {
                     (Some(total), Some(read), Some(write)) => total
                         .checked_sub(read)
                         .and_then(|rest| rest.checked_sub(write)),

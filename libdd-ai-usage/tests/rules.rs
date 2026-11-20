@@ -6,8 +6,8 @@
 //! code.
 
 use libdd_ai_usage::{
-    IssueCode, Json, MetricPoint, Profile, Projection, ReportedUsage, normalize_usage,
-    project_result,
+    IssueCode, Json, MetricPoint, PROVIDERS_WITHOUT_CACHE_WRITES, Profile, Projection,
+    ReportedUsage, has_no_cache_writes, normalize_provider_usage, normalize_usage, project_result,
 };
 
 fn project(profile: Profile, input: &str) -> Result<Projection, &'static str> {
@@ -446,5 +446,110 @@ fn a_missing_observation_is_required_and_another_type_is_wrong() {
     assert_eq!(
         code(&BASE.replace("\"exampleai\"", "\"exampleai\\n\"")),
         "identifier_invalid"
+    );
+}
+
+#[test]
+fn a_provider_without_cache_writes_that_reports_none_wrote_nothing() {
+    assert_eq!(
+        PROVIDERS_WITHOUT_CACHE_WRITES,
+        ["azure.ai.openai", "gcp.gemini", "openai"]
+    );
+    // Providers that serve model families with cache writes are not on it.
+    for provider in [
+        "anthropic",
+        "aws.bedrock",
+        "gcp.vertex_ai",
+        "azure.ai.inference",
+    ] {
+        assert!(!has_no_cache_writes(provider), "{provider}");
+    }
+    let inclusive = ReportedUsage {
+        input_tokens: Some(1200.0),
+        output_tokens: Some(300.0),
+        cache_read_input_tokens: Some(1024.0),
+        input_basis: Some("includes_cache".into()),
+        ..ReportedUsage::default()
+    };
+    // Without a provider, an absent cache write is not known.
+    let unknown = normalize_usage(&inclusive, false).unwrap();
+    assert_eq!(unknown.uncached_input, None);
+    assert!(unknown.issues.contains(&IssueCode::CacheWriteMissing));
+    assert_eq!(
+        normalize_provider_usage(&inclusive, false, Some("anthropic")).unwrap(),
+        unknown
+    );
+
+    // For OpenAI it is zero in the sums: uncached input is 1200 - 1024, and
+    // no cache-write part is recorded.
+    let openai = normalize_provider_usage(&inclusive, false, Some("openai")).unwrap();
+    assert_eq!(openai.uncached_input, Some(176));
+    assert_eq!(openai.input_total, Some(1200));
+    assert_eq!(openai.cache_read, Some(1024));
+    assert_eq!(openai.cache_write_unspecified, None);
+    assert!(openai.issues.is_empty(), "{:?}", openai.issues);
+
+    // Without cache reads the uncached input is still not known.
+    let no_read = ReportedUsage {
+        cache_read_input_tokens: None,
+        ..inclusive.clone()
+    };
+    let openai = normalize_provider_usage(&no_read, false, Some("openai")).unwrap();
+    assert_eq!(openai.uncached_input, None);
+    assert_eq!(
+        openai.issues.iter().copied().collect::<Vec<_>>(),
+        [IssueCode::CacheReadMissing]
+    );
+
+    // A reported cache write, a lifetime part included, is used as reported.
+    let lifetime = ReportedUsage {
+        cache_write_5m_input_tokens: Some(100.0),
+        ..inclusive.clone()
+    };
+    let openai = normalize_provider_usage(&lifetime, false, Some("openai")).unwrap();
+    assert_eq!(openai.uncached_input, None);
+    assert_eq!(openai.cache_write_5m, Some(100));
+    assert!(openai.issues.contains(&IssueCode::CacheWriteMissing));
+    let written = ReportedUsage {
+        cache_write_input_tokens: Some(100.0),
+        ..inclusive.clone()
+    };
+    let openai = normalize_provider_usage(&written, false, Some("openai")).unwrap();
+    assert_eq!(openai.uncached_input, Some(76));
+    assert_eq!(openai.cache_write_unspecified, Some(100));
+    // A cache write above the bound was reported: it is not taken as zero.
+    let above_bound = ReportedUsage {
+        cache_write_input_tokens: Some(f64::INFINITY),
+        ..inclusive.clone()
+    };
+    let openai = normalize_provider_usage(&above_bound, false, Some("openai")).unwrap();
+    assert_eq!(openai.uncached_input, None);
+    assert!(openai.issues.contains(&IssueCode::CacheWriteMissing));
+    assert!(openai.issues.contains(&IssueCode::CountOutOfRange));
+
+    // Under `excludes_cache` the input total is known once cache reads are.
+    let exclusive = ReportedUsage {
+        input_tokens: Some(176.0),
+        input_basis: Some("excludes_cache".into()),
+        ..inclusive
+    };
+    let gemini = normalize_provider_usage(&exclusive, false, Some("gcp.gemini")).unwrap();
+    assert_eq!(gemini.input_total, Some(1200));
+    assert_eq!(gemini.uncached_input, Some(176));
+    assert!(gemini.issues.is_empty(), "{:?}", gemini.issues);
+    // The provider-attempt profile then records the input total too.
+    let members = r#""input_tokens": 176, "output_tokens": 300, "cache_read_input_tokens": 1024, "input_basis": "excludes_cache""#;
+    let base = BASE.replace(
+        r#""provider_name": "exampleai""#,
+        r#""provider_name": "gcp.gemini""#,
+    );
+    assert_ne!(base, BASE, "BASE names another provider");
+    let projected = attempt(&format!("{base}, {members}")).unwrap();
+    assert!(projected.issues.is_empty(), "{:?}", projected.issues);
+    assert!(
+        projected
+            .points
+            .iter()
+            .any(|p| p.name == "gen_ai.client.inference.usage.input_tokens" && p.value == 1200.0)
     );
 }

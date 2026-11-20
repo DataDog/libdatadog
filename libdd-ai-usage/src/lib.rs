@@ -137,7 +137,8 @@ pub use request::{DatadogProjection, RequestDocument, metric_list_from_json};
 /// on each point when the SDK cannot set scope attributes.
 pub const PROFILE_ATTRIBUTE: &str = "trajectory.profile";
 pub use usage::{
-    InputBasis, Modality, NormalizedUsage, OutputBasis, ReportedUsage, normalize_usage,
+    InputBasis, Modality, NormalizedUsage, OutputBasis, PROVIDERS_WITHOUT_CACHE_WRITES,
+    ReportedUsage, has_no_cache_writes, normalize_provider_usage, normalize_usage,
 };
 
 /// A metric profile implemented by this crate.

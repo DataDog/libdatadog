@@ -191,6 +191,167 @@ fn provider_errors_carry_a_safe_message_and_code() {
     );
 }
 
+/// What the token-breakdown profile records from one provider response:
+/// the uncached input, whether a cache-write point was recorded, and the
+/// issues.
+fn breakdown_of(
+    format: UsageFormat,
+    provider: &str,
+    payload: &str,
+) -> (Option<f64>, bool, Vec<&'static str>) {
+    let payload = Json::parse(payload).unwrap();
+    let usage = parse_provider_response(format, &payload, false)
+        .usage
+        .unwrap();
+    let mut observation = TokenBreakdownObservation {
+        operation_name: Some("chat".into()),
+        provider_name: gen_ai_provider_name(provider),
+        observation_point: Some("gateway".into()),
+        ..TokenBreakdownObservation::default()
+    };
+    usage.apply_to_breakdown(&mut observation);
+    let projection = project_token_breakdown(&observation).unwrap();
+    let uncached = projection
+        .points
+        .iter()
+        .find(|p| p.name == "trajectory.gen_ai.client.inference.usage.uncached.input_tokens")
+        .map(|p| p.value);
+    let wrote = projection
+        .points
+        .iter()
+        .any(|p| p.name == "gen_ai.client.inference.usage.cache_write.input_tokens");
+    let issues = projection
+        .issues
+        .iter()
+        .map(|issue| issue.as_str())
+        .collect();
+    (uncached, wrote, issues)
+}
+
+#[test]
+fn uncached_input_of_providers_without_cache_writes() {
+    let chat = r#"{"usage": {"prompt_tokens": 1200, "completion_tokens": 300,
+        "prompt_tokens_details": {"cached_tokens": 1024}}}"#;
+    let chat_uncached = r#"{"usage": {"prompt_tokens": 12, "completion_tokens": 2}}"#;
+    let responses = r#"{"usage": {"input_tokens": 33, "output_tokens": 5,
+        "input_tokens_details": {"cached_tokens": 20},
+        "output_tokens_details": {"reasoning_tokens": 2}}}"#;
+    let responses_uncached = r#"{"usage": {"input_tokens": 33, "output_tokens": 5}}"#;
+    let responses_written = r#"{"usage": {"input_tokens": 5000, "output_tokens": 700,
+        "input_tokens_details": {"cached_tokens": 4096, "cache_write_tokens": 512}}}"#;
+    let gemini = r#"{"usageMetadata": {"promptTokenCount": 4000, "candidatesTokenCount": 100,
+        "cachedContentTokenCount": 3000, "totalTokenCount": 4100}}"#;
+    let normalized_anthropic = r#"{"usage": {"prompt_tokens": 1700, "completion_tokens": 80,
+        "prompt_tokens_details": {"cached_tokens": 1000}}}"#;
+    use UsageFormat::{Gemini, OpenAiChat, OpenAiResponses};
+    let cases = [
+        // OpenAI reports cached tokens and never a cache write: the cache
+        // write is zero, and no cache-write point is recorded.
+        (
+            "openai chat",
+            OpenAiChat,
+            "openai",
+            chat,
+            Some(176.0),
+            false,
+            vec![],
+        ),
+        (
+            "openai responses",
+            OpenAiResponses,
+            "openai",
+            responses,
+            Some(13.0),
+            false,
+            vec![],
+        ),
+        (
+            "azure chat",
+            OpenAiChat,
+            "azure",
+            chat,
+            Some(176.0),
+            false,
+            vec![],
+        ),
+        (
+            "gemini",
+            Gemini,
+            "gemini",
+            gemini,
+            Some(1000.0),
+            false,
+            vec![],
+        ),
+        // Without cached tokens the cache reads, and so the uncached input,
+        // are not known.
+        (
+            "openai chat, no cached tokens",
+            OpenAiChat,
+            "openai",
+            chat_uncached,
+            None,
+            false,
+            vec!["cache_read_missing"],
+        ),
+        (
+            "openai responses, no cached tokens",
+            OpenAiResponses,
+            "openai",
+            responses_uncached,
+            None,
+            false,
+            vec!["cache_read_missing"],
+        ),
+        // A reported cache write is used as reported.
+        (
+            "openai responses, cache write",
+            OpenAiResponses,
+            "openai",
+            responses_written,
+            Some(392.0),
+            true,
+            vec!["cache_write_lifetime_unknown"],
+        ),
+        // A provider with cache writes that reported none: not known.
+        (
+            "anthropic in the chat shape",
+            OpenAiChat,
+            "anthropic",
+            normalized_anthropic,
+            None,
+            false,
+            vec!["cache_write_missing"],
+        ),
+        (
+            "bedrock in the chat shape",
+            OpenAiChat,
+            "bedrock",
+            normalized_anthropic,
+            None,
+            false,
+            vec!["cache_write_missing"],
+        ),
+        // Vertex AI also serves models with cache writes.
+        (
+            "gemini on vertex",
+            Gemini,
+            "vertex_ai",
+            gemini,
+            None,
+            false,
+            vec!["cache_write_missing"],
+        ),
+    ];
+    for (name, format, provider, payload, uncached, wrote, issues) in cases {
+        assert_eq!(
+            breakdown_of(format, provider, payload),
+            (uncached, wrote, issues),
+            "{name}"
+        );
+    }
+}
+
 #[test]
 fn parsed_usage_projects() {
     // An Anthropic response as the observation of one attempt: the crate
