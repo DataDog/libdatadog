@@ -404,7 +404,7 @@ pub fn criterion_benchmark(c: &mut Criterion) {
                         is_parent_sampled: config.is_parent_sampled,
                         span: &config.span,
                     };
-                    black_box(config.sampler.sample(black_box(&data)));
+                    black_box(config.sampler.sample_v04(black_box(&data)));
                 })
             },
         );
@@ -423,7 +423,7 @@ fn criterion_benchmark_allocs(c: &mut Criterion<AllocatedBytesMeasurement<System
                         is_parent_sampled: config.is_parent_sampled,
                         span: &config.span,
                     };
-                    black_box(config.sampler.sample(black_box(&data)));
+                    black_box(config.sampler.sample_v04(black_box(&data)));
                 })
             },
         );

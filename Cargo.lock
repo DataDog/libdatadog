@@ -3590,6 +3590,7 @@ version = "9.0.0"
 dependencies = [
  "criterion",
  "libdd-common",
+ "libdd-trace-model",
  "libdd-trace-utils",
  "lru",
  "serde",
