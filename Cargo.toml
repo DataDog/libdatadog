@@ -70,6 +70,7 @@ members = [
   "libdd-log-ffi",
   "libdd-sampling",
   "libdd-trace-model",
+  "libdd-trace-semantics",
   "libdd-networking",
 ]
 
