@@ -53,7 +53,7 @@ pub fn set_default_sampling_distance(distance_bytes: u64) {
 }
 
 /// Returns true when an external profiler is currently attached to the
-/// `ddheap:alloc` USDT in this object file.
+/// `otel_memory:alloc` USDT in this object file.
 ///
 /// This is a point-in-time read of the alloc probe's USDT semaphore. A profiler
 /// can attach or detach immediately after this returns. Use it as a
@@ -246,7 +246,7 @@ mod tests {
 
     // With live-heap tracking compiled out, dd_allocation_freed is a
     // straight passthrough: it never inspects the sample-flag header and
-    // never fires ddheap:free. Verify this even when the underlying
+    // never fires otel_memory:free. Verify this even when the underlying
     // memory happens to contain the magic pattern that *would* trigger
     // the slow path if live-heap were enabled.
     #[cfg(not(feature = "live-heap"))]

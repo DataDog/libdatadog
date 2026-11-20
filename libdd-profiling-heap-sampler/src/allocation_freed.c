@@ -12,7 +12,7 @@
  * dd_sample_flag_check_and_clear confirmed that ptr carries the sample flag,
  * meaning this allocation was previously sampled.
  *
- * Fires the ddheap:free USDT (when live-heap tracking is enabled) with the
+ * Fires the otel_memory:free USDT (when live-heap tracking is enabled) with the
  * user-visible pointer, then returns
  * the raw pointer and adjusted size that the caller must forward to the
  * real deallocator. On x86-64 the size grows by DD_HEADER_BYTES to cover
