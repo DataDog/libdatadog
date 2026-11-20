@@ -20,6 +20,8 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
 pub const WORKER_ARG: &str = "__worker";
+/// Directory of the per-worker LLVM profiles (`discovery/discovery.py coverage`).
+const PROFILE_DIR_ENV: &str = "ALLOC_CHAOS_PROFILE_DIR";
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Mode {
@@ -287,9 +289,25 @@ pub fn run_worker(
     baseline: &[Event],
 ) -> Result<WorkerRun, String> {
     let exe = std::env::current_exe().map_err(|e| format!("current_exe: {e}"))?;
-    let mut child = Command::new(exe)
+    let mut command = Command::new(exe);
+    if let Some(dir) = std::env::var_os(PROFILE_DIR_ENV) {
+        // Coverage builds only: one LLVM profile per worker. A worker that aborts writes none.
+        let file = std::path::Path::new(&dir)
+            .join(scenario)
+            .join(format!("{}-{ordinal}-%p.profraw", mode.as_str()));
+        // The profile runtime of the controller sets this marker, and a process that inherits it
+        // skips its own profile setup.
+        command
+            .env("LLVM_PROFILE_FILE", file)
+            .env_remove("__LLVM_PROFILE_RT_INIT_ONCE");
+    }
+    let mut child = command
         .args([WORKER_ARG, scenario, mode.as_str(), &ordinal.to_string()])
         .env("RUST_BACKTRACE", "1")
+        // Panic backtraces only. A captured `std::backtrace::Backtrace` (anyhow errors) allocates
+        // under the std backtrace lock, and a failure there deadlocks the abort path. Production
+        // leaves capture off.
+        .env("RUST_LIB_BACKTRACE", "0")
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -847,7 +865,8 @@ fn debugger_backtrace(
         }
         other => return Err(format!("unknown debugger {other}")),
     }
-    cmd.env("RUST_BACKTRACE", "1");
+    cmd.env("RUST_BACKTRACE", "1")
+        .env("RUST_LIB_BACKTRACE", "0");
     let (status, stdout, stderr) = output_with_timeout(&mut cmd, Duration::from_secs(120))?;
     if status.is_none() {
         return Err("debugger timed out".to_string());

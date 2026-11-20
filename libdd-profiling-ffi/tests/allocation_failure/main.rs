@@ -17,12 +17,17 @@
 //! (`ALLOC_CHAOS_DEBUGGER=gdb|lldb` uses a debugger instead). Workers run in parallel
 //! (`ALLOC_CHAOS_JOBS`).
 
+mod agent;
 mod allocator;
 mod arena;
 mod contract;
 mod controller;
+mod ffi;
+mod fuzzed;
 mod lifecycle;
+mod promoted;
 mod scenarios;
+mod sequence;
 
 // The lifecycle scenarios call the C symbols of this crate: link its library.
 use datadog_profiling_ffi as _;
@@ -416,6 +421,31 @@ const TESTS: &[(&str, fn())] = &[
     ),
 ];
 
+/// `__sequence describe|replay|fuzz <file>`: a fuzz input, without allocation failure.
+/// `describe` prints the decoded calls, `replay` runs it as a promoted scenario (setup, call,
+/// post-failure check), `fuzz` runs it like the fuzz target.
+fn sequence_command(args: &[String]) {
+    let (Some(command), Some(path)) = (args.first(), args.get(1)) else {
+        eprintln!("usage: __sequence describe|replay|fuzz <file>");
+        std::process::exit(2);
+    };
+    let data = std::fs::read(path).unwrap_or_else(|e| panic!("read {path}: {e}"));
+    match command.as_str() {
+        "describe" => println!("{}", sequence::Plan::decode(&data).describe()),
+        "replay" => {
+            let mut fixture = fuzzed::setup(&data);
+            let result = fuzzed::run(&mut fixture);
+            let check = fuzzed::check(&mut fixture, result.is_err());
+            println!("result {result:?}, check {check:?}");
+        }
+        "fuzz" => sequence::fuzz_one(&data),
+        other => {
+            eprintln!("unknown command {other}");
+            std::process::exit(2);
+        }
+    }
+}
+
 fn main() {
     arena::register_observer();
     let args: Vec<String> = std::env::args().skip(1).collect();
@@ -424,9 +454,40 @@ fn main() {
         controller::worker_main(&args[1..]);
     }
 
+    // Scenario names and inputs, for `discovery/discovery.py`.
+    if args.first().map(String::as_str) == Some("__scenarios") {
+        for scenario in scenarios::all() {
+            println!("{}\t{}", scenario.name, scenario.inputs);
+        }
+        return;
+    }
+    if args.first().map(String::as_str) == Some("__sequence") {
+        sequence_command(&args[1..]);
+        return;
+    }
+
+    let mut tests: Vec<(String, Box<dyn Fn()>)> = TESTS
+        .iter()
+        .map(|&(name, test)| (name.to_string(), Box::new(test) as Box<dyn Fn()>))
+        .collect();
+    for promoted in promoted::PROMOTED {
+        let name = promoted.scenario.name;
+        let io_bound = promoted.io_bound();
+        tests.push((
+            format!("fuzz::{name}"),
+            Box::new(move || {
+                if io_bound {
+                    discover_io(name)
+                } else {
+                    discover(name)
+                }
+            }),
+        ));
+    }
+
     if args.iter().any(|arg| arg == "--list") {
         if !args.iter().any(|arg| arg == "--ignored") {
-            for (name, _) in TESTS {
+            for (name, _) in &tests {
                 println!("{name}: test");
             }
         }
@@ -446,7 +507,7 @@ fn main() {
         .map(String::as_str)
         .collect();
     let mut failed = 0;
-    for (name, test) in TESTS {
+    for (name, test) in &tests {
         let selected = filters.is_empty()
             || filters
                 .iter()
@@ -454,7 +515,7 @@ fn main() {
         if !selected {
             continue;
         }
-        match std::panic::catch_unwind(test) {
+        match std::panic::catch_unwind(std::panic::AssertUnwindSafe(test)) {
             Ok(()) => println!("test {name} ... ok"),
             Err(_) => {
                 println!("test {name} ... FAILED");

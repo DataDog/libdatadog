@@ -16,6 +16,8 @@ pub enum ScenarioError {
 
 pub struct Scenario {
     pub name: &'static str,
+    /// What the call receives and the state it starts from, for the scenario manifest.
+    pub inputs: &'static str,
     pub setup: fn() -> Box<dyn Any>,
     pub run: fn(&mut Box<dyn Any>) -> Result<(), ScenarioError>,
     /// Post-failure contract, checked once the scope has ended (allocations work again). The
@@ -48,6 +50,7 @@ fn run_try_reserve(_: &mut Box<dyn Any>) -> Result<(), ScenarioError> {
 pub const SCENARIOS: &[Scenario] = &[
     Scenario {
         name: TOY_BOX_NEW,
+        inputs: "Box::new([7u8; 64]), no libdatadog code",
         setup: no_fixture,
         run: |_| {
             black_box(Box::new(black_box([7u8; 64])));
@@ -57,6 +60,7 @@ pub const SCENARIOS: &[Scenario] = &[
     },
     Scenario {
         name: TOY_VEC_PUSH,
+        inputs: "100 Vec::push from an empty vector, no libdatadog code",
         setup: no_fixture,
         run: |_| {
             let mut v = Vec::new();
@@ -70,12 +74,14 @@ pub const SCENARIOS: &[Scenario] = &[
     },
     Scenario {
         name: TOY_VEC_TRY_RESERVE,
+        inputs: "Vec::try_reserve(1024), no libdatadog code",
         setup: no_fixture,
         run: run_try_reserve,
         check: None,
     },
     Scenario {
         name: TOY_CONTRACT_VIOLATION,
+        inputs: "Vec::try_reserve(1024); the check rejects every failure",
         setup: no_fixture,
         run: run_try_reserve,
         check: Some(|_, failed| {
@@ -88,6 +94,7 @@ pub const SCENARIOS: &[Scenario] = &[
     },
     Scenario {
         name: TOY_STRING_FORMAT,
+        inputs: "format!(\"{}-{}\", 42, \"forty-two\"), no libdatadog code",
         setup: no_fixture,
         run: |_| {
             black_box(format!("{}-{}", black_box(42), black_box("forty-two")));
@@ -168,17 +175,23 @@ fn run_tag_push(fixture: &mut Box<dyn Any>) -> Result<(), ScenarioError> {
 }
 
 pub fn find(name: &str) -> Option<&'static Scenario> {
+    all().find(|s| s.name == name)
+}
+
+/// Every scenario, promoted fuzz inputs last.
+pub fn all() -> impl Iterator<Item = &'static Scenario> {
     SCENARIOS
         .iter()
         .chain(TAG_SCENARIOS)
         .chain(ARENA_SCENARIOS)
         .chain(crate::lifecycle::SCENARIOS)
-        .find(|s| s.name == name)
+        .chain(crate::promoted::PROMOTED.iter().map(|p| &p.scenario))
 }
 
 const TAG_SCENARIOS: &[Scenario] = &[
     Scenario {
         name: TAG_PUSH_EMPTY,
+        inputs: "ddog_Vec_Tag_push(env, prod) on an empty vector",
         setup: || {
             Box::new(tag_push(
                 "env",
@@ -191,12 +204,14 @@ const TAG_SCENARIOS: &[Scenario] = &[
     },
     Scenario {
         name: TAG_PUSH_AT_CAPACITY,
+        inputs: "ddog_Vec_Tag_push(env, prod) on a vector with len == capacity",
         setup: || Box::new(tag_push("env", "prod", fill_to_capacity())),
         run: run_tag_push,
         check: None,
     },
     Scenario {
         name: TAG_PUSH_LONG,
+        inputs: "ddog_Vec_Tag_push with a 4096-byte key and value",
         setup: || {
             Box::new(TagPush {
                 tags: libdd_common_ffi::tags::ddog_Vec_Tag_new(),
@@ -276,36 +291,42 @@ fn run_arena_oversized(fixture: &mut Box<dyn Any>) -> Result<(), ScenarioError> 
 const ARENA_SCENARIOS: &[Scenario] = &[
     Scenario {
         name: ARENA_FIRST,
+        inputs: "8 bytes from a new ChainAllocator (64 KiB hint)",
         setup: || Box::new(request_arena()),
         run: run_arena_8,
         check: None,
     },
     Scenario {
         name: ARENA_SPARE,
+        inputs: "8 bytes with 1024 bytes spare in the chunk",
         setup: || Box::new(arena_leaving(1024)),
         run: run_arena_8,
         check: None,
     },
     Scenario {
         name: ARENA_EXHAUSTED,
+        inputs: "32 bytes with exactly 32 bytes spare in the chunk",
         setup: || Box::new(arena_leaving(32)),
         run: run_arena_32,
         check: None,
     },
     Scenario {
         name: ARENA_GROW,
+        inputs: "1 byte on a full chunk (new chunk)",
         setup: || Box::new(arena_leaving(0)),
         run: run_arena_1,
         check: None,
     },
     Scenario {
         name: ARENA_OVERSIZED,
+        inputs: "64 KiB + 1 bytes, more than the chunk hint",
         setup: || Box::new(request_arena()),
         run: run_arena_oversized,
         check: None,
     },
     Scenario {
         name: ARENA_STRING_TABLE,
+        inputs: "StringTable::try_intern(\"endpoint\") on a new table",
         setup: || Box::new(libdd_profiling::collections::string_table::StringTable::new()),
         run: |fixture| {
             let table = fixture
@@ -320,6 +341,7 @@ const ARENA_SCENARIOS: &[Scenario] = &[
     },
     Scenario {
         name: ARENA_SET,
+        inputs: "Set<u64>::try_insert(7) on a new set",
         setup: || {
             Box::new(
                 libdd_profiling::profiles::collections::Set::<u64>::try_new().expect("set setup"),
@@ -337,6 +359,7 @@ const ARENA_SCENARIOS: &[Scenario] = &[
     },
     Scenario {
         name: ARENA_SLICE_SET,
+        inputs: "SliceSet<u8>::try_insert([1, 2, 3]) with capacity 14",
         setup: || {
             Box::new(
                 libdd_profiling::profiles::collections::SliceSet::<u8>::try_with_capacity(14)

@@ -5,8 +5,8 @@
 //! upload cycle.
 //!
 //! They go through the C ABI, like a native caller. The FFI modules of this crate are private,
-//! so [`ffi`] mirrors their `#[repr(C)]` types and imports the exported symbols. Every input is
-//! built in the setup, outside the scope, so the scope only sees the call under test.
+//! so [`crate::ffi`] mirrors their `#[repr(C)]` types and imports the exported symbols. Every input
+//! is built in the setup, outside the scope, so the scope only sees the call under test.
 //!
 //! Each scenario checks a post-failure contract once the scope has ended:
 //! - a failed constructor publishes no handle;
@@ -17,199 +17,13 @@
 //! not used: each exporter starts a dump server whose socket has a random name in `/tmp`, which
 //! makes the trace nondeterministic and leaves one socket file per worker.
 
+use crate::agent::local_agent;
+use crate::ffi;
 use crate::scenarios::{Scenario, ScenarioError};
 use libdd_common::tag::Tag;
 use libdd_common_ffi::{CharSlice, Handle, Slice, ToInner};
 use std::any::Any;
 use std::num::NonZeroI64;
-
-#[allow(improper_ctypes, dead_code)]
-mod ffi {
-    use libdd_common::tag::Tag;
-    use libdd_common_ffi::{CharSlice, Error, Handle, Result, Slice, Timespec, VoidResult};
-    pub use libdd_profiling::api::{ManagedStringId, Period, SampleType};
-    pub use libdd_profiling::exporter::ProfileExporter;
-    pub use libdd_profiling::internal::EncodedProfile;
-    use std::num::NonZeroI64;
-
-    #[repr(C)]
-    pub struct Profile {
-        pub inner: *mut std::ffi::c_void,
-    }
-
-    #[repr(C)]
-    pub enum ProfileNewResult {
-        Ok(Profile),
-        Err(Error),
-    }
-
-    #[repr(C)]
-    pub enum ProfileResult {
-        Ok(bool),
-        Err(Error),
-    }
-
-    #[repr(C)]
-    pub enum SerializeResult {
-        Ok(Handle<EncodedProfile>),
-        Err(Error),
-    }
-
-    #[repr(C)]
-    #[derive(Copy, Clone, Default)]
-    pub struct Mapping<'a> {
-        pub memory_start: u64,
-        pub memory_limit: u64,
-        pub file_offset: u64,
-        pub filename: CharSlice<'a>,
-        pub filename_id: ManagedStringId,
-        pub build_id: CharSlice<'a>,
-        pub build_id_id: ManagedStringId,
-    }
-
-    #[repr(C)]
-    #[derive(Copy, Clone, Default)]
-    pub struct Function<'a> {
-        pub name: CharSlice<'a>,
-        pub name_id: ManagedStringId,
-        pub system_name: CharSlice<'a>,
-        pub system_name_id: ManagedStringId,
-        pub filename: CharSlice<'a>,
-        pub filename_id: ManagedStringId,
-    }
-
-    #[repr(C)]
-    #[derive(Copy, Clone, Default)]
-    pub struct Location<'a> {
-        pub mapping: Mapping<'a>,
-        pub function: Function<'a>,
-        pub address: u64,
-        pub line: i64,
-    }
-
-    #[repr(C)]
-    #[derive(Copy, Clone, Default)]
-    pub struct Label<'a> {
-        pub key: CharSlice<'a>,
-        pub key_id: ManagedStringId,
-        pub str: CharSlice<'a>,
-        pub str_id: ManagedStringId,
-        pub num: i64,
-        pub num_unit: CharSlice<'a>,
-        pub num_unit_id: ManagedStringId,
-    }
-
-    #[repr(C)]
-    #[derive(Copy, Clone)]
-    pub struct Sample<'a> {
-        pub locations: Slice<'a, Location<'a>>,
-        pub values: Slice<'a, i64>,
-        pub labels: Slice<'a, Label<'a>>,
-    }
-
-    #[repr(C)]
-    #[derive(Copy, Clone)]
-    pub enum ProfilingEndpoint<'a> {
-        Agent(CharSlice<'a>, u64, bool),
-        Agentless(CharSlice<'a>, CharSlice<'a>, u64, bool),
-        File(CharSlice<'a>),
-    }
-
-    #[repr(C)]
-    pub struct File<'a> {
-        pub name: CharSlice<'a>,
-        pub file: Slice<'a, u8>,
-    }
-
-    #[repr(C)]
-    pub struct HttpStatus(pub u16);
-
-    /// Stand-in for `tokio_util::sync::CancellationToken`. `Handle<T>` is one pointer.
-    pub enum CancellationToken {}
-
-    unsafe extern "C" {
-        pub fn ddog_prof_Profile_new(
-            sample_types: Slice<SampleType>,
-            period: Option<&Period>,
-        ) -> ProfileNewResult;
-        pub fn ddog_prof_Profile_drop(profile: *mut Profile);
-        pub fn ddog_prof_Profile_add(
-            profile: *mut Profile,
-            sample: Sample,
-            timestamp: Option<NonZeroI64>,
-        ) -> ProfileResult;
-        pub fn ddog_prof_Profile_set_endpoint(
-            profile: *mut Profile,
-            local_root_span_id: u64,
-            endpoint: CharSlice,
-        ) -> ProfileResult;
-        pub fn ddog_prof_Profile_add_endpoint_count(
-            profile: *mut Profile,
-            endpoint: CharSlice,
-            value: i64,
-        ) -> ProfileResult;
-        pub fn ddog_prof_Profile_add_upscaling_rule_proportional(
-            profile: *mut Profile,
-            offset_values: Slice<usize>,
-            label_name: CharSlice,
-            label_value: CharSlice,
-            total_sampled: u64,
-            total_real: u64,
-        ) -> ProfileResult;
-        pub fn ddog_prof_Profile_add_upscaling_rule_poisson(
-            profile: *mut Profile,
-            offset_values: Slice<usize>,
-            label_name: CharSlice,
-            label_value: CharSlice,
-            sum_value_offset: usize,
-            count_value_offset: usize,
-            sampling_distance: u64,
-        ) -> ProfileResult;
-        pub fn ddog_prof_Profile_serialize(
-            profile: *mut Profile,
-            start_time: Option<&Timespec>,
-            end_time: Option<&Timespec>,
-        ) -> SerializeResult;
-        pub fn ddog_prof_EncodedProfile_drop(profile: *mut Handle<EncodedProfile>);
-        pub fn ddog_prof_EncodedProfile_bytes(
-            encoded_profile: *mut Handle<EncodedProfile>,
-        ) -> libdd_common_ffi::Result<Slice<'static, u8>>;
-        pub fn ddog_prof_Endpoint_agent(
-            base_url: CharSlice,
-            timeout_ms: u64,
-            use_system_resolver: bool,
-        ) -> ProfilingEndpoint<'static>;
-        pub fn ddog_prof_Endpoint_agentless(
-            site: CharSlice,
-            api_key: CharSlice,
-            timeout_ms: u64,
-            use_system_resolver: bool,
-        ) -> ProfilingEndpoint<'static>;
-        pub fn ddog_CancellationToken_new() -> Handle<CancellationToken>;
-        pub fn ddog_CancellationToken_drop(token: *mut Handle<CancellationToken>);
-        pub fn ddog_prof_Exporter_new(
-            profiling_library_name: CharSlice,
-            profiling_library_version: CharSlice,
-            family: CharSlice,
-            tags: Option<&libdd_common_ffi::Vec<Tag>>,
-            endpoint: ProfilingEndpoint,
-        ) -> Result<Handle<ProfileExporter>>;
-        pub fn ddog_prof_Exporter_init_runtime(
-            exporter: *mut Handle<ProfileExporter>,
-        ) -> VoidResult;
-        pub fn ddog_prof_Exporter_send_blocking(
-            exporter: *mut Handle<ProfileExporter>,
-            profile: *mut Handle<EncodedProfile>,
-            files_to_compress_and_export: Slice<File>,
-            optional_additional_tags: Option<&libdd_common_ffi::Vec<Tag>>,
-            optional_process_tags: Option<&CharSlice>,
-            optional_internal_metadata_json: Option<&CharSlice>,
-            optional_info_json: Option<&CharSlice>,
-            cancel: *mut std::ffi::c_void,
-        ) -> Result<HttpStatus>;
-        pub fn ddog_prof_Exporter_drop(exporter: *mut Handle<ProfileExporter>);
-    }
-}
 
 use ffi::{EncodedProfile, ProfileExporter};
 
@@ -545,59 +359,6 @@ fn add_endpoints(profile: &mut ffi::Profile, variants: u32) {
     );
 }
 
-/// Reads one HTTP/1.1 request (`Content-Length` or chunked body) and answers 202.
-fn serve_request(mut stream: std::net::TcpStream) -> std::io::Result<()> {
-    use std::io::{Read, Write};
-    let mut request = Vec::new();
-    let mut buf = [0u8; 16 * 1024];
-    let mut body_start = None;
-    loop {
-        let n = stream.read(&mut buf)?;
-        if n == 0 {
-            break;
-        }
-        request.extend_from_slice(&buf[..n]);
-        if body_start.is_none() {
-            body_start = request
-                .windows(4)
-                .position(|w| w == b"\r\n\r\n")
-                .map(|p| p + 4);
-        }
-        let Some(start) = body_start else {
-            continue;
-        };
-        let headers = String::from_utf8_lossy(&request[..start]).to_ascii_lowercase();
-        let content_length = headers
-            .lines()
-            .find_map(|l| l.strip_prefix("content-length:"))
-            .and_then(|v| v.trim().parse::<usize>().ok());
-        let done = match content_length {
-            Some(len) => request.len() - start >= len,
-            None if headers.contains("transfer-encoding: chunked") => {
-                request.ends_with(b"0\r\n\r\n")
-            }
-            None => true,
-        };
-        if done {
-            break;
-        }
-    }
-    stream.write_all(b"HTTP/1.1 202 Accepted\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")
-}
-
-/// A local agent on a loopback port, answering every request on its own thread. Its
-/// allocations happen on that thread: the harness reports them, it does not enumerate them.
-fn local_agent() -> &'static str {
-    let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind the local agent");
-    let port = listener.local_addr().expect("local agent address").port();
-    std::thread::spawn(move || {
-        for stream in listener.incoming().flatten() {
-            let _ = serve_request(stream);
-        }
-    });
-    leak(format!("http://127.0.0.1:{port}"))
-}
-
 fn agent_endpoint(url: &'static str) -> ffi::ProfilingEndpoint<'static> {
     ffi::ProfilingEndpoint::Agent(CharSlice::from(url), 10_000, false)
 }
@@ -771,6 +532,7 @@ fn check_send(fixture: &mut Box<dyn Any>, failed: bool) -> Result<(), String> {
 pub const SCENARIOS: &[Scenario] = &[
     Scenario {
         name: PROFILE_NEW,
+        inputs: "Profile_new: cpu/wall time and samples, wall period 10 ms",
         setup: || {
             Box::new(NewProfileFixture {
                 profile: None,
@@ -786,12 +548,14 @@ pub const SCENARIOS: &[Scenario] = &[
     },
     Scenario {
         name: PROFILE_ADD_FIRST,
+        inputs: "Profile_add: first .NET sample (8 frames, 6 labels)",
         setup: || Box::new(profile_with(0)),
         run: run_add,
         check: Some(check_profile_usable),
     },
     Scenario {
         name: PROFILE_ADD_INTERNED,
+        inputs: "Profile_add: the same sample again, every string interned",
         setup: || {
             let mut fx = profile_with(1);
             fx.sample = DotnetSample::new(0);
@@ -802,12 +566,14 @@ pub const SCENARIOS: &[Scenario] = &[
     },
     Scenario {
         name: PROFILE_ADD_NEW_STRINGS,
+        inputs: "Profile_add: second sample with new frame and label strings",
         setup: || Box::new(profile_with(1)),
         run: run_add,
         check: Some(check_profile_usable),
     },
     Scenario {
         name: PROFILE_ADD_TIMESTAMPED,
+        inputs: "Profile_add: interned sample with a timestamp",
         setup: || {
             let mut fx = profile_with(1);
             fx.sample = DotnetSample::new(0);
@@ -819,24 +585,28 @@ pub const SCENARIOS: &[Scenario] = &[
     },
     Scenario {
         name: PROFILE_ADD_GROWTH,
+        inputs: "Profile_add: 29th distinct sample (collection growth)",
         setup: || Box::new(profile_with(GROWTH_SAMPLES)),
         run: run_add,
         check: Some(check_profile_usable),
     },
     Scenario {
         name: PROFILE_SERIALIZE_EMPTY,
+        inputs: "Profile_serialize: no sample",
         setup: || Box::new(profile_with(0)),
         run: run_serialize,
         check: Some(check_profile_usable),
     },
     Scenario {
         name: PROFILE_SERIALIZE_POPULATED,
+        inputs: "Profile_serialize: 8 samples",
         setup: || Box::new(profile_with(POPULATED_SAMPLES)),
         run: run_serialize,
         check: Some(check_profile_usable),
     },
     Scenario {
         name: PROFILE_SERIALIZE_ENDPOINTS,
+        inputs: "Profile_serialize: 8 samples, 8 endpoint mappings, 1 count",
         setup: || {
             let mut fx = profile_with(POPULATED_SAMPLES);
             add_endpoints(&mut fx.profile, POPULATED_SAMPLES);
@@ -847,6 +617,7 @@ pub const SCENARIOS: &[Scenario] = &[
     },
     Scenario {
         name: PROFILE_SERIALIZE_UPSCALING,
+        inputs: "Profile_serialize: 8 samples, 1 proportional upscaling rule",
         setup: || {
             let mut fx = profile_with(POPULATED_SAMPLES);
             let offsets = [0usize, 1];
@@ -871,6 +642,7 @@ pub const SCENARIOS: &[Scenario] = &[
     },
     Scenario {
         name: PROFILE_SERIALIZE_LARGE,
+        inputs: "Profile_serialize: 256 samples, 256 endpoint mappings",
         setup: || {
             let mut fx = profile_with(LARGE_SAMPLES);
             add_endpoints(&mut fx.profile, LARGE_SAMPLES);
@@ -881,30 +653,35 @@ pub const SCENARIOS: &[Scenario] = &[
     },
     Scenario {
         name: EXPORTER_NEW,
+        inputs: "Exporter_new: local agent endpoint, 6 .NET tags",
         setup: || Box::new(exporter_fixture(agent_endpoint(local_agent()))),
         run: run_new_exporter,
         check: Some(check_new_exporter),
     },
     Scenario {
         name: EXPORTER_SEND_COLD,
+        inputs: "send_blocking: first send (cold runtime), attachment, tags, metadata",
         setup: || Box::new(exporter_ready(agent_endpoint(local_agent()), false)),
         run: run_send,
         check: Some(check_send),
     },
     Scenario {
         name: EXPORTER_SEND_WARM,
+        inputs: "send_blocking: second send (runtime already started)",
         setup: || Box::new(exporter_ready(agent_endpoint(local_agent()), true)),
         run: run_send,
         check: Some(check_send),
     },
     Scenario {
         name: SET_ENDPOINT_FIRST,
+        inputs: "set_endpoint: first mapping",
         setup: || meta_profile(fresh_profile(), Meta::set(1, ENDPOINT)),
         run: run_meta,
         check: Some(check_meta),
     },
     Scenario {
         name: SET_ENDPOINT_INTERNED,
+        inputs: "set_endpoint: interned endpoint, table full at 3 mappings",
         setup: || {
             // Three mappings fill the table. The call sets the already-interned endpoint on a
             // new span, so only the table grows.
@@ -921,6 +698,7 @@ pub const SCENARIOS: &[Scenario] = &[
     },
     Scenario {
         name: SET_ENDPOINT_NEW,
+        inputs: "set_endpoint: new endpoint string",
         setup: || {
             let mut profile = fresh_profile();
             set_endpoint(&mut profile, 1, ENDPOINT).expect("setup endpoint");
@@ -931,6 +709,7 @@ pub const SCENARIOS: &[Scenario] = &[
     },
     Scenario {
         name: SET_ENDPOINT_GROWTH,
+        inputs: "set_endpoint: 29th mapping (table growth)",
         setup: || {
             meta_profile(
                 profile_with_endpoints(METADATA_GROWTH),
@@ -942,12 +721,14 @@ pub const SCENARIOS: &[Scenario] = &[
     },
     Scenario {
         name: ENDPOINT_COUNT_FIRST,
+        inputs: "add_endpoint_count: first count",
         setup: || meta_profile(fresh_profile(), Meta::count(ENDPOINT, 3)),
         run: run_meta,
         check: Some(check_meta),
     },
     Scenario {
         name: ENDPOINT_COUNT_EXISTING,
+        inputs: "add_endpoint_count: increment an existing count",
         setup: || {
             let mut profile = fresh_profile();
             add_count(&mut profile, ENDPOINT, 1).expect("setup count");
@@ -958,6 +739,7 @@ pub const SCENARIOS: &[Scenario] = &[
     },
     Scenario {
         name: ENDPOINT_COUNT_GROWTH,
+        inputs: "add_endpoint_count: 29th endpoint (table growth)",
         setup: || {
             meta_profile(
                 profile_with_counts(METADATA_GROWTH),
@@ -969,6 +751,7 @@ pub const SCENARIOS: &[Scenario] = &[
     },
     Scenario {
         name: UPSCALING_PROPORTIONAL_FIRST,
+        inputs: "proportional rule: offsets [0, 1] on thread name",
         setup: || {
             meta_profile(
                 fresh_profile(),
@@ -980,6 +763,7 @@ pub const SCENARIOS: &[Scenario] = &[
     },
     Scenario {
         name: UPSCALING_PROPORTIONAL_AGAIN,
+        inputs: "proportional rule: offset [2] on the same label",
         setup: || {
             let mut profile = fresh_profile();
             add_proportional(&mut profile, &OFFSETS_WIDE, LABEL_NAME, LABEL_VALUE)
@@ -994,6 +778,7 @@ pub const SCENARIOS: &[Scenario] = &[
     },
     Scenario {
         name: UPSCALING_POISSON_FIRST,
+        inputs: "poisson rule: offset [0], sum 0, count 1, distance 1024",
         setup: || {
             meta_profile(
                 fresh_profile(),
@@ -1005,6 +790,7 @@ pub const SCENARIOS: &[Scenario] = &[
     },
     Scenario {
         name: UPSCALING_POISSON_AGAIN,
+        inputs: "poisson rule: offset [2] on the same label",
         setup: || {
             let mut profile = fresh_profile();
             add_poisson(
@@ -1027,6 +813,7 @@ pub const SCENARIOS: &[Scenario] = &[
     },
     Scenario {
         name: CONTRACT_ENDPOINT_AGENT,
+        inputs: "Endpoint_agent(http://127.0.0.1:8126)",
         setup: || {
             Box::new(EndpointContract {
                 url: "http://127.0.0.1:8126",
@@ -1040,6 +827,7 @@ pub const SCENARIOS: &[Scenario] = &[
     },
     Scenario {
         name: CONTRACT_ENDPOINT_AGENTLESS,
+        inputs: "Endpoint_agentless(datadoghq.com, API key)",
         setup: || {
             Box::new(EndpointContract {
                 url: "",
@@ -1053,6 +841,7 @@ pub const SCENARIOS: &[Scenario] = &[
     },
     Scenario {
         name: CONTRACT_ENCODED_BYTES,
+        inputs: "EncodedProfile_bytes on a serialized profile",
         setup: || {
             Box::new(BytesContract {
                 encoded: encoded_profile(),
@@ -1064,12 +853,14 @@ pub const SCENARIOS: &[Scenario] = &[
     },
     Scenario {
         name: CONTRACT_VEC_TAG_NEW,
+        inputs: "ddog_Vec_Tag_new",
         setup: || Box::new(TagContract { tags: None }),
         run: run_vec_tag_new,
         check: Some(check_vec_tag_new),
     },
     Scenario {
         name: CONTRACT_DROP_PROFILE,
+        inputs: "Profile_drop, then again on the emptied profile",
         setup: || {
             Box::new(DropProfile {
                 profile: take_profile(profile_with(1)),
@@ -1080,6 +871,7 @@ pub const SCENARIOS: &[Scenario] = &[
     },
     Scenario {
         name: CONTRACT_DROP_ENCODED,
+        inputs: "EncodedProfile_drop on a serialized profile",
         setup: || {
             Box::new(DropEncoded {
                 encoded: encoded_profile(),
@@ -1090,6 +882,7 @@ pub const SCENARIOS: &[Scenario] = &[
     },
     Scenario {
         name: CONTRACT_DROP_EXPORTER,
+        inputs: "Exporter_drop on a new exporter",
         setup: || {
             let mut fx = exporter_fixture(agent_endpoint(local_agent()));
             fx.exporter = new_exporter(&fx).expect("setup exporter");
@@ -1100,6 +893,7 @@ pub const SCENARIOS: &[Scenario] = &[
     },
     Scenario {
         name: CONTRACT_DROP_ERROR,
+        inputs: "ddog_Error_drop on a profile error",
         setup: || {
             Box::new(DropError {
                 error: profile_error(),
@@ -1110,6 +904,7 @@ pub const SCENARIOS: &[Scenario] = &[
     },
     Scenario {
         name: CONTRACT_DROP_VEC_TAG,
+        inputs: "ddog_Vec_Tag_drop on a populated vector",
         setup: || {
             Box::new(DropTags {
                 tags: Some(populated_tags()),
@@ -1120,6 +915,7 @@ pub const SCENARIOS: &[Scenario] = &[
     },
     Scenario {
         name: CONTRACT_DROP_CANCEL,
+        inputs: "CancellationToken_drop on a new token",
         setup: || {
             Box::new(DropCancel {
                 token: unsafe { ffi::ddog_CancellationToken_new() },
