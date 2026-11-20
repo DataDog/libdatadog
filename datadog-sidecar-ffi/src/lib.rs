@@ -1145,12 +1145,41 @@ pub const FFE_ADMISSION_UNKNOWN: FfeAdmission = 3;
 /// Queue capacity prevented admission. The producer may submit the observation in a batch.
 pub const FFE_ADMISSION_QUEUE_FULL: FfeAdmission = 4;
 
-/// Attempts admission with a local IPC budget capped at 50 ms. An absent transport yields
-/// unavailable.
+const fn admission_status(verdict: datadog_sidecar::service::ExposureVerdict) -> FfeAdmission {
+    use datadog_sidecar::service::ExposureVerdict::*;
+    match verdict {
+        Unavailable => FFE_ADMISSION_UNAVAILABLE,
+        Admitted => FFE_ADMISSION_ADMITTED,
+        Repeat => FFE_ADMISSION_REPEAT,
+        Unknown => FFE_ADMISSION_UNKNOWN,
+        QueueFull => FFE_ADMISSION_QUEUE_FULL,
+    }
+}
+
+const _: () = {
+    use datadog_sidecar::service::ExposureVerdict::*;
+    assert!(admission_status(Unavailable) == Unavailable as u32);
+    assert!(admission_status(Admitted) == Admitted as u32);
+    assert!(admission_status(Repeat) == Repeat as u32);
+    assert!(admission_status(Unknown) == Unknown as u32);
+    assert!(admission_status(QueueFull) == QueueFull as u32);
+};
+
+/// Records an assignment in the delivery or hook-only cache selected by `deliver`.
+/// The first eligible call negotiates support within the same IPC budget (maximum 50 ms).
+/// An absent transport, zero budget or more than 65,536 text bytes yields UNAVAILABLE before IPC.
+/// Delivery includes the subject attributes and feature JSON in the byte count.
+///
+/// ADMITTED records the assignment and queues it when delivery is enabled. REPEAT matches the
+/// resident assignment. QUEUE_FULL permits batched fallback. UNAVAILABLE indicates a definitive
+/// refusal. UNKNOWN means the sidecar may have applied the observation: keep it terminal.
+/// A late reply must drain before a new call can proceed. Conversion errors set a MaybeError
+/// and leave the output at UNAVAILABLE.
 ///
 /// # Safety
 /// A populated transport slot must point to a live, exclusively borrowed transport. Supply writable
-/// storage for `out`.
+/// storage for `out` and valid borrowed input slices for the duration of the call. Text identity
+/// fields must contain UTF-8.
 #[unsafe(no_mangle)]
 // allow(ffi-panic-boundary): This crate uses the sidecar's abort-on-panic ABI.
 pub unsafe extern "C" fn ddog_sidecar_ffe_admit_v1(
@@ -1203,11 +1232,11 @@ pub unsafe extern "C" fn ddog_sidecar_ffe_admit_v1(
         fields.features_json = CharSlice::empty();
     }
     let event = try_c!(ffe_exposure_from_ffi(&fields));
-    out.write(
+    out.write(admission_status(
         transport
             .inner
-            .admit_ffe_exposure_v1(context, event, deliver, deadline) as FfeAdmission,
-    );
+            .admit_ffe_exposure_v1(context, event, deliver, deadline),
+    ));
     MaybeError::None
 }
 

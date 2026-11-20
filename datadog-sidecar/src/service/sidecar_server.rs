@@ -36,7 +36,7 @@ use std::collections::HashMap;
 #[cfg(unix)]
 use std::os::unix::ffi::OsStringExt;
 use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
-use std::sync::{Arc, Mutex, Weak};
+use std::sync::{Arc, Mutex, OnceLock, Weak};
 use std::time::{Duration, SystemTime};
 use tracing::{debug, error, info, trace, warn};
 
@@ -135,6 +135,7 @@ pub struct SidecarServer {
     pub(crate) ffe_http_client: NativeCapabilities,
     /// Sidecar-owned exposure cache, shared across sessions/connections.
     pub(crate) ffe_exposure_deduplicator: ffe_exposures_flusher::ExposureDeduplicator,
+    ffe_hook_exposure_deduplicator: Arc<OnceLock<ffe_exposures_flusher::ExposureDeduplicator>>,
     ffe_admission_queue: ffe_exposures_flusher::AdmissionQueue,
     /// AppSec lifecycle and active backend, when supplied by the embedding application.
     #[cfg(unix)]
@@ -1582,10 +1583,17 @@ impl SidecarInterface for ConnectionSidecarHandler {
         }) else {
             return crate::service::ExposureVerdict::Unavailable;
         };
+        let cache = if deliver {
+            &self.server.ffe_exposure_deduplicator
+        } else {
+            self.server
+                .ffe_hook_exposure_deduplicator
+                .get_or_init(Default::default)
+        };
         self.server.ffe_admission_queue.admit(
             &self.server.ffe_http_client,
             &transport,
-            &self.server.ffe_exposure_deduplicator,
+            cache,
             context,
             event,
             deliver,

@@ -42,6 +42,9 @@ fn authority(
     (
         SidecarServer {
             ffe_exposure_deduplicator: ffe_exposures_flusher::ExposureDeduplicator::new(limit),
+            ffe_hook_exposure_deduplicator: Arc::new(std::sync::OnceLock::from(
+                ffe_exposures_flusher::ExposureDeduplicator::new(limit),
+            )),
             ffe_admission_queue: queue,
             ..SidecarServer::default()
         },
@@ -121,6 +124,23 @@ async fn logging_off_and_eviction() {
     ] {
         assert_eq!(record(&mut worker, ffe_exposure(user), false), verdict);
     }
+    assert!(rx.try_recv().is_err());
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[cfg_attr(miri, ignore = "requires native sequenced-packet sockets")]
+async fn hook_only_observations_preserve_delivery_and_its_capacity() {
+    let (server, mut rx) = authority(1, 1);
+    let mut cli = client(server.clone());
+    let mut fpm = client(server);
+    let a = ffe_exposure("a");
+    assert_eq!(record(&mut cli, a.clone(), false), Admitted);
+    assert_eq!(record(&mut fpm, a.clone(), false), Repeat);
+    assert!(rx.try_recv().is_err());
+    assert_eq!(record(&mut fpm, a.clone(), true), Admitted);
+    assert_eq!(record(&mut cli, ffe_exposure("b"), false), Admitted);
+    assert_eq!(record(&mut fpm, a, true), Repeat);
+    assert_eq!(rx.try_recv().unwrap().1.exposures[0].subject_id, "a");
     assert!(rx.try_recv().is_err());
 }
 

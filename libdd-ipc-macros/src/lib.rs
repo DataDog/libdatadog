@@ -748,6 +748,8 @@ fn gen_channel(
 /// - `{Trait}Channel` client struct with `try_send_*` / `call_*` methods (Unix)
 ///
 /// Method attributes recognized (stripped before emission):
+/// - `#[oversized_after]` — places the shared-memory envelope after this method, preserving its
+///   wire index
 /// - `#[blocking]` — `-> ()` method where client waits for ack (vs fire-and-forget)
 /// - `#[oneway]` — sends no reply and does not participate in client reply accounting
 /// - `#[SerializedHandle]` on a parameter — transfer the value's OS handles separately from its

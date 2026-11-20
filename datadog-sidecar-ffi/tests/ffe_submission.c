@@ -21,10 +21,15 @@ int main(void) {
       ddog_Slice_FfeScalarAttribute, const ddog_FfeSnapshotState *) =
       ddog_sidecar_try_submit_ffe_flag_evaluation;
   _Static_assert(sizeof(ddog_FfeAdmission) == sizeof(uint32_t), "admission status ABI");
+  _Static_assert(ddog_FFE_ADMISSION_UNAVAILABLE == 0 && ddog_FFE_ADMISSION_ADMITTED == 1 &&
+      ddog_FFE_ADMISSION_REPEAT == 2 && ddog_FFE_ADMISSION_UNKNOWN == 3 &&
+      ddog_FFE_ADMISSION_QUEUE_FULL == 4, "admission status values");
+  ddog_MaybeError (*admit)(ddog_SidecarTransport **, const ddog_FfeTelemetryContext *,
+      const ddog_FfeExposure *, bool, uint32_t, ddog_FfeAdmission *) = ddog_sidecar_ffe_admit_v1;
   ddog_FfeExposure exposure = { 0 };
   ddog_FfeAdmission admission = UINT32_MAX;
   ddog_SidecarTransport *transport = NULL;
-  ddog_MaybeError result = ddog_sidecar_ffe_admit_v1(&transport, &context, &exposure, true, 100, &admission);
+  ddog_MaybeError result = admit(&transport, &context, &exposure, true, 100, &admission);
   ddog_MaybeError_drop(result);
   return admission != ddog_FFE_ADMISSION_UNAVAILABLE || status != DDOG_FFE_SUBMISSION_STATUS_UNAVAILABLE || attributes.len != 1 ||
       snapshot.snapshot_error || submit == NULL;
