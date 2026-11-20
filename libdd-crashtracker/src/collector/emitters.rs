@@ -539,12 +539,14 @@ fn emit_otel_thread_contexts(
         emitted
     };
 
-    // Process the crashing thread first so it is never dropped by the cap.
-    if crashing_tid != 0 && tids.contains(&crashing_tid) {
-        let _ = try_emit_otel(crashing_tid);
-    }
-
-    for tid in tids {
+    // Process the crashing thread LAST so that ProcMemReader and TLS
+    // resolution are already initialized from other threads.  This avoids
+    // heap allocation between ptrace attach/detach for the crashing thread,
+    // which would risk a post-fork malloc deadlock that freezes the parent's
+    // signal handler (the crashing thread is in ptrace-stop during that
+    // window).
+    let mut setup_ready = false;
+    for tid in tids.iter().copied() {
         if tid == crashing_tid {
             continue;
         }
@@ -552,8 +554,16 @@ fn emit_otel_thread_contexts(
             break;
         }
         if matches!(try_emit_otel(tid), Ok(true)) {
+            setup_ready = true;
             processed += 1;
         }
+    }
+
+    // Now collect the crashing thread only if the allocating setup succeeded
+    // on a prior thread, so no malloc occurs while it is ptrace-stopped.
+    if crashing_tid != 0 && tids.contains(&crashing_tid) && setup_ready && Instant::now() < deadline
+    {
+        let _ = try_emit_otel(crashing_tid);
     }
 
     Ok(())
@@ -658,6 +668,7 @@ fn emit_threads<W: Write + Send>(
                     crashing_context
                         .as_ref()
                         .filter(|_| config.unwind_from_ucontext()),
+                    true, // skip ptracing the crashing thread (it runs the signal handler)
                     |tid, captured| {
                         if write_result.is_ok() {
                             write_result = emit(tid, captured);

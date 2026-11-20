@@ -628,6 +628,31 @@ pub(crate) async fn receive_report_from_stream(
         }
     }
 
+    // The collector skips ptracing the crashing thread to avoid deadlocking the
+    // parent's signal handler.  If the collector supplied threads but the
+    // crashing thread's stack is incomplete, do a targeted ptrace from the
+    // receiver (a separate exec'd process where it is safe) to fill it in.
+    #[cfg(target_os = "linux")]
+    if config.collect_all_threads()
+        && config.unwind_from_ucontext()
+        && !access.is_restricted()
+        && builder.error.threads.is_some()
+    {
+        let proc_ids = builder.proc_info.as_ref().map(|p| (p.pid, p.tid));
+        if let Some((parent_pid, crashing_tid)) = proc_ids {
+            let remaining_budget = per_report_deadline
+                .unwrap_or(absolute_deadline)
+                .saturating_duration_since(Instant::now());
+            let _ = enrich_crashing_thread_stack(
+                &mut builder,
+                &config,
+                parent_pid,
+                crashing_tid,
+                remaining_budget,
+            );
+        }
+    }
+
     let crash_info = builder.build()?;
 
     if crash_info.incomplete {
@@ -718,6 +743,7 @@ fn collect_and_add_thread_contexts(
         config.max_threads(),
         budget,
         crashing_context.as_ref(),
+        false, // receiver is a separate exec'd process, safe to ptrace all threads
         |tid, captured| {
             let used_saved_context = captured.as_ref().is_some_and(|ctx| ctx.used_saved_context);
             let mut thread =
@@ -745,6 +771,92 @@ fn collect_and_add_thread_contexts(
         builder.with_stack(stack)?;
     }
     let _ = builder.with_threads(threads);
+    Ok(())
+}
+
+/// Ptrace just the crashing thread from the receiver to fill in its stack.
+///
+/// The collector deliberately skips ptracing the crashing thread to avoid
+/// deadlocking the parent's signal handler (the crashing thread runs the
+/// handler and would enter ptrace-stop, preventing timeout/cleanup)
+#[cfg(target_os = "linux")]
+fn enrich_crashing_thread_stack(
+    builder: &mut CrashInfoBuilder,
+    config: &CrashtrackerConfiguration,
+    _parent_pid: u32,
+    crashing_tid: Option<u32>,
+    budget: Duration,
+) -> anyhow::Result<()> {
+    use crate::ptrace_collector::{capture_thread_context, crash_site_registers};
+    use libdd_libunwind_sys::UnwAddrSpace;
+    use std::time::Instant;
+
+    let crashing_tid = crashing_tid.context("no crashing tid")? as i32;
+    if crashing_tid == 0 {
+        return Ok(());
+    }
+
+    // Only enrich if the crashing thread has an empty/incomplete stack.
+    let needs_enrichment = builder
+        .error
+        .threads
+        .as_ref()
+        .and_then(|threads| threads.iter().find(|t| t.crashed))
+        .is_some_and(|t| t.stack.frames.is_empty() || t.stack.incomplete);
+    if !needs_enrichment {
+        return Ok(());
+    }
+
+    let crashing_context = if config.unwind_from_ucontext() {
+        builder.ucontext.clone()
+    } else {
+        None
+    };
+
+    let deadline = Instant::now() + budget;
+    let addr_space = UnwAddrSpace::new().context("failed to create libunwind address space")?;
+    let captured = capture_thread_context(
+        crashing_tid,
+        &addr_space,
+        deadline,
+        crashing_context.as_ref(),
+    )
+    .map_err(|e| anyhow::anyhow!("ptrace crashing thread: {e}"))?;
+
+    if captured.stack_trace.frames.is_empty() {
+        return Ok(());
+    }
+
+    let used_saved_context = captured.used_saved_context;
+    let crash_site = crashing_context.as_ref().and_then(crash_site_registers);
+
+    // Update the crashing thread entry in the thread list.
+    if let Some(threads) = builder.error.threads.as_mut()
+        && let Some(thread) = threads.iter_mut().find(|t| t.crashed)
+    {
+        thread.stack = captured.stack_trace.clone();
+        if let Some((ip, sp)) = crash_site {
+            crate::ptrace_collector::drop_frames_above_crash_site(&mut thread.stack, ip, sp);
+        }
+        if used_saved_context && let Some(collector) = builder.error.stack.as_ref() {
+            recover_collector_callers(&mut thread.stack, collector);
+        }
+    }
+
+    // Promote the enriched stack to error.stack if applicable.
+    if should_promote_crashing_stack(config, used_saved_context) {
+        let mut stack = captured.stack_trace;
+        if let Some((ip, sp)) = crash_site {
+            crate::ptrace_collector::drop_frames_above_crash_site(&mut stack, ip, sp);
+        }
+        if let Some(collector) = builder.error.stack.as_ref() {
+            recover_collector_callers(&mut stack, collector);
+        }
+        if !stack.frames.is_empty() {
+            builder.with_stack(stack)?;
+        }
+    }
+
     Ok(())
 }
 

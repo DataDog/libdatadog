@@ -78,10 +78,21 @@ impl Collector {
             pid if pid > 0 => {
                 #[cfg(target_os = "linux")]
                 if let Some((read_fd, write_fd)) = ptrace_gate {
-                    // SAFETY: both calls are async-signal-safe. Closing the write end is what
-                    // releases the child, so it must come after the grant.
+                    // Allow both the collector child (which ptraces non-crashing
+                    // threads) and the receiver (which may ptrace the crashing
+                    // thread after the collector finishes) to attach.
+                    // PR_SET_PTRACER_ANY is needed because PR_SET_PTRACER only
+                    // accepts a single PID and the collector's grant would
+                    // overwrite the receiver's.
+                    //
+                    // SAFETY: both calls are async-signal-safe. Closing the write
+                    // end is what releases the child, so it must come after the
+                    // grant.
                     unsafe {
-                        libc::prctl(libc::PR_SET_PTRACER, pid as libc::c_ulong);
+                        libc::prctl(
+                            libc::PR_SET_PTRACER,
+                            libc::PR_SET_PTRACER_ANY as libc::c_ulong,
+                        );
                         libc::close(read_fd);
                         libc::close(write_fd);
                     }
