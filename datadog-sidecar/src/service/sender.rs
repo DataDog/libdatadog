@@ -521,6 +521,29 @@ impl SidecarSender {
         }
     }
 
+    /// Issues one admission to a negotiated peer using the socket's blocking reply path.
+    /// Semantic test fixtures supply a supervised connection with an outer liveness watchdog.
+    #[doc(hidden)]
+    pub fn admit_ffe_exposure_for_test(
+        &mut self,
+        context: crate::service::FfeTelemetryContext,
+        event: crate::service::FfeExposure,
+        deliver: bool,
+    ) -> crate::service::ExposureVerdict {
+        use crate::service::ExposureVerdict;
+        if self.drain_outbox_blocking().is_err()
+            || !self
+                .channel
+                .call_ping()
+                .is_ok_and(|caps| caps & super::FFE_ADMISSION_V1_CAPABILITY != 0)
+        {
+            return ExposureVerdict::Unavailable;
+        }
+        self.channel
+            .call_admit_ffe_exposure_v1(context, event, deliver)
+            .unwrap_or(ExposureVerdict::Unknown)
+    }
+
     pub fn ping(&mut self) -> io::Result<()> {
         self.drain_outbox_blocking()?;
         self.channel.call_ping().map(|_| ()).map_err(|e| match e {

@@ -1200,23 +1200,40 @@ pub unsafe extern "C" fn ddog_sidecar_ffe_admit_v1(
     };
     let deadline = std::time::Instant::now()
         + std::time::Duration::from_micros(u64::from(budget_us.min(50_000)));
-    let size = exposure_text_bytes(context, exposure, deliver);
-    if size > 65536 || budget_us == 0 {
+    if budget_us == 0 {
         return MaybeError::None;
     }
-    let context = try_c!(ffe_context_from_ffi(context));
-    let mut fields = *exposure;
-    if !deliver {
-        fields.subject_attributes_json = CharSlice::empty();
-        fields.features_json = CharSlice::empty();
-    }
-    let event = try_c!(ffe_exposure_from_ffi(&fields));
+    let Some((context, event)) = try_c!(exposure.admission_input(context, deliver)) else {
+        return MaybeError::None;
+    };
     out.write(admission_status(
         transport
             .inner
             .admit_ffe_exposure_v1(context, event, deliver, deadline),
     ));
     MaybeError::None
+}
+
+impl FfeExposure<'_> {
+    /// Builds the wire input, returning `None` when the admission payload exceeds its byte budget.
+    pub fn admission_input(
+        &self,
+        context: &FfeTelemetryContext<'_>,
+        deliver: bool,
+    ) -> Result<Option<(SidecarFfeTelemetryContext, SidecarFfeExposure)>, String> {
+        if exposure_text_bytes(context, self, deliver) > 65536 {
+            return Ok(None);
+        }
+        let mut fields = *self;
+        if !deliver {
+            fields.subject_attributes_json = CharSlice::empty();
+            fields.features_json = CharSlice::empty();
+        }
+        Ok(Some((
+            ffe_context_from_ffi(context)?,
+            ffe_exposure_from_ffi(&fields)?,
+        )))
+    }
 }
 
 fn exposure_text_bytes(

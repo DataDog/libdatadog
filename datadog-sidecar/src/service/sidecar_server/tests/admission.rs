@@ -271,6 +271,70 @@ fn simulated_peer_with_caps(
     )
 }
 
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[cfg_attr(miri, ignore = "requires native sequenced-packet sockets")]
+async fn exact_peer_waits_for_the_applied_repeat() {
+    use std::sync::mpsc::{RecvTimeoutError, channel};
+
+    let (server, mut queued) = authority(2, 2);
+    let mut upstream = client(server);
+    let (worker, relay) = SeqpacketConn::socketpair().unwrap();
+    let (applied, observed) = channel();
+    let (release, gate) = channel();
+    let (complete, result) = channel();
+    let peer = std::thread::spawn(move || {
+        let mut buf = [0; 4096];
+        for expected in [Admitted, Repeat] {
+            let (n, _) = relay.recv_raw_blocking(&mut buf).unwrap();
+            assert!(matches!(
+                decode::<SidecarInterfaceRequest>(&buf[..n]).unwrap(),
+                SidecarInterfaceRequest::Ping {}
+            ));
+            relay
+                .send_raw_blocking(encode(&upstream.channel.call_ping().unwrap()), &[])
+                .unwrap();
+            let (n, _) = relay.recv_raw_blocking(&mut buf).unwrap();
+            let request = decode::<SidecarInterfaceRequest>(&buf[..n]).unwrap();
+            assert!(
+                matches!(&request, SidecarInterfaceRequest::AdmitFfeExposureV1 { event, deliver: true, .. } if event.subject_id == "same")
+            );
+            let reply: ExposureVerdict = upstream.channel.call_request_blocking(&request).unwrap();
+            assert_eq!(reply, expected);
+            if reply == Repeat {
+                applied.send(()).unwrap();
+                gate.recv_timeout(Duration::from_secs(10)).unwrap();
+            }
+            relay.send_raw_blocking(encode(&reply), &[]).unwrap();
+        }
+    });
+    let worker = std::thread::spawn(move || {
+        let mut sender = SidecarSender::new(SidecarInterfaceChannel::new(worker));
+        for _ in 0..2 {
+            complete
+                .send(sender.admit_ffe_exposure_for_test(ffe_context(), ffe_exposure("same"), true))
+                .unwrap();
+        }
+    });
+    assert_eq!(
+        result.recv_timeout(Duration::from_secs(10)).unwrap(),
+        Admitted
+    );
+    observed.recv_timeout(Duration::from_secs(10)).unwrap();
+    assert_eq!(
+        result.recv_timeout(Duration::from_millis(100)),
+        Err(RecvTimeoutError::Timeout)
+    );
+    release.send(()).unwrap();
+    assert_eq!(
+        result.recv_timeout(Duration::from_secs(10)).unwrap(),
+        Repeat
+    );
+    worker.join().unwrap();
+    peer.join().unwrap();
+    assert_eq!(queued.try_recv().unwrap().1.exposures.len(), 1);
+    assert!(queued.try_recv().is_err());
+}
+
 fn submit(
     sender: &mut SidecarSender,
     rows: &[FfeExposure],
