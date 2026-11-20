@@ -56,9 +56,14 @@ pub struct HttpClientError {
 
 impl HttpClientError {
     pub(crate) fn new(code: HttpClientErrorCode, message: &str) -> Self {
+        // A C string can't hold an interior NUL (e.g. from a binary response body). Escape
+        // it instead of dropping the whole message. The second `CString::new` can't fail
+        // once the NULs are gone, so the `unwrap_or_default` is only a panic-free fallback.
+        let c_message = CString::new(message)
+            .unwrap_or_else(|_| CString::new(message.replace('\0', "\\0")).unwrap_or_default());
         Self {
             code,
-            message: CString::new(message).unwrap_or_default().into_raw(),
+            message: c_message.into_raw(),
         }
     }
 }
@@ -175,10 +180,10 @@ mod tests {
     }
 
     #[test]
-    fn a_message_with_an_interior_nul_becomes_empty() {
+    fn a_message_with_an_interior_nul_has_it_escaped() {
         let error = HttpClientError::new(HttpClientErrorCode::Io, "a\0b");
 
-        assert_eq!(message(&error), "");
+        assert_eq!(message(&error), "a\\0b");
     }
 
     #[test]
