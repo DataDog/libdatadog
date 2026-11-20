@@ -105,16 +105,19 @@ fn build_c_file(out_dir: &Path) {
     // This will help to identify regressions in blazesym.
     // Note: we could have picked any other debug_xx sections. As long as it's a
     // debug ELF sections.
-    let mut modify_alignment = Command::new("objcopy")
+    let status = Command::new("objcopy")
         .args(["--set-section-alignment", ".debug_abbrev=1"])
         .arg(&dst)
         .arg(&dst)
         .spawn()
-        .expect("failed to spawn objcopy");
-
-    modify_alignment
+        .expect("failed to spawn objcopy")
         .wait()
-        .expect("Failed to change alignement of debug_abbrev ELF section");
+        .expect("failed to wait for objcopy");
+    assert!(
+        status.success(),
+        "objcopy failed to misalign .debug_abbrev in {} (requires binutils >= 2.33)",
+        dst.display()
+    );
 }
 
 #[cfg(feature = "generate-unit-test-files")]
