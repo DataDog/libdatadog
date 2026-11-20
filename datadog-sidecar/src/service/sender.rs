@@ -105,16 +105,6 @@ struct ConnectionState {
 }
 
 impl ConnectionState {
-    fn has_pending(&self) -> bool {
-        self.connection_config.pending
-            || self.evp_transports.pending
-            || self.process_tags.pending
-            || self.user_service_defined.pending
-            || self.test_session_token.pending
-            || self.application.pending
-            || self.cdn.pending
-    }
-
     /// Offers the pending messages to `submit`, in the order they must be sent in: the
     /// configuration first, the application last. Stops at the first message `submit` refuses,
     /// which stays pending with all following ones. Returns whether everything was sent.
@@ -242,6 +232,10 @@ impl SidecarSender {
 
     /// Non-blocking drain of pending state messages.  Returns `true` if all messages were sent.
     fn try_drain_outbox(&mut self) -> bool {
+        self.try_drain_outbox_while(|| true)
+    }
+
+    fn try_drain_outbox_while(&mut self, within_budget: impl Fn() -> bool) -> bool {
         // Drain pending acks when approaching the throttle threshold so the socket
         // receive buffer doesn't fill up and block the sidecar from sending more acks.
         if self.channel.0.outstanding() >= self.max_outstanding / 2 {
@@ -249,7 +243,9 @@ impl SidecarSender {
         }
         let (channel, max_outstanding) = (&mut self.channel, self.max_outstanding);
         self.state.send_pending(|request| {
-            channel.0.outstanding() < max_outstanding && channel.try_send_request(request).is_ok()
+            within_budget()
+                && channel.0.outstanding() < max_outstanding
+                && channel.try_send_request(request).is_ok()
         })
     }
 
@@ -481,7 +477,7 @@ impl SidecarSender {
         use libdd_ipc::codec::{decode, encode};
         if std::time::Instant::now() >= deadline
             || self.channel.0.is_closed()
-            || self.state.has_pending()
+            || !self.try_drain_outbox_while(|| std::time::Instant::now() < deadline)
         {
             return ExposureVerdict::Unavailable;
         }

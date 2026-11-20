@@ -140,6 +140,58 @@ async fn queue_full_preserves_assignment() {
     assert_eq!(rx.try_recv().unwrap().1.exposures[0].variant, "b");
 }
 
+#[test]
+#[cfg_attr(miri, ignore = "requires native sequenced-packet sockets")]
+fn admission_drains_pending_state_and_consumes_prior_acks() {
+    let (conn, peer) = SeqpacketConn::socketpair().unwrap();
+    let mut sender = SidecarSender::new(SidecarInterfaceChannel::new(conn));
+    sender.max_outstanding = 1;
+    sender.set_user_service_defined(true);
+    sender.set_test_session_token("new-scope".to_owned());
+    assert_eq!(
+        record(&mut sender, ffe_exposure("user"), false),
+        Unavailable
+    );
+    sender.max_outstanding = 100;
+
+    let server = std::thread::spawn(move || {
+        let mut buf = [0; 4096];
+        let mut read = || {
+            let (len, _) = peer.recv_raw_blocking(&mut buf).unwrap();
+            decode::<SidecarInterfaceRequest>(&buf[..len]).unwrap()
+        };
+        assert!(matches!(
+            read(),
+            SidecarInterfaceRequest::SetUserServiceDefined { is_defined: true }
+        ));
+        assert!(
+            matches!(read(), SidecarInterfaceRequest::SetTestSessionToken { token } if token == "new-scope")
+        );
+        assert!(matches!(read(), SidecarInterfaceRequest::Ping {}));
+        for byte in [0, 0, crate::service::FFE_ADMISSION_V1_CAPABILITY] {
+            peer.send_raw_blocking(vec![byte], &[]).unwrap();
+        }
+        match read() {
+            SidecarInterfaceRequest::AdmitFfeExposureV1 {
+                event,
+                deliver: false,
+                ..
+            } => {
+                assert!(event.subject_attributes_json.is_empty());
+                assert!(event.features_json.is_empty());
+            }
+            _ => panic!("expected hook-only admission"),
+        }
+        peer.send_raw_blocking(encode(&Admitted), &[]).unwrap();
+    });
+    let mut event = ffe_exposure("user");
+    event.subject_attributes_json = r#"{"id":1}"#.to_owned();
+    event.features_json = r#"{"arm":"test"}"#.to_owned();
+    assert_eq!(record(&mut sender, event, false), Admitted);
+    assert_eq!(sender.channel.0.outstanding(), 0);
+    server.join().unwrap();
+}
+
 fn simulated_peer(
     supported: bool,
     after_probe: impl FnOnce(SeqpacketConn) + Send + 'static,

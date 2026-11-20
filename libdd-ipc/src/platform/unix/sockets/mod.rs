@@ -59,6 +59,19 @@ pub const HANDLE_SUFFIX_SIZE: usize = 0;
 
 pub use crate::platform::peer_credentials::PeerCredentials;
 
+fn poll_timeout_ms(remaining: Duration) -> i32 {
+    i32::try_from(remaining.as_nanos().div_ceil(1_000_000)).unwrap_or(i32::MAX)
+}
+
+#[test]
+fn poll_timeout_preserves_positive_remainders() {
+    assert_eq!(poll_timeout_ms(Duration::ZERO), 0);
+    assert_eq!(poll_timeout_ms(Duration::from_nanos(1)), 1);
+    assert_eq!(poll_timeout_ms(Duration::from_micros(999)), 1);
+    assert_eq!(poll_timeout_ms(Duration::from_millis(1)), 1);
+    assert_eq!(poll_timeout_ms(Duration::MAX), i32::MAX);
+}
+
 pub(super) fn create_unix_socket(sock_type: SockType) -> io::Result<OwnedFd> {
     let fd = nix::sys::socket::socket(AddressFamily::Unix, sock_type, SockFlag::empty(), None)
         .map_err(io::Error::from)?;
@@ -317,24 +330,22 @@ impl SeqpacketConn {
     }
 
     pub(crate) fn wait_for_packet(&self, deadline: std::time::Instant) -> io::Result<()> {
-        let ms = deadline
-            .saturating_duration_since(std::time::Instant::now())
-            .as_millis();
+        let ms = poll_timeout_ms(deadline.saturating_duration_since(std::time::Instant::now()));
+        if ms == 0 {
+            return Ok(());
+        }
         let mut pollfd = libc::pollfd {
             fd: self.inner.as_raw_fd(),
             events: libc::POLLIN,
             revents: 0,
         };
         // A signal returns control to the caller to recompute the remaining budget.
-        let result = unsafe { libc::poll(&mut pollfd, 1, i32::try_from(ms).unwrap_or(i32::MAX)) };
+        let result = unsafe { libc::poll(&mut pollfd, 1, ms) };
         if result < 0 {
             let error = io::Error::last_os_error();
             if error.kind() != io::ErrorKind::Interrupted {
                 return Err(error);
             }
-        }
-        if ms == 0 && result == 0 {
-            std::thread::yield_now();
         }
         Ok(())
     }
