@@ -1179,7 +1179,10 @@ impl SidecarInterface for ConnectionSidecarHandler {
             tokio::spawn(async move {
                 match handle.map() {
                     Ok(mapped) => {
-                        let bytes = tinybytes::Bytes::from(mapped);
+                        // The spans decoded from the payload borrow the mapping until their flush;
+                        // detached, it holds no descriptor meanwhile, so a burst of payloads cannot
+                        // exhaust the sidecar's descriptors.
+                        let bytes = tinybytes::Bytes::from(mapped.into_detached());
                         server.send_trace_v04(
                             &headers,
                             bytes,
@@ -1247,7 +1250,8 @@ impl SidecarInterface for ConnectionSidecarHandler {
             tokio::spawn(async move {
                 match handle.map() {
                     Ok(mapped) => {
-                        let bytes = tinybytes::Bytes::from(mapped);
+                        // Detached for the same reason as in `send_trace_v04_shm`.
+                        let bytes = tinybytes::Bytes::from(mapped.into_detached());
                         server.send_trace_v1(
                             &session,
                             generic,
@@ -1325,7 +1329,8 @@ impl SidecarInterface for ConnectionSidecarHandler {
         match handle.map() {
             Ok(mapped) => {
                 if let Some(app) = self.application.app.as_mut() {
-                    session.send_debugger_data(app, debugger_type, mapped);
+                    // Detached like trace payloads: it may wait for a slow agent too.
+                    session.send_debugger_data(app, debugger_type, mapped.into_detached());
                 } else {
                     warn!(
                         "No application for {:?} - skipping live debugger data",

@@ -14,8 +14,11 @@ use std::mem::MaybeUninit;
 use std::{
     io,
     os::unix::io::{AsRawFd, FromRawFd, IntoRawFd, OwnedFd, RawFd},
-    sync::atomic::{AtomicUsize, Ordering},
-    time::Duration,
+    sync::{
+        Mutex,
+        atomic::{AtomicUsize, Ordering},
+    },
+    time::{Duration, Instant},
 };
 use tokio::io::unix::AsyncFd;
 
@@ -102,6 +105,52 @@ pub(super) fn sendmsg_raw(
     .map_err(io::Error::from)
 }
 
+/// Closes the descriptors a truncated message brought, which nix does not hand out.
+fn close_truncated_rights(cmsg_buf: &[u8]) {
+    // SAFETY: the buffer outlives the header, and was zeroed before the kernel filled its
+    // start, so the walk ends at the first header it did not write.
+    unsafe {
+        let mut header: libc::msghdr = std::mem::zeroed();
+        header.msg_control = cmsg_buf.as_ptr() as *mut libc::c_void;
+        header.msg_controllen = cmsg_buf.len() as _;
+        let mut cmsg = libc::CMSG_FIRSTHDR(&header);
+        while !cmsg.is_null() && (*cmsg).cmsg_len as usize >= libc::CMSG_LEN(0) as usize {
+            if (*cmsg).cmsg_level == libc::SOL_SOCKET && (*cmsg).cmsg_type == libc::SCM_RIGHTS {
+                let fds = libc::CMSG_DATA(cmsg).cast::<libc::c_int>();
+                let count = ((*cmsg).cmsg_len as usize - libc::CMSG_LEN(0) as usize)
+                    / size_of::<libc::c_int>();
+                for i in 0..count {
+                    drop(OwnedFd::from_raw_fd(fds.add(i).read_unaligned()));
+                }
+            }
+            cmsg = libc::CMSG_NXTHDR(&header, cmsg);
+        }
+    }
+}
+
+/// Logs at error level at most every few seconds, the rest at debug: a full descriptor table
+/// drops the descriptors of every message passing some, on every connection.
+fn report_dropped_descriptors() {
+    const INTERVAL: Duration = Duration::from_secs(5);
+    static LAST: Mutex<Option<Instant>> = Mutex::new(None);
+    let now = Instant::now();
+    let due = LAST.lock().is_ok_and(|mut last| {
+        let due = last.is_none_or(|last| now.duration_since(last) >= INTERVAL);
+        if due {
+            *last = Some(now);
+        }
+        due
+    });
+    const DROPPED: &str = "IPC receive: the descriptors passed with a message were dropped \
+        (MSG_CTRUNC: out of descriptors, or more passed than a message takes); the connection \
+        is closed";
+    if due {
+        tracing::error!("{DROPPED}");
+    } else {
+        tracing::debug!("{DROPPED}");
+    }
+}
+
 pub(super) fn recvmsg_raw(
     fd: RawFd,
     buf: &mut [u8],
@@ -129,6 +178,12 @@ pub(super) fn recvmsg_raw(
         // 0 bytes means EOF (peer closed connection), not a valid datagram.
         // Legitimate acks are always at least 1 byte.
         return Err(io::Error::from(io::ErrorKind::BrokenPipe));
+    }
+    if msg.flags.contains(MsgFlags::MSG_CTRUNC) {
+        // Unusable without its descriptors: the error ends the connection, as nix's ENOBUFS did.
+        close_truncated_rights(&cmsg_buf);
+        report_dropped_descriptors();
+        return Err(io::Error::from_raw_os_error(libc::ENOBUFS));
     }
     let mut owned_fds = Vec::new();
     for cmsg in msg.cmsgs().map_err(io::Error::from)? {
