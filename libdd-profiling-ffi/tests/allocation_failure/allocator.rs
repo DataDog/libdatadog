@@ -170,7 +170,8 @@ fn thread_id() -> u32 {
         .unwrap_or(0)
 }
 
-/// Observer for the arena chaos wrappers. `domain` and `op` are the `libdd_alloc` codes.
+/// Observer for the `libdd-profiling` arena proxy. `domain` and `op` use that proxy's codes.
+#[cfg_attr(not(allocation_chaos_test), allow(dead_code))]
 pub fn observe_allocation(domain: u8, op: u8, size: usize, align: usize) -> bool {
     let domain = match domain {
         1 => Domain::ArenaRequest,
@@ -182,6 +183,11 @@ pub fn observe_allocation(domain: u8, op: u8, size: usize, align: usize) -> bool
         1 => Operation::AllocZeroed,
         _ => Operation::Realloc,
     };
+    on_allocation(domain, operation, size, align)
+}
+
+/// Same as [`observe_allocation`], for the harness's own arena wrappers.
+pub fn observe(domain: Domain, operation: Operation, size: usize, align: usize) -> bool {
     on_allocation(domain, operation, size, align)
 }
 

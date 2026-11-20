@@ -193,17 +193,10 @@ pub const ARENA_SLICE_SET: &str = "arena_slice_set";
 /// of `ARENA_CHUNK_HINT + 1` cannot fit in the hinted chunk.
 pub const ARENA_CHUNK_HINT: usize = 64 * 1024;
 
-type Backing =
-    libdd_alloc::ChaosAllocator<libdd_alloc::VirtualAllocator, libdd_alloc::ArenaBacking>;
-type RequestArena =
-    libdd_alloc::ChaosAllocator<libdd_alloc::ChainAllocator<Backing>, libdd_alloc::ArenaRequest>;
+use crate::arena::RequestArena;
 
 fn request_arena() -> RequestArena {
-    let backing = libdd_alloc::ChaosAllocator::new(libdd_alloc::VirtualAllocator {});
-    libdd_alloc::ChaosAllocator::new(libdd_alloc::ChainAllocator::new_in(
-        ARENA_CHUNK_HINT,
-        backing,
-    ))
+    crate::arena::request_arena(ARENA_CHUNK_HINT)
 }
 
 fn alloc_bytes(arena: &RequestArena, size: usize) -> Result<(), ScenarioError> {

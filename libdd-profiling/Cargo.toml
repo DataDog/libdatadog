@@ -18,9 +18,6 @@ bench = false
 
 [features]
 default = []
-# Test-only. Wraps profiling arenas with the allocation-failure proxy from libdd-alloc.
-# Production builds leave this off, so the arena type stays `ChainAllocator<VirtualAllocator>`.
-allocation-chaos-test = ["libdd-alloc/allocation-chaos-test"]
 cxx = ["dep:cxx", "dep:cxx-build"]
 otel = ["dep:opentelemetry-proto"]
 

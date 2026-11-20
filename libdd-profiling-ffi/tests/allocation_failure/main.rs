@@ -16,6 +16,7 @@
 //! `alloc_chaos_injection_hook` records the stack and the owned call site.
 
 mod allocator;
+mod arena;
 mod contract;
 mod controller;
 mod scenarios;
@@ -50,6 +51,15 @@ fn discover_arena(name: &'static str, required: &[Domain], absent: &[Domain]) ->
         );
     }
     report
+}
+
+/// Arena domains a `libdd-profiling` collection must show, when its arenas are observed.
+fn profiling_arena_domains() -> &'static [Domain] {
+    if arena::PROFILING_ARENAS_OBSERVED {
+        &[Domain::ArenaRequest, Domain::ArenaBacking]
+    } else {
+        &[]
+    }
 }
 
 fn load_discovery(name: &'static str) -> Report {
@@ -190,28 +200,20 @@ const TESTS: &[(&str, fn())] = &[
     ("scenario::arena_string_table", || {
         discover_arena(
             scenarios::ARENA_STRING_TABLE,
-            &[Domain::ArenaRequest, Domain::ArenaBacking],
+            profiling_arena_domains(),
             &[],
         );
     }),
     ("scenario::arena_set", || {
-        discover_arena(
-            scenarios::ARENA_SET,
-            &[Domain::ArenaRequest, Domain::ArenaBacking],
-            &[],
-        );
+        discover_arena(scenarios::ARENA_SET, profiling_arena_domains(), &[]);
     }),
     ("scenario::arena_slice_set", || {
-        discover_arena(
-            scenarios::ARENA_SLICE_SET,
-            &[Domain::ArenaRequest, Domain::ArenaBacking],
-            &[],
-        );
+        discover_arena(scenarios::ARENA_SLICE_SET, profiling_arena_domains(), &[]);
     }),
 ];
 
 fn main() {
-    libdd_alloc::register_observer(allocator::observe_allocation);
+    arena::register_observer();
     let args: Vec<String> = std::env::args().skip(1).collect();
 
     if args.first().map(String::as_str) == Some(controller::WORKER_ARG) {

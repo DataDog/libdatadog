@@ -54,12 +54,6 @@ pub trait ArenaAllocator: Allocator {
 
 impl<A: Allocator + Clone> ArenaAllocator for ChainAllocator<A> {}
 
-#[cfg(feature = "allocation-chaos-test")]
-impl<A: Allocator + Clone> ArenaAllocator
-    for libdd_alloc::ChaosAllocator<ChainAllocator<A>, libdd_alloc::ArenaRequest>
-{
-}
-
 type Hasher = core::hash::BuildHasherDefault<rustc_hash::FxHasher>;
 type HashSet<K> = indexmap::IndexSet<K, Hasher>;
 

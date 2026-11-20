@@ -2,6 +2,16 @@
 // SPDX-License-Identifier: Apache-2.0
 
 fn main() {
+    // Test-only: `LIBDD_ALLOCATION_CHAOS_TEST=1` wraps the profiling arenas for the
+    // allocation-failure harness of libdd-profiling-ffi. A cfg rather than a Cargo feature, so
+    // feature unification can never turn it on in a shipped build.
+    println!("cargo:rerun-if-changed=build.rs");
+    println!("cargo:rerun-if-env-changed=LIBDD_ALLOCATION_CHAOS_TEST");
+    println!("cargo:rustc-check-cfg=cfg(allocation_chaos_test)");
+    if std::env::var_os("LIBDD_ALLOCATION_CHAOS_TEST").is_some_and(|v| v == "1") {
+        println!("cargo:rustc-cfg=allocation_chaos_test");
+    }
+
     // Build CXX bridge if feature is enabled
     #[cfg(feature = "cxx")]
     {

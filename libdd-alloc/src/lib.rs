@@ -9,15 +9,11 @@
 #![cfg_attr(not(test), deny(clippy::unimplemented))]
 
 mod chain;
-#[cfg(feature = "allocation-chaos-test")]
-mod chaos;
 mod linear;
 mod utils;
 mod virtual_alloc;
 
 pub use chain::*;
-#[cfg(feature = "allocation-chaos-test")]
-pub use chaos::{ArenaBacking, ArenaRequest, ChaosAllocator, ObserveFn, register_observer};
 pub use linear::*;
 pub use virtual_alloc::*;
 

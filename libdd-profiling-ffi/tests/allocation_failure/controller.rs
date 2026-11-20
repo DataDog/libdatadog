@@ -548,7 +548,13 @@ fn capture_stacks(scenario: &str, baseline: &[Event], runs: &mut [Finding]) {
     }
 }
 
+/// `ALLOC_CHAOS_DEBUGGER=gdb|lldb` forces one; otherwise gdb, then lldb.
 fn debugger() -> Option<&'static str> {
+    match std::env::var("ALLOC_CHAOS_DEBUGGER").as_deref() {
+        Ok("gdb") => return command_ok("gdb").then_some("gdb"),
+        Ok("lldb") => return command_ok("lldb").then_some("lldb"),
+        _ => {}
+    }
     if command_ok("gdb") {
         Some("gdb")
     } else if command_ok("lldb") {
@@ -604,9 +610,16 @@ fn debugger_backtrace(
                 .arg("bt 80");
         }
         "lldb" => {
+            // The default frame format prints the file name only; owned frames are recognized
+            // by their full path.
             cmd.arg("-b")
                 .arg("-o")
                 .arg("settings set auto-confirm true")
+                .arg("-o")
+                .arg(
+                    "settings set frame-format \"frame #${frame.index}: ${function.name}\
+                     { at ${line.file.fullpath}:${line.number}}\\n\"",
+                )
                 .arg("-o")
                 .arg("breakpoint set --name alloc_chaos_injection_hook")
                 .arg("-o")
@@ -619,7 +632,7 @@ fn debugger_backtrace(
                     ordinal
                 ))
                 .arg("-o")
-                .arg("bt")
+                .arg("bt 80")
                 .arg("-o")
                 .arg("quit")
                 .arg(&exe);
@@ -693,7 +706,7 @@ fn is_owned_frame(line: &str) -> bool {
     if let Some((_, file)) = line.rsplit_once(" at ") {
         // The chaos wrapper is test infrastructure, like this harness. The call site is the
         // production line that asked for the memory.
-        if file.contains("chaos.rs") || file.contains("/allocation_failure/") {
+        if file.contains("libdd-profiling/src/arena.rs") || file.contains("/allocation_failure/") {
             return false;
         }
         return file.contains("libdd-") || file.contains("libdd_");

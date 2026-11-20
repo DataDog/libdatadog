@@ -11,10 +11,6 @@ edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 
-[features]
-# Test-only allocation-failure proxy. Off for every production build.
-allocation-chaos-test = []
-
 [dependencies]
 allocator-api2.workspace = true
 
