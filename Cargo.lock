@@ -3459,10 +3459,12 @@ version = "1.0.0"
 dependencies = [
  "allocator-api2",
  "anyhow",
+ "backtrace",
  "build_common",
  "function_name",
  "hyper",
  "libc",
+ "libdd-alloc",
  "libdd-common",
  "libdd-common-ffi",
  "libdd-crashtracker-ffi",
@@ -3481,6 +3483,7 @@ dependencies = [
  "symbolizer-ffi",
  "thiserror 2.0.17",
  "tokio-util",
+ "zstd",
 ]
 
 [[package]]

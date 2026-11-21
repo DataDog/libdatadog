@@ -94,5 +94,22 @@ libdd-ffe-ffi = { path = "../libdd-ffe-ffi", default-features = false, optional 
 libdd-shared-runtime-ffi = { path = "../libdd-shared-runtime-ffi", default-features = false, optional = true }
 libdd-otel-thread-ctx-ffi = { path = "../libdd-otel-thread-ctx-ffi", default-features = false, optional = true }
 
+[dev-dependencies]
+backtrace = { workspace = true, default-features = true }
+libdd-alloc = { path = "../libdd-alloc" }
+libdd-common = { path = "../libdd-common" }
+libdd-common-ffi = { path = "../libdd-common-ffi", features = ["std"] }
+# zstd contexts allocate through the Rust global allocator, so the harness can fail them.
+zstd = { workspace = true, features = ["with-rust-allocator"] }
+
+# Experimental allocation-failure harness. Its own binary and its own Cargo invocation,
+# not a feature of the shipped library, so feature unification cannot enable it there.
+# `LIBDD_ALLOCATION_CHAOS_TEST=1` observes profiling arenas; the release builder rejects it.
+[[test]]
+name = "allocation_failure"
+path = "tests/allocation_failure/main.rs"
+harness = false
+
 [package.metadata.cargo-machete]
-ignored = ["libdd-regex"]
+# zstd: a dev-dependency only for its with-rust-allocator feature.
+ignored = ["libdd-regex", "zstd"]

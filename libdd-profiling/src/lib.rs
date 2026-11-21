@@ -6,6 +6,8 @@
 #![cfg_attr(not(test), deny(clippy::todo))]
 #![cfg_attr(not(test), deny(clippy::unimplemented))]
 
+mod arena;
+
 pub mod api;
 pub mod api2;
 pub mod collections;

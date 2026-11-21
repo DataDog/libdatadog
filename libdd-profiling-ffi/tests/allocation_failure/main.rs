@@ -1,0 +1,529 @@
+// Copyright 2026-Present Datadog, Inc. https://www.datadoghq.com/
+// SPDX-License-Identifier: Apache-2.0
+
+//! Experimental allocation-failure harness: finds the paths where a failed allocation (the
+//! allocator returns null) crashes instead of returning an out-of-memory error.
+//!
+//! This test runs as its own binary (`harness = false` in `Cargo.toml`) so that
+//! `ScopedFailingAllocator` is the global allocator of this process only. `main` implements the
+//! small protocol expected by `cargo nextest` (see
+//! https://nexte.st/docs/design/custom-test-harnesses/): `--list --format terse` support and
+//! per-test selection with `--exact`. Started with `__worker`, the binary is a worker process of
+//! the controller (see `controller.rs`).
+//!
+//! Contract and toy-scenario tests are strict. Discovery scenarios record each outcome, including
+//! a crash, and fail only on a harness error. For those, the worker writes the return addresses
+//! of its first injected failure, and the controller symbolizes them to find the owned call site
+//! (`ALLOC_CHAOS_DEBUGGER=gdb|lldb` uses a debugger instead). Workers run in parallel
+//! (`ALLOC_CHAOS_JOBS`).
+
+mod agent;
+mod allocator;
+mod arena;
+mod contract;
+mod controller;
+mod ffi;
+mod fuzzed;
+mod lifecycle;
+mod promoted;
+mod scenarios;
+mod sequence;
+
+// The lifecycle scenarios call the C symbols of this crate: link its library.
+use datadog_profiling_ffi as _;
+
+use allocator::{Domain, ScopedFailingAllocator};
+use controller::{Mode, Outcome, Report};
+use std::alloc::System;
+
+#[global_allocator]
+static ALLOCATOR: ScopedFailingAllocator<System> = ScopedFailingAllocator(System);
+
+/// Discovery scenario: every ordinal in both modes is recorded. A crash is a finding.
+/// A nondeterministic trace is a harness error.
+fn discover(name: &'static str) {
+    let _ = load_discovery(name, false);
+}
+
+/// Runs the call and its post-failure contract. Ordinals are enumerated only when the baseline
+/// allocates: a call that does not allocate has nothing to fail.
+fn contract(name: &'static str) {
+    let report = load_discovery(name, false);
+    assert_eq!(
+        report.runs.len(),
+        report.baseline.len() * 2,
+        "{name}: enumeration does not match the baseline"
+    );
+}
+
+/// Same as [`discover`] for a call whose allocations depend on I/O timing (a request to a
+/// local endpoint). An unstable baseline and nondeterministic runs are reported, not errors.
+fn discover_io(name: &'static str) {
+    let _ = load_discovery(name, true);
+}
+
+/// Same as [`discover`], then checks which allocation domains the baseline contains.
+fn discover_arena(name: &'static str, required: &[Domain], absent: &[Domain]) -> Report {
+    let report = load_discovery(name, false);
+    let present: Vec<Domain> = report.baseline.iter().map(|e| e.domain).collect();
+    for domain in required {
+        assert!(
+            present.contains(domain),
+            "{name}: baseline {present:?} is missing {domain:?}"
+        );
+    }
+    for domain in absent {
+        assert!(
+            !present.contains(domain),
+            "{name}: baseline {present:?} unexpectedly contains {domain:?}"
+        );
+    }
+    report
+}
+
+/// Arena domains a `libdd-profiling` collection must show, when its arenas are observed.
+fn profiling_arena_domains() -> &'static [Domain] {
+    if arena::PROFILING_ARENAS_OBSERVED {
+        &[Domain::ArenaRequest, Domain::ArenaBacking]
+    } else {
+        &[]
+    }
+}
+
+/// Neither arena domain: a call that does not touch a profiling arena.
+fn no_arena_domains() -> &'static [Domain] {
+    if arena::PROFILING_ARENAS_OBSERVED {
+        &[Domain::ArenaRequest, Domain::ArenaBacking]
+    } else {
+        &[]
+    }
+}
+
+/// The request domain alone: a call whose items fit in the chunks the profile already has.
+fn profiling_arena_request() -> &'static [Domain] {
+    if arena::PROFILING_ARENAS_OBSERVED {
+        &[Domain::ArenaRequest]
+    } else {
+        &[]
+    }
+}
+
+fn load_discovery(name: &'static str, io_bound: bool) -> Report {
+    let report = controller::enumerate_with_stacks(name, io_bound)
+        .unwrap_or_else(|e| panic!("harness error: {e}"));
+    let nondeterministic: Vec<_> = report
+        .runs
+        .iter()
+        .filter(|finding| finding.run.outcome == Outcome::Nondeterministic)
+        .map(|finding| {
+            format!(
+                "{} #{} {}",
+                finding.mode.as_str(),
+                finding.ordinal,
+                finding.run.detail
+            )
+        })
+        .collect();
+    assert!(
+        io_bound || nondeterministic.is_empty(),
+        "{name}: nondeterministic trace: {nondeterministic:?}"
+    );
+    let missing: Vec<String> = report
+        .runs
+        .iter()
+        .filter(|finding| {
+            let needs_stack = !matches!(
+                finding.run.outcome,
+                Outcome::OomError | Outcome::Nondeterministic | Outcome::Timeout
+            );
+            needs_stack
+                && finding.allocation_stack.is_some()
+                && !finding
+                    .call_site
+                    .as_deref()
+                    .is_some_and(|site| site.contains("libdd"))
+        })
+        .map(|finding| format!("{} #{}", finding.mode.as_str(), finding.ordinal))
+        .collect();
+    assert!(
+        missing.is_empty(),
+        "{name}: no owned call site for {missing:?}"
+    );
+    report
+}
+
+/// Enumerates a toy scenario and checks every run has the `expected` outcome.
+fn toy(name: &'static str, expected: Outcome) {
+    let report = controller::enumerate(name).unwrap_or_else(|e| panic!("harness error: {e}"));
+    assert!(!report.baseline.is_empty(), "{name}: no allocation");
+    for mode in [Mode::FailOnce, Mode::FailFrom] {
+        let outcomes = report.outcomes(mode);
+        assert_eq!(outcomes.len(), report.baseline.len());
+        assert!(
+            outcomes.iter().all(|&o| o == expected),
+            "{name}: expected {} in {mode:?}, got {outcomes:?}",
+            expected.as_str()
+        );
+    }
+}
+
+const TESTS: &[(&str, fn())] = &[
+    ("contract::pass_through", contract::pass_through),
+    ("contract::ordinal_counting", contract::ordinal_counting),
+    ("contract::fail_once", contract::fail_once),
+    ("contract::fail_from", contract::fail_from),
+    (
+        "contract::realloc_preserves_block",
+        contract::realloc_preserves_block,
+    ),
+    ("contract::nested_scopes", contract::nested_scopes),
+    ("contract::thread_isolation", contract::thread_isolation),
+    ("contract::prefix_divergence", contract::prefix_divergence),
+    ("toy::box_new", || {
+        toy(scenarios::TOY_BOX_NEW, Outcome::Abort)
+    }),
+    ("toy::vec_push", || {
+        toy(scenarios::TOY_VEC_PUSH, Outcome::Abort)
+    }),
+    ("toy::vec_try_reserve", || {
+        toy(scenarios::TOY_VEC_TRY_RESERVE, Outcome::OomError)
+    }),
+    ("toy::string_format", || {
+        toy(scenarios::TOY_STRING_FORMAT, Outcome::Abort)
+    }),
+    ("toy::contract_violation", || {
+        toy(
+            scenarios::TOY_CONTRACT_VIOLATION,
+            Outcome::ContractViolation,
+        )
+    }),
+    ("scenario::tag_push_empty", || {
+        discover(scenarios::TAG_PUSH_EMPTY)
+    }),
+    ("scenario::tag_push_at_capacity", || {
+        discover(scenarios::TAG_PUSH_AT_CAPACITY)
+    }),
+    ("scenario::tag_push_long", || {
+        discover(scenarios::TAG_PUSH_LONG)
+    }),
+    ("scenario::arena_first", || {
+        discover_arena(
+            scenarios::ARENA_FIRST,
+            &[Domain::ArenaRequest, Domain::ArenaBacking],
+            &[],
+        );
+    }),
+    ("scenario::arena_spare", || {
+        discover_arena(
+            scenarios::ARENA_SPARE,
+            &[Domain::ArenaRequest],
+            &[Domain::ArenaBacking],
+        );
+    }),
+    ("scenario::arena_exhausted", || {
+        discover_arena(
+            scenarios::ARENA_EXHAUSTED,
+            &[Domain::ArenaRequest],
+            &[Domain::ArenaBacking],
+        );
+    }),
+    ("scenario::arena_grow", || {
+        discover_arena(
+            scenarios::ARENA_GROW,
+            &[Domain::ArenaRequest, Domain::ArenaBacking],
+            &[],
+        );
+    }),
+    ("scenario::arena_oversized", || {
+        let report = discover_arena(
+            scenarios::ARENA_OVERSIZED,
+            &[Domain::ArenaRequest, Domain::ArenaBacking],
+            &[],
+        );
+        let hint = scenarios::ARENA_CHUNK_HINT as u64;
+        assert!(
+            report
+                .baseline
+                .iter()
+                .any(|event| { event.domain == Domain::ArenaBacking && event.size > hint }),
+            "oversized item did not grow a backing chunk past the hint"
+        );
+    }),
+    ("scenario::arena_string_table", || {
+        discover_arena(
+            scenarios::ARENA_STRING_TABLE,
+            profiling_arena_domains(),
+            &[],
+        );
+    }),
+    ("scenario::arena_set", || {
+        discover_arena(scenarios::ARENA_SET, profiling_arena_domains(), &[]);
+    }),
+    ("scenario::arena_slice_set", || {
+        discover_arena(scenarios::ARENA_SLICE_SET, profiling_arena_domains(), &[]);
+    }),
+    ("lifecycle::profile_new", || {
+        discover_arena(lifecycle::PROFILE_NEW, profiling_arena_domains(), &[]);
+    }),
+    ("lifecycle::profile_add_first", || {
+        discover_arena(lifecycle::PROFILE_ADD_FIRST, profiling_arena_request(), &[]);
+    }),
+    ("lifecycle::profile_add_interned", || {
+        discover(lifecycle::PROFILE_ADD_INTERNED)
+    }),
+    ("lifecycle::profile_add_new_strings", || {
+        discover_arena(
+            lifecycle::PROFILE_ADD_NEW_STRINGS,
+            profiling_arena_request(),
+            &[],
+        );
+    }),
+    ("lifecycle::profile_add_timestamped", || {
+        discover(lifecycle::PROFILE_ADD_TIMESTAMPED)
+    }),
+    ("lifecycle::profile_add_growth", || {
+        discover_arena(
+            lifecycle::PROFILE_ADD_GROWTH,
+            profiling_arena_request(),
+            &[],
+        );
+    }),
+    ("lifecycle::profile_serialize_empty", || {
+        discover_arena(
+            lifecycle::PROFILE_SERIALIZE_EMPTY,
+            profiling_arena_domains(),
+            &[],
+        );
+    }),
+    ("lifecycle::profile_serialize_populated", || {
+        discover_arena(
+            lifecycle::PROFILE_SERIALIZE_POPULATED,
+            profiling_arena_domains(),
+            &[],
+        );
+    }),
+    ("lifecycle::profile_serialize_endpoints", || {
+        discover_arena(
+            lifecycle::PROFILE_SERIALIZE_ENDPOINTS,
+            profiling_arena_domains(),
+            &[],
+        );
+    }),
+    ("lifecycle::profile_serialize_upscaling", || {
+        discover_arena(
+            lifecycle::PROFILE_SERIALIZE_UPSCALING,
+            profiling_arena_domains(),
+            &[],
+        );
+    }),
+    ("lifecycle::profile_serialize_large", || {
+        discover_arena(
+            lifecycle::PROFILE_SERIALIZE_LARGE,
+            profiling_arena_domains(),
+            &[],
+        );
+    }),
+    ("lifecycle::exporter_new", || {
+        discover(lifecycle::EXPORTER_NEW)
+    }),
+    ("lifecycle::exporter_send_cold", || {
+        discover_io(lifecycle::EXPORTER_SEND_COLD)
+    }),
+    ("lifecycle::exporter_send_warm", || {
+        discover_io(lifecycle::EXPORTER_SEND_WARM)
+    }),
+    ("metadata::set_endpoint_first", || {
+        discover_arena(
+            lifecycle::SET_ENDPOINT_FIRST,
+            profiling_arena_request(),
+            &[],
+        );
+    }),
+    ("metadata::set_endpoint_interned", || {
+        discover_arena(lifecycle::SET_ENDPOINT_INTERNED, &[], no_arena_domains());
+    }),
+    ("metadata::set_endpoint_new", || {
+        discover_arena(lifecycle::SET_ENDPOINT_NEW, profiling_arena_request(), &[]);
+    }),
+    ("metadata::set_endpoint_growth", || {
+        discover_arena(
+            lifecycle::SET_ENDPOINT_GROWTH,
+            profiling_arena_request(),
+            &[],
+        );
+    }),
+    ("metadata::endpoint_count_first", || {
+        discover_arena(lifecycle::ENDPOINT_COUNT_FIRST, &[], no_arena_domains());
+    }),
+    ("metadata::endpoint_count_existing", || {
+        discover_arena(lifecycle::ENDPOINT_COUNT_EXISTING, &[], no_arena_domains());
+    }),
+    ("metadata::endpoint_count_growth", || {
+        discover_arena(lifecycle::ENDPOINT_COUNT_GROWTH, &[], no_arena_domains());
+    }),
+    ("metadata::upscaling_proportional_first", || {
+        discover_arena(
+            lifecycle::UPSCALING_PROPORTIONAL_FIRST,
+            profiling_arena_request(),
+            &[],
+        );
+    }),
+    ("metadata::upscaling_proportional_again", || {
+        discover_arena(
+            lifecycle::UPSCALING_PROPORTIONAL_AGAIN,
+            &[],
+            no_arena_domains(),
+        );
+    }),
+    ("metadata::upscaling_poisson_first", || {
+        discover_arena(
+            lifecycle::UPSCALING_POISSON_FIRST,
+            profiling_arena_request(),
+            &[],
+        );
+    }),
+    ("metadata::upscaling_poisson_again", || {
+        discover_arena(lifecycle::UPSCALING_POISSON_AGAIN, &[], no_arena_domains());
+    }),
+    ("contract::endpoint_agent", || {
+        contract(lifecycle::CONTRACT_ENDPOINT_AGENT)
+    }),
+    ("contract::endpoint_agentless", || {
+        contract(lifecycle::CONTRACT_ENDPOINT_AGENTLESS)
+    }),
+    ("contract::encoded_bytes", || {
+        contract(lifecycle::CONTRACT_ENCODED_BYTES)
+    }),
+    ("contract::vec_tag_new", || {
+        contract(lifecycle::CONTRACT_VEC_TAG_NEW)
+    }),
+    ("contract::drop_profile", || {
+        contract(lifecycle::CONTRACT_DROP_PROFILE)
+    }),
+    ("contract::drop_encoded", || {
+        contract(lifecycle::CONTRACT_DROP_ENCODED)
+    }),
+    ("contract::drop_exporter", || {
+        contract(lifecycle::CONTRACT_DROP_EXPORTER)
+    }),
+    ("contract::drop_error", || {
+        contract(lifecycle::CONTRACT_DROP_ERROR)
+    }),
+    ("contract::drop_vec_tag", || {
+        contract(lifecycle::CONTRACT_DROP_VEC_TAG)
+    }),
+    ("contract::drop_cancel", || {
+        contract(lifecycle::CONTRACT_DROP_CANCEL)
+    }),
+    (
+        "release::chaos_marker",
+        arena::assert_chaos_marker_matches_build,
+    ),
+];
+
+/// `__sequence describe|replay|fuzz <file>`: a fuzz input, without allocation failure.
+/// `describe` prints the decoded calls, `replay` runs it as a promoted scenario (setup, call,
+/// post-failure check), `fuzz` runs it like the fuzz target.
+fn sequence_command(args: &[String]) {
+    let (Some(command), Some(path)) = (args.first(), args.get(1)) else {
+        eprintln!("usage: __sequence describe|replay|fuzz <file>");
+        std::process::exit(2);
+    };
+    let data = std::fs::read(path).unwrap_or_else(|e| panic!("read {path}: {e}"));
+    match command.as_str() {
+        "describe" => println!("{}", sequence::Plan::decode(&data).describe()),
+        "replay" => {
+            let mut fixture = fuzzed::setup(&data);
+            let result = fuzzed::run(&mut fixture);
+            let check = fuzzed::check(&mut fixture, result.is_err());
+            println!("result {result:?}, check {check:?}");
+        }
+        "fuzz" => sequence::fuzz_one(&data),
+        other => {
+            eprintln!("unknown command {other}");
+            std::process::exit(2);
+        }
+    }
+}
+
+fn main() {
+    arena::register_observer();
+    let args: Vec<String> = std::env::args().skip(1).collect();
+
+    if args.first().map(String::as_str) == Some(controller::WORKER_ARG) {
+        controller::worker_main(&args[1..]);
+    }
+
+    // Scenario names and inputs, for `discovery/discovery.py`.
+    if args.first().map(String::as_str) == Some("__scenarios") {
+        for scenario in scenarios::all() {
+            println!("{}\t{}", scenario.name, scenario.inputs);
+        }
+        return;
+    }
+    if args.first().map(String::as_str) == Some("__sequence") {
+        sequence_command(&args[1..]);
+        return;
+    }
+
+    let mut tests: Vec<(String, Box<dyn Fn()>)> = TESTS
+        .iter()
+        .map(|&(name, test)| (name.to_string(), Box::new(test) as Box<dyn Fn()>))
+        .collect();
+    for promoted in promoted::PROMOTED {
+        let name = promoted.scenario.name;
+        let io_bound = promoted.io_bound();
+        tests.push((
+            format!("fuzz::{name}"),
+            Box::new(move || {
+                if io_bound {
+                    discover_io(name)
+                } else {
+                    discover(name)
+                }
+            }),
+        ));
+    }
+
+    if args.iter().any(|arg| arg == "--list") {
+        if !args.iter().any(|arg| arg == "--ignored") {
+            for (name, _) in &tests {
+                println!("{name}: test");
+            }
+        }
+        return;
+    }
+
+    // Miri cannot start worker processes.
+    if cfg!(miri) {
+        println!("skipped under Miri: the harness starts worker processes");
+        return;
+    }
+
+    let exact = args.iter().any(|a| a == "--exact");
+    let filters: Vec<&str> = args
+        .iter()
+        .filter(|a| !a.starts_with("--"))
+        .map(String::as_str)
+        .collect();
+    let mut failed = 0;
+    for (name, test) in &tests {
+        let selected = filters.is_empty()
+            || filters
+                .iter()
+                .any(|f| if exact { f == name } else { name.contains(f) });
+        if !selected {
+            continue;
+        }
+        match std::panic::catch_unwind(std::panic::AssertUnwindSafe(test)) {
+            Ok(()) => println!("test {name} ... ok"),
+            Err(_) => {
+                println!("test {name} ... FAILED");
+                failed += 1;
+            }
+        }
+    }
+    if failed > 0 {
+        std::process::exit(101);
+    }
+}

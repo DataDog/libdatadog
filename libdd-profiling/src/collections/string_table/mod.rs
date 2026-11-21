@@ -7,9 +7,12 @@ pub mod wordpress_test_data;
 
 pub use error::*;
 
+use crate::arena::{ProfilingArena, profiling_arena};
 use crate::collections::identifiable::StringId;
 use crate::iter::{IntoLendingIterator, LendingIterator};
-use libdd_alloc::{AllocError, Allocator, ChainAllocator, VirtualAllocator};
+#[cfg(test)]
+use libdd_alloc::VirtualAllocator;
+use libdd_alloc::{AllocError, Allocator, ChainAllocator};
 use std::alloc::Layout;
 
 /// A trait that indicates an allocator is arena allocator, meaning it doesn't
@@ -58,7 +61,7 @@ type HashSet<K> = indexmap::IndexSet<K, Hasher>;
 /// that the strings were inserted.
 pub struct StringTable {
     /// The bytes of each string stored in `strings` are allocated here.
-    bytes: ChainAllocator<VirtualAllocator>,
+    bytes: ProfilingArena,
 
     /// The ordered hash set of unique strings. The order becomes the StringId.
     /// The static lifetime is a lie, it is tied to the `bytes`, which is only
@@ -86,7 +89,7 @@ impl StringTable {
         // string tables in memory at a given time. Talk to .NET profiling
         // engineers before making this any bigger.
         const SIZE_HINT: usize = 4 * 1024 * 1024;
-        let bytes = ChainAllocator::new_in(SIZE_HINT, VirtualAllocator {});
+        let bytes = profiling_arena(SIZE_HINT);
 
         let mut strings = HashSet::with_hasher(Hasher::default());
         // It varies by implementation, but frequently I've noticed that the
@@ -178,7 +181,7 @@ pub struct StringTableIter {
     /// This is actually used, the compiler doesn't know that the static
     /// references in `iter` actually point in here.
     #[allow(unused)]
-    bytes: ChainAllocator<VirtualAllocator>,
+    bytes: ProfilingArena,
 
     /// The strings of the string table, in order of insertion.
     /// The static lifetimes are a lie, they are tied to the `bytes`. When
