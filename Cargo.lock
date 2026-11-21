@@ -3014,11 +3014,13 @@ dependencies = [
  "libdd-host-identity",
  "libdd-regex",
  "libdd-tinybytes",
+ "libdd-trace-normalization",
  "libdd-trace-obfuscation",
  "libdd-trace-stats",
  "libdd-trace-utils",
  "serde_json",
  "thiserror 2.0.17",
+ "tracing",
  "zstd",
 ]
 
@@ -3712,6 +3714,7 @@ dependencies = [
  "libdd-trace-model",
  "libdd-trace-protobuf",
  "rand 0.8.8",
+ "thiserror 2.0.17",
 ]
 
 [[package]]

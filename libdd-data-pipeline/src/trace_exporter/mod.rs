@@ -1416,6 +1416,12 @@ impl<
 
         let mut header_tags: TracerHeaderTags = self.metadata.borrow().into();
 
+        // Without an agent to normalize the traces, normalize them before stats, filtering and
+        // telemetry read them, as the agent would.
+        if self.agentless_config.is_some() {
+            libdd_data_pipeline_core::normalize_traces_v1(&mut traces, &self.metadata.language);
+        }
+
         // Process stats computation and drop non-sampled (p0) chunks.
         // This must run before the OTLP path so that unsampled spans are not exported.
         let client_side_stats = stats::process_traces_for_stats_v1(
@@ -3200,13 +3206,29 @@ mod tests {
 
         let server = MockServer::start();
         let mock_intake = server.mock(|when, then| {
-            when.method(POST)
+            // Normalized by the exporter
+            fn check_body(body: &[u8]) -> bool {
+                String::from_utf8_lossy(body).contains(r#""name":"bad_name""#)
+            }
+            let when = when
+                .method(POST)
                 .path("/v1/input")
                 .header("Content-Type", "application/json")
                 .header("dd-api-key", "test-api-key")
                 .header("X-Datadog-Trace-Count", "1")
                 .header("datadog-meta-lang", "nodejs")
                 .header("datadog-meta-tracer-version", "1.0");
+            #[cfg(feature = "compression")]
+            let when = when.header("content-encoding", "zstd").is_true(|req| {
+                #[cfg(not(target_arch = "wasm32"))]
+                let body = zstd::decode_all(req.body_ref());
+                #[cfg(target_arch = "wasm32")]
+                let body = zrip::decompress(req.body_ref());
+                body.is_ok_and(|body| check_body(&body))
+            });
+            #[cfg(not(feature = "compression"))]
+            let when = when.is_true(|req| check_body(req.body_ref()));
+            let _ = when;
             then.status(200).body("");
         });
 
@@ -3223,20 +3245,28 @@ mod tests {
             .set_output_format(TraceExporterOutputFormat::V1);
         let exporter = builder.build::<NativeCapabilities>().unwrap();
 
-        let chunks = vec![TraceChunkBytes {
-            trace_id: [0; 16],
-            spans: vec![SpanBytesV1 {
-                name: BytesString::from_slice(b"op").unwrap(),
-                service: BytesString::from_static("svc"),
-                resource: BytesString::from_static("res"),
-                span_id: 2,
-                parent_id: 0,
-                start: 2_500_000_000,
-                duration: 1_000_000,
-                ..Default::default()
-            }],
+        // The second chunk can't be normalized (zero span id), so it is dropped.
+        let invalid_chunk = TraceChunkBytes {
+            spans: vec![SpanBytesV1::default()],
             ..Default::default()
-        }];
+        };
+        let chunks = vec![
+            TraceChunkBytes {
+                trace_id: [0; 16],
+                spans: vec![SpanBytesV1 {
+                    name: BytesString::from_static("bad-name"),
+                    service: BytesString::from_static("svc"),
+                    resource: BytesString::from_static("res"),
+                    span_id: 2,
+                    parent_id: 0,
+                    start: 2_500_000_000,
+                    duration: 1_000_000,
+                    ..Default::default()
+                }],
+                ..Default::default()
+            },
+            invalid_chunk,
+        ];
         let result = exporter.send_trace_chunks_v1(PooledTraceChunks::unpooled(chunks), None);
 
         assert!(
