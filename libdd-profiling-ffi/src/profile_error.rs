@@ -22,6 +22,24 @@ pub enum ProfileError {
     Other(Cow<'static, CStr>),
 }
 
+impl fmt::Display for ProfileError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::AllocError => f.write_str("memory allocation failed"),
+            Self::CapacityOverflow => {
+                f.write_str("memory allocation failed because the computed capacity overflowed")
+            }
+            Self::ReferenceCountOverflow => f.write_str("reference count overflow"),
+            Self::Other(message) => match message.to_str() {
+                Ok(message) => f.write_str(message),
+                Err(_) => f.write_str("error message was not valid UTF-8"),
+            },
+        }
+    }
+}
+
+impl core::error::Error for ProfileError {}
+
 impl ProfileError {
     /// Creates a ProfileError by formatting a Display-able error.
     pub fn from_display<E: fmt::Display>(err: E) -> Self {
@@ -84,10 +102,20 @@ impl From<CString> for ProfileError {
 impl From<ProfileError> for Cow<'static, CStr> {
     fn from(err: ProfileError) -> Cow<'static, CStr> {
         match err {
-            ProfileError::AllocError => Cow::Borrowed(c"memory allocation failed because the memory allocator returned an error"),
+            ProfileError::AllocError => Cow::Borrowed(c"memory allocation failed"),
             ProfileError::CapacityOverflow => Cow::Borrowed(c"memory allocation failed because the computed capacity exceeded the collection's maximum"),
             ProfileError::ReferenceCountOverflow => Cow::Borrowed(c"reference count overflow"),
             ProfileError::Other(msg) => msg,
+        }
+    }
+}
+
+#[cfg(feature = "ddcommon-ffi")]
+impl From<ProfileError> for libdd_common_ffi::Error {
+    fn from(err: ProfileError) -> Self {
+        match err {
+            ProfileError::AllocError => Self::out_of_memory(),
+            other => Self::from_display(other),
         }
     }
 }
@@ -182,17 +210,79 @@ impl From<std::io::Error> for ProfileError {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use core::alloc::{GlobalAlloc, Layout};
+    use core::cell::Cell;
+    #[cfg(feature = "ddcommon-ffi")]
+    use libdd_common_ffi::slice::AsBytes;
+    use std::alloc::System;
     use std::io::ErrorKind;
+
+    struct TrackingAllocator;
+
+    thread_local! {
+        static ALLOCATION_COUNTS: Cell<Option<(usize, usize)>> = const { Cell::new(None) };
+    }
+
+    #[global_allocator]
+    static ALLOCATOR: TrackingAllocator = TrackingAllocator;
+
+    impl TrackingAllocator {
+        fn record_allocation(&self) {
+            ALLOCATION_COUNTS.with(|counts| {
+                if let Some((allocations, deallocations)) = counts.get() {
+                    counts.set(Some((allocations + 1, deallocations)));
+                }
+            });
+        }
+
+        fn record_deallocation(&self) {
+            ALLOCATION_COUNTS.with(|counts| {
+                if let Some((allocations, deallocations)) = counts.get() {
+                    counts.set(Some((allocations, deallocations + 1)));
+                }
+            });
+        }
+    }
+
+    unsafe impl GlobalAlloc for TrackingAllocator {
+        unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
+            self.record_allocation();
+            // SAFETY: delegated to the system allocator with the original layout.
+            unsafe { System.alloc(layout) }
+        }
+
+        unsafe fn alloc_zeroed(&self, layout: Layout) -> *mut u8 {
+            self.record_allocation();
+            // SAFETY: delegated to the system allocator with the original layout.
+            unsafe { System.alloc_zeroed(layout) }
+        }
+
+        unsafe fn realloc(&self, ptr: *mut u8, layout: Layout, new_size: usize) -> *mut u8 {
+            self.record_allocation();
+            // SAFETY: delegated to the system allocator with the original arguments.
+            unsafe { System.realloc(ptr, layout, new_size) }
+        }
+
+        unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) {
+            self.record_deallocation();
+            // SAFETY: delegated to the system allocator with the original arguments.
+            unsafe { System.dealloc(ptr, layout) }
+        }
+    }
+
+    fn start_tracking_allocations() {
+        ALLOCATION_COUNTS.with(|counts| counts.set(Some((0, 0))));
+    }
+
+    fn stop_tracking_allocations() -> (usize, usize) {
+        ALLOCATION_COUNTS.with(|counts| counts.replace(None).unwrap())
+    }
 
     #[test]
     fn test_alloc_error() {
         let err = ProfileError::AllocError;
         let cow: Cow<'static, CStr> = err.into();
-        assert!(
-            cow.to_str()
-                .unwrap()
-                .contains("memory allocator returned an error")
-        );
+        assert_eq!(cow.to_str().unwrap(), "memory allocation failed");
     }
 
     #[test]
@@ -357,7 +447,33 @@ mod tests {
         assert!(!status.err.is_null()); // Should be an error
         let result: Result<(), Cow<'static, CStr>> = status.into();
         let cstr = result.unwrap_err();
-        assert!(cstr.to_str().unwrap().contains("memory allocator"));
+        assert_eq!(cstr.to_str().unwrap(), "memory allocation failed");
+    }
+
+    #[cfg(feature = "ddcommon-ffi")]
+    #[test]
+    fn test_alloc_error_conversions_do_not_allocate_or_deallocate() {
+        start_tracking_allocations();
+        let mut status = ProfileStatus::from(ProfileError::AllocError);
+        let status_error = unsafe { CStr::from_ptr(status.err) };
+        assert_eq!(status_error.to_bytes(), b"memory allocation failed");
+        unsafe {
+            crate::ddog_prof_Status_drop(&mut status);
+            crate::ddog_prof_Status_drop(&mut status);
+        }
+        assert_eq!(
+            (status.flags, status.err),
+            (ProfileStatus::OK.flags, ProfileStatus::OK.err)
+        );
+
+        let mut error = libdd_common_ffi::Error::from(ProfileError::AllocError);
+        let message = unsafe { libdd_common_ffi::ddog_Error_message(Some(&error)) };
+        assert_eq!(message.as_bytes(), b"memory allocation failed");
+        unsafe {
+            libdd_common_ffi::ddog_Error_drop(Some(&mut error));
+            libdd_common_ffi::ddog_Error_drop(Some(&mut error));
+        }
+        assert_eq!(stop_tracking_allocations(), (0, 0));
     }
 
     #[test]

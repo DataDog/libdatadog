@@ -91,18 +91,16 @@ pub fn handle_panic_error(
         // This pattern of String vs &str comes from
         // https://doc.rust-lang.org/std/panic/struct.PanicHookInfo.html#method.payload
         if let Some(s) = error.downcast_ref::<String>() {
-            anyhow::anyhow!("{} failed: (panic) {}", function_name, s)
+            crate::Error::from_format_args(format_args!("{function_name} failed: (panic) {s}"))
         } else if let Some(s) = error.downcast_ref::<&str>() {
-            anyhow::anyhow!("{} failed: (panic) {}", function_name, s)
+            crate::Error::from_format_args(format_args!("{function_name} failed: (panic) {s}"))
         } else {
-            anyhow::anyhow!(
-                "{} failed: (panic) Unable to retrieve panic context",
-                function_name
-            )
+            crate::Error::from_format_args(format_args!(
+                "{function_name} failed: (panic) Unable to retrieve panic context"
+            ))
         }
-        .into()
     }))
-    .unwrap_or(crate::error::CANNOT_ALLOCATE_ERROR)
+    .unwrap_or_else(|_| crate::Error::out_of_memory())
 }
 
 #[cfg(test)]
@@ -120,7 +118,7 @@ mod tests {
 
         assert_no_alloc(|| {
             // Simulate fallback code path of handle_panic_error + ddog_Error_message
-            let fallback_error = crate::error::CANNOT_ALLOCATE_ERROR;
+            let fallback_error = crate::Error::out_of_memory();
             let error_message = unsafe { crate::ddog_Error_message(Some(&fallback_error)) };
 
             // Stash error message so we can assert on it
@@ -130,10 +128,7 @@ mod tests {
 
         unsafe {
             let c_str = core::ffi::CStr::from_ptr(error_result_buffer.as_ptr());
-            assert_eq!(
-                c_str.to_str().unwrap(),
-                "libdatadog failed: (panic) Cannot allocate error message"
-            );
+            assert_eq!(c_str.to_str().unwrap(), "memory allocation failed");
         };
     }
 
