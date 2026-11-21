@@ -1,0 +1,303 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Allocation-failure findings for the profiling FFI</title>
+<style>
+:root { --fg: #1f2328; --muted: #59636e; --border: #d1d9e0; --code: #f6f8fa; --accent: #632ca6; }
+* { box-sizing: border-box; }
+body { margin: 0; color: var(--fg); font: 15px/1.55 -apple-system, "Segoe UI", Helvetica, Arial, sans-serif; }
+.layout { display: grid; grid-template-columns: 18rem 1fr; }
+nav { position: sticky; top: 0; height: 100vh; overflow-y: auto; padding: 1.5rem 1rem; border-right: 1px solid var(--border); background: #fbfbfd; font-size: 13px; }
+nav ol { list-style: none; padding-left: 0; margin: 0; }
+nav ol ol { padding-left: 0.9rem; }
+nav li { margin: 0.2rem 0; }
+nav a { color: var(--fg); text-decoration: none; }
+nav a:hover { color: var(--accent); text-decoration: underline; }
+main { max-width: 64rem; padding: 1.5rem 2.5rem 4rem; }
+h1 { font-size: 1.9rem; margin-top: 0; }
+h2 { font-size: 1.45rem; margin-top: 2.4rem; padding-bottom: 0.3rem; border-bottom: 1px solid var(--border); }
+h3 { font-size: 1.15rem; margin-top: 2rem; }
+h4 { font-size: 1rem; margin-top: 1.4rem; }
+section.finding { border-left: 4px solid var(--accent); padding: 0.1rem 0 0.4rem 1rem; margin: 1.6rem 0; }
+a { color: var(--accent); }
+code { font: 0.88em ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; background: var(--code); padding: 0.1em 0.3em; border-radius: 4px; overflow-wrap: anywhere; }
+pre { background: var(--code); padding: 0.8rem 1rem; border-radius: 6px; overflow-x: auto; }
+pre code { background: none; padding: 0; overflow-wrap: normal; }
+table { border-collapse: collapse; margin: 0.8rem 0; display: block; overflow-x: auto; }
+th, td { border: 1px solid var(--border); padding: 0.35rem 0.6rem; text-align: left; vertical-align: top; }
+th { background: var(--code); }
+td.num, th.num { text-align: right; }
+@media (max-width: 900px) { .layout { display: block; } nav { position: static; height: auto; border-right: 0; border-bottom: 1px solid var(--border); } main { padding: 1rem; } }
+@media print {
+  .layout { display: block; }
+  nav { position: static; height: auto; border: 0; background: none; page-break-after: always; }
+  main { max-width: none; padding: 0; }
+  a { color: inherit; }
+  a[href^="http"]::after { content: " (" attr(href) ")"; font-size: 0.8em; color: var(--muted); }
+  section.finding, table, pre { break-inside: avoid; }
+  h2, h3 { break-after: avoid; }
+}
+</style>
+</head>
+<body>
+<div class="layout">
+<nav aria-label="Contents">
+<p><strong>Contents</strong></p>
+<p>Source: <a href="FINDINGS.md">FINDINGS.md</a></p>
+<ol>
+<li><a href="#executive-summary">Executive summary</a></li>
+<li><a href="#evidence">Evidence</a></li>
+<li><a href="#findings">Findings</a>
+<ol>
+<li><a href="#f1-zstd-encoder-construction-panics-which-aborts-at-the-ffi-boundary">F1. zstd encoder construction panics, which aborts at the FFI boundary</a></li>
+<li><a href="#f2-error-construction-allocates-after-a-correctly-detected-allocation-failure">F2. Error construction allocates after a correctly detected allocation failure</a></li>
+<li><a href="#f3-infallible-allocations-in-the-profile-api">F3. Infallible allocations in the profile API</a></li>
+<li><a href="#f4-exporter-construction-and-send-allocate-infallibly-mostly-in-dependencies">F4. Exporter construction and send allocate infallibly, mostly in dependencies</a></li>
+<li><a href="#f5-host-identity-aborts-in-exporter-new">F5. Host identity aborts in <code>Exporter_new</code></a></li>
+<li><a href="#f6-ddog-vec-tag-push-aborts">F6. <code>ddog_Vec_Tag_push</code> aborts</a></li>
+<li><a href="#f7-profile-serialize-drops-samples-silently-when-the-observation-decoder-cannot-allocate">F7. <code>Profile_serialize</code> drops samples silently when the observation decoder cannot allocate</a></li>
+<li><a href="#f8-dropping-an-empty-handle-allocates-an-error">F8. Dropping an empty handle allocates an error</a></li>
+<li><a href="#f9-release-builds-skip-sample-label-validation-not-an-allocation-failure">F9. Release builds skip sample label validation (not an allocation failure)</a></li>
+<li><a href="#f10-the-file-endpoint-s-dump-server-leaks-a-socket-in-tmp-not-an-allocation-failure">F10. The file endpoint&#x27;s dump server leaks a socket in <code>/tmp</code> (not an allocation failure)</a></li>
+<li><a href="#f11-benign-success-fallback-outcomes-and-one-silent-degradation">F11. Benign <code>success-fallback</code> outcomes, and one silent degradation</a></li>
+<li><a href="#f12-exporter-send-scenarios-are-nondeterministic">F12. Exporter send scenarios are nondeterministic</a></li>
+<li><a href="#f13-public-contract-gaps-in-profiling-h">F13. Public contract gaps in <code>profiling.h</code></a></li>
+<li><a href="#f14-harness-limitations-that-affect-the-findings">F14. Harness limitations that affect the findings</a></li>
+</ol></li>
+<li><a href="#contract-audit">Contract audit</a></li>
+<li><a href="#proposed-fix-tickets">Proposed fix tickets</a></li>
+<li><a href="#from-report-only-to-a-pr-gate">From report-only to a PR gate</a></li>
+<li><a href="#recommended-automation">Recommended automation</a></li>
+<li><a href="#draft-upstream-issue-for-zstd-rs-not-filed">Draft upstream issue for zstd-rs (not filed)</a></li>
+<li><a href="#phase-b-gate">Phase B gate</a></li>
+</ol>
+</nav>
+<main>
+<!-- Generated from FINDINGS.md by discovery/render_findings.py. Do not edit: run it again. -->
+<h1>Allocation-failure findings for the profiling FFI</h1>
+<p>Experimental report for <a href="https://datadoghq.atlassian.net/browse/PROF-16808">PROF-16808</a>. The same content is rendered as <a href="FINDINGS.html">FINDINGS.html</a> by <code>discovery/render_findings.py</code> (<code>--check</code> fails when the HTML is stale). No production code was changed: every remediation below is a proposal for Phase B, which starts only after a human review of this report.</p>
+<section id="executive-summary">
+<h2 id="h-executive-summary">Executive summary</h2>
+<ul><li>An allocation failure inside the profiling FFI used by the .NET profiler almost never returns an error. In the Linux normal build, 3,115 of 4,269 one-shot injected failures (fail-once) abort the process and 29 panic across the <code>extern &quot;C&quot;</code> boundary (also an abort). With sticky failures (fail-from), 4,233 of 4,269 runs abort: the error path itself allocates.</li><li>Two root causes cover most aborts: infallible allocations (<code>Vec</code>, <code>Box</code>, <code>format!</code>, <code>String</code> clones, <code>indexmap</code> and third-party crates) on paths that otherwise return <code>Result</code> (F3, F4, F5, F6), and error construction that allocates after an allocation failure was detected correctly (F2, F8).</li><li>The zstd encoder constructor panics when its context allocation fails (F1). It is called from <code>Profile_new</code>, <code>Profile_serialize</code> and <code>Exporter_send_blocking</code>, so every one of those can abort the host process. A draft upstream issue is included; upgrading zstd is not the fix.</li><li>One silent data-loss path: <code>Profile_serialize</code> returns success with samples missing when the observation decoder cannot allocate (F7).</li><li>Two non-allocation findings: release builds accept a sample label that makes every later serialize of that profile fail (F9), and the file endpoint&#x27;s dump server leaks a socket in <code>/tmp</code> for each exporter created with a file endpoint (F10).</li><li>No post-call contract violation was observed in any libdatadog scenario. But most post-error behaviour the harness checks is not documented in <code>profiling.h</code> (contract audit below), so the checks are provisional, and enumeration stays report-only. Gating PRs requires the contract work and the harness changes listed in &quot;From report-only to a PR gate&quot;.</li><li>Linux and Windows agree on every profiling-core finding. Windows has fewer aborts (3,262 against 7,348 in the normal build) because the container and cgroup parsing of F5 is Linux only; Windows instead aborts in an environment-variable read at <code>Exporter_new</code>. The dump-server socket leak (F10) is Unix only. macOS ran only through the generic test job, which hides per-scenario results.</li></ul>
+</section>
+<section id="evidence">
+<h2 id="h-evidence">Evidence</h2>
+<p>The harness (<code>tests/allocation_failure</code>) runs each scenario once without failure injection (baseline), then once per allocation ordinal with one failed allocation (fail-once) and with every allocation failing from that ordinal (fail-from). Outcomes: <code>oom-error</code> (the API returned an error), <code>success-fallback</code> (the API succeeded despite the failure), <code>contract-violation</code> (handles not in their checked state afterwards), <code>panic</code>, <code>abort</code>, <code>timeout</code> and <code>nondeterministic</code> (the allocation sequence differs from the baseline). Arena chaos (<code>LIBDD_ALLOCATION_CHAOS_TEST=1</code>) also injects failures into the profiling arenas.</p>
+<p>Linux, local (aarch64, harness commit 98e0e1bdb). Toy scenarios excluded (<code>toy_contract_violation</code> produces the only two <code>contract-violation</code> outcomes, by design):</p>
+<table>
+<thead><tr>
+<th>Run</th>
+<th class="num">abort</th>
+<th class="num">panic</th>
+<th class="num">success-fallback</th>
+<th class="num">nondeterministic</th>
+<th class="num">contract-violation</th>
+<th class="num">oom-error</th>
+</tr></thead>
+<tbody>
+<tr><td>normal build</td><td class="num">7,348</td><td class="num">29</td><td class="num">85</td><td class="num">58</td><td class="num">0</td><td class="num">1,018</td></tr>
+<tr><td>arena chaos</td><td class="num">7,551</td><td class="num">29</td><td class="num">87</td><td class="num">55</td><td class="num">0</td><td class="num">1,230</td></tr>
+<tr><td>release build, promoted fuzz scenarios only</td><td class="num">963</td><td class="num">16</td><td class="num">58</td><td class="num">19</td><td class="num">0</td><td class="num">108</td></tr>
+</tbody>
+</table>
+<p>Windows, CI (<code>windows-latest</code>, harness commit 98e0e1bdb): <a href="https://github.com/DataDog/libdatadog/actions/runs/44848768358">Test run 44848768358</a>, job <a href="https://github.com/DataDog/libdatadog/actions/runs/44848768358/job/136675253731">allocation failure reports #windows-latest</a>, artifact <a href="https://github.com/DataDog/libdatadog/actions/runs/44848768358/artifacts/14684637518">allocation-failure-reports-windows</a> (<code>normal/&lt;scenario&gt;.md</code> and <code>arena-chaos/&lt;scenario&gt;.md</code>, 57 reports each; GitHub keeps artifacts for a limited time). Toy scenarios excluded:</p>
+<table>
+<thead><tr>
+<th>Run</th>
+<th class="num">abort</th>
+<th class="num">panic</th>
+<th class="num">success-fallback</th>
+<th class="num">nondeterministic</th>
+<th class="num">contract-violation</th>
+<th class="num">oom-error</th>
+</tr></thead>
+<tbody>
+<tr><td>normal build</td><td class="num">3,262</td><td class="num">29</td><td class="num">76</td><td class="num">61</td><td class="num">0</td><td class="num">1,018</td></tr>
+<tr><td>arena chaos</td><td class="num">3,456</td><td class="num">28</td><td class="num">78</td><td class="num">68</td><td class="num">0</td><td class="num">1,230</td></tr>
+</tbody>
+</table>
+<p>macOS: only the generic <code>cargo nextest</code> job ran the harness (it passes; per-scenario outcomes are not visible there). Two harness changes came from macOS CI: unwinding there allocates while the worker records the injected stack, which turned fail-from outcomes into aborts (diagnostic stack allocations now bypass injection), and fail-from runs cannot always be unwound, so their stacks reuse the fail-once stack of the same ordinal. No macOS-only library finding is known; adding macOS to the report job is a follow-up.</p>
+<p>OS differences:</p>
+<table>
+<thead><tr>
+<th>Difference</th>
+<th>Linux</th>
+<th>Windows</th>
+</tr></thead>
+<tbody>
+<tr><td>Host identity at <code>Exporter_new</code> (F5)</td><td>aborts in <code>libdd-host-identity/src/entity_id/unix/*</code> (regex, cgroup parsing)</td><td>not compiled; aborts in <code>libdd-env/src/lib.rs:51</code> (<code>std::env::var</code>) instead</td></tr>
+<tr><td>Dump-server socket (F10)</td><td>leaks <code>/tmp/libdatadog_dump_*.sock</code></td><td>not compiled (Unix sockets)</td></tr>
+<tr><td>Azure App Services environment read (F11)</td><td><code>/proc/self/environ</code>, degrades silently</td><td>not compiled</td></tr>
+<tr><td>Abort status</td><td><code>SIGABRT</code></td><td>exit code <code>0xc0000409</code> (<code>__fastfail</code>)</td></tr>
+<tr><td>Innermost arena frame under chaos</td><td><code>string_table/mod.rs:30</code>, <code>libdd-alloc/src/linear.rs:36</code></td><td><code>arena.rs:63</code> (inlining)</td></tr>
+</tbody>
+</table>
+<p>Ordinal counts differ slightly between OSes and runs where the exporter send scenarios are timing dependent (F12).</p>
+<p>Commands (all output under a scratch directory, never <code>/tmp</code>):</p>
+<pre><code>ALLOC_CHAOS_REPORT_DIR=&lt;dir&gt;/normal cargo nextest run -p libdd-profiling-ffi --test allocation_failure
+LIBDD_ALLOCATION_CHAOS_TEST=1 ALLOC_CHAOS_REPORT_DIR=&lt;dir&gt;/arena-chaos cargo nextest run -p libdd-profiling-ffi --test allocation_failure
+ALLOC_CHAOS_REPORT_DIR=&lt;dir&gt;/release cargo nextest run --cargo-profile release -p libdd-profiling-ffi --test allocation_failure -E &#x27;test(/^fuzz::/)&#x27;</code></pre>
+</section>
+<section id="findings">
+<h2 id="h-findings">Findings</h2>
+<p>Each finding lists the observed outcomes, the affected API, representative call sites (innermost libdatadog frame that allocates; full stacks are in the per-scenario reports), OS scope with the reports that show it, root cause, remediation, suggested owner (from <code>.github/CODEOWNERS</code>), dependencies and the proposed fix-ticket group (see &quot;Proposed fix tickets&quot;). Windows evidence: the per-scenario reports in the <a href="https://github.com/DataDog/libdatadog/actions/runs/44848768358/artifacts/14684637518">Windows artifact</a>. Linux evidence: the local reports, regenerated with the commands above.</p>
+<section id="f1-zstd-encoder-construction-panics-which-aborts-at-the-ffi-boundary" class="finding">
+<h3 id="h-f1-zstd-encoder-construction-panics-which-aborts-at-the-ffi-boundary">F1. zstd encoder construction panics, which aborts at the FFI boundary</h3>
+<ul><li><strong>Outcomes</strong>: <code>panic</code> (29 per Linux build, 16 in release), then abort with &quot;panic in a function that cannot unwind&quot;; also <code>abort</code> in fail-from.</li><li><strong>API / path</strong>: <code>ddog_prof_Profile_new</code> (observation encoder), <code>ddog_prof_Profile_serialize</code> and <code>ddog_prof_Exporter_send_blocking</code> (profile encoder), every <code>reset</code> that creates a new encoder.</li><li><strong>Call sites</strong>: <code>libdd-profiling/src/profiles/compressor.rs:247</code> (<code>ZstdObservationCodec::new_encoder</code>) and <code>:159</code> (<code>ZstdProfileCodec::new_encoder</code>), both via <code>zstd::stream::write::Encoder::new</code>, <code>zstd::stream::raw::Encoder::with_dictionary</code> (zstd 0.14.3 <code>raw.rs:293</code>), <code>zstd_safe::CCtx::create</code> (zstd-safe 8.2.0 <code>lib.rs:371</code>).</li><li>**Stack (Linux, <code>profile_new</code> fail-once #4)**: <code>ZSTD_createCCtx_advanced</code> → <code>CCtx::try_create</code> → <code>CCtx::create</code> → <code>expect</code> panics → <code>Profile::try_new</code> (<code>internal/profile/mod.rs:419</code>) → <code>ddog_prof_Profile_new</code> (<code>datatypes.rs:409</code>).</li><li><strong>OS scope / evidence</strong>: Linux and Windows (same call sites); reports <code>profile_new</code>, <code>profile_serialize_*</code>, <code>exporter_send_*</code>, <code>fuzz_seq_*</code>.</li><li><strong>Root cause</strong>: zstd&#x27;s stream encoder constructors call the panicking <code>CCtx::create()</code>, although the decoder uses <code>DCtx::try_create()</code> and returns an <code>io::Error</code>. The panic unwinds into a non-unwinding <code>extern &quot;C&quot;</code> function, which aborts.</li><li><strong>Remediation</strong>: (1) preferred: build the encoder on a context created with <code>zstd_safe::CCtx::try_create()</code> (a small owned streaming encoder over <code>zstd_safe</code> compress-stream calls, or the zstd <code>with_context</code> constructors with an owned context), mapping <code>None</code> to an out-of-memory error; (2) report it upstream (draft below) so the constructors return <code>io::Result</code> errors; (3) not recommended: <code>catch_unwind</code> around construction, because the panic payload itself allocates under memory pressure.</li><li><strong>Owner</strong>: @DataDog/libdatadog-profiling.</li><li><strong>Dependencies</strong>: needs the non-allocating error representation from T1 to report the failure without another allocation; independent otherwise.</li><li><strong>Ticket group</strong>: T2.</li></ul>
+</section>
+<section id="f2-error-construction-allocates-after-a-correctly-detected-allocation-failure" class="finding">
+<h3 id="h-f2-error-construction-allocates-after-a-correctly-detected-allocation-failure">F2. Error construction allocates after a correctly detected allocation failure</h3>
+<ul><li><strong>Outcomes</strong>: <code>abort</code> in fail-from (4,233 of 4,269 normal-build fail-from runs abort); fail-once also aborts where the error conversion itself is the failed allocation.</li><li><strong>API / path</strong>: every fallible FFI call: <code>Profile_add</code>, <code>Profile_serialize</code>, <code>Profile_new</code>, metadata calls, <code>Exporter_*</code>.</li><li><strong>Call sites</strong>: <code>try_reserve_exact(..)?</code> and <code>try_reserve(1)?</code> followed by an <code>anyhow::Error</code> allocation: <code>libdd-profiling/src/internal/profile/mod.rs:572</code>, <code>:620</code>, <code>:627</code>, <code>:606</code>, <code>:160</code>, <code>:180</code>, <code>:130</code>; <code>collections/identifiable/mod.rs:71</code>, <code>:82</code>; <code>collections/string_table/mod.rs:30</code>; <code>profiles/compressor.rs:59</code>, <code>:85</code>, <code>:251</code>, <code>:252</code>, <code>:315</code>; <code>internal/observation/timestamped_observations.rs:79</code>; <code>libdd-alloc/src/linear.rs:36</code>. Conversion to the FFI error: <code>libdd-common-ffi/src/error.rs:83</code> (<code>format!(&quot;{value:#}&quot;)</code>); context strings: <code>libdd-profiling-ffi/src/profiles/datatypes.rs:617</code>, <code>:815</code>, <code>:864</code>.</li><li>**Stack (Linux, <code>profile_serialize_endpoints</code> fail-from #12)**: <code>Profile::expand_label_set</code> (<code>mod.rs:572</code>, <code>try_reserve_exact</code> fails) → <code>?</code> boxes an <code>anyhow::Error</code> → allocation fails → <code>handle_alloc_error</code> aborts; called from <code>Profile::encode</code> → <code>ddog_prof_Profile_serialize</code>.</li><li><strong>OS scope / evidence</strong>: Linux and Windows.</li><li><strong>Root cause</strong>: the out-of-memory error is reported through <code>anyhow::Error</code> (heap allocated), with <code>.context(..)</code> strings and a <code>format!</code> into the FFI <code>Error</code>. Under sticky memory pressure the error cannot be built, so the correct detection is wasted.</li><li><strong>Remediation</strong>: a dedicated out-of-memory error that never allocates: a zero-size or static variant in the internal error type (no <code>anyhow</code> boxing for <code>TryReserveError</code> and <code>AllocError</code>), and an FFI error or status that can carry a <code>&#x27;static</code> message without copying (<code>ProfileStatus</code>-style static errors for the profile API, a static variant of <code>ddog_Error</code> in <code>libdd-common-ffi</code>). Keep context strings off the out-of-memory path.</li><li><strong>Owner</strong>: @DataDog/libdatadog-profiling (profile internals, FFI) with @DataDog/apm-common-components-core (<code>libdd-common-ffi</code> <code>Error</code>).</li><li><strong>Dependencies</strong>: first in the order; F1, F3, F6, F7 and F8 need it to report their failures.</li><li><strong>Ticket group</strong>: T1.</li></ul>
+</section>
+<section id="f3-infallible-allocations-in-the-profile-api" class="finding">
+<h3 id="h-f3-infallible-allocations-in-the-profile-api">F3. Infallible allocations in the profile API</h3>
+<ul><li><strong>Outcomes</strong>: <code>abort</code> in fail-once (the first failed allocation is fatal).</li><li><strong>API / path</strong>: <code>Profile_new</code>, <code>Profile_add</code>, <code>Profile_serialize</code>, <code>Profile_reset</code>, <code>Profile_set_endpoint</code>, <code>Profile_add_endpoint_count</code>, <code>Profile_add_upscaling_rule_*</code>.</li><li><strong>Call sites</strong>: <code>Profile::try_new</code> <code>to_vec</code> (<code>internal/profile/mod.rs:421</code>); <code>datatypes.rs:28</code> (<code>Profile::new</code> box); sample conversion <code>datatypes.rs:360</code>, <code>:368</code>; <code>StringTable::new</code> <code>reserve(32)</code> (<code>collections/string_table/mod.rs:109</code>); <code>timestamped_observations.rs:43</code>, <code>:97</code>; <code>trimmed_observation.rs:74</code> (<code>Box::from</code>); <code>observations.rs:126</code>, <code>:164</code>; <code>reset_and_return_previous</code> (<code>mod.rs:514</code>); <code>encode</code> (<code>mod.rs:681</code>); upscaling <code>upscaling.rs:80</code>, <code>:96</code>, <code>:97</code>, <code>:103</code>, <code>:144</code>, <code>:153</code>, <code>:186</code>, <code>:190</code>; <code>api/mod.rs:250</code> (<code>UpscalingInfo::check_validity</code> message); endpoint stats <code>endpoint_stats.rs:8</code>, <code>:22</code>; <code>mod.rs:138</code>; handle boxing <code>libdd-common-ffi/src/handle.rs:68</code>.</li><li>**Stack (Linux, <code>profile_new</code> fail-once #0)**: <code>&lt;[T]&gt;::to_vec</code> → <code>Profile::try_new</code> (<code>mod.rs:421</code>) → <code>profile_new</code> (<code>datatypes.rs:494</code>) → <code>ddog_prof_Profile_new</code>.</li><li><strong>OS scope / evidence</strong>: Linux and Windows; <code>profile_*</code>, <code>set_endpoint_*</code>, <code>endpoint_count_*</code>, <code>upscaling_*</code>, <code>fuzz_seq_*</code>.</li><li><strong>Root cause</strong>: the profile API returns <code>Result</code>, but many collection operations still use infallible <code>Vec</code>, <code>Box</code>, <code>HashMap</code> and <code>IndexMap</code> methods. The arenas themselves are fallible: every direct arena scenario returns <code>oom-error</code>.</li><li><strong>Remediation</strong>: convert each listed site to <code>try_reserve</code>, <code>try_with_capacity</code> or pre-sized buffers allocated at <code>Profile_new</code>, and replace <code>Box::from(Vec)</code> and <code>to_vec</code> with fallible helpers. Add a clippy <code>disallowed-methods</code> lint (infallible <code>Vec::push</code>, <code>with_capacity</code>, <code>Box::new</code>, <code>to_vec</code>, <code>format!</code>) scoped to the profile hot path, so regressions show in review. <code>libdd-alloc</code> already provides fallible arenas.</li><li><strong>Owner</strong>: @DataDog/libdatadog-profiling.</li><li><strong>Dependencies</strong>: T1 first (otherwise each converted site aborts while building its error).</li><li><strong>Ticket group</strong>: T3.</li></ul>
+</section>
+<section id="f4-exporter-construction-and-send-allocate-infallibly-mostly-in-dependencies" class="finding">
+<h3 id="h-f4-exporter-construction-and-send-allocate-infallibly-mostly-in-dependencies">F4. Exporter construction and send allocate infallibly, mostly in dependencies</h3>
+<ul><li><strong>Outcomes</strong>: <code>abort</code> in fail-once and fail-from.</li><li><strong>API / path</strong>: <code>ddog_prof_Exporter_new</code>, <code>ddog_prof_Exporter_send_blocking</code> (cold and warm runtime), <code>ddog_prof_Endpoint_*</code> conversion.</li><li><strong>Call sites</strong>: <code>libdd-profiling/src/exporter/profile_exporter.rs:97</code>–<code>:159</code> (<code>new</code>, <code>init_runtime</code>: tokio runtime), <code>:189</code> (<code>send_blocking</code>), <code>:224</code>–<code>:226</code> (<code>build</code>: reqwest request and multipart form), <code>:259</code>, <code>:260</code> (<code>send</code>), <code>:269</code>–<code>:362</code> (tags string, event JSON, multipart parts); <code>exporter/tls.rs:66</code>–<code>:85</code> (rustls configuration); <code>exporter/config.rs:26</code>; <code>libdd-networking/src/endpoint.rs:95</code>, <code>:118</code> (reqwest client builder); <code>libdd-profiling-ffi/src/exporter.rs:50</code>, <code>:109</code>, <code>:206</code>, <code>:223</code> (<code>parse_json</code>); <code>libdd-common/src/tag.rs:102</code> (<code>Tag::clone</code>).</li><li>**Stack (Linux, <code>exporter_send_warm</code> fail-once #86)**: reqwest multipart request → <code>ProfileExporter::build</code> (<code>profile_exporter.rs:226</code>) → <code>ProfileExporter::send</code> (<code>:241</code>) → <code>send_blocking</code> → <code>ddog_prof_Exporter_send_blocking</code>.</li><li><strong>OS scope / evidence</strong>: Linux and Windows; <code>exporter_new</code>, <code>exporter_send_cold</code>, <code>exporter_send_warm</code>, <code>fuzz_seq_01</code>.</li><li><strong>Root cause</strong>: the exporter is built on tokio, hyper, reqwest, rustls and serde_json, which treat allocation failure as fatal. Their allocations cannot be made fallible from libdatadog.</li><li><strong>Remediation</strong>: decide the policy first (design ticket): (1) move all one-time allocations (runtime, TLS configuration, HTTP client, tags, endpoint) into <code>Exporter_new</code>, documented as an initialization-time call; (2) on the send path, keep libdatadog-owned allocations fallible (event JSON, tags string, multipart buffers sized from the encoded profile) and pre-reserve where the size is known; (3) document the residual risk of third-party allocations in <code>profiling.h</code>. Replacing the HTTP stack is out of scope.</li><li><strong>Owner</strong>: @DataDog/libdatadog-profiling (exporter) with @DataDog/apm-common-components-core (<code>libdd-networking</code>, <code>libdd-common</code>).</li><li><strong>Dependencies</strong>: T1 for the libdatadog-owned parts; the policy decision before any code change.</li><li><strong>Ticket group</strong>: T5.</li></ul>
+</section>
+<section id="f5-host-identity-aborts-in-exporter-new" class="finding">
+<h3 id="h-f5-host-identity-aborts-in-exporter-new">F5. Host identity aborts in <code>Exporter_new</code></h3>
+<ul><li><strong>Outcomes</strong>: <code>abort</code> (8,280 Linux ordinals in <code>exporter_new</code> across the normal and arena chaos builds, the largest single group; 4 on Windows).</li><li><strong>API / path</strong>: <code>ddog_prof_Exporter_new</code> → entity id and container id detection.</li><li><strong>Call sites</strong>: <code>libdd-host-identity/src/entity_id/unix/container_id.rs:22</code>, <code>:27</code> (<code>Regex::new</code> in <code>LINE_REGEX</code> and <code>CONTAINER_REGEX</code> lazy statics), <code>:37</code>, <code>:38</code>, <code>:45</code>, <code>:47</code>; <code>cgroup_inode.rs:36</code>–<code>:98</code>; <code>entity_id/unix/mod.rs:55</code>, <code>:99</code>. Windows: <code>libdd-env/src/lib.rs:51</code> (<code>std::env::var</code> in the <code>DD_EXTERNAL_ENV</code> lazy static, <code>libdd-host-identity/src/entity_id/mod.rs:96</code>).</li><li>**Stack (Linux, <code>exporter_new</code> fail-once)**: regex compilation → <code>CONTAINER_REGEX</code> initializer (<code>container_id.rs:27</code>) → <code>extract_container_id</code> → <code>compute_entity_id</code> → <code>ProfileExporter::new</code> → <code>ddog_prof_Exporter_new</code>.</li><li><strong>OS scope / evidence</strong>: container and cgroup parsing on Linux only (<code>cfg(unix)</code>); the environment read only failed on Windows in these runs. Report <code>exporter_new</code>.</li><li><strong>Root cause</strong>: regex compilation allocates thousands of times in a lazy static on first use, cgroup parsing uses infallible <code>String</code> and <code>PathBuf</code> operations, and <code>std::env::var</code> allocates on Windows even when the variable is unset.</li><li><strong>Remediation</strong>: replace the two regexes with a hand-written parser of the cgroup line (fixed formats), or compute the entity and container ids and the external environment once at library initialization, outside the allocation-sensitive call; make file reads and path building fallible and degrade to &quot;no container id&quot; on failure.</li><li><strong>Owner</strong>: @DataDog/apm-common-components-core.</li><li><strong>Dependencies</strong>: none (degrading to &quot;unknown&quot; does not need T1).</li><li><strong>Ticket group</strong>: T5.</li></ul>
+</section>
+<section id="f6-ddog-vec-tag-push-aborts" class="finding">
+<h3 id="h-f6-ddog-vec-tag-push-aborts">F6. <code>ddog_Vec_Tag_push</code> aborts</h3>
+<ul><li><strong>Outcomes</strong>: <code>abort</code> on every ordinal of the three tag scenarios.</li><li><strong>API / path</strong>: <code>ddog_Vec_Tag_push</code> (exporter tags, additional tags).</li><li><strong>Call sites</strong>: <code>libdd-common-ffi/src/tags.rs:39</code>, <code>:40</code> (key and value clones), <code>libdd-common/src/tag.rs:230</code> (<code>format!</code> in <code>Tag::new</code>), <code>libdd-common-ffi/src/vec.rs:112</code> (<code>Vec::push</code>).</li><li>**Stack (Linux, <code>tag_push_empty</code> fail-once #0)**: <code>String</code> clone of the key → <code>ddog_Vec_Tag_push</code> (<code>tags.rs:39</code>).</li><li><strong>OS scope / evidence</strong>: Linux and Windows; <code>tag_push_empty</code>, <code>tag_push_at_capacity</code>, <code>tag_push_long</code>.</li><li><strong>Root cause</strong>: string clones, <code>format!</code> and <code>Vec::push</code> are infallible; the function already returns a result type that could carry an error.</li><li><strong>Remediation</strong>: <code>try_reserve</code> the vector and the strings, build the tag without <code>format!</code>, and return the static out-of-memory error from T1.</li><li><strong>Owner</strong>: @DataDog/apm-common-components-core.</li><li><strong>Dependencies</strong>: T1 (static FFI error).</li><li><strong>Ticket group</strong>: T4.</li></ul>
+</section>
+<section id="f7-profile-serialize-drops-samples-silently-when-the-observation-decoder-cannot-allocate" class="finding">
+<h3 id="h-f7-profile-serialize-drops-samples-silently-when-the-observation-decoder-cannot-allocate">F7. <code>Profile_serialize</code> drops samples silently when the observation decoder cannot allocate</h3>
+<ul><li><strong>Outcomes</strong>: <code>success-fallback</code> (<code>fuzz_seq_03</code> fail-once #53 in the normal build, #52 in release); <code>abort</code> in fail-from at the same site.</li><li><strong>API / path</strong>: <code>ddog_prof_Profile_serialize</code> with timestamped samples.</li><li><strong>Call sites</strong>: <code>libdd-profiling/src/internal/observation/timestamped_observations.rs:94</code> (<code>self.decoder.read_u32(..).ok()?</code> in <code>TimestampedObservationsIterImpl::next</code>).</li><li><strong>Stack</strong>: zstd decoder read → <code>TimestampedObservationsIterImpl::next</code> (<code>:94</code>) → <code>ObservationsIntoIter::next</code> (<code>observations.rs:237</code>) → <code>Profile::encode</code> (<code>mod.rs:615</code>) → <code>ddog_prof_Profile_serialize</code>.</li><li><strong>OS scope / evidence</strong>: Linux and Windows (<code>fuzz_seq_03</code>, 2 Windows ordinals).</li><li><strong>Root cause</strong>: the iterator maps every read error to end of iteration, so an allocation failure in the decoder truncates the timestamped samples and serialize reports success.</li><li><strong>Remediation</strong>: make the iterator yield <code>Result</code> (or record the first error and check it after iteration) and fail the serialize with the out-of-memory error.</li><li><strong>Owner</strong>: @DataDog/libdatadog-profiling.</li><li><strong>Dependencies</strong>: T1.</li><li><strong>Ticket group</strong>: T3.</li></ul>
+</section>
+<section id="f8-dropping-an-empty-handle-allocates-an-error" class="finding">
+<h3 id="h-f8-dropping-an-empty-handle-allocates-an-error">F8. Dropping an empty handle allocates an error</h3>
+<ul><li><strong>Outcomes</strong>: <code>abort</code> in fail-once and fail-from.</li><li><strong>API / path</strong>: <code>Drop</code> of <code>Handle&lt;T&gt;</code> (encoded profile, exporter, cancellation token) and <code>ToInner::to_inner_mut</code> on null handles; reached by <code>*_drop</code> on a consumed handle and by <code>Exporter_send_blocking</code>.</li><li><strong>Call sites</strong>: <code>libdd-common-ffi/src/handle.rs:56</code> (<code>anyhow::ensure!</code> in <code>take</code>, called from <code>Drop</code> at <code>:75</code>), <code>:34</code>, <code>:47</code> (<code>.context(&quot;Null pointer&quot;)</code>).</li><li>**Stack (Linux, <code>profile_serialize_endpoints</code> fail-once #42)**: <code>Handle::drop</code> (<code>handle.rs:75</code>) → <code>take</code> (<code>:56</code>) → <code>anyhow!</code> message allocation → abort.</li><li><strong>OS scope / evidence</strong>: Linux and Windows.</li><li><strong>Root cause</strong>: <code>take</code> builds an <code>anyhow::Error</code> for the null case, and <code>Drop</code> calls <code>take</code> and discards the result.</li><li><strong>Remediation</strong>: <code>Drop</code> checks for null before calling <code>take</code>; null-handle errors use a static error (T1).</li><li><strong>Owner</strong>: @DataDog/apm-common-components-core.</li><li><strong>Dependencies</strong>: none for the <code>Drop</code> change; T1 for the error.</li><li><strong>Ticket group</strong>: T1.</li></ul>
+</section>
+<section id="f9-release-builds-skip-sample-label-validation-not-an-allocation-failure" class="finding">
+<h3 id="h-f9-release-builds-skip-sample-label-validation-not-an-allocation-failure">F9. Release builds skip sample label validation (not an allocation failure)</h3>
+<ul><li><strong>Outcomes</strong>: in release, a sample with a string <code>local root span id</code> label is accepted by <code>Profile_add</code>, and every later <code>Profile_serialize</code> of that profile fails. Debug builds reject the add. Separately, the debug-only validation aborts on allocation failure (<code>internal/profile/mod.rs:1084</code>, <code>:1085</code>, <code>:1089</code>, and the <code>{label:?}</code> message at <code>api/mod.rs:133</code>).</li><li><strong>API / path</strong>: <code>ddog_prof_Profile_add</code>, then <code>ddog_prof_Profile_serialize</code>.</li><li><strong>Call sites</strong>: <code>try_add_sample</code> (<code>internal/profile/mod.rs:151</code>, <code>#[cfg(debug_assertions)] validate_sample_labels</code>).</li><li><strong>OS scope / evidence</strong>: all OSes (build-profile dependent); observed in the release fuzz runs, handled in <code>fuzzed.rs</code> by comparing with a setup reference run.</li><li><strong>Root cause</strong>: label validation is compiled only with <code>debug_assertions</code>, so shipped (release) artifacts accept invalid labels that poison the profile.</li><li><strong>Remediation</strong>: validate the cheap invariants (duplicate keys, <code>local root span id</code> numeric and non-zero) in release too, without allocating (no <code>HashMap</code>: compare keys pairwise or against interned ids), or drop the offending label or sample instead of poisoning the profile. Document the label rules in <code>profiling.h</code> (they are absent today).</li><li><strong>Owner</strong>: @DataDog/libdatadog-profiling.</li><li><strong>Dependencies</strong>: none.</li><li><strong>Ticket group</strong>: T6.</li></ul>
+</section>
+<section id="f10-the-file-endpoint-s-dump-server-leaks-a-socket-in-tmp-not-an-allocation-failure" class="finding">
+<h3 id="h-f10-the-file-endpoint-s-dump-server-leaks-a-socket-in-tmp-not-an-allocation-failure">F10. The file endpoint&#x27;s dump server leaks a socket in <code>/tmp</code> (not an allocation failure)</h3>
+<ul><li><strong>Outcomes</strong>: a randomly named <code>libdatadog_dump_&lt;pid&gt;_&lt;random&gt;.sock</code> file per exporter created with a file endpoint, never removed. Harness workers left 1,116 sockets on the development host before the exporter scenarios moved to a local agent.</li><li><strong>API / path</strong>: <code>ddog_Endpoint_file</code> → <code>ddog_prof_Exporter_new</code> → <code>libdd-networking</code> dump server (<code>cfg(unix)</code>).</li><li><strong>Call sites</strong>: <code>libdd-networking/src/dump_server.rs:46</code> (socket directory <code>/tmp</code>), <code>spawn_dump_server</code> (no <code>remove_file</code> anywhere in the file).</li><li><strong>OS scope / evidence</strong>: observed on Linux; macOS has the same <code>cfg(unix)</code> code (not observed); not applicable to Windows.</li><li><strong>Root cause</strong>: the socket path is bound and never unlinked, neither on exporter drop nor on server-thread exit.</li><li><strong>Remediation</strong>: unlink the socket when the server stops (guard object owned by the exporter), use a Linux abstract-namespace socket where available, or a private temporary directory removed on drop.</li><li><strong>Owner</strong>: @DataDog/apm-common-components-core.</li><li><strong>Dependencies</strong>: none.</li><li><strong>Ticket group</strong>: T7.</li></ul>
+</section>
+<section id="f11-benign-success-fallback-outcomes-and-one-silent-degradation" class="finding">
+<h3 id="h-f11-benign-success-fallback-outcomes-and-one-silent-degradation">F11. Benign <code>success-fallback</code> outcomes, and one silent degradation</h3>
+<ul><li><strong>Outcomes</strong>: <code>success-fallback</code> (85 normal, 87 arena chaos, 58 release on Linux).</li><li><strong>API / path</strong>: <code>Profile_new</code>, <code>Profile_add</code>, <code>Profile_set_endpoint</code>, upscaling rules (<code>indexmap</code> growth); <code>Exporter_new</code> (Azure App Services detection).</li><li><strong>Call sites and verdict</strong>:<ul><li><code>libdd-profiling/src/collections/identifiable/mod.rs:71</code>, <code>:82</code>, <code>collections/string_table/mod.rs:109</code>, <code>internal/upscaling.rs:97</code>, <code>internal/profile/mod.rs:130</code>: benign. <code>indexmap</code> first tries an opportunistic <code>try_reserve_exact</code> up to the index capacity, then falls back to the exact request; nothing is lost.</li><li><code>libdd-host-identity/src/azure_app_services.rs:86</code>: silent degradation. <code>std::fs::read(&quot;/proc/self/environ&quot;)</code> fails and the function returns an empty map, so Azure App Services metadata is missing from the exporter tags.</li><li><code>libdd-profiling/src/collections/string_table/mod.rs:30</code> (arena chaos, <code>fuzz_seq_01</code>; <code>arena.rs:63</code> on Windows): harness masking, see F14.</li></ul></li><li><strong>OS scope / evidence</strong>: <code>indexmap</code> fallbacks on Linux and Windows; the Azure read is Linux only (<code>/proc</code>). Reports <code>profile_*</code>, <code>set_endpoint_*</code>, <code>upscaling_*</code>, <code>exporter_new</code>, <code>fuzz_seq_*</code>.</li><li><strong>Root cause</strong>: by design in <code>indexmap</code>; for Azure, an I/O error (here out of memory) is treated as &quot;not on Azure&quot;.</li><li><strong>Remediation</strong>: none for <code>indexmap</code>. Azure: log the read failure at debug level and retry detection on the next exporter creation; optional.</li><li><strong>Owner</strong>: @DataDog/apm-common-components-core (Azure detection).</li><li><strong>Dependencies</strong>: none.</li><li><strong>Ticket group</strong>: optional addition to T5.</li></ul>
+</section>
+<section id="f12-exporter-send-scenarios-are-nondeterministic" class="finding">
+<h3 id="h-f12-exporter-send-scenarios-are-nondeterministic">F12. Exporter send scenarios are nondeterministic</h3>
+<ul><li><strong>Outcomes</strong>: <code>nondeterministic</code> (58 normal, 55 arena chaos, 19 release on Linux; 61 and 68 on Windows), only in <code>exporter_send_cold</code>, <code>exporter_send_warm</code> and <code>fuzz_seq_01</code> (which sends).</li><li><strong>API / path</strong>: <code>ddog_prof_Exporter_send_blocking</code>.</li><li><strong>Call sites</strong>: none (the outcome is a sequence mismatch): the report detail is &quot;event N differs from the baseline&quot; or &quot;ordinal N not reached&quot;.</li><li><strong>OS scope / evidence</strong>: Linux and Windows, same three scenarios.</li><li><strong>Root cause</strong>: harness limitation. The send path allocates on tokio worker threads and in hyper connection handling, whose order depends on I/O timing, so the allocation sequence differs from the baseline. The harness already reports instead of failing these three scenarios.</li><li><strong>Remediation</strong>: run the exporter on a current-thread runtime with a deterministic in-process agent, or enumerate only the calling thread&#x27;s allocations up to the first I/O wait.</li><li><strong>Owner</strong>: harness owner (PROF-16808 follow-up).</li><li><strong>Dependencies</strong>: none; required before the send scenarios can gate.</li><li><strong>Ticket group</strong>: T9.</li></ul>
+</section>
+<section id="f13-public-contract-gaps-in-profiling-h" class="finding">
+<h3 id="h-f13-public-contract-gaps-in-profiling-h">F13. Public contract gaps in <code>profiling.h</code></h3>
+<ul><li><strong>Outcomes</strong>: none observed: no <code>contract-violation</code> outside the toy scenario. The gap limits what the checks can claim (see &quot;Contract audit&quot;).</li><li><strong>API / path</strong>: every exported profile and exporter symbol the harness calls, plus <code>ddog_Vec_Tag_*</code> and <code>ddog_Error_drop</code> (<code>common.h</code>).</li><li><strong>Call sites</strong>: doc comments above the exported functions in <code>libdd-profiling-ffi/src/profiles/datatypes.rs</code>, <code>libdd-profiling-ffi/src/exporter.rs</code>, <code>libdd-common-ffi/src/tags.rs</code> and <code>libdd-common-ffi/src/error.rs</code>.</li><li><strong>OS scope / evidence</strong>: all OSes (documentation).</li><li><strong>Root cause</strong>: the comments document safety preconditions and success behaviour, but not what a failed call leaves behind: whether the profile is still usable after a failed <code>add</code>, <code>serialize</code>, <code>reset</code> or metadata call, whether a failed constructor (<code>Profile_new</code>, <code>Exporter_new</code>) publishes a handle, or whether an exporter can send again after a failed send. <code>ddog_prof_Profile_reset</code>&#x27;s comment is stale: it documents a bool return and a <code>start_time</code> argument, but the function takes only the profile and returns <code>ProfileResult</code>. <code>ddog_Vec_Tag_new</code>, <code>ddog_Vec_Tag_drop</code> and the drops&#x27; effect on the handle are undocumented, and so are the label rules for <code>Profile_add</code> (F9).</li><li><strong>Remediation</strong>: document per exported symbol the ownership of every argument and result, the state after an error, and whether the call can be retried (wording proposals under &quot;Contract audit&quot;). No header change is made in this experimental PR.</li><li><strong>Owner</strong>: @DataDog/libdatadog-profiling (profile and exporter symbols) with @DataDog/apm-common-components-core (<code>ddog_Vec_Tag_*</code>, <code>ddog_Error_drop</code>).</li><li><strong>Dependencies</strong>: none; prerequisite to turning the harness into a PR gate.</li><li><strong>Ticket group</strong>: T8.</li></ul>
+</section>
+<section id="f14-harness-limitations-that-affect-the-findings" class="finding">
+<h3 id="h-f14-harness-limitations-that-affect-the-findings">F14. Harness limitations that affect the findings</h3>
+<ul><li><strong>Outcomes</strong>: <code>success-fallback</code> that hides a failure (fuzz sequences); missing coverage for aborting workers; no per-scenario macOS results.</li><li><strong>API / path</strong>: the harness (<code>tests/allocation_failure</code>), not the library.</li><li><strong>Call sites</strong>: <code>fuzzed.rs</code> and <code>sequence.rs</code> (expected-error matching); the worker coverage profile written at exit; the macOS job in <code>.github/workflows/test.yml</code>.</li><li><strong>OS scope / evidence</strong>: masking seen on Linux (<code>string_table/mod.rs:30</code>) and Windows (<code>arena.rs:63</code>); coverage is local Linux only; macOS has no report job.</li><li><strong>Root cause</strong>: a fuzz sequence ignores errors from calls that also fail in the setup run (rejected inputs), so an injected failure inside such a call looks like the expected rejection. An aborting worker writes no LLVM profile (atexit does not run). The report job runs only on Windows, and the generic macOS job hides per-scenario outcomes.</li><li><strong>Remediation</strong>: compare error kinds once an out-of-memory error is distinguishable (T1); accept the coverage limit (it only affects discovery); add macOS to the report job. The 57 never-reached allocation-relevant branch outcomes in <code>SCENARIOS.md</code> (last section) stay a gap report, nothing in it is excused; most are APIs the .NET profiler does not call (profiles dictionary, managed string ids) or host-dependent paths (Azure App Services).</li><li><strong>Owner</strong>: harness owner.</li><li><strong>Dependencies</strong>: T1 for error-kind matching.</li><li><strong>Ticket group</strong>: T9.</li></ul>
+</section>
+</section>
+<section id="contract-audit">
+<h2 id="h-contract-audit">Contract audit</h2>
+<p>Each post-call assertion of <code>lifecycle.rs</code> and <code>fuzzed.rs</code>, classified against the doc comments that cbindgen copies into <code>profiling.h</code> (and <code>common.h</code> for <code>ddog_Vec_Tag_*</code> and <code>ddog_Error_drop</code>). &quot;Documented&quot;: the header states it. &quot;Undocumented ownership&quot;: necessary for memory safety, but not stated. &quot;Provisional&quot;: a test assumption about post-error behaviour. &quot;Out of contract&quot;: the header forbids the call; kept as an implementation observation that must not become a gate. The checks carry the same label in their doc comments.</p>
+<table>
+<thead><tr>
+<th>Check</th>
+<th>Assertion</th>
+<th>Header text</th>
+<th>Class</th>
+</tr></thead>
+<tbody>
+<tr><td><code>check_new_profile</code></td><td>a returned profile is usable and must be dropped</td><td>&quot;Must call <code>ddog_prof_Profile_drop</code> when you are done&quot;</td><td>Documented</td></tr>
+<tr><td><code>check_new_profile</code></td><td>a failed <code>Profile_new</code> publishes no profile</td><td>none</td><td>Undocumented ownership</td></tr>
+<tr><td><code>check_profile_usable</code></td><td>after a failed <code>add</code> or <code>serialize</code>, add and serialize still work</td><td><code>serialize</code>: &quot;Drains the data, and then resets the profile&quot; (success only)</td><td>Provisional</td></tr>
+<tr><td><code>check_meta</code></td><td>a failed <code>set_endpoint</code>, <code>add_endpoint_count</code> or upscaling call can be retried, and the profile takes a sample</td><td>none</td><td>Provisional</td></tr>
+<tr><td>sequence generator</td><td>upscaling rules only before the first serialize</td><td>&quot;must be called before serialize and must not be called after&quot;</td><td>Documented (respected)</td></tr>
+<tr><td>sequence generator</td><td>non-zero <code>total_sampled</code>, <code>total_real</code>, <code>sampling_distance</code></td><td>&quot;This value must not be equal to 0&quot;</td><td>Documented (respected)</td></tr>
+<tr><td><code>check_new_exporter</code></td><td>a failed <code>Exporter_new</code> publishes no exporter; a returned one can send</td><td>none</td><td>Undocumented ownership, then provisional</td></tr>
+<tr><td><code>check_send</code></td><td><code>send_blocking</code> consumes the encoded profile whatever the result</td><td>&quot;Takes ownership of the profile&quot;</td><td>Documented</td></tr>
+<tr><td><code>check_send</code></td><td>success returns a 2xx status</td><td>&quot;returning the HttpStatus&quot;</td><td>Documented</td></tr>
+<tr><td><code>check_send</code>, <code>check_exporter_sends</code></td><td>the exporter can send again after a failed send</td><td>&quot;Borrows the exporter&quot; (ownership only)</td><td>Provisional</td></tr>
+<tr><td><code>check_encoded_bytes</code></td><td><code>bytes</code> leaves the encoded profile owned by the handle</td><td>&quot;valid for use until the encoded_profile is modified&quot;</td><td>Documented</td></tr>
+<tr><td><code>check_endpoint_agent</code>, <code>check_endpoint_agentless</code></td><td>the endpoint returns the arguments it was given and borrows them</td><td>none</td><td>Undocumented ownership</td></tr>
+<tr><td><code>check_vec_tag_new</code></td><td>a new tag vector is empty and accepts a push</td><td>no doc comment</td><td>Provisional</td></tr>
+<tr><td><code>check_drop_profile</code>, <code>check_drop_encoded</code>, <code>check_drop_exporter</code>, <code>check_drop_cancel</code></td><td>drop empties the handle</td><td>none</td><td>Undocumented ownership</td></tr>
+<tr><td>same</td><td>a second drop is a no-op</td><td>&quot;has not previously been dropped&quot; / &quot;do not call this twice&quot; / &quot;has already been dropped&quot; / &quot;been dropped already&quot;</td><td>Out of contract</td></tr>
+<tr><td><code>check_drop_error</code></td><td>a second <code>ddog_Error_drop</code> stays cleared</td><td>&quot;It should not be used after this&quot;</td><td>Out of contract</td></tr>
+<tr><td><code>check_drop_tags</code></td><td>drop consumes the vector</td><td>by-value signature only</td><td>Undocumented ownership</td></tr>
+<tr><td><code>fuzzed::check</code></td><td>the profile takes a sample and serializes after any failed call, when it did in the setup run</td><td>none</td><td>Provisional</td></tr>
+</tbody>
+</table>
+<p>Missing ownership and post-error behaviour is an API-contract gap and a prerequisite to turning this report-only experiment into a PR gate (T8). This PR changes no header; follow-up wording to propose:</p>
+<ul><li><code>ddog_prof_Profile_new</code>: &quot;On error, no profile is returned and nothing needs to be dropped except the error.&quot;</li><li><code>ddog_prof_Profile_add</code>, <code>_serialize</code>, <code>_set_endpoint</code>, <code>_add_endpoint_count</code>, <code>_add_upscaling_rule_*</code>: &quot;On error the profile is unchanged (or: reset) and remains valid; the call can be retried.&quot;</li><li><code>ddog_prof_Profile_reset</code>: rewrite to match the <code>ProfileResult</code> signature.</li><li><code>ddog_prof_Exporter_new</code>: &quot;On error, no exporter is returned.&quot; <code>ddog_prof_Exporter_send_blocking</code>: &quot;The exporter remains usable after an error.&quot;</li><li><code>*_drop</code>: &quot;Leaves the handle empty; dropping an empty handle is a no-op&quot; (if that is the intended contract; today the header forbids a second drop).</li><li><code>ddog_Vec_Tag_new</code>, <code>ddog_Vec_Tag_drop</code>: add ownership comments.</li><li><code>ddog_prof_Endpoint_agent</code>, <code>_agentless</code>: &quot;The endpoint borrows its string arguments for its lifetime.&quot;</li></ul>
+</section>
+<section id="proposed-fix-tickets">
+<h2 id="h-proposed-fix-tickets">Proposed fix tickets</h2>
+<p>Not created: Phase B starts after the human review of this report. Order: T1, then T2, T3, T4 and T6 in parallel; T5 after its design decision; T7 and T8 any time; T9 last.</p>
+<table>
+<thead><tr>
+<th>Ticket</th>
+<th>Scope</th>
+<th>Findings</th>
+<th>Owner</th>
+<th>Depends on</th>
+</tr></thead>
+<tbody>
+<tr><td>T1</td><td>Non-allocating out-of-memory error: internal error type, FFI <code>Error</code> and <code>ProfileStatus</code> static errors, null-handle <code>Drop</code></td><td>F2, F8</td><td>libdatadog-profiling, apm-common-components-core</td><td>none</td></tr>
+<tr><td>T2</td><td>zstd encoder on <code>CCtx::try_create</code>; file the upstream issue</td><td>F1</td><td>libdatadog-profiling</td><td>T1</td></tr>
+<tr><td>T3</td><td>Fallible allocations in profile new, add, serialize, reset, upscaling, endpoints; decoder errors in serialize</td><td>F3, F7</td><td>libdatadog-profiling</td><td>T1</td></tr>
+<tr><td>T4</td><td>Fallible <code>ddog_Vec_Tag_push</code></td><td>F6</td><td>apm-common-components-core</td><td>T1</td></tr>
+<tr><td>T5</td><td>Exporter allocation policy (design), then init-time allocations and fallible send-path buffers; host identity without regex</td><td>F4, F5, F11 (Azure logging)</td><td>libdatadog-profiling, apm-common-components-core</td><td>T1, design review</td></tr>
+<tr><td>T6</td><td>Release-build label validation without allocation; document label rules</td><td>F9</td><td>libdatadog-profiling</td><td>none</td></tr>
+<tr><td>T7</td><td>Dump-server socket cleanup</td><td>F10</td><td>apm-common-components-core</td><td>none</td></tr>
+<tr><td>T8</td><td>Per-symbol FFI contract (ownership, post-error state, retry) in the headers</td><td>F13</td><td>libdatadog-profiling, apm-common-components-core</td><td>none</td></tr>
+<tr><td>T9</td><td>Harness to PR gate (see below), deterministic exporter scenarios, macOS reports</td><td>F12, F14</td><td>harness owner</td><td>T8, and T1 to T3 for a green baseline</td></tr>
+</tbody>
+</table>
+</section>
+<section id="from-report-only-to-a-pr-gate">
+<h2 id="h-from-report-only-to-a-pr-gate">From report-only to a PR gate</h2>
+<p>Today the scenario enumeration is report-only: crash outcomes are recorded in the per-scenario Markdown reports and do not fail the test (only harness-internal errors and nondeterminism outside the send scenarios do). That is deliberate: almost every scenario crashes today, and most post-error checks are provisional. Before crashes can fail PRs:</p>
+<ol><li>Contracts (T8): every assertion must trace to a documented header statement; provisional and out-of-contract checks are removed or become documented.</li><li>Expected-outcome baseline: commit the expected outcome per scenario and ordinal class (for example &quot;every ordinal returns <code>oom-error</code> or <code>success-fallback</code>&quot;), keyed by finding id while fixes land, so a PR fails only on a regression or a new crash call site.</li><li>Determinism: exporter scenarios on a deterministic runtime and agent (F12), so <code>nondeterministic</code> can fail.</li><li>Platforms: run the report job on Linux, Windows and macOS, and fail on any OS-specific crash not in the baseline.</li><li>Fix wave: T1 to T3 at least, otherwise the gate is red from the start.</li></ol>
+</section>
+<section id="recommended-automation">
+<h2 id="h-recommended-automation">Recommended automation</h2>
+<ul><li><strong>Machine-readable contract per exported ABI symbol</strong>: a checked-in file (for example <code>ffi-contracts.yaml</code>) next to the cbindgen configuration with, per <code>ddog_*</code> symbol: argument ownership (borrowed, consumed, out), result ownership, state after an error, retry semantics and whether the call may allocate. The header doc comments are generated from it or checked against it.</li><li><strong>Contract-completeness CI</strong>: a check that fails when an exported symbol (from the cbindgen output or <code>nm</code> of the cdylib) has no contract entry, or when an entry has unfilled fields.</li><li><strong>Agent skill that drafts contracts</strong>: a skill that reads a symbol&#x27;s implementation and current doc comment and drafts the contract entry for human review. Drafts are never merged without review, and the skill must not infer guarantees from implementation details alone.</li><li><strong>Generated test registry and adapters</strong>: generate the harness scenario table, the post-call checks and the <code>#[repr(C)]</code> mirrors from the contract file, so a new symbol gets scenarios and checks by construction.</li><li><strong>Deterministic committed scenarios on PRs</strong>: the committed lifecycle, metadata and promoted scenarios run on every PR (normal and arena chaos, Linux, Windows, macOS), with the expected-outcome baseline. The Windows report job added in this PR is the starting point.</li><li><strong>Slow discovery nightly</strong>: coverage and fuzzing (<code>discovery.py coverage</code>, <code>fuzz</code>, <code>fuzz-coverage</code>, <code>promote</code>) run nightly, never on PRs. New promotions open a PR with the regenerated <code>promoted.rs</code> and <code>SCENARIOS.md</code>.</li><li><strong>Rolling coverage-gap issue</strong>: the nightly job maintains one GitHub issue (&quot;Allocation-failure coverage gaps&quot;) whose body is replaced on each run with the current never-reached allocation-relevant branch list from <code>SCENARIOS.md</code>. No source-line exception file: a gap disappears from the issue only when a scenario reaches it or the code goes away.</li></ul>
+</section>
+<section id="draft-upstream-issue-for-zstd-rs-not-filed">
+<h2 id="h-draft-upstream-issue-for-zstd-rs-not-filed">Draft upstream issue for zstd-rs (not filed)</h2>
+<p>Target: <a href="https://github.com/gyscos/zstd-rs">gyscos/zstd-rs</a>. Do not file before the Phase B review; do not treat a zstd upgrade as the fix for F1.</p>
+<pre><code>Title: Stream encoder constructors panic when the compression context cannot be allocated
+
+Versions: zstd 0.14.3, zstd-safe 8.2.0, zstd-sys 2.1.2+zstd.1.5.7.
+
+zstd::stream::write::Encoder::new (and raw::Encoder::new, with_dictionary,
+with_prepared_dictionary, with_ref_prefix) return io::Result, but create their
+context with zstd_safe::CCtx::create(), which panics with &quot;zstd returned null
+pointer when creating new context&quot; when ZSTD_createCCtx returns NULL
+(src/stream/raw.rs:293, :333, :350).
+
+The decoder side already handles this: create_dctx uses DCtx::try_create() and
+returns io::Error (&quot;zstd could not allocate a decompression context&quot;).
+
+Reproduction: build zstd-safe with its Rust allocator support and install a
+global allocator that returns null for the context allocation (or any custom
+ZSTD allocator that fails), then call zstd::stream::write::Encoder::new(Vec::new(), 1).
+Expected: Err(io::Error). Actual: panic. Called from an extern &quot;C&quot; function,
+the panic aborts the process.
+
+Proposal: use CCtx::try_create() in the encoder constructors and map None to an
+io::Error, mirroring create_dctx (io::ErrorKind::OutOfMemory would be the most
+precise kind).</code></pre>
+</section>
+<section id="phase-b-gate">
+<h2 id="h-phase-b-gate">Phase B gate</h2>
+<p>This report closes Phase A. Phase B (fix tickets, production changes, the PR gate) starts only after a human reviews <code>FINDINGS.md</code> or <code>FINDINGS.html</code> and approves or amends the ticket groups above. No production fix tickets, issues or branches exist for these findings yet.</p>
+</section>
+</main>
+</div>
+</body>
+</html>
