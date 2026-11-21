@@ -10,8 +10,9 @@
 //! never fails. While a scope is active, allocations of the other threads are only counted per
 //! thread: they are forwarded unchanged and never fail.
 //!
-//! The allocator callbacks only use constant-initialized thread-locals and atomics: no
-//! allocation, formatting, logging, stack walking or panic.
+//! The allocator callbacks use constant-initialized thread-locals and atomics. When a failure is
+//! selected, the worker records a diagnostic stack; allocations made by that stack walk bypass
+//! tracing and injection, so diagnostics cannot change the observed outcome.
 
 use std::alloc::{GlobalAlloc, Layout};
 use std::cell::Cell;
@@ -174,6 +175,7 @@ thread_local! {
     static POLICY: Cell<Policy> = const { Cell::new(Policy::Observe) };
     static ORDINAL: Cell<u64> = const { Cell::new(0) };
     static THREAD_ID: Cell<u32> = const { Cell::new(0) };
+    static RECORDING_STACK: Cell<bool> = const { Cell::new(false) };
 }
 
 /// Debugger breakpoint target: called just before the allocator returns null.
@@ -296,6 +298,9 @@ fn count_other_thread(size: usize) {
 /// Counts and records one allocation attempt of the current thread. Returns `true` if it must
 /// fail. Returns `false` outside a scope.
 fn on_allocation(domain: Domain, operation: Operation, size: usize, align: usize) -> bool {
+    if RECORDING_STACK.try_with(Cell::get).unwrap_or(false) {
+        return false;
+    }
     let Ok(Some((policy, ordinal))) = DEPTH.try_with(|depth| {
         if depth.get() == 0 {
             return None;
@@ -345,7 +350,11 @@ fn on_allocation(domain: Domain, operation: Operation, size: usize, align: usize
 
     if policy.fails(ordinal) && DIVERGED_AT.load(Ordering::Relaxed) == u64::MAX {
         if INJECTED.fetch_add(1, Ordering::Relaxed) == 0 && WRITE_STACK.load(Ordering::Relaxed) {
-            write_stack();
+            RECORDING_STACK.with(|recording| {
+                recording.set(true);
+                write_stack();
+                recording.set(false);
+            });
         }
         alloc_chaos_injection_hook(ordinal);
         return true;
