@@ -104,6 +104,7 @@ pub mod ffi {
         Custom5,
         GcTime,
         GcSamples,
+        UiHangTime,
     }
 
     struct Period {
