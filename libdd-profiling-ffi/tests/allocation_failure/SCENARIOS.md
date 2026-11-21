@@ -42,7 +42,7 @@ Branch outcomes: owned branch outcomes the baseline reaches; with failures: also
 | `profile_serialize_upscaling` | Profile_serialize: 8 samples, 1 proportional upscaling rule | 77 | 81 | 0 |
 | `profile_serialize_large` | Profile_serialize: 256 samples, 256 endpoint mappings | 73 | 77 | 0 |
 | `exporter_new` | Exporter_new: local agent endpoint, 6 .NET tags | 95 | 97 | 0 |
-| `exporter_send_cold` | send_blocking: first send (cold runtime), attachment, tags, metadata | 96 | 100 | 0 |
+| `exporter_send_cold` | send_blocking: first send (cold runtime), attachment, tags, metadata | 96 | 98 | 0 |
 | `exporter_send_warm` | send_blocking: second send (runtime already started) | 96 | 100 | 0 |
 | `set_endpoint_first` | set_endpoint: first mapping | 72 | 75 | 0 |
 | `set_endpoint_interned` | set_endpoint: interned endpoint, table full at 3 mappings | 72 | 75 | 0 |

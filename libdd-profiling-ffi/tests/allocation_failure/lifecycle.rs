@@ -1201,6 +1201,8 @@ fn run_endpoint_agent(fixture: &mut Box<dyn Any>) -> Result<(), ScenarioError> {
     Ok(())
 }
 
+/// Contract: the returned endpoint borrows the arguments; `profiling.h` does not say so
+/// (undocumented ownership). The functions return no error, which the signature shows.
 fn check_endpoint_agent(fixture: &mut Box<dyn Any>, failed: bool) -> Result<(), String> {
     let fx = fixture.downcast_mut::<EndpointContract>().unwrap();
     if failed {
@@ -1230,6 +1232,8 @@ fn run_endpoint_agentless(fixture: &mut Box<dyn Any>) -> Result<(), ScenarioErro
     Ok(())
 }
 
+/// Contract: the returned endpoint borrows the arguments; `profiling.h` does not say so
+/// (undocumented ownership). The functions return no error, which the signature shows.
 fn check_endpoint_agentless(fixture: &mut Box<dyn Any>, failed: bool) -> Result<(), String> {
     let fx = fixture.downcast_mut::<EndpointContract>().unwrap();
     if failed {

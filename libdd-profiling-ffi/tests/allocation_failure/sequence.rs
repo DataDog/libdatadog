@@ -329,15 +329,17 @@ impl Plan {
                 4 => Op::Proportional {
                     offsets: offsets(&mut input, n),
                     label: (input.pick(&UPSCALING_LABEL_KEYS), input.pick(&LABEL_VALUES)),
-                    sampled: u64::from(input.byte()),
-                    real: u64::from(input.byte()) * 10,
+                    // `profiling.h`: `total_sampled` and `total_real` "must not be equal to 0".
+                    sampled: u64::from(input.byte().max(1)),
+                    real: u64::from(input.byte().max(1)) * 10,
                 },
                 5 => Op::Poisson {
                     offsets: offsets(&mut input, n),
                     label: (input.pick(&UPSCALING_LABEL_KEYS), input.pick(&LABEL_VALUES)),
                     sum: usize::from(input.byte()) % (n + 1),
                     count: usize::from(input.byte()) % (n + 1),
-                    distance: u64::from(input.byte()) * 64,
+                    // `profiling.h`: `sampling_distance` "must not be equal to 0".
+                    distance: u64::from(input.byte().max(1)) * 64,
                 },
                 6 => Op::Serialize {
                     start: timespec(&mut input),
