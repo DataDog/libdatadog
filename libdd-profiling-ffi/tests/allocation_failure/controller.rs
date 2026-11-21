@@ -601,10 +601,20 @@ fn enumerate_inner(scenario: &'static str, stacks: bool, io_bound: bool) -> Resu
     Ok(report)
 }
 
+/// Per-scenario reports: `ALLOC_CHAOS_REPORT_DIR`, so two modes can keep separate reports, or
+/// `$CARGO_TARGET_TMPDIR/allocation_failure`.
+fn report_dir() -> std::path::PathBuf {
+    std::env::var_os("ALLOC_CHAOS_REPORT_DIR")
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|| {
+            std::path::Path::new(env!("CARGO_TARGET_TMPDIR")).join("allocation_failure")
+        })
+}
+
 fn write_report(report: &Report) {
     let markdown = report.to_markdown();
     println!("{markdown}");
-    let dir = std::path::Path::new(env!("CARGO_TARGET_TMPDIR")).join("allocation_failure");
+    let dir = report_dir();
     let path = dir.join(format!("{}.md", report.scenario));
     if let Err(e) =
         std::fs::create_dir_all(&dir).and_then(|()| std::fs::write(&path, markdown.as_bytes()))
@@ -761,7 +771,7 @@ fn capture_stacks(scenario: &str, baseline: &[Event], runs: &mut [Finding]) {
         eprintln!("{scenario}: no gdb or lldb, allocation stacks were not replayed");
         return;
     };
-    let dir = std::path::Path::new(env!("CARGO_TARGET_TMPDIR")).join("allocation_failure");
+    let dir = report_dir();
     if std::fs::create_dir_all(&dir).is_err() {
         return;
     }
