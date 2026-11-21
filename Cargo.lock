@@ -545,12 +545,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b048fb63fd8b5923fc5aa7b340d8e156aec7ec02f0c78fa8a6ddc2613f6f71de"
 
 [[package]]
-name = "bitmaps"
-version = "3.2.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a1d084b0137aaa901caf9f1e8b21daa6aa24d41cd806e111335541eff9683bd6"
-
-[[package]]
 name = "blazesym"
 version = "0.2.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -562,20 +556,6 @@ dependencies = [
  "memmap2",
  "miniz_oxide 0.9.0",
  "rustc-demangle",
- "tracing",
-]
-
-[[package]]
-name = "blazesym-c"
-version = "0.1.7"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "35836355f6e78e299510f6d0dd0f09e01f1a80246da8b1730872f91e76c5757c"
-dependencies = [
- "blazesym",
- "libc",
- "memoffset",
- "tracing",
- "tracing-subscriber",
 ]
 
 [[package]]
@@ -1007,6 +987,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "compcol"
+version = "0.7.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1484689ce40c89ace4c8ae957f2b1b786c0201c6001c874f428d66f8310b3803"
+
+[[package]]
 name = "concurrent-queue"
 version = "2.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1364,18 +1350,6 @@ name = "data-encoding"
 version = "2.10.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d7a1e2f27636f116493b8b860f5546edb47c8d8f8ea73e1d2a20be88e28d1fea"
-
-[[package]]
-name = "datadog-profiling-replayer"
-version = "49.0.0"
-dependencies = [
- "anyhow",
- "clap",
- "libdd-profiling",
- "libdd-profiling-protobuf",
- "prost",
- "sysinfo",
-]
 
 [[package]]
 name = "datadog-sidecar"
@@ -3402,76 +3376,25 @@ dependencies = [
 
 [[package]]
 name = "libdd-profiling"
-version = "1.0.0"
+version = "2.0.0"
 dependencies = [
- "allocator-api2",
- "anyhow",
- "bitmaps",
- "bolero",
- "byteorder",
- "chrono",
- "criterion",
- "crossbeam-channel",
- "crossbeam-utils",
- "cxx",
- "cxx-build",
- "hashbrown 0.17.1",
- "http 1.1.0",
- "indexmap 2.12.1",
- "libdd-alloc",
- "libdd-common",
- "libdd-networking",
- "libdd-process-utils",
- "libdd-profiling-protobuf",
- "opentelemetry-proto",
- "parking_lot",
- "proptest",
+ "compcol",
+ "equivalent",
+ "flate2",
+ "foldhash 0.2.0",
+ "libc",
  "prost",
- "rand 0.8.8",
- "reqwest",
- "rustc-hash",
- "rustls",
- "serde",
  "serde_json",
- "strum",
- "target-triple",
- "tempfile",
- "thiserror 2.0.17",
- "tokio",
- "tokio-util",
- "tools",
- "zrip",
  "zstd",
+ "zstd-sys",
 ]
 
 [[package]]
 name = "libdd-profiling-ffi"
-version = "1.0.0"
+version = "2.0.0"
 dependencies = [
- "allocator-api2",
- "anyhow",
- "build_common",
- "function_name",
- "hyper",
  "libc",
- "libdd-common",
- "libdd-common-ffi",
- "libdd-crashtracker-ffi",
- "libdd-data-pipeline-ffi",
- "libdd-ddsketch-ffi",
- "libdd-ffe-ffi",
- "libdd-library-config-ffi",
- "libdd-log-ffi",
- "libdd-networking",
- "libdd-otel-thread-ctx-ffi",
  "libdd-profiling",
- "libdd-regex",
- "libdd-shared-runtime-ffi",
- "libdd-telemetry-ffi",
- "serde_json",
- "symbolizer-ffi",
- "thiserror 2.0.17",
- "tokio-util",
 ]
 
 [[package]]
@@ -4206,15 +4129,6 @@ name = "nourl"
 version = "0.1.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "bdf177075516a2681d344b047633cd75893126f376469f05a346acf17431eadd"
-
-[[package]]
-name = "ntapi"
-version = "0.4.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e8a3895c6391c39d7fe7ebc444a87eb2991b2a0bc718fdabd071eec617fc68e4"
-dependencies = [
- "winapi",
-]
 
 [[package]]
 name = "num-conv"
@@ -5921,9 +5835,6 @@ name = "strum"
 version = "0.26.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8fec0f0aef304996cf250b31b5a10dee7980c85da9d759361292b8bca5a18f06"
-dependencies = [
- "strum_macros",
-]
 
 [[package]]
 name = "strum_macros"
@@ -6047,14 +5958,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "symbolizer-ffi"
-version = "49.0.0"
-dependencies = [
- "blazesym-c",
- "build_common",
-]
-
-[[package]]
 name = "syn"
 version = "1.0.109"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -6118,20 +6021,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "sysinfo"
-version = "0.29.11"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "cd727fc423c2060f6c92d9534cef765c65a6ed3f428a03d7def74a8c4348e666"
-dependencies = [
- "cfg-if",
- "core-foundation-sys",
- "libc",
- "ntapi",
- "once_cell",
- "winapi",
-]
-
-[[package]]
 name = "tabwriter"
 version = "1.4.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -6161,12 +6050,6 @@ name = "target-lexicon"
 version = "0.13.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b1dd07eb858a2067e2f3c7155d54e929265c264e6f37efe3ee7a8d1b5a1dd0ba"
-
-[[package]]
-name = "target-triple"
-version = "0.1.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1ac9aa371f599d22256307c24a9d748c041e548cbf599f35d890f9d365361790"
 
 [[package]]
 name = "tempfile"

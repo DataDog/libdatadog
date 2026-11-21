@@ -3,96 +3,45 @@
 
 [package]
 name = "libdd-profiling-ffi"
+version = "2.0.0"
+description = "C API for libdd-profiling: profiles lowered to pprof or OTLP, as HTTP requests to send"
 edition.workspace = true
-version = "1.0.0"
 rust-version.workspace = true
 license.workspace = true
 publish = false
+links = "datadog_profiling_ffi"
 
 [lib]
-# LTO is ignored if "lib" is added as crate type
-# cf. https://github.com/rust-lang/rust/issues/51009
-crate-type = ["lib", "staticlib", "cdylib"]
-bench = false
 name = "datadog_profiling_ffi"
+# Only an rlib: hosts such as dd-trace-py's `_native` link it into their own
+# library and supply std's panic handler and allocator. The verified C
+# artifact is built separately as a cdylib with `--cfg ddprof_ffi_cdylib`
+# (see scripts/check-profiling-ffi-no-panic.sh), which adds a sentinel panic
+# handler and a malloc-backed allocator.
+crate-type = ["lib"]
+bench = false
 
 [features]
-default = ["ddcommon-ffi", "catch_panic"]
-# Panic containment for every aggregated FFI sub-crate that supports it.
-#
-# The sub-crates enable `catch_panic` in their own `default`, but this crate pulls
-# them with `default-features = false`, so containment has to be re-enabled here.
-# Without it `catch_panic!` degrades to a bare call and a Rust panic unwinds into a
-# non-unwinding `extern "C"` frame, aborting the host process instead of returning
-# an error (APMSP-3830).
-#
-# Weak (`?/`) on purpose: enabling this must never activate an optional dependency
-# that was not otherwise requested.
-#
-# Every new aggregated FFI sub-crate declaring a `catch_panic` feature belongs here.
-# Whether it is actually enabled is builder's decision: builder passes an exhaustive
-# --features list with --no-default-features, and mirrors this as its own `catch_panic`
-# default feature. Building without it is supported and yields abort-on-panic semantics.
-# examples/ffi/trace_exporter.c verifies containment is on in the artifact our own
-# release process produces.
-catch_panic = [
-  "libdd-data-pipeline-ffi?/catch_panic",
-  "libdd-library-config-ffi?/catch_panic",
-  "libdd-shared-runtime-ffi?/catch_panic",
-]
-cbindgen = ["build_common/cbindgen", "libdd-common-ffi/cbindgen", "libdd-shared-runtime-ffi?/cbindgen", "libdd-otel-thread-ctx-ffi?/cbindgen"]
-ddtelemetry-ffi = ["dep:libdd-telemetry-ffi"]
-datadog-log-ffi = ["dep:libdd-log-ffi"]
-symbolizer = ["symbolizer-ffi"]
-data-pipeline-ffi = ["dep:libdd-data-pipeline-ffi"]
-# Enable zstd compression for the agentless trace intake sender.
-data-pipeline-compression = ["data-pipeline-ffi", "libdd-data-pipeline-ffi/compression"]
-# Enable client-side stats obfuscation in the linked data-pipeline crate. No FFI
-# surface of its own; only compiles the capability into the linked crate.
-data-pipeline-stats-obfuscation = ["data-pipeline-ffi", "libdd-data-pipeline-ffi/stats-obfuscation"]
-# Expose exporter observations for hosts that run their own telemetry client.
-data-pipeline-external-observations = ["data-pipeline-ffi", "libdd-data-pipeline-ffi/external-observations"]
-crashtracker-ffi = ["dep:libdd-crashtracker-ffi"]
-# Enables the in-process collection of crash-info
-crashtracker-collector = ["crashtracker-ffi", "libdd-crashtracker-ffi/collector", "libdd-crashtracker-ffi/otel-thread-ctx"]
-# Enables the use of this library to receiver crash-info from a suitable collector
-crashtracker-receiver = ["crashtracker-ffi", "libdd-crashtracker-ffi/receiver", "libdd-crashtracker-ffi/otel-thread-ctx"]
-demangler = ["crashtracker-ffi", "libdd-crashtracker-ffi/demangler"]
-datadog-library-config-ffi = ["dep:libdd-library-config-ffi", "libdd-library-config-ffi/std"]
-ddcommon-ffi = ["dep:libdd-common-ffi", "libdd-common-ffi/std"]
-ddsketch-ffi = ["dep:libdd-ddsketch-ffi"]
-libdd-ffe-ffi = ["dep:libdd-ffe-ffi"]
-shared-runtime = ["dep:libdd-shared-runtime-ffi"]
-otel-thread-ctx-ffi = ["dep:libdd-otel-thread-ctx-ffi"]
-regex-lite = ["libdd-regex/regex-lite"]
-
-[build-dependencies]
-build_common = { path = "../build-common", features = ["winresource"] }
+default = ["pprof", "otel", "zstd"]
+# The output formats, forwarded to libdd-profiling. Each adds its request
+# functions; either, both or neither may be enabled. The header declares all
+# of them; dependents see which were built in through build-script metadata
+# (DEP_DATADOG_PROFILING_FFI_PPROF / _OTEL / _GZIP / _ZSTD, see build.rs).
+pprof = ["libdd-profiling/pprof"]
+otel = ["libdd-profiling/otel"]
+# gzip compression for either format (`otel` always has it); the pprof
+# default when zstd is not built in.
+gzip = ["libdd-profiling/gzip"]
+# zstd compression for either format; the pprof default when built in.
+zstd = ["libdd-profiling/zstd"]
 
 [dependencies]
-allocator-api2 = { workspace = true, features = ["alloc"] }
-anyhow.workspace = true
-libdd-data-pipeline-ffi = { path = "../libdd-data-pipeline-ffi", default-features = false, optional = true }
-libdd-crashtracker-ffi = { path = "../libdd-crashtracker-ffi", default-features = false, optional = true}
-libdd-library-config-ffi = {  path = "../libdd-library-config-ffi", default-features = false, optional = true }
-libdd-profiling = { path = "../libdd-profiling" }
-libdd-common = { path = "../libdd-common" }
-libdd-networking = { path = "../libdd-networking" }
-libdd-regex = { path = "../libdd-regex" }
-libdd-common-ffi = { path = "../libdd-common-ffi", default-features = false, optional = true, features = ["std"] }
-libdd-telemetry-ffi = { path = "../libdd-telemetry-ffi", default-features = false, optional = true, features = ["expanded_builder_macros"] }
-libdd-ddsketch-ffi = { path = "../libdd-ddsketch-ffi", default-features = false, optional = true }
-libdd-log-ffi = { path = "../libdd-log-ffi", default-features = false, optional = true }
-function_name.workspace = true
-hyper = { workspace = true, features = ["http1", "client"] }
-libc.workspace = true
-serde_json.workspace = true
-symbolizer-ffi = { path = "../symbolizer-ffi", optional = true, default-features = false }
-thiserror = { workspace = true, default-features = true }
-tokio-util.workspace = true
-libdd-ffe-ffi = { path = "../libdd-ffe-ffi", default-features = false, optional = true }
-libdd-shared-runtime-ffi = { path = "../libdd-shared-runtime-ffi", default-features = false, optional = true }
-libdd-otel-thread-ctx-ffi = { path = "../libdd-otel-thread-ctx-ffi", default-features = false, optional = true }
+libdd-profiling = { path = "../libdd-profiling", features = ["alloc"] }
+# The cdylib's global allocator calls the C runtime's malloc and friends (on
+# Windows too, where over-aligned blocks use `_aligned_malloc`).
+# allow(workspace-deps): the workspace entry enables libc's `std` feature,
+# which drops libc's own link to the C library; this no_std artifact needs it.
+libc = { version = "0.2", default-features = false }
 
-[package.metadata.cargo-machete]
-ignored = ["libdd-regex"]
+[lints]
+workspace = true

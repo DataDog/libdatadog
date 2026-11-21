@@ -41,9 +41,7 @@ bincode,https://github.com/servo/bincode,MIT,"Ty Overby <ty@pre-alpha.com>, Fran
 bit-set,https://github.com/contain-rs/bit-set,MIT OR Apache-2.0,Alexis Beingessner <a.beingessner@gmail.com>
 bit-vec,https://github.com/contain-rs/bit-vec,MIT OR Apache-2.0,Alexis Beingessner <a.beingessner@gmail.com>
 bitflags,https://github.com/bitflags/bitflags,MIT OR Apache-2.0,The Rust Project Developers
-bitmaps,https://github.com/bodil/bitmaps,MPL-2.0+,Bodil Stokke <bodil@bodil.org>
 blazesym,https://github.com/libbpf/blazesym,BSD-3-Clause,"Daniel Müller <deso@posteo.net>, Kui-Feng <thinker.li@gmail.com>"
-blazesym-c,https://github.com/libbpf/blazesym,BSD-3-Clause,Daniel Müller <deso@posteo.net>
 block-buffer,https://github.com/RustCrypto/utils,MIT OR Apache-2.0,RustCrypto Developers
 block2,https://github.com/madsmtm/objc2,MIT,Mads Marquart <mads@marquart.dk>
 blocking,https://github.com/smol-rs/blocking,Apache-2.0 OR MIT,Stjepan Glavina <stjepang@gmail.com>
@@ -84,6 +82,7 @@ codespan-reporting,https://github.com/brendanzab/codespan,Apache-2.0,Brendan Zab
 colorchoice,https://github.com/rust-cli/anstyle,MIT OR Apache-2.0,The colorchoice Authors
 colored,https://github.com/mackwic/colored,MPL-2.0,Thomas Wickham <mackwic@gmail.com>
 combine,https://github.com/Marwes/combine,MIT,Markus Westerlind <marwes91@gmail.com>
+compcol,https://github.com/KarpelesLab/compcol,MIT,The compcol Authors
 concurrent-queue,https://github.com/smol-rs/concurrent-queue,Apache-2.0 OR MIT,"Stjepan Glavina <stjepang@gmail.com>, Taiki Endo <te316e89@gmail.com>, John Nunley <dev@notgull.net>"
 console-api,https://github.com/tokio-rs/console,MIT,"Eliza Weisman <eliza@buoyant.io>, Tokio Contributors <team@tokio.rs>"
 console-subscriber,https://github.com/tokio-rs/console,MIT,"Eliza Weisman <eliza@buoyant.io>, Tokio Contributors <team@tokio.rs>"
@@ -263,7 +262,6 @@ nb,https://github.com/rust-embedded/nb,MIT OR Apache-2.0,Jorge Aparicio <jorge@j
 nix,https://github.com/nix-rust/nix,MIT,The nix-rust Project Developers
 nom,https://github.com/Geal/nom,MIT,contact@geoffroycouprie.com
 nourl,https://github.com/rmja/nourl,MIT  OR  Apache-2.0,Rasmus Melchior Jacobsen <rmja@laesoe.org>
-ntapi,https://github.com/MSxDOS/ntapi,Apache-2.0 OR MIT,MSxDOS <melcodos@gmail.com>
 num-conv,https://github.com/jhpratt/num-conv,MIT OR Apache-2.0,Jacob Pratt <jacob@jhpratt.dev>
 num-derive,https://github.com/rust-num/num-derive,MIT OR Apache-2.0,The Rust Project Developers
 num-traits,https://github.com/rust-num/num-traits,MIT OR Apache-2.0,The Rust Project Developers
@@ -286,7 +284,6 @@ once_cell,https://github.com/matklad/once_cell,MIT OR Apache-2.0,Aleksey Kladov 
 oorandom,https://hg.sr.ht/~icefox/oorandom,MIT,Simon Heath <icefox@dreamquest.io>
 openssl-probe,https://github.com/alexcrichton/openssl-probe,MIT OR Apache-2.0,Alex Crichton <alex@alexcrichton.com>
 opentelemetry,https://github.com/open-telemetry/opentelemetry-rust/tree/main/opentelemetry,Apache-2.0,The opentelemetry Authors
-opentelemetry-proto,https://github.com/open-telemetry/opentelemetry-rust/tree/main/opentelemetry-proto,Apache-2.0,The opentelemetry-proto Authors
 opentelemetry_sdk,https://github.com/open-telemetry/opentelemetry-rust/tree/main/opentelemetry-sdk,Apache-2.0,The opentelemetry_sdk Authors
 os_info,https://github.com/stanislav-tkach/os_info,MIT,"Jan Schulte <hello@unexpected-co.de>, Stanislav Tkach <stanislav.tkach@gmail.com>"
 page_size,https://github.com/Elzair/page_size_rs,MIT OR Apache-2.0,Philip Woods <elzairthesorcerer@gmail.com>
@@ -434,12 +431,10 @@ syn,https://github.com/dtolnay/syn,MIT OR Apache-2.0,David Tolnay <dtolnay@gmail
 sync_wrapper,https://github.com/Actyx/sync_wrapper,Apache-2.0,Actyx AG <developer@actyx.io>
 synstructure,https://github.com/mystor/synstructure,MIT,Nika Layzell <nika@thelayzells.com>
 sys-info,https://github.com/FillZpp/sys-info-rs,MIT,Siyu Wang <FillZpp.pub@gmail.com>
-sysinfo,https://github.com/GuillaumeGomez/sysinfo,MIT,Guillaume Gomez <guillaume1.gomez@gmail.com>
 tabwriter,https://github.com/BurntSushi/tabwriter,Unlicense OR MIT,Andrew Gallant <jamslam@gmail.com>
 tagptr,https://github.com/oliver-giersch/tagptr,MIT OR Apache-2.0,Oliver Giersch
 tar,https://github.com/alexcrichton/tar-rs,MIT OR Apache-2.0,Alex Crichton <alex@alexcrichton.com>
 target-lexicon,https://github.com/bytecodealliance/target-lexicon,Apache-2.0 WITH LLVM-exception,Dan Gohman <sunfish@mozilla.com>
-target-triple,https://github.com/dtolnay/target-triple,MIT OR Apache-2.0,David Tolnay <dtolnay@gmail.com>
 tempfile,https://github.com/Stebalien/tempfile,MIT OR Apache-2.0,"Steven Allen <steven@stebalien.com>, The Rust Project Developers, Ashley Mannix <ashleymannix@live.com.au>, Jason White <me@jasonwhite.io>"
 termcolor,https://github.com/BurntSushi/termcolor,Unlicense OR MIT,Andrew Gallant <jamslam@gmail.com>
 test-case-macros,https://github.com/frondeus/test-case,MIT,"Marcin Sas-Szymanski <marcin.sas-szymanski@anixe.pl>, Wojciech Polak <frondeus@gmail.com>, Łukasz Biel <lukasz.p.biel@gmail.com>"

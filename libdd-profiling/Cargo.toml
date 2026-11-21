@@ -3,9 +3,8 @@
 
 [package]
 name = "libdd-profiling"
-version = "1.0.0"
-description = "Continuous profiling library supporting pprof format collection and export to Datadog"
-homepage = "https://github.com/DataDog/libdatadog/tree/main/libdd-profiling"
+version = "2.0.0"
+description = "Continuous profiling library supporting pprof and OTel formats"
 repository = "https://github.com/DataDog/libdatadog/tree/main/libdd-profiling"
 edition.workspace = true
 rust-version.workspace = true
@@ -13,79 +12,39 @@ license.workspace = true
 autobenches = false
 
 [lib]
-crate-type = ["lib", "staticlib"]
+# Only an rlib: Rust consumers supply their own panic handler. The checked
+# release artifact is built separately as a cdylib with a sentinel handler.
+crate-type = ["lib"]
 bench = false
 
 [features]
 default = []
-cxx = ["dep:cxx", "dep:cxx-build"]
-otel = ["dep:opentelemetry-proto"]
-
-[[bench]]
-name = "main"
-harness = false
-path = "benches/main.rs"
+alloc = []
+pprof = ["alloc"]
+otel = ["alloc", "gzip"]
+gzip = ["alloc", "dep:compcol"]
+zstd = ["alloc", "dep:zstd-sys"]
 
 [dependencies]
-allocator-api2 = { workspace = true, features = ["alloc"] }
-anyhow.workspace = true
-bitmaps = { workspace = true, default-features = true }
-# std is byteorder's only default feature; the workspace disables default
-# features, so enable std explicitly.
-byteorder = { workspace = true, features = ["std"] }
-chrono = { workspace = true, features = ["std", "clock"] }
-crossbeam-channel = { workspace = true, default-features = true }
-crossbeam-utils = { workspace = true, default-features = true }
-cxx = { workspace = true, default-features = true, optional = true }
-hashbrown.workspace = true
-http = { workspace = true, features = ["std"] }
-indexmap = { workspace = true, default-features = true }
-libdd-alloc = { version = "1.0.0", path = "../libdd-alloc" }
-libdd-common = { version = "9.0.0", path = "../libdd-common", default-features = false }
-libdd-networking = { path = "../libdd-networking", version = "1.0.0", default-features = false, features = ["reqwest", "tls-distrust"] }
-libdd-profiling-protobuf = { version = "2.0.0", path = "../libdd-profiling-protobuf", features = ["prost_impls"] }
-opentelemetry-proto = { workspace = true, optional = true, features = ["profiles", "gen-tonic-messages"] }
-parking_lot.workspace = true
-# Only the prost::Message trait is used here; the Message derives live in
-# libdd-profiling-protobuf (which enables prost/derive for its generated code).
-prost = { workspace = true, features = ["std"] }
-# Use rustls to align with the rest of the workspace (libdd-networking, libdd-telemetry, etc.)
-# Non-FIPS builds use ring as the crypto provider; FIPS builds use aws-lc-rs.
-# Use hickory-dns instead of the default system DNS resolver to avoid fork safety issues.
-# The default resolver can hold locks or other global state that can cause deadlocks
-# or corruption when the process forks (e.g., in PHP-FPM or other forking environments).
-# Use rustls-no-provider instead of rustls to avoid reqwest forcing aws-lc-rs as the crypto
-# backend. We install the ring provider explicitly via libdd-networking's connector instead.
-reqwest = { workspace = true, features = ["multipart", "rustls-no-provider", "hickory-dns"] }
-rustc-hash.workspace = true
-serde = { workspace = true, features = ["derive"] }
-serde_json.workspace = true
-target-triple.workspace = true
-thiserror = { workspace = true, default-features = true }
-tokio = { workspace = true, features = ["rt", "macros", "net", "io-util", "fs"] }
-tokio-util.workspace = true
-# ring is the crypto provider for non-FIPS builds on all platforms.
-# FIPS builds activate aws-lc-rs via the rustls/fips feature instead.
-rustls = { workspace = true, features = ["ring"] }
+compcol = { workspace = true, features = ["gzip", "embed"], optional = true }
+# HashMap's key-lookup trait, the same one hashbrown and indexmap use.
+equivalent.workspace = true
+foldhash.workspace = true
+# `experimental` exposes ZSTD_customMem.
+zstd-sys = { workspace = true, features = ["experimental"], optional = true }
 
-[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
-zstd.workspace = true
-
-[target.'cfg(target_arch = "wasm32")'.dependencies]
-zrip = { workspace = true, features = ["frame"] }
+[target.'cfg(unix)'.dependencies]
+# Memory mapping and the process lock file.
+# allow(workspace-deps): the workspace entry enables libc's `std` feature,
+# which drops libc's own link to the C library on the assumption that std
+# links it. This crate is no_std, so its artifacts need libc to link it.
+libc = { version = "0.2", default-features = false }
 
 [dev-dependencies]
-bolero = { workspace = true, features = ["std"] }
-criterion.workspace = true
-libdd-process-utils = { version = "1.0.0", path = "../libdd-process-utils" }
-tools = { path = "../tools", default-features = false, features = ["test-utils"] }
-# rand is only used by tests/exporter_e2e.rs (rand::random), never by the
-# library itself, so it lives in dev-dependencies. `rand::random` needs the
-# thread RNG, i.e. both `std` and `std_rng` defaults.
-rand = { workspace = true, default-features = true }
-proptest = { workspace = true, default-features = true }
-strum = { workspace = true, features = ["derive"] }
-tempfile.workspace = true
+prost = { workspace = true, features = ["derive", "std"] }
+serde_json = { workspace = true, features = ["std"] }
+flate2 = { workspace = true, features = ["rust_backend"] }
+zstd.workspace = true
 
-[build-dependencies]
-cxx-build = { workspace = true, optional = true }
+[lints]
+workspace = true

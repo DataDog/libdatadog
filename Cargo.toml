@@ -28,7 +28,6 @@ members = [
   "libdd-profiling",
   "libdd-profiling-ffi",
   "libdd-profiling-protobuf",
-  "datadog-profiling-replayer",
   "libdd-remote-config",
   "datadog-sidecar",
   "datadog-sidecar-ffi",
@@ -159,6 +158,9 @@ chrono = { version = "0.4.38", default-features = false }
 clap = { version = "4.3.21", default-features = false }
 cmake = { version = "0.1.50", default-features = false }
 colored = { version = "2", default-features = false }
+# Pinned: 0.7.3 is the last release whose MSRV (1.88) is within the
+# workspace's; 0.7.4 raised it to 1.95.
+compcol = { version = "=0.7.3", default-features = false }
 console-subscriber = { version = "0.5", default-features = false }
 const_format = { version = "0.2.34", default-features = false }
 constcat = { version = "0.4.1", default-features = false }
@@ -181,6 +183,7 @@ elf = { version = "0.7", default-features = false }
 embedded-io = { version = "0.6", default-features = false }
 embedded-io-async = { version = "0.6", default-features = false }
 env_logger = { version = "0.10", default-features = false }
+equivalent = { version = "1.0", default-features = false }
 errno = { version = "0.3", default-features = false }
 fastrand = { version = "2", default-features = false }
 faststr = { version = "0.2.23", default-features = false }
@@ -189,6 +192,7 @@ faststr = { version = "0.2.23", default-features = false }
 # is the baseline we want everywhere.
 flate2 = { version = "1.0", default-features = false, features = ["rust_backend"] }
 fluent-uri = { version = "0.4.1", default-features = false }
+foldhash = { version = "0.2", default-features = false }
 function_name = { version = "0.3.0", default-features = false }
 futures = { version = "0.3", default-features = false }
 futures-channel = { version = "0.3", default-features = false }
@@ -348,6 +352,7 @@ winver = { version = "1.0.0", default-features = false }
 zip = { version = "4.0.0", default-features = false }
 zrip = { version = "=0.6.0", default-features = false }
 zstd = { version = "0.14.3", default-features = false }
+zstd-sys = { version = "2.1", default-features = false }
 zwohash = { version = "0.1.2", default-features = false }
 
 [profile.dev]
@@ -367,6 +372,23 @@ opt-level = "s"            # optimize for size
 inherits = "release"
 lto = "thin"
 codegen-units = 16
+
+# The no-panic C artifact of libdd-profiling-ffi
+# (scripts/check-profiling-ffi-no-panic.sh). Fat LTO in one codegen unit lets
+# the optimizer see every bounds and overflow check it can remove; abort
+# means no unwinding tables or personality routine.
+[profile.release-profiling]
+inherits = "release"
+opt-level = "s"
+lto = "fat"
+codegen-units = 1
+panic = "abort"
+debug = false
+# macOS's strip leaves the dylib's string pool misaligned, which ld then
+# rejects ("mis-aligned LINKEDIT string pool") when C code links against it.
+strip = "none"
+overflow-checks = false
+debug-assertions = false
 
 [profile.bench]
 codegen-units = 1
