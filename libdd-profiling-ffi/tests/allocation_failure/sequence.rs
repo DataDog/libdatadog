@@ -52,6 +52,14 @@ const LABEL_KEYS: [&str; 4] = [
     "lock name",
 ];
 const LABEL_VALUES: [&str; 4] = [".NET ThreadPool Worker", "MyApp", "System.Exception", ""];
+/// Upscaling rule label names. An empty name with an empty value is a by-value rule.
+const UPSCALING_LABEL_KEYS: [&str; 5] = [
+    "thread name",
+    "appdomain name",
+    "exception type",
+    "lock name",
+    "",
+];
 
 fn interned() -> &'static Mutex<HashSet<&'static str>> {
     static STRINGS: OnceLock<Mutex<HashSet<&'static str>>> = OnceLock::new();
@@ -306,6 +314,7 @@ impl Plan {
         let n = sample_types.len();
         let mut ops = Vec::new();
         let mut sends = 0;
+        let mut serialized = false;
         while !input.done() && ops.len() < MAX_OPS {
             let op = match input.byte() % 10 {
                 0 | 1 => Op::Add(add_call(&mut input, n)),
@@ -319,13 +328,13 @@ impl Plan {
                 },
                 4 => Op::Proportional {
                     offsets: offsets(&mut input, n),
-                    label: (input.pick(&LABEL_KEYS), input.pick(&LABEL_VALUES)),
+                    label: (input.pick(&UPSCALING_LABEL_KEYS), input.pick(&LABEL_VALUES)),
                     sampled: u64::from(input.byte()),
                     real: u64::from(input.byte()) * 10,
                 },
                 5 => Op::Poisson {
                     offsets: offsets(&mut input, n),
-                    label: (input.pick(&LABEL_KEYS), input.pick(&LABEL_VALUES)),
+                    label: (input.pick(&UPSCALING_LABEL_KEYS), input.pick(&LABEL_VALUES)),
                     sum: usize::from(input.byte()) % (n + 1),
                     count: usize::from(input.byte()) % (n + 1),
                     distance: u64::from(input.byte()) * 64,
@@ -345,6 +354,13 @@ impl Plan {
                 }
                 _ => Op::Reset,
             };
+            // `profiling.h`: upscaling rules "must be called before serialize and must not be
+            // called after". A send serializes too. The rule's bytes are still consumed.
+            let rule = matches!(op, Op::Proportional { .. } | Op::Poisson { .. });
+            if rule && serialized {
+                continue;
+            }
+            serialized |= matches!(op, Op::Serialize { .. } | Op::Send { .. });
             ops.push(op);
         }
         let probe = add_call(&mut Input { data: &[], pos: 0 }, n);
@@ -377,6 +393,13 @@ impl Plan {
         for op in &self.ops {
             s.push_str(", ");
             s.push_str(op.name());
+            if let Op::Proportional { label, .. } | Op::Poisson { label, .. } = op {
+                s.push_str(if label.0.is_empty() && label.1.is_empty() {
+                    "(by value)"
+                } else {
+                    "(by label)"
+                });
+            }
             if let Op::Add(call) = op {
                 s.push_str(&format!(
                     "({} frames, {} labels{})",

@@ -17,7 +17,7 @@ Commands (run in this order; every output goes under --work, nothing under /tmp)
   promote         Fuzz inputs that reach owned branches no scenario baseline reaches become
                   named scenarios in `promoted.rs`. Then run `coverage` again.
   manifest        Write `SCENARIOS.md`: scenario, inputs, branches it reaches, and the
-                  uncovered allocation-relevant branches with their justification.
+                  owned allocation-relevant branches that no worker reached (a gap report).
 
 Owned code: the files of this repository outside tests, benches, examples, fuzz and build
 scripts. Branches come from `llvm-cov export -format=lcov` (BRDA records).
@@ -392,8 +392,9 @@ def cmd_promote(args):
     work = args.work
     run_dir = latest_run(work)
     exe = Path((run_dir / "exe").read_text().strip())
-    union = baseline_union(run_dir)
-    log(f"scenario baselines reach {len(union)} owned branch outcomes")
+    # `promoted.rs` is rewritten whole: the previous promoted scenarios do not count.
+    union = baseline_union(run_dir, skip_prefix="fuzz_seq_")
+    log(f"non-promoted scenario baselines reach {len(union)} owned branch outcomes")
     root = fuzz_paths(work)
     candidates = {}
     for lcov in sorted((root / "coverage" / "lcov").glob("*.lcov")):
@@ -460,25 +461,6 @@ def write_promoted(entries):
 # ---------------------------------------------------------------------------------------------
 # manifest
 # ---------------------------------------------------------------------------------------------
-
-
-def load_justifications():
-    rules = []
-    path = HERE / "justifications.tsv"
-    for raw in path.read_text().splitlines():
-        if not raw.strip() or raw.startswith("#"):
-            continue
-        file_re, lines, reason = raw.split("\t")
-        lo, hi = (0, 10**9) if lines == "*" else map(int, lines.split("-"))
-        rules.append((re.compile(file_re), lo, hi, reason))
-    return rules
-
-
-def justify(rules, file, line):
-    for file_re, lo, hi, reason in rules:
-        if file_re.search(file) and lo <= line <= hi:
-            return reason
-    return None
 
 
 def source_lines(file, cache={}):
@@ -583,7 +565,6 @@ def cmd_manifest(args):
             out.append(f"- `{f}`: {line_ranges(by_file[f])}")
         out.append("")
         out.append("</details>")
-    rules = load_justifications()
     rows = []
     for f, data in sorted(merged.items()):
         by_branch = {}
@@ -597,31 +578,26 @@ def cmd_manifest(args):
                 if not allocation_relevant(f, line):
                     continue
                 kind = "outcome never taken" if evaluated else "condition never evaluated"
-                rows.append((f, line, branch, kind, justify(rules, f, line)))
+                rows.append((f, line, branch, kind))
     out.append("")
     out.append("## Uncovered allocation-relevant branches")
     out.append("")
     out.append(
         "Owned branch outcomes that no worker reached, injected failures included, on a line"
         " that allocates or handles an allocation result (the line or the two next ones match"
-        f" `{ALLOC_RE.pattern}`). Justifications: `discovery/justifications.tsv`."
+        f" `{ALLOC_RE.pattern}`). This list is a coverage gap report: nothing in it is accepted"
+        " or excused."
     )
     out.append("")
-    out.append("| File | Line | Outcome | Kind | Justification |")
-    out.append("|---|---:|---:|---|---|")
-    unjustified = 0
-    for f, line, branch, kind, reason in rows:
-        if reason is None:
-            unjustified += 1
-            reason = "**unjustified**"
-        out.append(f"| `{f}` | {line} | {branch} | {kind} | {reason} |")
+    out.append("| File | Line | Outcome | Kind |")
+    out.append("|---|---:|---:|---|")
+    for f, line, branch, kind in rows:
+        out.append(f"| `{f}` | {line} | {branch} | {kind} |")
     (HARNESS / "SCENARIOS.md").write_text("\n".join(out) + "\n")
     log(
         f"wrote SCENARIOS.md: {len(order)} scenarios, {len(rows)} uncovered allocation-relevant"
-        f" outcomes, {unjustified} unjustified"
+        " outcomes"
     )
-    if unjustified and args.strict:
-        sys.exit(1)
 
 
 def main():
@@ -645,9 +621,7 @@ def main():
     p.add_argument("--max", type=int, default=8, help="most inputs promoted")
     p.add_argument("--min-new", type=int, default=2, help="fewest new outcomes to promote")
     p.set_defaults(f=cmd_promote)
-    p = sub.add_parser("manifest")
-    p.add_argument("--strict", action="store_true", help="fail on an unjustified branch")
-    p.set_defaults(f=cmd_manifest)
+    sub.add_parser("manifest").set_defaults(f=cmd_manifest)
     args = parser.parse_args()
     args.work = args.work.resolve()
     args.f(args)

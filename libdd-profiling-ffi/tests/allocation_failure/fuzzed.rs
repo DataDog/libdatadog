@@ -83,6 +83,9 @@ pub fn run(fixture: &mut Box<dyn Any>) -> Result<(), ScenarioError> {
 
 /// A failed `Profile_new` publishes no profile. Otherwise the profile takes a sample and
 /// serializes, whatever call failed, when it does so in the setup run.
+///
+/// Contract: provisional. `profiling.h` documents neither the error variant of `Profile_new`
+/// nor the profile state after a failed `add`, `serialize`, metadata call or send.
 pub fn check(fixture: &mut Box<dyn Any>, failed: bool) -> Result<(), String> {
     let fx = fixture.downcast_mut::<SequenceFixture>().unwrap();
     let Some(profile) = fx.run.profile.as_mut() else {

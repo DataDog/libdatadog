@@ -283,6 +283,9 @@ fn run_serialize(fixture: &mut Box<dyn Any>) -> Result<(), ScenarioError> {
 }
 
 /// The profile is still usable: a new sample can be added, and the profile serialized.
+///
+/// Contract: provisional. `profiling.h` does not say what state `Profile_add` or
+/// `Profile_serialize` leave the profile in after an error.
 fn check_profile_usable(fixture: &mut Box<dyn Any>, _failed: bool) -> Result<(), String> {
     let fx = profile_fixture(fixture);
     if fx.profile.inner.is_null() {
@@ -311,6 +314,9 @@ impl Drop for NewProfileFixture {
 }
 
 /// A failed `Profile_new` publishes no handle; a profile it returns is usable.
+///
+/// Contract: "must call `ddog_prof_Profile_drop`" on a returned profile is documented. That the
+/// error variant carries no profile is undocumented ownership.
 fn check_new_profile(fixture: &mut Box<dyn Any>, failed: bool) -> Result<(), String> {
     let fx = fixture.downcast_mut::<NewProfileFixture>().unwrap();
     match (&mut fx.profile, failed) {
@@ -500,6 +506,8 @@ fn check_exporter_sends(fx: &mut ExporterFixture) -> Result<(), String> {
 }
 
 /// A failed `Exporter_new` publishes no handle; an exporter it returns can send.
+///
+/// Contract: undocumented ownership (no handle on error) and provisional (it can send).
 fn check_new_exporter(fixture: &mut Box<dyn Any>, failed: bool) -> Result<(), String> {
     let fx = fixture.downcast_mut::<ExporterFixture>().unwrap();
     let mut handle: *mut Handle<ProfileExporter> = &mut fx.exporter;
@@ -515,6 +523,9 @@ fn check_new_exporter(fixture: &mut Box<dyn Any>, failed: bool) -> Result<(), St
 
 /// `send_blocking` takes the encoded profile whatever the result, and the exporter can send
 /// again.
+///
+/// Contract: "Takes ownership of the profile" and "Borrows the exporter" are documented. That the
+/// exporter can send again after an error is provisional.
 fn check_send(fixture: &mut Box<dyn Any>, failed: bool) -> Result<(), String> {
     let fx = fixture.downcast_mut::<ExporterFixture>().unwrap();
     let mut handle: *mut Handle<EncodedProfile> = &mut fx.encoded;
@@ -1147,6 +1158,8 @@ fn run_meta(fixture: &mut Box<dyn Any>) -> Result<(), ScenarioError> {
 }
 
 /// After a failure the same call can be retried, and the profile can take a sample.
+///
+/// Contract: provisional. The header documents no error state for these calls.
 fn check_meta(fixture: &mut Box<dyn Any>, failed: bool) -> Result<(), String> {
     let fx = meta_fx(fixture);
     if fx.profile.inner.is_null() {
@@ -1275,6 +1288,8 @@ fn run_encoded_bytes(fixture: &mut Box<dyn Any>) -> Result<(), ScenarioError> {
 }
 
 /// `bytes` borrows the encoded profile: the handle still owns it afterwards.
+///
+/// Contract: documented ("valid for use until the encoded_profile is modified").
 fn check_encoded_bytes(fixture: &mut Box<dyn Any>, failed: bool) -> Result<(), String> {
     let fx = fixture.downcast_mut::<BytesContract>().unwrap();
     if !encoded_owned(&mut fx.encoded) {
@@ -1300,6 +1315,8 @@ fn run_vec_tag_new(fixture: &mut Box<dyn Any>) -> Result<(), ScenarioError> {
 }
 
 /// A new tag vector is empty, and a tag can be pushed into it.
+///
+/// Contract: provisional. `ddog_Vec_Tag_new` has no doc comment.
 fn check_vec_tag_new(fixture: &mut Box<dyn Any>, _failed: bool) -> Result<(), String> {
     let fx = fixture.downcast_mut::<TagContract>().unwrap();
     let tags = fx.tags.as_mut().ok_or("Vec_Tag_new returned nothing")?;
@@ -1340,12 +1357,17 @@ fn run_drop_profile(fixture: &mut Box<dyn Any>) -> Result<(), ScenarioError> {
 }
 
 /// Drop nulls the handle, and a second drop is a no-op.
+///
+/// Contract: the header accepts a null `profile` pointer and forbids dropping a profile twice.
+/// Nulling the handle is undocumented; the second drop on the nulled handle is out of contract,
+/// an implementation observation that must not become a gate.
 fn check_drop_profile(fixture: &mut Box<dyn Any>, _failed: bool) -> Result<(), String> {
     let fx = fixture.downcast_mut::<DropProfile>().unwrap();
     if !fx.profile.inner.is_null() {
         return Err("Profile_drop left the profile handle set".to_string());
     }
-    // SAFETY: the handle is null, which `ddog_prof_Profile_drop` accepts.
+    // SAFETY: out of contract; the `ddog_prof_Profile_drop` implementation ignores a null
+    // handle.
     unsafe { ffi::ddog_prof_Profile_drop(&mut fx.profile) };
     if fx.profile.inner.is_null() {
         Ok(())
@@ -1372,12 +1394,18 @@ fn run_drop_encoded(fixture: &mut Box<dyn Any>) -> Result<(), ScenarioError> {
     Ok(())
 }
 
+/// Drop empties the handle, and a second drop is a no-op.
+///
+/// Contract: the header says "do not call this twice on the same object".
+/// Nulling the handle is undocumented ownership; the second drop is out of contract, an
+/// implementation observation that must not become a gate.
 fn check_drop_encoded(fixture: &mut Box<dyn Any>, _failed: bool) -> Result<(), String> {
     let fx = fixture.downcast_mut::<DropEncoded>().unwrap();
     if encoded_owned(&mut fx.encoded) {
         return Err("EncodedProfile_drop left the handle set".to_string());
     }
-    // SAFETY: the handle is empty, which `ddog_prof_EncodedProfile_drop` accepts.
+    // SAFETY: out of contract; the `ddog_prof_EncodedProfile_drop` implementation ignores an empty
+    // handle.
     unsafe { ffi::ddog_prof_EncodedProfile_drop(&mut fx.encoded) };
     if encoded_owned(&mut fx.encoded) {
         Err("the second EncodedProfile_drop restored a handle".to_string())
@@ -1399,12 +1427,18 @@ fn run_drop_exporter(fixture: &mut Box<dyn Any>) -> Result<(), ScenarioError> {
     Ok(())
 }
 
+/// Drop empties the handle, and a second drop is a no-op.
+///
+/// Contract: the header forbids an exporter "that has already been dropped".
+/// Nulling the handle is undocumented ownership; the second drop is out of contract, an
+/// implementation observation that must not become a gate.
 fn check_drop_exporter(fixture: &mut Box<dyn Any>, _failed: bool) -> Result<(), String> {
     let fx = fixture.downcast_mut::<ExporterFixture>().unwrap();
     if exporter_owned(&mut fx.exporter) {
         return Err("Exporter_drop left the handle set".to_string());
     }
-    // SAFETY: the handle is empty, which `ddog_prof_Exporter_drop` accepts.
+    // SAFETY: out of contract; the `ddog_prof_Exporter_drop` implementation ignores an empty
+    // handle.
     unsafe { ffi::ddog_prof_Exporter_drop(&mut fx.exporter) };
     if exporter_owned(&mut fx.exporter) {
         Err("the second Exporter_drop restored a handle".to_string())
@@ -1438,6 +1472,9 @@ fn run_drop_error(fixture: &mut Box<dyn Any>) -> Result<(), ScenarioError> {
 }
 
 /// Drop clears the message, and a second drop stays cleared.
+///
+/// Contract: "It should not be used after this". The second drop is out of contract (the header
+/// only says the implementation "tries to limit the damage").
 fn check_drop_error(fixture: &mut Box<dyn Any>, _failed: bool) -> Result<(), String> {
     let fx = fixture.downcast_mut::<DropError>().unwrap();
     if !fx.error.as_ref().is_empty() {
@@ -1479,6 +1516,9 @@ fn run_drop_tags(fixture: &mut Box<dyn Any>) -> Result<(), ScenarioError> {
     Ok(())
 }
 
+/// Drop consumes the vector.
+///
+/// Contract: by-value ownership is in the signature; `ddog_Vec_Tag_drop` has no doc comment.
 fn check_drop_tags(fixture: &mut Box<dyn Any>, _failed: bool) -> Result<(), String> {
     let fx = fixture.downcast_mut::<DropTags>().unwrap();
     if fx.tags.is_some() {
@@ -1512,12 +1552,18 @@ fn run_drop_cancel(fixture: &mut Box<dyn Any>) -> Result<(), ScenarioError> {
     Ok(())
 }
 
+/// Drop empties the handle, and a second drop is a no-op.
+///
+/// Contract: the header forbids a token that has "been dropped already".
+/// Nulling the handle is undocumented ownership; the second drop is out of contract, an
+/// implementation observation that must not become a gate.
 fn check_drop_cancel(fixture: &mut Box<dyn Any>, _failed: bool) -> Result<(), String> {
     let fx = fixture.downcast_mut::<DropCancel>().unwrap();
     if cancel_owned(&mut fx.token) {
         return Err("CancellationToken_drop left the handle set".to_string());
     }
-    // SAFETY: the handle is empty, which `ddog_CancellationToken_drop` accepts.
+    // SAFETY: out of contract; the `ddog_CancellationToken_drop` implementation ignores an empty
+    // handle.
     unsafe { ffi::ddog_CancellationToken_drop(&mut fx.token) };
     if cancel_owned(&mut fx.token) {
         Err("the second CancellationToken_drop restored a handle".to_string())
