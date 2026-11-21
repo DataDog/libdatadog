@@ -374,6 +374,17 @@ mod tests {
         }
     }
 
+    #[cfg(feature = "collector")]
+    unsafe extern "C" fn test_emit_non_utf8_stacktrace_string_callback(
+        emit_stacktrace_string: unsafe extern "C" fn(*const c_char),
+    ) {
+        static STACKTRACE: &[u8] = b"frame \xff\0";
+
+        unsafe {
+            emit_stacktrace_string(STACKTRACE.as_ptr().cast());
+        }
+    }
+
     fn ensure_callback_cleared() {
         let old_ptr = RUNTIME_CALLBACK.swap(ptr::null_mut(), Ordering::SeqCst);
         if !old_ptr.is_null() {
@@ -476,6 +487,27 @@ mod tests {
         assert!(
             json_output.contains("test_stacktrace_string"),
             "Missing stacktrace string"
+        );
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    #[cfg(feature = "collector")]
+    fn formal_counterexample_stacktrace_string_is_valid_utf8() {
+        let _guard = TEST_MUTEX.lock().unwrap();
+        ensure_callback_cleared();
+
+        register_runtime_stacktrace_string_callback(
+            test_emit_non_utf8_stacktrace_string_callback,
+        )
+        .unwrap();
+
+        let mut buffer = Vec::new();
+        unsafe { invoke_runtime_callback_with_writer(&mut buffer) }.unwrap();
+
+        assert!(
+            core::str::from_utf8(&buffer).is_ok(),
+            "callback output must be valid UTF-8 for the receiver's line parser"
         );
     }
 
