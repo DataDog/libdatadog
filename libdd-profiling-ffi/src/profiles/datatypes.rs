@@ -913,17 +913,16 @@ pub unsafe extern "C" fn ddog_prof_EncodedProfile_from_bytes(
     })
 }
 
+/// Drops the encoded profile and leaves its handle empty. A null pointer or empty handle is a
+/// no-op.
+///
 /// # Safety
-/// Only pass a reference to a valid `ddog_prof_EncodedProfile`, or null. A
-/// valid reference also means that it hasn't already been dropped or exported (do not
-/// call this twice on the same object).
+/// A non-null `profile` must point to a handle created by this library.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ddog_prof_EncodedProfile_drop(
     profile: *mut Handle<internal::EncodedProfile>,
 ) {
     unsafe {
-        // Technically, this function has been designed so if it's double-dropped
-        // then it's okay, but it's not something that should be relied on.
         if !profile.is_null() {
             drop((*profile).take())
         }

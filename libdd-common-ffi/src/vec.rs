@@ -113,8 +113,27 @@ impl<T> Vec<T> {
         self.replace(vec);
     }
 
+    /// Reserves capacity without aborting if the allocator reports an error.
+    pub fn try_reserve(
+        &mut self,
+        additional: usize,
+    ) -> Result<(), alloc::collections::TryReserveError> {
+        // SAFETY: this FFI Vec exclusively owns raw parts created by a Rust Vec.
+        let mut vec = ManuallyDrop::new(unsafe {
+            alloc::vec::Vec::from_raw_parts(self.ptr as *mut T, self.len, self.capacity)
+        });
+        let result = vec.try_reserve(additional);
+        self.replace(vec);
+        result
+    }
+
     pub fn as_slice(&self) -> Slice<'_, T> {
         unsafe { Slice::from_raw_parts(self.ptr, self.len) }
+    }
+
+    /// Returns the number of elements the vector can hold without reallocating.
+    pub const fn capacity(&self) -> usize {
+        self.capacity
     }
 
     /// Note: Like the regular rust `Vec`, this doesn't allocate memory when capacity is zero.
@@ -176,6 +195,15 @@ mod tests {
         let [first, second]: [_; 2] = slice.try_into().expect("slice to have 2 items");
         assert_eq!(first, 1);
         assert_eq!(second, 2);
+    }
+
+    #[test]
+    fn test_try_reserve() {
+        let mut ffi_vec: Vec<u8> = Vec::default();
+        ffi_vec.try_reserve(2).unwrap();
+        ffi_vec.push(1);
+        ffi_vec.push(2);
+        assert_eq!(&*ffi_vec, &[1, 2]);
     }
 
     #[test]
