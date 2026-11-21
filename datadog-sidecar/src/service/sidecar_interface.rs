@@ -314,26 +314,12 @@ pub trait SidecarInterface {
     /// [`kafka_cluster_ids`](crate::service::kafka_cluster_ids).
     async fn set_kafka_cluster_id(bootstrap_servers: String, cluster_id: String);
 
-    /// Starts the AppSec backend if it has not already been initialized.
-    ///
-    /// Returns only after initialization finishes, so subsequent AppSec messages
-    /// cannot overtake initialization.
-    async fn ensure_appsec_started(log_file_path: Vec<u8>, log_level: String) -> bool;
-
-    /// Forwards an AppSec message from the PHP extension to the helper's client of this
-    /// connection.
-    ///
-    /// # Arguments
-    ///
-    /// * `data` - The message.
-    /// * `client_init` - Whether the message is a client_init, which starts a new client.
-    ///
-    /// Returns the response bytes from the helper and a flag indicating whether the client is
-    /// gone, and the extension has to start over with client_init.
+    /// Hands a request to the AppSec client of this connection, which the session config set
+    /// up. Without client, the verdict is the protocol's default.
     async fn send_appsec_message(
-        #[ClientType(&'request [u8])] data: Vec<u8>,
-        client_init: bool,
-    ) -> (Vec<u8>, bool);
+        #[ClientType(&'request crate::appsec::protocol::AppSecRequest)]
+        request: crate::appsec::protocol::AppSecRequest,
+    ) -> crate::appsec::protocol::AppSecVerdict;
 
     /// Sends a ping to the service.
     #[blocking]
@@ -380,21 +366,20 @@ mod tests {
     };
     use libdd_common::Endpoint;
 
+    // The included protocol of an embedding application has other types.
+    #[cfg(not(appsec_protocol_external))]
     #[test]
     fn appsec_client_request_decodes_as_server_request() {
-        let request = SidecarInterfaceClientRequest::SendAppsecMessage {
-            data: b"payload",
-            client_init: true,
-        };
+        let original = crate::appsec::protocol::AppSecRequest {};
+        let request = SidecarInterfaceClientRequest::SendAppsecMessage { request: &original };
 
         let encoded = libdd_ipc::codec::encode(&request);
         let decoded: SidecarInterfaceRequest =
             libdd_ipc::codec::decode(&encoded).expect("client request should decode");
 
         match decoded {
-            SidecarInterfaceRequest::SendAppsecMessage { data, client_init } => {
-                assert_eq!(data, b"payload");
-                assert!(client_init);
+            SidecarInterfaceRequest::SendAppsecMessage { request } => {
+                assert_eq!(request, original);
             }
             _ => panic!("decoded the wrong request variant"),
         }

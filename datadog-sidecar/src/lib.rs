@@ -8,7 +8,6 @@
 #![cfg_attr(not(test), deny(clippy::unimplemented))]
 
 pub mod agent_remote_config;
-#[cfg(unix)]
 pub mod appsec;
 pub mod auth;
 pub mod config;

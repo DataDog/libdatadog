@@ -33,17 +33,14 @@ use manual_future::ManualFutureCompleter;
 use std::borrow::Borrow;
 use std::borrow::Cow;
 use std::collections::HashMap;
-#[cfg(unix)]
-use std::os::unix::ffi::OsStringExt;
 use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, Weak};
 use std::time::{Duration, SystemTime};
 use tracing::{debug, error, info, trace, warn};
 
+use crate::appsec::protocol::{AppSecRequest, AppSecVerdict};
 #[cfg(unix)]
-use crate::appsec::{AppSecConnection, AppSecManager};
-#[cfg(unix)]
-use crate::config::AppSecConfig;
+use crate::appsec::{AppSecApplication, AppSecConnection, AppSecManager};
 use crate::service::agent_info::{AgentInfoGuard, AgentInfos};
 use crate::service::data_streams_flusher::{
     DsmTableKey, DsmTables, flush_all_dsm_now, get_or_create_dsm_table,
@@ -554,6 +551,24 @@ impl ConnectionSidecarHandler {
             debug!("Ignoring {what} for a connection without configuration");
         }
     }
+
+    /// Passes the application to the AppSec client, once registered for remote config.
+    #[cfg(unix)]
+    fn update_appsec_application(&mut self) {
+        let Some(appsec) = self.server.appsec.clone() else {
+            return;
+        };
+        let Some(app) = self.application.app.as_ref() else {
+            return;
+        };
+        let application = AppSecApplication {
+            service: app.config.service_name.clone(),
+            env: app.config.env_name.clone(),
+            version: app.config.app_version.clone(),
+            remote_config_path: app.remote_config_path(),
+        };
+        appsec.set_application(&mut self.appsec, application);
+    }
 }
 
 impl Drop for ConnectionSidecarHandler {
@@ -592,15 +607,6 @@ impl SidecarServer {
     ) -> Self {
         self.appsec = Some(Arc::new(AppSecManager::new(telemetry)));
         self
-    }
-
-    #[cfg(unix)]
-    pub(crate) async fn ensure_appsec_started(&self, config: &AppSecConfig) -> bool {
-        let Some(appsec) = self.appsec.as_ref() else {
-            error!("AppSec is unavailable: no lifecycle manager was configured");
-            return false;
-        };
-        appsec.ensure_started(config).await
     }
 
     #[cfg(unix)]
@@ -1032,9 +1038,10 @@ impl SidecarInterface for ConnectionSidecarHandler {
         &mut self,
         instance_id: InstanceId,
         #[cfg(windows)] remote_config_notify_target: Option<RemoteConfigNotifyTarget>,
-        config: SessionConfig,
+        mut config: SessionConfig,
     ) {
         debug!("Set connection config for {instance_id:?} to {config:?}");
+        let appsec_config = config.appsec.take();
 
         self.server.trace_flusher.min_force_flush_size_bytes.store(
             u32::try_from(config.force_flush_size).unwrap_or(u32::MAX),
@@ -1074,6 +1081,15 @@ impl SidecarInterface for ConnectionSidecarHandler {
         self.session.store(session);
         // The application is registered for the previous session: the client sends it again.
         self.application.modify(|app| *app = None);
+
+        #[cfg(unix)]
+        if let Some(appsec) = self.server.appsec.clone() {
+            appsec
+                .set_session_config(&mut self.appsec, appsec_config.as_ref())
+                .await;
+        }
+        #[cfg(not(unix))]
+        drop(appsec_config);
     }
 
     async fn add_session_evp_transports(&mut self, configs: Vec<EvpTransportConfigWithIdentity>) {
@@ -1103,6 +1119,8 @@ impl SidecarInterface for ConnectionSidecarHandler {
                 app.update_remote_config(&self.server.remote_configs, &session, 0, notify_target);
             }
         });
+        #[cfg(unix)]
+        self.update_appsec_application();
     }
 
     async fn set_user_service_defined(&mut self, is_defined: bool) {
@@ -1159,6 +1177,8 @@ impl SidecarInterface for ConnectionSidecarHandler {
         if let Some(cdn) = &self.cdn_subscription {
             cdn.notify_current(remote_config_generation);
         }
+        #[cfg(unix)]
+        self.update_appsec_application();
     }
 
     async fn send_trace_v04_shm(
@@ -1582,51 +1602,26 @@ impl SidecarInterface for ConnectionSidecarHandler {
         simd_json::serde::to_string(&stats).expect("unable to serialize stats to string")
     }
 
-    async fn ensure_appsec_started(&mut self, log_file_path: Vec<u8>, log_level: String) -> bool {
+    async fn send_appsec_message(&mut self, request: AppSecRequest) -> AppSecVerdict {
         #[cfg(unix)]
         {
-            let config = AppSecConfig {
-                log_file_path: std::ffi::OsString::from_vec(log_file_path),
-                log_level,
+            let Some(appsec) = self.server.appsec.clone() else {
+                debug!("appsec: no backend is available");
+                return AppSecVerdict::default();
             };
-            self.server.ensure_appsec_started(&config).await
-        }
-        #[cfg(not(unix))]
-        {
-            _ = (log_file_path, log_level);
-            false
-        }
-    }
-
-    async fn send_appsec_message(&mut self, data: Vec<u8>, client_init: bool) -> (Vec<u8>, bool) {
-        #[cfg(unix)]
-        {
-            let Some(appsec) = self.server.appsec.as_ref() else {
-                warn!("appsec: no backend is available");
-                return (vec![], true /* disconnect */);
-            };
-
             if self.session.load().is_none() {
                 warn!(
-                    "appsec: extension has sent an appsec message on a connection \
+                    "appsec: extension has sent an appsec request on a connection \
                      without configuration"
                 );
-                return (vec![], true /* disconnect */);
+                return AppSecVerdict::default();
             }
-
-            let Some(response) = appsec
-                .send_message(&mut self.appsec, data, client_init)
-                .await
-            else {
-                info!("appsec: not in running phase anymore");
-                return (vec![], true /* disconnect */);
-            };
-            (response.data, response.disconnect)
+            appsec.request(&mut self.appsec, request).await
         }
         #[cfg(not(unix))]
         {
-            _ = (data, client_init);
-            (vec![], false)
+            drop(request);
+            AppSecVerdict::default()
         }
     }
 }

@@ -130,13 +130,9 @@ where
     // actions before the receiver task gets its first poll.
     let (in_process_telemetry, telemetry_rx) = init_telemetry_sender();
 
+    // The AppSec backend starts with the first session that has AppSec config.
     #[cfg(unix)]
     let server = server.with_appsec_telemetry(in_process_telemetry.clone());
-
-    #[cfg(unix)]
-    if let Some(appsec_config) = config.appsec_config.as_ref() {
-        server.ensure_appsec_started(appsec_config).await;
-    }
 
     #[cfg(not(unix))]
     drop(in_process_telemetry);

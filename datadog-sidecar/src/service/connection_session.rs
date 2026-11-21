@@ -278,6 +278,12 @@ impl ConnectionSession {
         }
     }
 
+    /// Lets remote config notify `pid`, which test connections have no peer for.
+    #[cfg(all(test, unix, not(appsec_protocol_external)))]
+    pub(crate) fn set_peer_pid_for_test(&mut self, pid: u32) {
+        self.peer_pid = pid;
+    }
+
     /// Install the legacy Agent-only transport unless the client has already
     /// provided an explicit EVP routing policy and producer identity.
     pub(crate) fn set_default_evp_transport(&mut self, endpoint: Endpoint, intake_subdomain: &str) {

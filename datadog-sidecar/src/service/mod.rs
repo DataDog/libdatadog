@@ -106,6 +106,9 @@ pub struct SessionConfig {
     pub otlp_metrics_endpoint: Option<Endpoint>,
     /// `DD_TRACE_AGENT_PROTOCOL_VERSION=0.4`: send v0.4 even when the agent advertises V1.
     pub force_v04_traces: bool,
+    /// The AppSec settings of the connection, if it uses AppSec. They are not part of the
+    /// session: the connection's AppSec client takes them.
+    pub appsec: Option<crate::appsec::protocol::AppSecSessionConfig>,
 }
 
 #[cfg(test)]
@@ -145,6 +148,7 @@ impl SessionConfig {
             parent_session_id: None,
             otlp_metrics_endpoint: None,
             force_v04_traces: false,
+            appsec: None,
         }
     }
 }

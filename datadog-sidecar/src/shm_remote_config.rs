@@ -433,6 +433,16 @@ pub struct ShmRemoteConfigsGuard<N: NotifyTarget + 'static> {
     dynamic_instrumentation_state: DynamicInstrumentationConfigState,
 }
 
+impl<N: NotifyTarget + 'static> ShmRemoteConfigsGuard<N> {
+    /// The shared memory the remote configs of the registered target are published in.
+    pub fn path(&self) -> CString {
+        path_for_remote_config(
+            &self.remote_configs.0.invariants().clone().into(),
+            &self.target,
+        )
+    }
+}
+
 impl<N: NotifyTarget + 'static> Drop for ShmRemoteConfigsGuard<N> {
     fn drop(&mut self) {
         let fetcher = &self.remote_configs.0;

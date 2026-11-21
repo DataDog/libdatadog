@@ -737,6 +737,8 @@ pub unsafe extern "C" fn ddog_sidecar_set_connection_config(
             },
             retry_interval: Duration::from_millis(retry_interval_milliseconds as u64),
             force_v04_traces,
+            // Set through blocking::set_appsec_session_config by the embedding application.
+            appsec: None,
         };
         #[cfg(unix)]
         let _ = win_remote_config_notification;
@@ -2013,97 +2015,6 @@ pub unsafe extern "C" fn ddog_drop_agent_info_reader(_: Box<AgentInfoReader>) {}
 pub unsafe extern "C" fn ddog_sidecar_send_garbage(transport: &mut Box<SidecarTransport>) {
     // This shall fail.
     let _ = transport.send_garbage();
-}
-
-/// Raw AppSec response returned by the AppSec message functions.
-///
-/// When `ptr` is non-null, the response must be freed by calling
-/// `ddog_sidecar_appsec_response_drop`.
-#[cfg(unix)]
-#[repr(C)]
-pub struct AppsecCResponse {
-    pub ptr: *mut u8,
-    pub len: usize,
-    pub capacity: usize,
-    /// If true, the extension session should be disconnected after this response.
-    pub disconnect: bool,
-}
-
-/// Sends an AppSec message from the PHP extension through the sidecar to the helper's client of
-/// this connection. A client_init message, as told by `client_init`, starts a new client.
-///
-/// The response is allocated by the sidecar and must be freed with
-/// `ddog_sidecar_appsec_response_drop` when the caller is done with it.
-///
-/// Returns a zeroed `ddog_AppsecCResponse` (null ptr) on transport errors.
-#[cfg(unix)]
-#[unsafe(no_mangle)]
-#[allow(clippy::missing_safety_doc)]
-pub unsafe extern "C" fn ddog_sidecar_send_appsec_message(
-    transport: &mut Box<SidecarTransport>,
-    data: ffi::CharSlice,
-    client_init: bool,
-) -> AppsecCResponse {
-    appsec_c_response(blocking::send_appsec_message(
-        transport,
-        data.as_bytes(),
-        client_init,
-    ))
-}
-
-/// Sends an AppSec message once, without reconnecting the sidecar on failure.
-///
-/// The response is allocated by the sidecar and must be freed with
-/// `ddog_sidecar_appsec_response_drop` when the caller is done with it.
-///
-/// Returns a zeroed `ddog_AppsecCResponse` (null ptr) on transport errors.
-#[cfg(unix)]
-#[unsafe(no_mangle)]
-#[allow(clippy::missing_safety_doc)]
-pub unsafe extern "C" fn datadog_sidecar_send_appsec_message_without_reconnect(
-    transport: &mut Box<SidecarTransport>,
-    data: ffi::CharSlice,
-    client_init: bool,
-) -> AppsecCResponse {
-    appsec_c_response(blocking::send_appsec_message_without_reconnect(
-        transport,
-        data.as_bytes(),
-        client_init,
-    ))
-}
-
-#[cfg(unix)]
-fn appsec_c_response(response: std::io::Result<(Vec<u8>, bool)>) -> AppsecCResponse {
-    match response {
-        Ok((bytes, disconnect)) => {
-            let mut bytes = std::mem::ManuallyDrop::new(bytes);
-            AppsecCResponse {
-                ptr: bytes.as_mut_ptr(),
-                len: bytes.len(),
-                capacity: bytes.capacity(),
-                disconnect,
-            }
-        }
-        Err(_) => AppsecCResponse {
-            ptr: std::ptr::null_mut(),
-            len: 0,
-            capacity: 0,
-            disconnect: false,
-        },
-    }
-}
-
-/// Frees an `AppsecCResponse` returned by an AppSec message function.
-#[cfg(unix)]
-#[unsafe(no_mangle)]
-pub extern "C" fn ddog_sidecar_appsec_response_drop(response: AppsecCResponse) {
-    if !response.ptr.is_null() {
-        // SAFETY: ptr/len/capacity were produced by ManuallyDrop<Vec> in
-        // an AppSec message function and use the sidecar's allocator.
-        unsafe {
-            let _ = Vec::from_raw_parts(response.ptr, response.len, response.capacity);
-        }
-    }
 }
 
 #[cfg(test)]

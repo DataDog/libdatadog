@@ -14,6 +14,7 @@
 //!
 //! `SidecarSender` takes `&mut self`; the caller is responsible for exclusive access.
 
+use crate::appsec::protocol::{AppSecSessionConfig, AppSecVerdict};
 use crate::service::{
     ApplicationConfig, EvpTransportConfigWithIdentity, InstanceId, SessionConfig,
     sidecar_interface::{
@@ -92,6 +93,8 @@ struct ConnectionConfig {
 #[derive(Default)]
 struct ConnectionState {
     connection_config: StateSlot<ConnectionConfig>,
+    /// Sent as part of the connection config.
+    appsec_session: Option<AppSecSessionConfig>,
     evp_transports: StateSlot<Vec<EvpTransportConfigWithIdentity>>,
     process_tags: StateSlot<Vec<Tag>>,
     user_service_defined: StateSlot<bool>,
@@ -109,12 +112,16 @@ impl ConnectionState {
     /// configuration first, the application last. Stops at the first message `submit` refuses,
     /// which stays pending with all following ones. Returns whether everything was sent.
     fn send_pending(&mut self, mut submit: impl FnMut(&SidecarInterfaceRequest) -> bool) -> bool {
+        let appsec_session = &self.appsec_session;
         if !self.connection_config.send_with(&mut submit, |connection| {
             SidecarInterfaceRequest::SetConnectionConfig {
                 instance_id: connection.instance_id.clone(),
                 #[cfg(windows)]
                 remote_config_notify_target: connection.remote_config_notify_target.clone(),
-                config: connection.config.clone(),
+                config: SessionConfig {
+                    appsec: appsec_session.clone(),
+                    ..connection.config.clone()
+                },
             }
         }) {
             return false;
@@ -282,6 +289,19 @@ impl SidecarSender {
         self.try_drain_outbox();
     }
 
+    /// Sets the AppSec settings sent with the connection config, `None` without AppSec. Set
+    /// them before the connection config: changing them later starts a new session.
+    pub fn set_appsec_session_config(&mut self, config: Option<AppSecSessionConfig>) {
+        if self.state.appsec_session == config {
+            return;
+        }
+        self.state.appsec_session = config;
+        if self.state.connection_config.value.is_some() {
+            self.state.resend_all();
+            self.try_drain_outbox();
+        }
+    }
+
     fn coalesce_evp_transport(&mut self, config: EvpTransportConfigWithIdentity) {
         let mut configs = self.state.evp_transports.value.clone().unwrap_or_default();
         if let Some(previous) = configs.iter_mut().find(|previous| {
@@ -437,17 +457,10 @@ impl SidecarSender {
         self.channel.0.set_write_timeout(d)
     }
 
-    pub fn ensure_appsec_started(
-        &mut self,
-        request: &SidecarInterfaceRequest,
-    ) -> Result<bool, libdd_ipc::codec::DecodeError> {
-        self.channel.call_request_blocking(request)
-    }
-
     pub fn send_appsec_message(
         &mut self,
         request: &SidecarInterfaceClientRequest<'_>,
-    ) -> Result<(Vec<u8>, bool), libdd_ipc::codec::DecodeError> {
+    ) -> Result<AppSecVerdict, libdd_ipc::codec::DecodeError> {
         self.drain_outbox_blocking()
             .map_err(libdd_ipc::codec::DecodeError::Io)?;
         self.channel.call_client_request_blocking(request)
@@ -567,6 +580,55 @@ mod tests {
             }
         }
         assert_eq!(accepted, 2);
+    }
+
+    #[cfg(not(appsec_protocol_external))]
+    fn appsec_sessions(requests: &[SidecarInterfaceRequest]) -> Vec<Option<AppSecSessionConfig>> {
+        requests
+            .iter()
+            .filter_map(|request| match request {
+                SidecarInterfaceRequest::SetConnectionConfig { config, .. } => {
+                    Some(config.appsec.clone())
+                }
+                _ => None,
+            })
+            .collect()
+    }
+
+    // The included protocol of an embedding application has other types.
+    #[cfg(not(appsec_protocol_external))]
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn appsec_session_config_rides_on_the_connection_config_and_is_replayed() {
+        let appsec = AppSecSessionConfig::default();
+        let instance_id = InstanceId::new("session", "runtime");
+        let (mut previous, previous_peer) = sender();
+        // Set before the connection config, as by the embedding application: nothing to send.
+        previous.set_appsec_session_config(Some(appsec.clone()));
+        assert!(received(&previous_peer).is_empty());
+        previous.set_connection_config(instance_id.clone(), SessionConfig::for_test());
+        previous.set_appsec_session_config(Some(appsec.clone()));
+        assert_eq!(
+            appsec_sessions(&received(&previous_peer)),
+            vec![Some(appsec.clone())]
+        );
+
+        // Fork child.
+        previous.set_instance_id(InstanceId::new("session", "child"), 0);
+        assert_eq!(
+            appsec_sessions(&received(&previous_peer)),
+            vec![Some(appsec.clone())]
+        );
+
+        // Reconnect.
+        let (mut sender, peer) = sender();
+        sender.adopt_state(previous);
+        sender.send(&request());
+        assert_eq!(appsec_sessions(&received(&peer)), vec![Some(appsec)]);
+
+        // Disabling AppSec later starts a new session without it.
+        sender.set_appsec_session_config(None);
+        assert_eq!(appsec_sessions(&received(&peer)), vec![None]);
     }
 
     #[test]

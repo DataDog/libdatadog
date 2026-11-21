@@ -38,6 +38,13 @@ impl ActiveApplication {
         self.remote_config_guard.is_some()
     }
 
+    /// The shared memory the application's remote configs are published in, if it is registered
+    /// for remote config.
+    #[cfg(unix)]
+    pub(crate) fn remote_config_path(&self) -> Option<std::ffi::CString> {
+        self.remote_config_guard.as_ref().map(|guard| guard.path())
+    }
+
     pub(crate) fn update(&mut self, config: ApplicationConfig) {
         if self.config.env_name != config.env_name
             || self.config.app_version != config.app_version

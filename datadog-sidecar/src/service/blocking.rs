@@ -5,6 +5,7 @@ use super::{
     ApplicationConfig, DynamicInstrumentationConfigState, InstanceId, SerializedTracerHeaderTags,
     SessionConfig, SidecarAction, SidecarFlushOptions,
 };
+use crate::appsec::protocol::{AppSecRequest, AppSecSessionConfig, AppSecVerdict};
 use crate::service::ffe_submission::FfeSubmissionStatus;
 use crate::service::sender::SidecarSender;
 pub use crate::service::sidecar_interface::CdnSubscriptionError;
@@ -587,23 +588,6 @@ pub fn set_kafka_cluster_id(
     Ok(transport.with_retry(|s| s.send(&request)))
 }
 
-/// Starts the AppSec backend in the sidecar and waits for initialization to
-/// complete before returning.
-pub fn ensure_appsec_started(
-    transport: &mut SidecarTransport,
-    log_file_path: Vec<u8>,
-    log_level: String,
-) -> io::Result<bool> {
-    let request = SidecarInterfaceRequest::EnsureAppsecStarted {
-        log_file_path,
-        log_level,
-    };
-    transport.with_retry(|s| {
-        s.ensure_appsec_started(&request)
-            .map_err(decode_error_to_io)
-    })
-}
-
 /// Enqueue CDN registration without waiting for a sidecar response.
 pub fn set_cdn_configuration(
     transport: &mut SidecarTransport,
@@ -625,31 +609,34 @@ pub fn stats(transport: &mut SidecarTransport) -> io::Result<String> {
     transport.with_retry(|s| s.stats().map_err(decode_error_to_io))
 }
 
-/// Forwards an AppSec message to the sidecar for dispatching to the registered helper.
-///
-/// Returns the response bytes from the helper and a disconnect flag.
-pub fn send_appsec_message(
+/// Sets the AppSec settings sent with the connection config; see
+/// [`SidecarSender::set_appsec_session_config`]. They are replayed on reconnects.
+pub fn set_appsec_session_config(
     transport: &mut SidecarTransport,
-    data: &[u8],
-    client_init: bool,
-) -> io::Result<(Vec<u8>, bool)> {
-    let request = SidecarInterfaceClientRequest::SendAppsecMessage { data, client_init };
-    transport.with_retry(|s| s.send_appsec_message(&request).map_err(decode_error_to_io))
+    config: Option<AppSecSessionConfig>,
+) {
+    transport.inner.set_appsec_session_config(config);
 }
 
-/// Forwards an AppSec message without reconnecting the sidecar on failure.
+/// Hands a request to the connection's AppSec client.
 ///
-/// Returns the response bytes from the helper and a disconnect flag.
-pub fn send_appsec_message_without_reconnect(
+/// A request starting an AppSec request may `reconnect`: the replayed session config sets up a
+/// new client. Later requests of the same AppSec request must not, the new client would not know
+/// it.
+pub fn send_appsec_request(
     transport: &mut SidecarTransport,
-    data: &[u8],
-    client_init: bool,
-) -> io::Result<(Vec<u8>, bool)> {
-    let request = SidecarInterfaceClientRequest::SendAppsecMessage { data, client_init };
-    transport
-        .inner
-        .send_appsec_message(&request)
-        .map_err(decode_error_to_io)
+    request: &AppSecRequest,
+    reconnect: bool,
+) -> io::Result<AppSecVerdict> {
+    let request = SidecarInterfaceClientRequest::SendAppsecMessage { request };
+    if reconnect {
+        transport.with_retry(|s| s.send_appsec_message(&request).map_err(decode_error_to_io))
+    } else {
+        transport
+            .inner
+            .send_appsec_message(&request)
+            .map_err(decode_error_to_io)
+    }
 }
 
 /// Flushes traces/stats and/or telemetry, as specified by options.

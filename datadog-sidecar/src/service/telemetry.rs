@@ -66,6 +66,13 @@ impl InProcessTelemetryClientFactory {
         Self { sender }
     }
 
+    /// A factory whose clients' telemetry goes to the returned receiver instead of the sidecar,
+    /// for tests of in-process components.
+    pub fn new_for_testing(capacity: usize) -> (Self, mpsc::Receiver<InternalTelemetryActions>) {
+        let (sender, receiver) = mpsc::channel(capacity);
+        (Self::new(sender), receiver)
+    }
+
     pub fn create_client(
         &self,
         session: ConnectionSessionHandle,
