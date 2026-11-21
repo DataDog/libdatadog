@@ -6,6 +6,11 @@
 #![cfg_attr(not(test), deny(clippy::expect_used))]
 #![cfg_attr(not(test), deny(clippy::todo))]
 #![cfg_attr(not(test), deny(clippy::unimplemented))]
+// The async call chain (entry → sidecar_server → sidecar_interface → flush →
+// ...) is deep enough that nightly rustc's trait solver trips its recursion
+// depth lint (`recursion_depth_exceeding_limit`, rust-lang/rust#159228) at the
+// default limit of 128 when evaluating Send for the spawned coroutines.
+#![recursion_limit = "256"]
 
 pub mod agent_remote_config;
 #[cfg(unix)]
