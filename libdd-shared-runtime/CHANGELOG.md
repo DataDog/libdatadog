@@ -2,6 +2,12 @@
 
 
 
+## [8.0.0](https://github.com/datadog/libdatadog/compare/libdd-shared-runtime-v7.0.0..libdd-shared-runtime-v8.0.0) - 2026-10-28
+
+### Changed
+
+- Bump `libdd-common` to a new major version (`^9.0.0` → `^10.0.0`)
+
 ## [7.0.0](https://github.com/datadog/libdatadog/compare/libdd-shared-runtime-v6.0.0..libdd-shared-runtime-v7.0.0) - 2026-10-23
 
 ### Added

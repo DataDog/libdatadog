@@ -2,6 +2,18 @@
 
 
 
+## [13.0.0](https://github.com/datadog/libdatadog/compare/libdd-trace-stats-v12.0.0..libdd-trace-stats-v13.0.0) - 2026-10-28
+
+### Changed
+
+- Bump MSRV from 1.87.0 to 1.91.1 ([#2734](https://github.com/datadog/libdatadog/issues/2734)) - ([1c6b398](https://github.com/datadog/libdatadog/commit/1c6b398b6caf0cfa2deaf1f493c08248719f2dc4))
+
+### Fixed
+
+- Restrict peer-tag base-service fallback to internal spans ([#2554](https://github.com/datadog/libdatadog/issues/2554)) - ([abbaf62](https://github.com/datadog/libdatadog/commit/abbaf6268be9a467fb0e19cfcc3b311e779ea6a4))
+
+
+
 ## [12.0.0](https://github.com/datadog/libdatadog/compare/libdd-trace-stats-v11.0.0..libdd-trace-stats-v12.0.0) - 2026-10-23
 
 ### Added
