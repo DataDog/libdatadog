@@ -5,7 +5,7 @@ use libdd_tinybytes::BytesString;
 use libdd_trace_utils::{
     msgpack_decoder,
     msgpack_encoder::{
-        split::{self, Format, Outcome, Part},
+        split::{self, Format, Outcome},
         v1, v04,
     },
     span::v1::{
@@ -13,12 +13,13 @@ use libdd_trace_utils::{
         TracerPayloadBytes,
     },
 };
+use std::ops::Range;
 
 fn text(value: impl Into<String>) -> BytesString {
     BytesString::from(value.into())
 }
 
-fn payload() -> TracerPayloadBytes {
+fn payload(chunks: Range<usize>) -> TracerPayloadBytes {
     let mut payload = TracerPayloadBytes {
         env: text("production"),
         app_version: text("1.2"),
@@ -26,8 +27,9 @@ fn payload() -> TracerPayloadBytes {
         hostname: text("host"),
         container_id: text("container"),
         language_name: text("ruby"),
-        chunks: (0..3u64)
+        chunks: chunks
             .map(|i| {
+                let i = u64::try_from(i).unwrap();
                 let mut chunk = TraceChunkBytes {
                     trace_id: (u128::from(i + 1) << 64 | 17).to_be_bytes(),
                     priority: Some(2),
@@ -87,38 +89,18 @@ fn reference(payload: &TracerPayloadBytes, format: Format) -> Vec<u8> {
     }
 }
 
-fn selected(part: &Part) -> TracerPayloadBytes {
-    let mut source = payload();
-    source.chunks = source
-        .chunks
-        .into_iter()
-        .enumerate()
-        .filter_map(|(i, mut chunk)| {
-            if !part.chunks().contains(&i) {
-                return None;
-            }
-            if let Some(range) = part.spans() {
-                chunk.spans = chunk.spans.drain(range).collect();
-            }
-            Some(chunk)
-        })
-        .collect();
-    source
-}
-
 #[test]
 fn fitting_payload_is_byte_identical_including_the_exact_limit() {
-    let source = payload();
+    let source = payload(0..3);
     for format in [Format::V04, Format::V1] {
         let expected = reference(&source, format);
         for limit in [expected.len(), expected.len() + 1] {
             let mut results = split::encode(&source, format, limit);
-            let Some(Outcome::Encoded { part, bytes }) = results.next() else {
+            let Some(Outcome::Encoded { chunks, bytes }) = results.next() else {
                 panic!("expected payload")
             };
             assert_eq!(bytes, expected);
-            assert_eq!(part.chunks(), 0..3);
-            assert_eq!(part.spans(), None);
+            assert_eq!(chunks, 0..3);
             assert!(results.next().is_none());
             assert!(results.next().is_none());
         }
@@ -126,80 +108,90 @@ fn fitting_payload_is_byte_identical_including_the_exact_limit() {
 }
 
 #[test]
-fn whole_chunks_are_split_before_spans() {
-    let source = payload();
+fn fitting_chunk_ranges_stay_together() {
+    let source = payload(0..3);
     for format in [Format::V04, Format::V1] {
-        let limit = (0..3)
-            .map(|i| {
-                let mut single = payload();
-                single.chunks = vec![single.chunks.remove(i)];
-                reference(&single, format).len()
-            })
-            .max()
-            .unwrap();
+        let limit = reference(&payload(1..3), format).len();
         assert!(reference(&source, format).len() > limit);
-        let mut seen = Vec::new();
-        for result in split::encode(&source, format, limit) {
-            let Outcome::Encoded { part, bytes } = result else {
+        let mut results = split::encode(&source, format, limit);
+        for expected in [0..1, 1..3] {
+            let Some(Outcome::Encoded { chunks, bytes }) = results.next() else {
                 panic!("unexpected drop")
             };
+            assert_eq!(chunks, expected);
             assert!(bytes.len() <= limit);
-            assert!(part.spans().is_none());
-            assert_eq!(bytes, reference(&selected(&part), format));
-            seen.extend(part.chunks());
+            assert_eq!(bytes, reference(&payload(expected), format));
         }
-        assert_eq!(seen, vec![0, 1, 2]);
+        assert!(results.next().is_none());
     }
 }
 
 #[test]
-fn all_limits_partition_every_original_span_once_in_order() {
-    let source = payload();
+fn outcomes_cover_every_original_chunk_once_in_order() {
+    let source = payload(0..3);
     for format in [Format::V04, Format::V1] {
         let size = reference(&source, format).len();
-        for limit in [0, 1, 250, 400, 700, size / 2, size - 1] {
+        let single = reference(&payload(0..1), format).len();
+        for limit in [0, single - 1, single, size / 2, size - 1] {
             let mut seen = Vec::new();
             for outcome in split::encode(&source, format, limit) {
-                let part = match outcome {
-                    Outcome::Encoded { part, bytes } => {
+                let chunks = match outcome {
+                    Outcome::Encoded { chunks, bytes } => {
                         assert!(bytes.len() <= limit);
-                        assert_eq!(bytes, reference(&selected(&part), format));
-                        part
+                        assert_eq!(bytes, reference(&payload(chunks.clone()), format));
+                        chunks
                     }
-                    Outcome::Oversized { part, encoded_size } => {
-                        assert_eq!(part.chunks().len(), 1);
-                        assert_eq!(part.spans().unwrap().len(), 1);
-                        assert_eq!(encoded_size, reference(&selected(&part), format).len());
+                    Outcome::Oversized {
+                        chunks,
+                        encoded_size,
+                    } => {
+                        assert_eq!(chunks.len(), 1);
+                        assert_eq!(
+                            encoded_size,
+                            reference(&payload(chunks.clone()), format).len()
+                        );
                         assert!(encoded_size > limit);
-                        part
+                        chunks
                     }
                 };
-                for chunk in part.chunks() {
-                    for span in part.spans().unwrap_or(0..source.chunks[chunk].spans.len()) {
-                        seen.push((chunk, span));
-                    }
-                }
+                seen.extend(chunks);
             }
-            assert_eq!(
-                seen,
-                (0..3)
-                    .flat_map(|c| (0..5).map(move |s| (c, s)))
-                    .collect::<Vec<_>>()
-            );
+            assert_eq!(seen, [0, 1, 2]);
         }
     }
 }
 
+fn roots_last_payload() -> TracerPayloadBytes {
+    let mut source = payload(0..2);
+    for chunk in &mut source.chunks {
+        chunk.dropped_trace = true;
+        chunk.spans[0]
+            .attributes
+            .insert(text("sdk.root"), AttributeValue::String(text("root-only")));
+        chunk.spans.rotate_left(1);
+    }
+    for (key, value) in [
+        ("_dd.git.commit.sha", "commit"),
+        ("_dd.tags.process", "process:tag"),
+        ("_dd.sdk.otlp_export", "false"),
+    ] {
+        source
+            .attributes
+            .insert(text(key), AttributeValue::String(text(value)));
+    }
+    source
+}
+
 #[test]
-fn rootless_pieces_keep_the_original_trace_and_sampling_metadata() {
-    let mut source = payload();
-    source.chunks.truncate(1);
-    source.chunks[0].dropped_trace = true;
-    let mut rootless = false;
-    for result in split::encode(&source, Format::V1, 450) {
-        let Outcome::Encoded { bytes, .. } = result else {
+fn v1_keeps_sdk_root_metadata_with_its_chunk() {
+    let source = roots_last_payload();
+    let limit = v1::to_vec_from_v1(&source).len() - 1;
+    let mut results = split::encode(&source, Format::V1, limit);
+    for (i, original) in source.chunks.iter().enumerate() {
+        let Some(Outcome::Encoded { chunks, bytes }) = results.next() else {
             panic!("unexpected drop")
         };
+        assert_eq!(chunks, i..i + 1);
         let (decoded, _) = msgpack_decoder::v1::from_slice(&bytes).unwrap();
         assert_eq!(decoded.env, "production");
         assert_eq!(decoded.app_version, "1.2");
@@ -210,7 +202,7 @@ fn rootless_pieces_keep_the_original_trace_and_sampling_metadata() {
         );
         assert_eq!(decoded.chunks.len(), 1);
         let chunk = &decoded.chunks[0];
-        assert_eq!(chunk.trace_id, source.chunks[0].trace_id);
+        assert_eq!(chunk.trace_id, original.trace_id);
         assert_eq!(chunk.priority, Some(2));
         assert_eq!(chunk.sampling_mechanism, Some(8));
         assert_eq!(chunk.origin, "synthetics");
@@ -219,138 +211,181 @@ fn rootless_pieces_keep_the_original_trace_and_sampling_metadata() {
             chunk.attributes.get("chunk.key").and_then(|a| a.as_str()),
             Some("chunk-value")
         );
-        for span in &chunk.spans {
-            assert_eq!(span.parent_id, if span.span_id == 1 { 0 } else { 1 });
+        assert_eq!(chunk.spans.len(), original.spans.len());
+        for (span, input) in chunk.spans.iter().zip(&original.spans) {
+            assert_eq!(
+                (span.span_id, span.parent_id),
+                (input.span_id, input.parent_id)
+            );
+            let root = input.parent_id == 0;
+            assert_eq!(
+                span.attributes.get("sdk.root").and_then(|a| a.as_str()),
+                root.then_some("root-only")
+            );
             assert_eq!(
                 span.attributes.get("_dd.top_level"),
-                Some(&AttributeValue::Int(i64::from(span.span_id == 1)))
+                Some(&AttributeValue::Int(i64::from(root)))
             );
             assert_eq!(span.span_events[0].name, "event");
             assert_eq!(span.span_links[0].span_id, 99);
         }
-        rootless |= chunk.spans.iter().all(|span| span.span_id != 1);
     }
-    assert!(rootless);
+    assert!(results.next().is_none());
 }
 
 #[test]
-fn v04_downgrade_keeps_chunk_context_on_rootless_pieces() {
-    let mut source = payload();
-    source.chunks.truncate(1);
-    source.chunks[0].dropped_trace = true;
-    source.chunks[0].spans.rotate_left(1);
-    for (key, value) in [
-        ("_dd.git.commit.sha", "commit"),
-        ("_dd.tags.process", "process:tag"),
-        ("_dd.sdk.otlp_export", "false"),
-    ] {
-        source
-            .attributes
-            .insert(text(key), AttributeValue::String(text(value)));
-    }
+fn v04_downgrade_keeps_metadata_on_the_original_root_and_first_span() {
+    let source = roots_last_payload();
     let limit = v04::to_vec_from_v1(&source).len() - 1;
-    let mut rootless = false;
-    for result in split::encode(&source, Format::V04, limit) {
-        let Outcome::Encoded { bytes, .. } = result else {
+    let mut results = split::encode(&source, Format::V04, limit);
+    for (i, original) in source.chunks.iter().enumerate() {
+        let Some(Outcome::Encoded { chunks, bytes }) = results.next() else {
             panic!("unexpected drop")
         };
-        assert!(bytes.len() <= limit);
+        assert_eq!(chunks, i..i + 1);
         let (chunks, _) = msgpack_decoder::v04::from_slice(&bytes).unwrap();
-        for spans in &chunks {
-            rootless |= spans.iter().all(|span| span.span_id != 1);
-            // Each piece's root is last in this fixture, distinct from its first span.
-            for (i, span) in spans.iter().enumerate() {
-                assert_eq!(span.trace_id, 17);
-                let root = i == spans.len() - 1;
-                for (key, value) in [
-                    ("_dd.p.tid", "0000000000000001"),
-                    ("_dd.origin", "synthetics"),
-                    ("_dd.p.dm", "-8"),
-                    ("_dd.hostname", "host"),
-                    ("_dd.git.commit.sha", "commit"),
-                ] {
-                    assert_eq!(
-                        span.meta.get(key).map(|value| value.as_ref()),
-                        root.then_some(value)
-                    );
-                }
+        assert_eq!(chunks.len(), 1);
+        let spans = &chunks[0];
+        assert_eq!(spans.len(), original.spans.len());
+        let high_trace_id = format!("{:016x}", i + 1);
+        for (span, input) in spans.iter().zip(&original.spans) {
+            assert_eq!(span.span_id, input.span_id);
+            assert_eq!(span.trace_id, 17);
+            let root = input.parent_id == 0;
+            for (key, value) in [
+                ("sdk.root", "root-only"),
+                ("_dd.p.tid", high_trace_id.as_str()),
+                ("_dd.origin", "synthetics"),
+                ("_dd.p.dm", "-8"),
+                ("_dd.hostname", "host"),
+                ("_dd.git.commit.sha", "commit"),
+            ] {
                 assert_eq!(
-                    span.metrics.get("_sampling_priority_v1"),
-                    root.then_some(&2.0)
+                    span.meta.get(key).map(|value| value.as_ref()),
+                    root.then_some(value)
                 );
-                for (key, value) in [
-                    ("_dd.tags.process", "process:tag"),
-                    ("_dd.sdk.otlp_export", "false"),
-                ] {
-                    assert_eq!(
-                        span.meta.get(key).map(|value| value.as_ref()),
-                        (i == 0).then_some(value)
-                    );
-                }
-                assert_eq!(span.meta.get("chunk.key").unwrap(), "chunk-value");
-                assert_eq!(span.metrics.get("payload.key"), Some(&9.0));
             }
+            assert_eq!(
+                span.metrics.get("_sampling_priority_v1"),
+                root.then_some(&2.0)
+            );
+            let first = input.span_id == original.spans[0].span_id;
+            for (key, value) in [
+                ("_dd.tags.process", "process:tag"),
+                ("_dd.sdk.otlp_export", "false"),
+            ] {
+                assert_eq!(
+                    span.meta.get(key).map(|value| value.as_ref()),
+                    first.then_some(value)
+                );
+            }
+            assert_eq!(span.meta.get("chunk.key").unwrap(), "chunk-value");
+            assert_eq!(span.metrics.get("payload.key"), Some(&9.0));
         }
     }
-    assert!(rootless);
+    assert!(results.next().is_none());
 }
 
 #[test]
-fn a_single_oversized_span_does_not_discard_its_neighbours() {
+fn oversized_chunk_is_reported_even_if_its_spans_would_fit_separately() {
+    let singleton = |spans| {
+        let mut source = payload(0..1);
+        let chunk = &mut source.chunks[0];
+        chunk.spans = chunk.spans.drain(spans).collect();
+        source
+    };
+    let source = singleton(0..2);
+    for format in [Format::V1, Format::V04] {
+        let size = reference(&source, format).len();
+        let limit = reference(&singleton(0..1), format)
+            .len()
+            .max(reference(&singleton(1..2), format).len());
+        assert!(size > limit);
+        let mut results = split::encode(&source, format, limit);
+        let Some(Outcome::Oversized {
+            chunks,
+            encoded_size,
+        }) = results.next()
+        else {
+            panic!("expected the complete {size}-byte chunk at limit {limit} ({format:?})");
+        };
+        assert_eq!(chunks, 0..1);
+        assert_eq!(encoded_size, size);
+        assert!(results.next().is_none());
+    }
+}
+
+#[test]
+fn an_oversized_chunk_does_not_discard_its_neighbours() {
+    let mut source = payload(0..3);
+    source.chunks[0].spans.truncate(1);
+    source.chunks[2].spans.truncate(1);
     for format in [Format::V04, Format::V1] {
-        let mut source = payload();
-        source.chunks.truncate(1);
-        source.chunks[0].spans[2].resource = text("x".repeat(4096));
-        let mut kept = Vec::new();
-        let mut dropped = Vec::new();
-        for result in split::encode(&source, format, 1024) {
-            match result {
-                Outcome::Encoded { part, bytes } => {
-                    assert!(bytes.len() <= 1024);
-                    kept.extend(part.spans().unwrap());
+        let size = reference(&payload(1..2), format).len();
+        let limit = size - 1;
+        let mut results = split::encode(&source, format, limit);
+        for i in 0..3 {
+            let chunks = match results.next().unwrap() {
+                Outcome::Encoded { chunks, bytes } => {
+                    assert_ne!(i, 1);
+                    assert!(bytes.len() <= limit);
+                    chunks
                 }
-                Outcome::Oversized { part, .. } => dropped.extend(part.spans().unwrap()),
-            }
+                Outcome::Oversized {
+                    chunks,
+                    encoded_size,
+                } => {
+                    assert_eq!(i, 1);
+                    assert_eq!(encoded_size, size);
+                    chunks
+                }
+            };
+            assert_eq!(chunks, i..i + 1);
         }
-        assert_eq!(kept, vec![0, 1, 3, 4]);
-        assert_eq!(dropped, vec![2]);
+        assert!(results.next().is_none());
     }
 }
 
 #[test]
-fn empty_chunks_and_oversized_envelopes_terminate() {
+fn oversized_empty_envelope_is_reported_once() {
     for format in [Format::V04, Format::V1] {
         let source = TracerPayloadBytes::default();
         let expected = reference(&source, format);
         let mut outcomes = split::encode(&source, format, expected.len() - 1);
-        assert!(
-            matches!(outcomes.next(), Some(Outcome::Oversized { part, .. }) if part.chunks().is_empty())
-        );
+        let Some(Outcome::Oversized {
+            chunks,
+            encoded_size,
+        }) = outcomes.next()
+        else {
+            panic!("expected oversized empty payload");
+        };
+        assert_eq!(chunks, 0..0);
+        assert_eq!(encoded_size, expected.len());
         assert!(outcomes.next().is_none());
-        let mut source = payload();
-        source.chunks[0].spans.clear();
-        source.chunks.truncate(1);
-        assert_eq!(split::encode(&source, format, 0).count(), 1);
     }
 }
 
 #[test]
 fn indivisible_chunks_including_empty_neighbours_are_reported() {
-    let mut source = payload();
+    let mut source = payload(0..3);
     source.chunks[0].spans.clear();
     source.chunks[1].spans.truncate(1);
     source.chunks[2].spans.clear();
     for format in [Format::V04, Format::V1] {
-        let mut seen = Vec::new();
-        for outcome in split::encode(&source, format, 0) {
-            let Outcome::Oversized { part, encoded_size } = outcome else {
-                panic!("expected oversized envelope");
+        let mut results = split::encode(&source, format, 0);
+        for (i, original) in source.chunks.iter().enumerate() {
+            let Some(Outcome::Oversized {
+                chunks,
+                encoded_size,
+            }) = results.next()
+            else {
+                panic!("expected oversized chunk");
             };
-            assert_eq!(part.chunks().len(), 1);
-            assert_eq!(part.spans(), None);
-            assert!(encoded_size > 0);
-            seen.extend(part.chunks());
+            assert_eq!(chunks, i..i + 1);
+            let mut single = payload(i..i + 1);
+            single.chunks[0].spans.truncate(original.spans.len());
+            assert_eq!(encoded_size, reference(&single, format).len());
         }
-        assert_eq!(seen, vec![0, 1, 2]);
+        assert!(results.next().is_none());
     }
 }

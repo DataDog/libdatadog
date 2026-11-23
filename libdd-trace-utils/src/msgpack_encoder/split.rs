@@ -1,22 +1,19 @@
 // Copyright 2026-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-//! Encode first, then split oversized payloads between chunks, and finally between spans.
+//! Encode first, then bisect oversized payloads between SDK-supplied chunks.
 //!
 //! This is an alternative to bounded encoding: the first attempt allocates the whole encoded
-//! payload, so `limit` bounds returned payloads, not temporary memory. Each result is a complete
-//! encoding (including its own dictionary for V1). Delivery of one result does not depend on
-//! the others. Encoding to v0.4 retains the existing downgrade semantics.
+//! payload, so `limit` bounds returned payloads, not temporary memory. Each returned byte vector
+//! is a complete payload, with its own string table for V1. Encoding to v0.4 retains the
+//! existing downgrade semantics.
 //!
-//! Input uses the V1 model so trace identity and sampling metadata remain available even when
-//! the root span is in another part. Perform topology-dependent processing before splitting;
-//! this API preserves existing span attributes rather than inventing new roots or top-level flags.
-//! Metadata stored only on a span is not repeated in parts that exclude that span.
+//! Partial flushing belongs to the SDK: chunk metadata can live on the root span. Keeping the
+//! original chunks intact preserves that association and the order of their spans.
 
-use crate::span::{
-    TraceData,
-    v1::{Span, TraceChunk, TracerPayload},
-};
+use crate::span::{TraceData, v1::TracerPayload};
+use libdd_common::ResultInfallibleExt;
+use rmp::encode::ByteBuf;
 use std::ops::Range;
 
 /// Existing wire formats supported by the V1 input model.
@@ -27,83 +24,35 @@ pub enum Format {
     V1,
 }
 
-/// Original input covered by an outcome. Span indices are relative to the original chunk.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Part {
-    chunks: Range<usize>,
-    spans: Option<Range<usize>>,
-}
-
-impl Part {
-    /// Chunk indices in the original payload.
-    pub fn chunks(&self) -> Range<usize> {
-        self.chunks.clone()
-    }
-
-    /// Span indices within a singleton chunk, or `None` for all spans in the selected chunks.
-    pub fn spans(&self) -> Option<Range<usize>> {
-        self.spans.clone()
-    }
-
-    fn view<'a, T: TraceData>(
-        &self,
-        source: &'a TracerPayload<T>,
-    ) -> impl ExactSizeIterator<Item = ChunkView<'a, T>> {
-        let spans = self.spans.clone();
-        source.chunks[self.chunks.clone()]
-            .iter()
-            .map(move |chunk| ChunkView {
-                chunk,
-                spans: spans
-                    .as_ref()
-                    .map_or(chunk.spans.as_slice(), |range| &chunk.spans[range.clone()]),
-            })
-    }
-
-    fn bisect<T: TraceData>(&self, source: &TracerPayload<T>) -> Option<(Self, Self)> {
-        if self.chunks.len() > 1 {
-            let middle = self.chunks.start + self.chunks.len() / 2;
-            return Some((
-                Self {
-                    chunks: self.chunks.start..middle,
-                    spans: None,
-                },
-                Self {
-                    chunks: middle..self.chunks.end,
-                    spans: None,
-                },
-            ));
+impl Format {
+    fn encode<T: TraceData>(self, source: &TracerPayload<T>, chunks: Range<usize>) -> Vec<u8> {
+        let chunks = &source.chunks[chunks];
+        let mut buf = ByteBuf::with_capacity(0);
+        match self {
+            Self::V04 => {
+                super::v04::encode_payload_from_v1(&mut buf, source, chunks, Default::default())
+            }
+            Self::V1 => super::v1::encode_payload_from_v1(&mut buf, source, chunks),
         }
-        let chunk = source.chunks.get(self.chunks.start)?;
-        let spans = self.spans.clone().unwrap_or(0..chunk.spans.len());
-        if spans.len() <= 1 {
-            return None;
-        }
-        let middle = spans.start + spans.len() / 2;
-        Some((
-            Self {
-                chunks: self.chunks.clone(),
-                spans: Some(spans.start..middle),
-            },
-            Self {
-                chunks: self.chunks.clone(),
-                spans: Some(middle..spans.end),
-            },
-        ))
+        .map_err(super::flatten_value_write_infallible)
+        .unwrap_infallible();
+        buf.into_vec()
     }
 }
 
-pub(super) struct ChunkView<'a, T: TraceData> {
-    pub chunk: &'a TraceChunk<T>,
-    pub spans: &'a [Span<T>],
-}
-
-/// A fitting payload or an indivisible oversized part. Oversized parts contain one span,
-/// an empty chunk, or the empty payload envelope; the caller decides how to report/drop them.
+/// The result for a range of chunk indices in the original payload.
 #[derive(Debug)]
 pub enum Outcome {
-    Encoded { part: Part, bytes: Vec<u8> },
-    Oversized { part: Part, encoded_size: usize },
+    /// A complete payload whose encoded bytes fit the limit.
+    Encoded {
+        chunks: Range<usize>,
+        bytes: Vec<u8>,
+    },
+    /// A single chunk (or the empty payload, `0..0`) whose complete encoding exceeds the limit.
+    Oversized {
+        chunks: Range<usize>,
+        encoded_size: usize,
+    },
 }
 
 /// Lazily encodes candidates. Stop iterating to cancel before the next outcome.
@@ -113,16 +62,17 @@ pub struct Payloads<'a, T: TraceData> {
     source: &'a TracerPayload<T>,
     format: Format,
     limit: usize,
-    next: Option<Part>,
-    pending: Vec<Part>,
+    // The fitting fast path needn't allocate a stack of pending ranges.
+    first: Option<Range<usize>>,
+    pending: Vec<Range<usize>>,
 }
 
-/// Encode once when the payload fits. On overflow, split whole chunks first; split spans only
-/// when an individual chunk is too large. The limit includes the complete encoded envelope.
+/// Encode once when the payload fits. On overflow, bisect the chunk range until each candidate
+/// fits or cannot be split further. The limit includes the complete encoded envelope.
 ///
-/// The original payload and chunk metadata are reused for every part. Spans are neither cloned
-/// nor modified, and each appears in exactly one terminal outcome, in input order. There is no
-/// span truncation: a single span that cannot fit is returned as [`Outcome::Oversized`].
+/// Each input chunk appears in exactly one outcome, in input order. A chunk that cannot fit on
+/// its own is reported as [`Outcome::Oversized`], regardless of its span count. Iteration can
+/// continue with the remaining chunks.
 ///
 /// ```
 /// use libdd_trace_utils::{
@@ -133,8 +83,11 @@ pub struct Payloads<'a, T: TraceData> {
 /// for result in split::encode(&payload, Format::V1, 1024) {
 ///     match result {
 ///         Outcome::Encoded { bytes, .. } => assert!(bytes.len() <= 1024),
-///         Outcome::Oversized { part, encoded_size } => {
-///             eprintln!("{part:?}: {encoded_size} bytes")
+///         Outcome::Oversized {
+///             chunks,
+///             encoded_size,
+///         } => {
+///             eprintln!("chunks {chunks:?}: {encoded_size} bytes")
 ///         }
 ///     }
 /// }
@@ -148,10 +101,7 @@ pub fn encode<T: TraceData>(
         source,
         format,
         limit,
-        next: Some(Part {
-            chunks: 0..source.chunks.len(),
-            spans: None,
-        }),
+        first: Some(0..source.chunks.len()),
         pending: Vec::new(),
     }
 }
@@ -160,24 +110,22 @@ impl<T: TraceData> Iterator for Payloads<'_, T> {
     type Item = Outcome;
 
     fn next(&mut self) -> Option<Self::Item> {
-        while let Some(part) = self.next.take().or_else(|| self.pending.pop()) {
-            let bytes = match self.format {
-                Format::V04 => super::v04::encode_selection(self.source, part.view(self.source)),
-                Format::V1 => super::v1::encode_selection(self.source, part.view(self.source)),
-            };
-            let encoded_size = bytes.len();
-            if encoded_size <= self.limit {
-                return Some(Outcome::Encoded { part, bytes });
+        let mut chunks = self.first.take().or_else(|| self.pending.pop())?;
+        loop {
+            let bytes = self.format.encode(self.source, chunks.clone());
+            if bytes.len() <= self.limit {
+                return Some(Outcome::Encoded { chunks, bytes });
             }
-            drop(bytes);
-            if let Some((left, right)) = part.bisect(self.source) {
-                self.pending.push(right);
-                self.next = Some(left);
-            } else {
-                return Some(Outcome::Oversized { part, encoded_size });
+            if chunks.len() <= 1 {
+                return Some(Outcome::Oversized {
+                    chunks,
+                    encoded_size: bytes.len(),
+                });
             }
+            let middle = chunks.start + chunks.len() / 2;
+            self.pending.push(middle..chunks.end);
+            chunks.end = middle;
         }
-        None
     }
 }
 

@@ -5,6 +5,7 @@
 //!
 //! ```text
 //! msgpack_encoder/
+//! ├── split.rs       // encode V1 input, splitting only between chunks on overflow
 //! ├── v04/
 //! │   ├── mod.rs        // public API + payload-level helpers
 //! │   ├── span_v04.rs   // v0.4 in-memory Span  → v0.4 wire (native)
@@ -17,8 +18,8 @@
 //!
 //! - **Module (`v04`/`v1`) = output wire format.**
 //! - **File suffix (`_v04`/`_v1`) = input span type.**
-//! - **Public functions carry a `_from_<input>` suffix**, so a caller reads the *output* from the
-//!   module path and the *input* from the function name:
+//! - **Format-specific public functions carry a `_from_<input>` suffix**, so a caller reads the
+//!   *output* from the module path and the *input* from the function name:
 //!
 //!   | Module | Function | Input → Output |
 //!   |--------|----------|----------------|

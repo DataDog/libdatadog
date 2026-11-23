@@ -45,8 +45,8 @@ fn encode(source: &TracerPayloadBytes, format: Format) -> Vec<u8> {
 fn bench(c: &mut Criterion) {
     let ordinary = payload(32, 20);
     let singleton = payload(1, 640);
-    let mut large_span = payload(1, 20);
-    large_span.chunks[0].spans[10].resource = "x".repeat(1024 * 1024).into();
+    let mut mixed = payload(3, 20);
+    mixed.chunks[1].spans[10].resource = "x".repeat(1024 * 1024).into();
     let mut group = c.benchmark_group("encode_then_split");
     group.sample_size(20);
     group.warm_up_time(Duration::from_secs(1));
@@ -59,8 +59,8 @@ fn bench(c: &mut Criterion) {
         for (case, source, limit) in [
             ("fits", &ordinary, encode(&ordinary, format).len()),
             ("chunks", &ordinary, 64 * 1024),
-            ("spans", &singleton, 64 * 1024),
-            ("large_span", &large_span, 64 * 1024),
+            ("oversized_chunk", &singleton, 64 * 1024),
+            ("oversized_chunk_with_neighbours", &mixed, 64 * 1024),
         ] {
             group.bench_function(BenchmarkId::new(&name, case), |b| {
                 b.iter(|| {

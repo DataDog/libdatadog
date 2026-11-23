@@ -3,7 +3,7 @@
 
 use crate::span::TraceData;
 use crate::span::trace_utils::get_root_span_index;
-use crate::span::v1::TracerPayload;
+use crate::span::v1::{TraceChunk, TracerPayload};
 use crate::span::v04::Span;
 use libdd_common::ResultInfallibleExt;
 use rmp::encode::{ByteBuf, RmpWrite, ValueWriteError, write_array_len};
@@ -261,44 +261,16 @@ impl Default for V1DowngradeOptions {
 /// format produced by [`to_vec_from_v04`]. Payload-level
 /// `env`/`app_version`/`hostname`/`attributes` are propagated into the spans (see [`span_v1`]'s
 /// mapping table).
-fn encode_payload_from_v1<W: RmpWrite, T: TraceData>(
+pub(super) fn encode_payload_from_v1<W: RmpWrite, T: TraceData>(
     writer: &mut W,
     payload: &TracerPayload<T>,
-    opts: V1DowngradeOptions,
-) -> Result<(), ValueWriteError<W::Error>> {
-    encode_selected_from_v1(
-        writer,
-        payload,
-        payload.chunks.iter().map(|chunk| super::split::ChunkView {
-            chunk,
-            spans: &chunk.spans,
-        }),
-        opts,
-    )
-}
-
-pub(super) fn encode_selection<'a, T: TraceData + 'a>(
-    payload: &TracerPayload<T>,
-    chunks: impl ExactSizeIterator<Item = super::split::ChunkView<'a, T>>,
-) -> Vec<u8> {
-    let mut buf = ByteBuf::with_capacity(0);
-    encode_selected_from_v1(&mut buf, payload, chunks, V1DowngradeOptions::default())
-        .map_err(super::flatten_value_write_infallible)
-        .unwrap_infallible();
-    buf.into_vec()
-}
-
-fn encode_selected_from_v1<'a, W: RmpWrite, T: TraceData + 'a>(
-    writer: &mut W,
-    payload: &TracerPayload<T>,
-    chunks: impl ExactSizeIterator<Item = super::split::ChunkView<'a, T>>,
+    chunks: &[TraceChunk<T>],
     opts: V1DowngradeOptions,
 ) -> Result<(), ValueWriteError<W::Error>> {
     use span_v1::{ChunkContext, encode_span};
 
     write_array_len(writer, chunks.len() as u32)?;
-    for view in chunks {
-        let chunk = view.chunk;
+    for chunk in chunks {
         // `dropped_trace` is agent-owned and not mapped, see `TraceChunk::dropped_trace`.
         let ctx = ChunkContext::new(
             &chunk.trace_id,
@@ -311,9 +283,9 @@ fn encode_selected_from_v1<'a, W: RmpWrite, T: TraceData + 'a>(
             &payload.hostname,
             &payload.attributes,
         );
-        let root_idx = get_root_span_index(view.spans).unwrap_or(0);
-        write_array_len(writer, view.spans.len() as u32)?;
-        for (i, span) in view.spans.iter().enumerate() {
+        let root_idx = get_root_span_index(&chunk.spans).unwrap_or(0);
+        write_array_len(writer, chunk.spans.len() as u32)?;
+        for (i, span) in chunk.spans.iter().enumerate() {
             encode_span(writer, span, &ctx, i == root_idx, i == 0, opts)?;
         }
     }
@@ -336,7 +308,7 @@ pub fn to_vec_from_v1_with<T: TraceData>(
     opts: V1DowngradeOptions,
 ) -> Vec<u8> {
     let mut buf = ByteBuf::new();
-    encode_payload_from_v1(&mut buf, payload, opts)
+    encode_payload_from_v1(&mut buf, payload, &payload.chunks, opts)
         .map_err(super::flatten_value_write_infallible)
         .unwrap_infallible();
     buf.into_vec()
@@ -350,7 +322,7 @@ pub fn to_vec_with_capacity_from_v1<T: TraceData>(
     capacity: u32,
 ) -> Vec<u8> {
     let mut buf = ByteBuf::with_capacity(capacity as usize);
-    encode_payload_from_v1(&mut buf, payload, V1DowngradeOptions::default())
+    encode_payload_from_v1(&mut buf, payload, &payload.chunks, Default::default())
         .map_err(super::flatten_value_write_infallible)
         .unwrap_infallible();
     buf.into_vec()
@@ -366,14 +338,14 @@ pub fn write_to_slice_from_v1<T: TraceData>(
     slice: &mut &mut [u8],
     payload: &TracerPayload<T>,
 ) -> Result<(), ValueWriteError> {
-    encode_payload_from_v1(slice, payload, V1DowngradeOptions::default())
+    encode_payload_from_v1(slice, payload, &payload.chunks, Default::default())
 }
 
 /// Returns the exact number of bytes [`to_vec_from_v1`] would write for `payload`. Walks
 /// the payload through a counting writer without allocating an output buffer.
 pub fn to_encoded_byte_len_from_v1<T: TraceData>(payload: &TracerPayload<T>) -> u32 {
     let mut counter = super::CountLength(0);
-    let _ = encode_payload_from_v1(&mut counter, payload, V1DowngradeOptions::default());
+    let _ = encode_payload_from_v1(&mut counter, payload, &payload.chunks, Default::default());
     counter.0
 }
 

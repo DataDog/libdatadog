@@ -63,25 +63,35 @@ impl ValueTypes for Data {
 
 impl TraceData for Data {}
 
+fn payload(chunks: usize) -> TracerPayload<Data> {
+    TracerPayload {
+        env: Text::from_static("production"),
+        chunks: (0..chunks)
+            .map(|_| TraceChunk {
+                spans: vec![Span {
+                    resource: Text::from_static("request"),
+                    ..Default::default()
+                }],
+                ..Default::default()
+            })
+            .collect(),
+        ..Default::default()
+    }
+}
+
+fn reference(source: &TracerPayload<Data>, format: Format) -> Vec<u8> {
+    match format {
+        Format::V04 => v04::to_vec_from_v1(source),
+        Format::V1 => v1::to_vec_from_v1(source),
+    }
+}
+
 #[test]
 fn fitting_payload_is_lazy_and_reads_the_input_only_once() {
-    let source = TracerPayload::<Data> {
-        env: Text::from_static("production"),
-        chunks: vec![TraceChunk {
-            spans: vec![Span {
-                resource: Text::from_static("request"),
-                ..Default::default()
-            }],
-            ..Default::default()
-        }],
-        ..Default::default()
-    };
+    let source = payload(1);
     for format in [Format::V04, Format::V1] {
         READS.set(0);
-        let expected = match format {
-            Format::V04 => v04::to_vec_from_v1(&source),
-            Format::V1 => v1::to_vec_from_v1(&source),
-        };
+        let expected = reference(&source, format);
         let reads = READS.get();
         assert!(reads > 0);
         READS.set(0);
@@ -93,6 +103,29 @@ fn fitting_payload_is_lazy_and_reads_the_input_only_once() {
         assert_eq!(bytes, expected);
         assert_eq!(READS.get(), reads);
         assert!(results.next().is_none());
+        assert_eq!(READS.get(), reads);
+    }
+}
+
+#[test]
+fn stopping_after_the_first_split_does_not_encode_the_pending_half() {
+    let source = payload(2);
+    let left = payload(1);
+    for format in [Format::V04, Format::V1] {
+        READS.set(0);
+        let full_size = reference(&source, format).len();
+        let expected = reference(&left, format);
+        assert!(full_size > expected.len());
+        let reads = READS.get();
+
+        READS.set(0);
+        let Some(Outcome::Encoded { chunks, bytes }) =
+            split::encode(&source, format, expected.len()).next()
+        else {
+            panic!("expected first half");
+        };
+        assert_eq!(chunks, 0..1);
+        assert_eq!(bytes, expected);
         assert_eq!(READS.get(), reads);
     }
 }
