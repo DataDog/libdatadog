@@ -23,8 +23,10 @@ http = { workspace = true, features = ["std"], optional = true }
 serde = { workspace = true, features = ["derive"] }
 static_assertions = { workspace = true, optional = true }
 const_format = { workspace = true, optional = true }
+futures-util = { workspace = true, features = ["alloc"], optional = true }
 
 [dev-dependencies]
+futures = { workspace = true, features = ["std"] }
 proptest = { workspace = true, default-features = true }
 
 [features]
@@ -43,6 +45,8 @@ std = [
     "dep:http",
     "serde/std",
 ]
+# `WeakWakerFuture`, a future wrapper that holds the task waker weakly.
+weak-waker = ["alloc", "dep:futures-util"]
 
 [lints.clippy]
 std_instead_of_alloc = "warn"

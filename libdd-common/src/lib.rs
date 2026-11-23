@@ -21,6 +21,8 @@ pub mod multipart;
 #[cfg(feature = "std")]
 pub mod mutable_metadata;
 pub mod tag;
+#[cfg(feature = "weak-waker")]
+pub mod weak_waker;
 
 /// Extension trait that extracts the value from a `Result` whose error type is uninhabited.
 ///

@@ -2858,6 +2858,8 @@ dependencies = [
  "anyhow",
  "arc-swap",
  "const_format",
+ "futures",
+ "futures-util",
  "hex",
  "http 1.1.0",
  "proptest",
