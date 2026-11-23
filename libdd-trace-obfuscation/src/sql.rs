@@ -107,47 +107,24 @@ fn find_quoted_string_end(bytes: &[u8], start: usize) -> Option<usize> {
     short_end
 }
 
-/// Whether `tag` (the text between the `$`s) is a valid `PostgreSQL` dollar-quote tag: empty, or a
-/// letter (including non-ASCII) or `_` followed by letters, digits or `_`. See
-/// <https://www.postgresql.org/docs/current/sql-syntax-lexical.html#SQL-SYNTAX-DOLLAR-QUOTING>.
-fn is_postgres_dollar_tag(tag: &[u8]) -> bool {
-    match tag.split_first() {
-        None => true,
-        Some((&first, rest)) => {
-            is_ident_start(first)
-                && rest
-                    .iter()
-                    .all(|&b| b.is_ascii_alphanumeric() || b == b'_' || b > 127)
-        }
-    }
-}
-
-/// What [`find_dollar_quote_end`] found at a `$`.
-enum DollarQuote {
-    /// No opening tag here, so this `$` does not start a dollar-quoted string.
-    NotAQuote,
-    /// A valid opening tag with no matching closing tag: the string runs to the end of the input.
-    Unterminated,
-    /// A complete `$tag$...$tag$`: (`inner_start`, `inner_end`, `outer_end`).
-    Terminated(usize, usize, usize),
-}
-
-/// Find the end of a dollar-quoted string `$tag$...$tag$` starting at `start`.
-fn find_dollar_quote_end(bytes: &[u8], start: usize) -> DollarQuote {
+/// Find the end of a dollar-quoted string $tag$...$tag$
+/// Returns (`inner_start`, `inner_end`, `outer_end`), or None when the opening or closing tag is
+/// missing, in which case the string runs to the end of the input.
+///
+/// Like the Agent's legacy tokenizer, the tag is everything up to the next `$`, so it may hold
+/// spaces, symbols or newlines. Unlike it, the closing tag is matched on whole bytes, so a
+/// non-ASCII tag such as `$é$...$é$` closes.
+fn find_dollar_quote_end(bytes: &[u8], start: usize) -> Option<(usize, usize, usize)> {
     let n = bytes.len();
     if start >= n || bytes[start] != b'$' {
-        return DollarQuote::NotAQuote;
+        return None;
     }
-    // Collect the tag: $<tag>$ — Go allows spaces and other chars in tags
     let mut tag_end = start + 1;
     while tag_end < n && bytes[tag_end] != b'$' {
-        if bytes[tag_end] == b'\n' {
-            return DollarQuote::NotAQuote; // tags don't span lines
-        }
         tag_end += 1;
     }
     if tag_end >= n {
-        return DollarQuote::NotAQuote;
+        return None;
     }
     // tag is bytes[start..=tag_end], e.g. $func$ or $$
     let tag = &bytes[start..=tag_end];
@@ -157,18 +134,11 @@ fn find_dollar_quote_end(bytes: &[u8], start: usize) -> DollarQuote {
     let mut i = inner_start;
     while i + tag.len() <= n {
         if bytes[i] == b'$' && bytes[i..].starts_with(tag) {
-            return DollarQuote::Terminated(inner_start, i, i + tag.len());
+            return Some((inner_start, i, i + tag.len()));
         }
         i += 1;
     }
-    // No closing tag. A tag PostgreSQL accepts opens a string that runs to the end of the input
-    // (e.g. a truncated query), so it must not be emitted. Anything else, such as `$foo, bar$`, is
-    // not a dollar quote, and falls back to identifiers.
-    if is_postgres_dollar_tag(&tag[1..tag.len() - 1]) {
-        DollarQuote::Unterminated
-    } else {
-        DollarQuote::NotAQuote
-    }
+    None
 }
 
 /// Maximum recursion depth for nested dollar-quoted strings (`$tag$...$tag$`).
@@ -609,7 +579,7 @@ impl<'a> Tokenizer<'a> {
     }
 
     #[allow(clippy::too_many_lines, reason = "FIXME: split this function")]
-    fn process(&mut self) {
+    fn process(&mut self) -> Result<(), SqlObfuscationError> {
         while !self.at_end() {
             let b = self.bytes[self.pos];
 
@@ -1015,98 +985,13 @@ impl<'a> Tokenizer<'a> {
                                 self.emit_placeholder();
                             }
                         }
-                        // Dollar-quoted string: $tag$...$tag$ or $$...$$
-                        _ if next == Some(b'$') || next.is_some_and(is_ident_start) => {
-                            let start = self.pos;
-                            let quote = find_dollar_quote_end(self.bytes, start);
-                            if let DollarQuote::Terminated(inner_start, inner_end, outer_end) =
-                                quote
-                            {
-                                if self.maybe_consume_alias_next() {
-                                    self.pos = outer_end;
-                                    continue;
-                                }
-                                if self.is_normalize_only() {
-                                    // In normalize mode: process inner content with same config
-                                    let tag_str = &self.s[start..inner_start];
-                                    let inner = &self.s[inner_start..inner_end];
-                                    let close_tag = &self.s[inner_end..outer_end];
-                                    let normalized_inner = obfuscate_sql_at_depth(
-                                        inner,
-                                        self.config,
-                                        self.dbms,
-                                        self.dollar_recursion_depth + 1,
-                                    );
-                                    self.space();
-                                    self.result.push_str(tag_str);
-                                    self.result.push_str(&normalized_inner);
-                                    self.result.push_str(close_tag);
-                                } else if self.config.dollar_quoted_func {
-                                    // Obfuscate the content inside dollar quotes.
-                                    // Past MAX_DOLLAR_QUOTE_DEPTH, use a placeholder directly
-                                    // rather than recursing, so the nested literal can't leak.
-                                    let tag_str = &self.s[start..inner_start];
-                                    let inner = &self.s[inner_start..inner_end];
-                                    let close_tag = &self.s[inner_end..outer_end];
-                                    if self.dollar_recursion_depth + 1 >= MAX_DOLLAR_QUOTE_DEPTH {
-                                        self.emit_placeholder();
-                                        self.pos = outer_end;
-                                        continue;
-                                    }
-                                    let obfuscated_inner = obfuscate_sql_at_depth(
-                                        inner,
-                                        self.config,
-                                        self.dbms,
-                                        self.dollar_recursion_depth + 1,
-                                    );
-                                    // If inner collapses to just '?' (trivial content), emit ?
-                                    // directly
-                                    if obfuscated_inner.trim() == "?" {
-                                        self.emit_placeholder();
-                                    } else {
-                                        self.space();
-                                        self.result.push_str(tag_str);
-                                        self.result.push_str(&obfuscated_inner);
-                                        self.result.push_str(close_tag);
-                                    }
-                                } else {
-                                    // Replace whole thing with ?
-                                    self.emit_placeholder();
-                                }
-                                self.pos = outer_end;
-                            } else if matches!(quote, DollarQuote::Unterminated) {
-                                // No closing tag (e.g. a truncated query): like an unterminated
-                                // '...' string, the literal runs to the end of the input.
-                                self.pos = self.bytes.len();
-                                if self.maybe_consume_alias_next() {
-                                    continue;
-                                }
-                                if self.is_normalize_only() {
-                                    self.emit(&self.s[start..]);
-                                } else {
-                                    self.emit_placeholder();
-                                }
-                            } else {
-                                // Not a valid dollar quote, check if it's an identifier starting
-                                // with $
-                                self.pos += 1; // skip '$'
-                                let id_start_pos = self.pos;
-                                while !self.at_end()
-                                    && (is_ident_char(self.bytes[self.pos])
-                                        || self.bytes[self.pos] == b'$')
-                                {
-                                    self.pos += 1;
-                                }
-                                let ident = &self.s[id_start_pos - 1..self.pos]; // include '$'
-                                if self.maybe_consume_alias_next() {
-                                    continue;
-                                }
-                                self.emit(ident);
-                            }
-                            let _ = b; // suppress unused warning
-                        }
-                        _ => {
-                            // $identifier like $action - keep as-is
+                        // SQL Server identifier such as `$action` in a MERGE's OUTPUT clause,
+                        // as in Go: a `$` followed by a letter (Go's isLetter).
+                        _ if matches!(self.dbms, DbmsKind::Mssql)
+                            && self.s[self.pos + 1..].chars().next().is_some_and(|c| {
+                                c.is_alphabetic() || matches!(c, '_' | '@' | '#')
+                            }) =>
+                        {
                             let start = self.pos;
                             self.pos += 1; // skip '$'
                             while !self.at_end()
@@ -1120,6 +1005,70 @@ impl<'a> Tokenizer<'a> {
                                 continue;
                             }
                             self.emit(token);
+                        }
+                        // Dollar-quoted string: $tag$...$tag$ or $$...$$. As in the Agent's
+                        // legacy tokenizer, every other `$` opens one, and one that never closes
+                        // (e.g. in a truncated query) is an error.
+                        _ => {
+                            let start = self.pos;
+                            let Some((inner_start, inner_end, outer_end)) =
+                                find_dollar_quote_end(self.bytes, start)
+                            else {
+                                return Err(SqlObfuscationError::UnterminatedDollarQuote);
+                            };
+                            if self.maybe_consume_alias_next() {
+                                self.pos = outer_end;
+                                continue;
+                            }
+                            let tag_str = &self.s[start..inner_start];
+                            let inner = &self.s[inner_start..inner_end];
+                            let close_tag = &self.s[inner_end..outer_end];
+                            if self.is_normalize_only() {
+                                // In normalize mode: process inner content with same config. If
+                                // it fails, keep the string as sent, as this mode keeps literals.
+                                let normalized_inner = obfuscate_sql_at_depth(
+                                    inner,
+                                    self.config,
+                                    self.dbms,
+                                    self.dollar_recursion_depth + 1,
+                                );
+                                self.space();
+                                self.result.push_str(tag_str);
+                                self.result
+                                    .push_str(normalized_inner.as_deref().unwrap_or(inner));
+                                self.result.push_str(close_tag);
+                            } else if self.config.dollar_quoted_func {
+                                // Obfuscate the content inside dollar quotes.
+                                // Past MAX_DOLLAR_QUOTE_DEPTH, use a placeholder directly
+                                // rather than recursing, so the nested literal can't leak.
+                                if self.dollar_recursion_depth + 1 >= MAX_DOLLAR_QUOTE_DEPTH {
+                                    self.emit_placeholder();
+                                    self.pos = outer_end;
+                                    continue;
+                                }
+                                // Content that fails to obfuscate is replaced as a plain string,
+                                // as Go's legacy tokenizer does with a `$func$` body.
+                                match obfuscate_sql_at_depth(
+                                    inner,
+                                    self.config,
+                                    self.dbms,
+                                    self.dollar_recursion_depth + 1,
+                                ) {
+                                    // If inner collapses to just '?' (trivial content), emit ?
+                                    // directly
+                                    Ok(obfuscated_inner) if obfuscated_inner.trim() != "?" => {
+                                        self.space();
+                                        self.result.push_str(tag_str);
+                                        self.result.push_str(&obfuscated_inner);
+                                        self.result.push_str(close_tag);
+                                    }
+                                    _ => self.emit_placeholder(),
+                                }
+                            } else {
+                                // Replace whole thing with ?
+                                self.emit_placeholder();
+                            }
+                            self.pos = outer_end;
                         }
                     }
                 }
@@ -1993,6 +1942,7 @@ impl<'a> Tokenizer<'a> {
                 }
             }
         }
+        Ok(())
     }
 
     fn finalize(mut self) -> String {
@@ -2202,15 +2152,20 @@ pub enum SqlObfuscationError {
     /// Obfuscation produced nothing, so there is no query to report.
     #[error("obfuscation result is empty")]
     EmptyResult,
+    /// A dollar-quoted string (`$tag$...$tag$`) has no closing tag, for example because the query
+    /// was truncated. A `$` that does not start a positional parameter (`$1`) opens one.
+    #[error("unexpected EOF in dollar-quoted string")]
+    UnterminatedDollarQuote,
 }
 
 /// Obfuscates a SQL string using a proper tokenizer.
 ///
 /// # Errors
 ///
-/// Returns [`SqlObfuscationError::EmptyResult`] when obfuscation leaves nothing behind. A failed
-/// query must never be forwarded as sent: callers replace it with a marker for their context,
-/// either [`SQL_NON_PARSABLE_REPLACEMENT`] for a span or stats resource (see
+/// Returns [`SqlObfuscationError::EmptyResult`] when obfuscation leaves nothing behind, and
+/// [`SqlObfuscationError::UnterminatedDollarQuote`] when a dollar-quoted string never closes. A
+/// failed query must never be forwarded as sent: callers replace it with a marker for their
+/// context, either [`SQL_NON_PARSABLE_REPLACEMENT`] for a span or stats resource (see
 /// [`obfuscate_sql_resource`]) or [`SQL_OBFUSCATION_FAILURE_REPLACEMENT`] for a value inside a JSON
 /// document.
 pub fn obfuscate_sql(
@@ -2218,7 +2173,7 @@ pub fn obfuscate_sql(
     config: &SqlConfig,
     dbms: DbmsKind,
 ) -> Result<String, SqlObfuscationError> {
-    let obfuscated = obfuscate_sql_at_depth(s, config, dbms, 0);
+    let obfuscated = obfuscate_sql_at_depth(s, config, dbms, 0)?;
     if obfuscated.is_empty() {
         return Err(SqlObfuscationError::EmptyResult);
     }
@@ -2235,15 +2190,15 @@ fn obfuscate_sql_at_depth(
     config: &SqlConfig,
     dbms: DbmsKind,
     dollar_recursion_depth: usize,
-) -> String {
+) -> Result<String, SqlObfuscationError> {
     if s.is_empty() {
-        return String::new();
+        return Ok(String::new());
     }
     if dollar_recursion_depth >= MAX_DOLLAR_QUOTE_DEPTH {
-        return s.to_string();
+        return Ok(s.to_string());
     }
     let mut tokenizer = Tokenizer::new(s, config, dbms, dollar_recursion_depth);
-    tokenizer.process();
+    tokenizer.process()?;
     let raw = tokenizer.finalize();
     // collapse_grouped_values applies in legacy mode and obfuscate_and_normalize mode.
     // In obfuscate_only and normalize_only modes, values are NOT collapsed.
@@ -2252,11 +2207,11 @@ fn obfuscate_sql_at_depth(
         config.obfuscation_mode,
         SqlObfuscationMode::Unspecified | SqlObfuscationMode::ObfuscateAndNormalize
     );
-    if should_collapse {
+    Ok(if should_collapse {
         collapse_grouped_values(&raw, config.obfuscation_mode)
     } else {
         raw
-    }
+    })
 }
 
 /// Obfuscates a non-empty SQL span or stats-group resource, applying our failure policy.
@@ -2535,33 +2490,224 @@ mod tests {
         assert!(errors.is_empty(), "{errors}");
     }
 
-    /// A dollar-quoted string with no matching closing tag (for example a truncated query) is
-    /// replaced up to the end of the input, as an unterminated `'...'` string is, so its contents
-    /// never reach the output.
+    /// Results of the Agent's legacy Go obfuscator (`pkg/obfuscate` on datadog-agent `main`, the
+    /// trace-agent default) for queries with a `$`: `(dbms, dollar_quoted_func, input, output)`,
+    /// where `None` is an error, which the trace-agent reports as `Non-parsable SQL query`.
+    ///
+    /// Not listed, as Go differs on purpose: `$tag$$tag$`, `$tag$$5.00$tag$` and `$tag$$$tag$`
+    /// give `?` here, as they will in Go once DataDog/datadog-agent#61172 lands, and a closed
+    /// non-ASCII tag such as `$é$secret$é$` gives `?` here where Go fails to find its closing tag.
+    #[allow(clippy::type_complexity)]
+    const GO_LEGACY_DOLLAR_PARITY: &[(DbmsKind, bool, &str, Option<&str>)] = &[
+        // Unclosed or mismatched dollar quotes.
+        (DbmsKind::Postgresql, false, "SELECT $tag$secret", None),
+        (
+            DbmsKind::Postgresql,
+            false,
+            "SELECT $tag$secret$other$",
+            None,
+        ),
+        (
+            DbmsKind::Postgresql,
+            false,
+            "SELECT * FROM t WHERE a = $$secret' AND b = 1",
+            None,
+        ),
+        (DbmsKind::Postgresql, false, "SELECT $$", None),
+        (DbmsKind::Postgresql, false, "SELECT $a b$secret", None),
+        (
+            DbmsKind::Postgresql,
+            false,
+            "SELECT $foo, bar$baz FROM t WHERE id = 1",
+            None,
+        ),
+        (DbmsKind::Postgresql, false, "SELECT $foo FROM t", None),
+        (DbmsKind::Generic, false, "SELECT $foo FROM t", None),
+        (DbmsKind::Postgresql, false, "SELECT $foo\nFROM t", None),
+        (DbmsKind::Postgresql, false, "SELECT $é1_$secret", None),
+        (DbmsKind::Postgresql, false, "SELECT $", None),
+        (DbmsKind::Postgresql, false, "SELECT $ FROM t", None),
+        (DbmsKind::Postgresql, false, "SELECT ${var} FROM t", None),
+        (DbmsKind::Postgresql, false, "SELECT $(x) FROM t", None),
+        (
+            DbmsKind::Postgresql,
+            false,
+            "OUTPUT $action, inserted.*",
+            None,
+        ),
+        (DbmsKind::Postgresql, true, "SELECT $tag$secret", None),
+        // Closed dollar quotes: the tag is everything up to the next `$`.
+        (
+            DbmsKind::Postgresql,
+            false,
+            "SELECT $tag$abc$tag$",
+            Some("SELECT ?"),
+        ),
+        (
+            DbmsKind::Postgresql,
+            false,
+            "SELECT $$abc$$",
+            Some("SELECT ?"),
+        ),
+        (
+            DbmsKind::Postgresql,
+            false,
+            "SELECT $tag$ab$tactac$tx$tag$",
+            Some("SELECT ?"),
+        ),
+        (
+            DbmsKind::Postgresql,
+            false,
+            "SELECT $a b$secret$a b$",
+            Some("SELECT ?"),
+        ),
+        (
+            DbmsKind::Postgresql,
+            false,
+            "SELECT $ x$abc$ x$",
+            Some("SELECT ?"),
+        ),
+        (
+            DbmsKind::Postgresql,
+            false,
+            "SELECT $a\nb$x$a\nb$",
+            Some("SELECT ?"),
+        ),
+        // Positional parameters and `$` inside identifiers.
+        (
+            DbmsKind::Postgresql,
+            false,
+            "SELECT * FROM t WHERE a = $1 AND b = $2",
+            Some("SELECT * FROM t WHERE a = ? AND b = ?"),
+        ),
+        (
+            DbmsKind::Postgresql,
+            false,
+            "select * from dollarField$ as df from some$dollar$filled_thing$$",
+            Some("select * from dollarField$ from some$dollar$filled_thing$$"),
+        ),
+        // SQL Server: `$` followed by a letter is an identifier.
+        (
+            DbmsKind::Mssql,
+            false,
+            "SELECT $foo FROM t",
+            Some("SELECT $foo FROM t"),
+        ),
+        (
+            DbmsKind::Mssql,
+            false,
+            "OUTPUT $action, inserted.*",
+            Some("OUTPUT $action, inserted.*"),
+        ),
+        (
+            DbmsKind::Mssql,
+            false,
+            "SELECT $_x FROM t",
+            Some("SELECT $_x FROM t"),
+        ),
+        (
+            DbmsKind::Mssql,
+            false,
+            "SELECT $@x FROM t",
+            Some("SELECT $@x FROM t"),
+        ),
+        // `$func$` bodies: one that fails to obfuscate is replaced as a plain string.
+        (
+            DbmsKind::Postgresql,
+            false,
+            "SELECT $func$INSERT INTO t VALUES ('a', 1)$func$ FROM users",
+            Some("SELECT ? FROM users"),
+        ),
+        (
+            DbmsKind::Postgresql,
+            true,
+            "SELECT $func$INSERT INTO t VALUES ('a', 1)$func$ FROM users",
+            Some("SELECT $func$INSERT INTO t VALUES ( ? )$func$ FROM users"),
+        ),
+        (
+            DbmsKind::Postgresql,
+            true,
+            "SELECT $func$SELECT $tag$secret$func$ FROM users",
+            Some("SELECT ? FROM users"),
+        ),
+    ];
+
     #[test]
-    fn test_unterminated_dollar_quote_does_not_leak_literal() {
-        check_dollar_quote_cases(&[
-            ("SELECT $tag$secret", ["SELECT ?", "SELECT ?", "SELECT ?"]),
-            (
-                "SELECT $tag$secret$other$",
-                ["SELECT ?", "SELECT ?", "SELECT ?"],
-            ),
-            (
-                "SELECT * FROM t WHERE a = $$secret' AND b = 1",
-                [
-                    "SELECT * FROM t WHERE a = ?",
-                    "SELECT * FROM t WHERE a = ?",
-                    "SELECT * FROM t WHERE a = ?",
-                ],
-            ),
-            ("SELECT $$", ["SELECT ?", "SELECT ?", "SELECT ?"]),
-        ]);
+    fn test_dollar_quotes_match_go_legacy_obfuscator() {
+        let mut errors = String::new();
+        for &(dbms, dollar_quoted_func, input, expected) in GO_LEGACY_DOLLAR_PARITY {
+            let config = SqlConfig {
+                dollar_quoted_func,
+                ..Default::default()
+            };
+            let got = obfuscate_sql(input, &config, dbms);
+            let want = expected.map_or(Err(SqlObfuscationError::UnterminatedDollarQuote), |e| {
+                Ok(e.to_owned())
+            });
+            if got != want {
+                let _ = writeln!(
+                    errors,
+                    "{dbms:?} dollar_quoted_func={dollar_quoted_func}: {input:?}\n  expected \
+                     {want:?}\n  got      {got:?}"
+                );
+            }
+        }
+        assert!(errors.is_empty(), "{errors}");
     }
 
-    /// A dollar-quote tag may start with a non-ASCII letter, as a `PostgreSQL` identifier may. See
-    /// <https://www.postgresql.org/docs/current/sql-syntax-lexical.html#SQL-SYNTAX-DOLLAR-QUOTING>.
+    /// A dollar-quoted string that never closes (for example in a truncated query) is an error in
+    /// every mode, so its contents never reach the output.
     #[test]
-    fn test_dollar_quote_tag_may_start_with_non_ascii_letter() {
+    #[allow(deprecated)]
+    fn test_unterminated_dollar_quote_is_an_error_in_every_mode() {
+        let modes = [
+            SqlObfuscationMode::Unspecified,
+            SqlObfuscationMode::ObfuscateOnly,
+            SqlObfuscationMode::ObfuscateAndNormalize,
+            SqlObfuscationMode::NormalizeOnly,
+        ];
+        let mut errors = String::new();
+        for &(dbms, _, input, expected) in GO_LEGACY_DOLLAR_PARITY {
+            if expected.is_some() {
+                continue;
+            }
+            for obfuscation_mode in modes {
+                for dollar_quoted_func in [false, true] {
+                    let config = SqlConfig {
+                        dollar_quoted_func,
+                        obfuscation_mode,
+                        ..Default::default()
+                    };
+                    let got = obfuscate_sql(input, &config, dbms);
+                    if got != Err(SqlObfuscationError::UnterminatedDollarQuote) {
+                        let _ = writeln!(
+                            errors,
+                            "{obfuscation_mode:?} dollar_quoted_func={dollar_quoted_func}: \
+                             {input:?}\n  got {got:?}"
+                        );
+                    }
+                }
+            }
+        }
+        assert!(errors.is_empty(), "{errors}");
+    }
+
+    #[test]
+    fn test_unterminated_dollar_quote_resource_is_non_parsable() {
+        assert_eq!(
+            super::obfuscate_sql_resource(
+                "SELECT $tag$secret",
+                &SqlConfig::default(),
+                DbmsKind::Postgresql
+            ),
+            super::SQL_NON_PARSABLE_REPLACEMENT
+        );
+    }
+
+    /// A closed dollar quote whose tag is non-ASCII is replaced like any other. The Agent's legacy
+    /// tokenizer fails to match such a closing tag and reports an error, which we do not copy.
+    #[test]
+    fn test_dollar_quote_with_non_ascii_tag() {
         check_dollar_quote_cases(&[
             (
                 "SELECT $é$secret$é$",
@@ -2572,28 +2718,6 @@ mod tests {
             (
                 "SELECT $é$'secret'$é$",
                 ["SELECT ?", "SELECT ?", "SELECT ?"],
-            ),
-            ("SELECT $é1_$secret", ["SELECT ?", "SELECT ?", "SELECT ?"]),
-        ]);
-    }
-
-    /// Only a tag `PostgreSQL` accepts opens an unterminated dollar quote. Text between two `$`s
-    /// that is not a valid tag, such as `$foo, bar$`, is not swallowed up to the end of the
-    /// input. A complete `$a b$...$a b$` is still replaced, as the Agent does.
-    #[test]
-    fn test_unclosed_invalid_dollar_tag_is_not_a_dollar_quote() {
-        check_dollar_quote_cases(&[
-            (
-                "SELECT $foo, bar$baz FROM t WHERE id = 1",
-                [
-                    "SELECT $foo, bar$baz FROM t WHERE id = ?",
-                    "SELECT $foo, bar$baz FROM t WHERE id = ?",
-                    "SELECT $foo, bar$baz FROM t WHERE id = ?",
-                ],
-            ),
-            (
-                "SELECT $a b$secret$a b$",
-                ["SELECT ?", "SELECT $a b$secret$a b$", "SELECT ?"],
             ),
         ]);
     }
@@ -2614,10 +2738,9 @@ mod tests {
                 "SELECT $tag$$5.00$tag$",
                 ["SELECT ?", "SELECT ?", "SELECT ?"],
             ),
-            (
-                "SELECT $tag$$$tag$",
-                ["SELECT ?", "SELECT $tag$$$tag$", "SELECT ?"],
-            ),
+            // dollar_quoted_func: the body `$` is itself an unclosed dollar quote, so the string
+            // is replaced as a whole.
+            ("SELECT $tag$$$tag$", ["SELECT ?", "SELECT ?", "SELECT ?"]),
             ("SELECT $$abc$$", ["SELECT ?", "SELECT $$abc$$", "SELECT ?"]),
             ("SELECT $$$$", ["SELECT ?", "SELECT $$$$", "SELECT ?"]),
             (
@@ -2627,6 +2750,10 @@ mod tests {
             (
                 "SELECT $tag$ab$tactac$tx$tag$",
                 ["SELECT ?", "SELECT $tag$ab$tactac$tx$tag$", "SELECT ?"],
+            ),
+            (
+                "SELECT $a b$secret$a b$",
+                ["SELECT ?", "SELECT $a b$secret$a b$", "SELECT ?"],
             ),
             (
                 "SELECT * FROM users WHERE name = $eEGKEwMKHi$$eEGKEwMKHi$",
@@ -2653,14 +2780,6 @@ mod tests {
                 ],
             ),
             (
-                "SELECT $foo FROM t",
-                [
-                    "SELECT $foo FROM t",
-                    "SELECT $foo FROM t",
-                    "SELECT $foo FROM t",
-                ],
-            ),
-            (
                 "SELECT $func$INSERT INTO t VALUES ('a', 1)$func$ FROM users",
                 [
                     "SELECT ? FROM users",
@@ -2671,20 +2790,19 @@ mod tests {
         ]);
     }
 
-    /// `NormalizeOnly` keeps literals as sent, including an unterminated dollar-quoted string.
+    /// `NormalizeOnly` keeps literals as sent, so a closed dollar quote whose body fails to
+    /// normalize is kept as sent rather than failing the whole query.
     #[test]
-    fn test_normalize_only_keeps_unterminated_dollar_quote() {
+    fn test_normalize_only_keeps_dollar_quote_whose_body_fails() {
         let config = SqlConfig {
             obfuscation_mode: SqlObfuscationMode::NormalizeOnly,
             ..Default::default()
         };
-        for input in ["SELECT $tag$secret", "SELECT $tag$secret$other$"] {
-            assert_eq!(
-                obfuscate_sql(input, &config, DbmsKind::Postgresql).as_deref(),
-                Ok(input),
-                "input: {input:?}"
-            );
-        }
+        let input = "SELECT $func$SELECT $tag$secret$func$ FROM users";
+        assert_eq!(
+            obfuscate_sql(input, &config, DbmsKind::Postgresql).as_deref(),
+            Ok(input)
+        );
     }
 
     #[test]
@@ -3391,7 +3509,7 @@ mod tests {
         let input = "SELECT * FROM public.table ( array [ ROW ( array [ 'magic', 'foo',";
         // First check raw (pre-collapse) output
         let mut tok = super::Tokenizer::new(input, &config, DbmsKind::Generic, 0);
-        tok.process();
+        tok.process().unwrap();
         let raw = tok.finalize();
         eprintln!("RAW: {raw:?}");
         let got = obfuscate_sql(input, &config, DbmsKind::Generic);
