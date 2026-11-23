@@ -85,7 +85,38 @@ mod native {
     use http_body_util::BodyExt;
     use hyper::body::Incoming;
     use hyper_util::rt::TokioTimer;
+    use libdd_common::weak_waker::WeakWakerFuture;
     use pin_project::pin_project;
+
+    /// Hyper executor that spawns tasks on the current tokio runtime and gives them a weak waker.
+    ///
+    /// The client spawns its connection tasks and pool tasks with this executor. Pool state
+    /// outlives the runtime, because it lives in the client. When a connection task waits on the
+    /// request channel, the channel keeps a clone of the task waker. With a plain tokio waker,
+    /// that clone keeps the task cell alive after the runtime drops. The task cell holds the
+    /// scheduler handle, which holds the I/O driver and its epoll fd and eventfd.
+    ///
+    /// Each task is wrapped in a [`WeakWakerFuture`]. Shared state then only sees the weak waker,
+    /// and the real waker is released when the runtime drops the task.
+    ///
+    /// Unlike [`hyper_util::rt::TokioExecutor`], this executor does not panic outside a tokio
+    /// runtime. It drops the task instead. Hyper then reports the connection as closed, or
+    /// skips pool cleanup for the idle task.
+    #[derive(Clone, Copy, Debug, Default)]
+    pub struct WeakWakerExecutor;
+
+    impl<F> hyper::rt::Executor<F> for WeakWakerExecutor
+    where
+        F: Future + Send + 'static,
+        F::Output: Send + 'static,
+    {
+        fn execute(&self, fut: F) {
+            if let Ok(handle) = tokio::runtime::Handle::try_current() {
+                // The task is detached, like with `tokio::spawn`.
+                drop(handle.spawn(WeakWakerFuture::new(fut)));
+            }
+        }
+    }
 
     impl From<hyper::Error> for ClientError {
         fn from(source: hyper::Error) -> Self {
@@ -139,7 +170,7 @@ mod native {
     ///
     /// This is in general not a problem if we use the client once every tens of seconds.
     pub fn new_client_periodic() -> GenericHttpClient<Connector> {
-        hyper_util::client::legacy::Client::builder(hyper_util::rt::TokioExecutor::default())
+        client_builder()
             .pool_timer(TokioTimer::new())
             .pool_idle_timeout(PERIODIC_POOL_IDLE_TIMEOUT)
             .pool_max_idle_per_host(POOL_MAX_IDLE)
@@ -150,7 +181,7 @@ mod native {
     ///
     /// It will keep connections open for a longer time and reuse them.
     pub fn new_default_client() -> GenericHttpClient<Connector> {
-        hyper_util::client::legacy::Client::builder(hyper_util::rt::TokioExecutor::default())
+        client_builder()
             .pool_max_idle_per_host(POOL_MAX_IDLE)
             .build(Connector::default())
     }
@@ -317,10 +348,97 @@ mod native {
 
     pub type GenericHttpClient<C> = hyper_util::client::legacy::Client<C, Body>;
 
+    /// Create a hyper client builder that spawns its tasks with [`WeakWakerExecutor`].
     pub fn client_builder() -> hyper_util::client::legacy::Builder {
-        hyper_util::client::legacy::Client::builder(hyper_util::rt::TokioExecutor::default())
+        hyper_util::client::legacy::Client::builder(WeakWakerExecutor)
     }
 }
 
 #[cfg(not(target_arch = "wasm32"))]
 pub use native::*;
+
+#[cfg(all(test, not(target_arch = "wasm32")))]
+mod weak_waker_executor_tests {
+    use super::WeakWakerExecutor;
+    use alloc::sync::Arc;
+    use core::time::Duration;
+    use hyper::rt::Executor;
+
+    /// Build a runtime whose handle owns `sentinel`, so the sentinel count shows whether
+    /// anything still holds the runtime handle.
+    fn runtime_owning(sentinel: &Arc<()>) -> tokio::runtime::Runtime {
+        let sentinel = sentinel.clone();
+        tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .on_thread_start(move || {
+                let _ = &sentinel;
+            })
+            .build()
+            .unwrap()
+    }
+
+    /// Spawn a task that waits on a channel whose sender stays outside the runtime, drop the
+    /// runtime, then return the sentinel count seen while the sender still lives.
+    fn count_after_runtime_drop<E: Executor<futures::future::BoxFuture<'static, ()>>>(
+        executor: E,
+    ) -> usize {
+        let sentinel = Arc::new(());
+        let rt = runtime_owning(&sentinel);
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<()>();
+        {
+            let _guard = rt.enter();
+            executor.execute(Box::pin(async move {
+                let _ = rx.recv().await;
+            }));
+        }
+        // Let the task run until it waits on the channel.
+        rt.block_on(async {
+            for _ in 0..4 {
+                tokio::task::yield_now().await;
+            }
+        });
+        drop(rt);
+        let count = Arc::strong_count(&sentinel);
+        drop(tx);
+        assert_eq!(Arc::strong_count(&sentinel), 1);
+        count
+    }
+
+    #[test]
+    fn runtime_drop_releases_handle() {
+        assert_eq!(count_after_runtime_drop(WeakWakerExecutor), 1);
+    }
+
+    #[test]
+    fn tokio_executor_keeps_handle_after_runtime_drop() {
+        // Control case: with a plain tokio waker, the channel keeps the runtime handle alive.
+        assert!(count_after_runtime_drop(hyper_util::rt::TokioExecutor::new()) > 1);
+    }
+
+    #[test]
+    fn spawned_task_runs_to_completion() {
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        {
+            let _guard = rt.enter();
+            WeakWakerExecutor.execute(async move {
+                tokio::time::sleep(Duration::from_millis(10)).await;
+                let _ = tx.send(42);
+            });
+        }
+        assert_eq!(rt.block_on(rx).unwrap(), 42);
+    }
+
+    #[test]
+    fn execute_outside_runtime_drops_the_task() {
+        let sentinel = Arc::new(());
+        let held = sentinel.clone();
+        WeakWakerExecutor.execute(async move {
+            let _ = &held;
+        });
+        assert_eq!(Arc::strong_count(&sentinel), 1);
+    }
+}

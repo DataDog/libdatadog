@@ -73,6 +73,7 @@ http-client = [
   "dep:hyper",
   "dep:hyper-util",
   "dep:libdd-process-utils",
+  "libdd-common/weak-waker",
   "dep:pin-project",
   "dep:thiserror",
   "dep:tokio",

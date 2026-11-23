@@ -1,34 +1,37 @@
 // Copyright 2026-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-//! Diagnostic for APMSP-4334: does an idle pooled connection keep the tokio driver fds
-//! (epoll/eventfd) open after the runtime is dropped, while the client lives on?
+//! Check that a client with an idle pooled connection does not keep the tokio driver fds
+//! (epoll and eventfd) open after the runtime drops, while the client lives on (APMSP-4334).
 //!
 //! Findings (hyper-util 0.1.17, Linux):
-//! * a pending pool timer alone does not leak, with `TokioTimer` or with a weak timer;
-//! * any client holding an idle pooled connection leaks, with `TokioTimer`, a weak timer, or no
-//!   pool timer at all, until the client itself is dropped;
-//! * a client without pooling does not leak.
+//! * the pool timer is not involved: a pending `TokioTimer` sleep alone does not leak;
+//! * with `hyper_util::rt::TokioExecutor`, any client holding an idle pooled connection leaks until
+//!   the client drops. The pooled sender shares the request channel with the connection task, and
+//!   the channel keeps the task's tokio waker, which holds the scheduler handle;
+//! * a client without pooling does not leak;
+//! * clients built with `WeakWakerExecutor` (all `http_common` constructors) do not leak.
 //!
-//! So the leak path is the pooled connection, not the pool timer. The leaking cases are
-//! `#[ignore]`d; run them with `--ignored`.
+//! The leaking case is `#[ignore]`d; run it with `--run-ignored all`.
 
 #![cfg(all(target_os = "linux", feature = "http-client"))]
 
-use core::net::SocketAddr;
-use core::pin::Pin;
-use core::task::{Context, Poll};
+mod common;
+
 use core::time::Duration;
-use std::io::{BufRead, BufReader, Write};
-use std::net::TcpListener;
 use std::sync::Mutex;
 use std::time::Instant;
 
+use common::{KeepAliveServer, get_ok};
 use libdd_networking::connector::Connector;
-use libdd_networking::http_common::{self, Body, GenericHttpClient};
+use libdd_networking::http_common::{self, GenericHttpClient};
 
 /// fd counts are process-wide, so tests that read them must not overlap.
 static FD_LOCK: Mutex<()> = Mutex::new(());
+
+fn lock() -> std::sync::MutexGuard<'static, ()> {
+    FD_LOCK.lock().unwrap_or_else(|e| e.into_inner())
+}
 
 fn driver_fds() -> (usize, usize) {
     let mut epoll = 0;
@@ -45,39 +48,6 @@ fn driver_fds() -> (usize, usize) {
     (epoll, eventfd)
 }
 
-fn spawn_keep_alive_server() -> SocketAddr {
-    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
-    let addr = listener.local_addr().unwrap();
-    std::thread::spawn(move || {
-        for stream in listener.incoming() {
-            let Ok(stream) = stream else { return };
-            std::thread::spawn(move || {
-                let mut reader = BufReader::new(stream.try_clone().unwrap());
-                let mut writer = stream;
-                loop {
-                    let mut line = String::new();
-                    // Read headers until the empty line.
-                    loop {
-                        line.clear();
-                        match reader.read_line(&mut line) {
-                            Ok(0) | Err(_) => return,
-                            Ok(_) if line == "\r\n" => break,
-                            Ok(_) => {}
-                        }
-                    }
-                    if writer
-                        .write_all(b"HTTP/1.1 200 OK\r\ncontent-length: 2\r\n\r\nok")
-                        .is_err()
-                    {
-                        return;
-                    }
-                }
-            });
-        }
-    });
-    addr
-}
-
 fn build_runtime() -> tokio::runtime::Runtime {
     tokio::runtime::Builder::new_multi_thread()
         .worker_threads(1)
@@ -86,19 +56,33 @@ fn build_runtime() -> tokio::runtime::Runtime {
         .unwrap()
 }
 
-fn send_one(rt: &tokio::runtime::Runtime, client: &GenericHttpClient<Connector>, addr: SocketAddr) {
+/// Send one request with `block_on`, then let the connection return to the pool.
+fn send_block_on(
+    rt: &tokio::runtime::Runtime,
+    client: &GenericHttpClient<Connector>,
+    server: &KeepAliveServer,
+) {
     rt.block_on(async {
-        let req = http::Request::get(format!("http://{addr}/"))
-            .body(Body::empty())
-            .unwrap();
-        let resp = client.request(req).await.unwrap();
-        assert_eq!(resp.status(), 200);
-        let resp = http_common::into_response(resp);
-        let bytes = http_common::collect_response_bytes(resp).await.unwrap();
-        assert_eq!(&bytes[..], b"ok");
-        // Let the connection go back to the pool and the idle task start.
+        get_ok(client, server.addr).await;
         tokio::time::sleep(Duration::from_millis(50)).await;
     });
+}
+
+/// Send one request from a task spawned on the runtime, so the request runs with a tokio waker.
+fn send_spawned(
+    rt: &tokio::runtime::Runtime,
+    client: &GenericHttpClient<Connector>,
+    server: &KeepAliveServer,
+) {
+    let (done_tx, done_rx) = std::sync::mpsc::channel();
+    let client = client.clone();
+    let addr = server.addr;
+    rt.spawn(async move {
+        get_ok(&client, addr).await;
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        let _ = done_tx.send(());
+    });
+    done_rx.recv_timeout(Duration::from_secs(5)).unwrap();
 }
 
 fn wait_for_baseline(baseline: (usize, usize)) -> (usize, usize) {
@@ -112,13 +96,17 @@ fn wait_for_baseline(baseline: (usize, usize)) -> (usize, usize) {
     }
 }
 
-fn run_case(client: GenericHttpClient<Connector>) {
-    let _guard = FD_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-    let addr = spawn_keep_alive_server();
+type Send = fn(&tokio::runtime::Runtime, &GenericHttpClient<Connector>, &KeepAliveServer);
+
+/// Send with `send` on a fresh runtime, drop the runtime while keeping the client, and check
+/// the driver fds are back to baseline.
+fn run_case(client: GenericHttpClient<Connector>, send: Send) {
+    let _guard = lock();
+    let server = KeepAliveServer::start();
     let baseline = driver_fds();
     let rt = build_runtime();
     eprintln!("baseline={baseline:?} with runtime={:?}", driver_fds());
-    send_one(&rt, &client, addr);
+    send(&rt, &client, &server);
     drop(rt);
     let after = wait_for_baseline(baseline);
     eprintln!("after runtime drop={after:?}");
@@ -131,78 +119,23 @@ fn run_case(client: GenericHttpClient<Connector>) {
     );
 }
 
-/// Test-local weak timer used to check the approach before the production version exists.
-#[derive(Clone, Copy)]
-struct DiagWeakTimer;
-
-#[pin_project::pin_project]
-struct DiagWeakSleep {
-    deadline: tokio::time::Instant,
-    #[pin]
-    inner: Option<tokio::time::Sleep>,
-}
-
-impl core::future::Future for DiagWeakSleep {
-    type Output = ();
-    fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<()> {
-        let mut this = self.project();
-        if this.inner.is_none() {
-            this.inner
-                .set(Some(tokio::time::sleep_until(*this.deadline)));
-        }
-        match this.inner.as_mut().as_pin_mut() {
-            Some(s) => match s.poll(cx) {
-                Poll::Ready(()) => {
-                    this.inner.set(None);
-                    Poll::Ready(())
-                }
-                Poll::Pending => Poll::Pending,
-            },
-            None => Poll::Ready(()),
-        }
-    }
-}
-
-impl hyper::rt::Sleep for DiagWeakSleep {}
-
-impl hyper::rt::Timer for DiagWeakTimer {
-    fn sleep(&self, d: Duration) -> Pin<Box<dyn hyper::rt::Sleep>> {
-        self.sleep_until(Instant::now() + d)
-    }
-    fn sleep_until(&self, deadline: Instant) -> Pin<Box<dyn hyper::rt::Sleep>> {
-        Box::pin(DiagWeakSleep {
-            deadline: tokio::time::Instant::from_std(deadline),
-            inner: None,
-        })
-    }
-}
-
-fn periodic_with<T: hyper::rt::Timer + Clone + Send + Sync + 'static>(
-    timer: T,
-) -> GenericHttpClient<Connector> {
+fn tokio_executor_periodic_client() -> GenericHttpClient<Connector> {
     hyper_util::client::legacy::Client::builder(hyper_util::rt::TokioExecutor::default())
-        .pool_timer(timer)
+        .pool_timer(hyper_util::rt::TokioTimer::new())
         .pool_idle_timeout(Duration::from_secs(5))
         .pool_max_idle_per_host(20)
         .build(Connector::default())
 }
 
 #[test]
-#[ignore = "leaks: the idle pooled connection keeps the driver alive"]
-fn diag_1_periodic_tokio_timer() {
-    run_case(periodic_with(hyper_util::rt::TokioTimer::new()));
+#[ignore = "leaks: with TokioExecutor, the idle pooled connection keeps the driver alive"]
+fn diag_1_tokio_executor_leaks() {
+    run_case(tokio_executor_periodic_client(), send_block_on);
 }
 
 #[test]
-#[ignore = "leaks: the idle pooled connection keeps the driver alive"]
-fn diag_2_default_client() {
-    run_case(http_common::new_default_client());
-}
-
-#[test]
-#[ignore = "leaks: the idle pooled connection keeps the driver alive"]
-fn diag_3_periodic_weak_timer() {
-    run_case(periodic_with(DiagWeakTimer));
+fn diag_2_default_client_releases() {
+    run_case(http_common::new_default_client(), send_block_on);
 }
 
 #[test]
@@ -211,28 +144,13 @@ fn diag_4_no_pooling() {
         hyper_util::client::legacy::Client::builder(hyper_util::rt::TokioExecutor::default())
             .pool_max_idle_per_host(0)
             .build(Connector::default()),
+        send_block_on,
     );
 }
 
 #[test]
-fn diag_5_weak_timer_alone() {
-    let _guard = FD_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-    let baseline = driver_fds();
-    let rt = build_runtime();
-    let timer = DiagWeakTimer;
-    rt.spawn(async move {
-        hyper::rt::Timer::sleep(&timer, Duration::from_secs(60)).await;
-    });
-    std::thread::sleep(Duration::from_millis(50));
-    drop(rt);
-    let after = wait_for_baseline(baseline);
-    eprintln!("baseline={baseline:?} after runtime drop={after:?}");
-    assert_eq!(after, baseline);
-}
-
-#[test]
 fn diag_6_tokio_timer_alone() {
-    let _guard = FD_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let _guard = lock();
     let baseline = driver_fds();
     let rt = build_runtime();
     let timer = hyper_util::rt::TokioTimer::new();
@@ -247,9 +165,47 @@ fn diag_6_tokio_timer_alone() {
 }
 
 #[test]
+fn diag_7_periodic_client_releases() {
+    run_case(http_common::new_client_periodic(), send_block_on);
+}
+
+#[test]
+fn diag_8_client_builder_releases() {
+    let mut builder = http_common::client_builder();
+    builder.pool_max_idle_per_host(20);
+    run_case(builder.build(Connector::default()), send_block_on);
+}
+
+#[test]
+fn diag_9_spawned_request_releases() {
+    run_case(http_common::new_client_periodic(), send_spawned);
+}
+
+#[test]
+fn diag_9_spawned_request_default_client_releases() {
+    run_case(http_common::new_default_client(), send_spawned);
+}
+
+#[test]
+fn diag_10_fork_like_cycle() {
+    let _guard = lock();
+    let server = KeepAliveServer::start();
+    let client = http_common::new_client_periodic();
+    let baseline = driver_fds();
+    for round in 0..2 {
+        let rt = build_runtime();
+        send_block_on(&rt, &client, &server);
+        drop(rt);
+        let after = wait_for_baseline(baseline);
+        eprintln!("round {round}: baseline={baseline:?} after runtime drop={after:?}");
+        assert_eq!(after, baseline, "round {round}: driver fds still open");
+    }
+}
+
+#[test]
 fn diag_0_no_request() {
-    let _guard = FD_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     // Sanity check: a runtime alone releases its fds on drop.
+    let _guard = lock();
     let baseline = driver_fds();
     let rt = build_runtime();
     rt.block_on(async { tokio::time::sleep(Duration::from_millis(10)).await });
