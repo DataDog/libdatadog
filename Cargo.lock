@@ -2806,7 +2806,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-ai-usage-ffi"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "cbindgen",
  "libdd-ai-usage",
