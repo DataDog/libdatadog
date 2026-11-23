@@ -2793,7 +2793,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-ai-usage"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "hashbrown 0.17.1",
  "libdd-ddsketch",
@@ -2806,7 +2806,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-ai-usage-ffi"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "cbindgen",
  "libdd-ai-usage",
@@ -3046,7 +3046,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-ddsketch"
-version = "1.1.4"
+version = "1.2.0"
 dependencies = [
  "criterion",
  "prost",

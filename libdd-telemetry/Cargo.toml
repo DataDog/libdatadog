@@ -100,7 +100,7 @@ embedded-io = { workspace = true, optional = true }
 embedded-io-async = { workspace = true, optional = true }
 reqwless = { workspace = true, optional = true }
 libdd-shared-runtime = { version = "8.0.0", path = "../libdd-shared-runtime", default-features = false, optional = true }
-libdd-ddsketch = { version = "1.1.4", path = "../libdd-ddsketch", optional = true }
+libdd-ddsketch = { version = "1.2.0", path = "../libdd-ddsketch", optional = true }
 web-time = { workspace = true, optional = true }
 libdd-networking = { path = "../libdd-networking", version = "0.1.0", default-features = false, optional = true }
 
