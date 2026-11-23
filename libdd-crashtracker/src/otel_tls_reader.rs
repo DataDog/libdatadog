@@ -190,6 +190,61 @@ pub struct DtvResolution {
     pub dtv_offset: isize,
 }
 
+// ── Pre-cached TLS resolution (populated at init, read at crash time) ────────
+
+static CACHED_RESOLUTION: std::sync::OnceLock<Option<OtelTlsResolution>> =
+    std::sync::OnceLock::new();
+
+/// Compute and cache the OTel TLS resolution data.
+///
+/// Must be called outside signal/crash context
+/// `tls_module_info` calls `dl_iterate_phdr` which takes the loader lock — safe
+/// here but would deadlock in a post-fork collector if another thread held the lock.
+pub fn cache_otel_tls_resolution() {
+    CACHED_RESOLUTION.get_or_init(|| {
+        let slot_addr = libdd_otel_thread_ctx::linux::tls_slot_address();
+        if slot_addr == 0 {
+            return None;
+        }
+
+        #[cfg(target_arch = "x86_64")]
+        let own_tp: u64 = unsafe {
+            let tp: u64;
+            core::arch::asm!("movq %fs:0, {}", out(reg) tp, options(att_syntax, nomem, nostack));
+            tp
+        };
+        #[cfg(target_arch = "aarch64")]
+        let own_tp: u64 = unsafe {
+            let tp: u64;
+            core::arch::asm!("mrs {}, tpidr_el0", out(reg) tp, options(nomem, nostack));
+            tp
+        };
+
+        let dtv = tls_module_info().and_then(|info| {
+            let dtv_off = validated_dtv_offset(own_tp, info.modid, info.tls_block_base)?;
+            Some(DtvResolution {
+                modid: info.modid,
+                offset: info.offset,
+                dtv_offset: dtv_off,
+            })
+        });
+
+        let tp_offset = if dtv.is_none() {
+            Some(slot_addr as i64 - own_tp as i64)
+        } else {
+            None
+        };
+
+        Some(OtelTlsResolution { dtv, tp_offset })
+    });
+}
+
+/// Read the cached OTel TLS resolution. Returns `None` if not cached or the
+/// symbol wasn't found at init time.
+pub fn cached_otel_tls_resolution() -> Option<&'static OtelTlsResolution> {
+    CACHED_RESOLUTION.get().and_then(|opt| opt.as_ref())
+}
+
 /// TLS module metadata discovered via `dl_iterate_phdr`.
 pub(crate) struct TlsModuleInfo {
     /// TLS module ID (index into the DTV).

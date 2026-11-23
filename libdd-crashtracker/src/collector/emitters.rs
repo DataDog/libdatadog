@@ -997,50 +997,19 @@ fn emit_text_file(w: &mut impl Write, path: &str) -> Result<(), EmitterError> {
 /// Emit the OTel TLS resolution data (DTV walk parameters and/or TP-relative offset)
 /// so the receiver can resolve OTel TLS addresses from saved thread pointers without
 /// a second ptrace pass.
+/// Emit the pre-cached OTel TLS resolution data so the receiver can resolve
+/// TLS addresses from saved thread pointers.  The resolution is computed at
+/// `crashtracker::init()` time (outside signal context) to avoid calling
+/// `dl_iterate_phdr` after fork, which would deadlock if another thread held
+/// the loader lock at crash time.
 #[cfg(all(target_os = "linux", feature = "otel-thread-ctx"))]
 fn emit_otel_tls_resolution(w: &mut impl Write) -> Result<(), EmitterError> {
-    use crate::otel_tls_reader::{
-        DtvResolution, OtelTlsResolution, tls_module_info, validated_dtv_offset,
+    let Some(resolution) = crate::otel_tls_reader::cached_otel_tls_resolution() else {
+        return Ok(());
     };
-
-    let slot_addr = libdd_otel_thread_ctx::linux::tls_slot_address();
-    if slot_addr == 0 {
-        return Ok(()); // Symbol not linked.
-    }
-
-    // Read our own TP for computing offsets.
-    #[cfg(target_arch = "x86_64")]
-    let own_tp: u64 = unsafe {
-        let tp: u64;
-        core::arch::asm!("movq %fs:0, {}", out(reg) tp, options(att_syntax, nomem, nostack));
-        tp
-    };
-    #[cfg(target_arch = "aarch64")]
-    let own_tp: u64 = unsafe {
-        let tp: u64;
-        core::arch::asm!("mrs {}, tpidr_el0", out(reg) tp, options(nomem, nostack));
-        tp
-    };
-
-    let dtv = tls_module_info().and_then(|info| {
-        let dtv_off = validated_dtv_offset(own_tp, info.modid, info.tls_block_base)?;
-        Some(DtvResolution {
-            modid: info.modid,
-            offset: info.offset,
-            dtv_offset: dtv_off,
-        })
-    });
-
-    let tp_offset = if dtv.is_none() {
-        Some(slot_addr as i64 - own_tp as i64)
-    } else {
-        None
-    };
-
-    let resolution = OtelTlsResolution { dtv, tp_offset };
 
     writeln!(w, "{DD_CRASHTRACK_BEGIN_OTEL_TLS_RESOLUTION}")?;
-    serde_json::to_writer(&mut *w, &resolution)?;
+    serde_json::to_writer(&mut *w, resolution)?;
     writeln!(w)?;
     writeln!(w, "{DD_CRASHTRACK_END_OTEL_TLS_RESOLUTION}")?;
     w.flush()?;
@@ -1069,7 +1038,7 @@ fn emit_otel_thread_contexts(
     max_threads: usize,
     deadline: Instant,
 ) -> Result<(), EmitterError> {
-    use crate::otel_tls_reader::{ProcMemReader, tls_module_info, validated_dtv_offset};
+    use crate::otel_tls_reader::ProcMemReader;
     use crate::ptrace_collector::{
         attach_thread, detach_thread, enumerate_threads, read_thread_pointer,
     };
@@ -1081,48 +1050,27 @@ fn emit_otel_thread_contexts(
 
     let stop_timeout = core::time::Duration::from_millis(100);
 
-    // Read the collector's own TP for computing offsets.
-    #[cfg(target_arch = "x86_64")]
-    let own_tp: u64 = unsafe {
-        let tp: u64;
-        // SAFETY: reading fs:0 is a single register read with no side effects.
-        core::arch::asm!("movq %fs:0, {}", out(reg) tp, options(att_syntax, nomem, nostack));
-        tp
-    };
-    #[cfg(target_arch = "aarch64")]
-    let own_tp: u64 = unsafe {
-        let tp: u64;
-        // SAFETY: reading tpidr_el0 is a single register read with no side effects.
-        core::arch::asm!("mrs {}, tpidr_el0", out(reg) tp, options(nomem, nostack));
-        tp
-    };
+    let cached = crate::otel_tls_reader::cached_otel_tls_resolution();
+    let dtv_resolution =
+        cached.and_then(|r| r.dtv.as_ref().map(|d| (d.modid, d.offset, d.dtv_offset)));
 
-    // Resolution strategy:
-    //
-    // 1. DTV walk (preferred): look up the DTV pointer at a known (arch, libc)-specific offset from
-    //    TP, validate it against dl_iterate_phdr metadata, then walk each remote thread's DTV.
-    //    Correct for both static and dynamic TLS.
-    //
-    // 2. TP-relative offset (fallback): compute `slot_addr - TP` once and apply it to every thread.
-    //    Only correct for static TLS (constant TP-relative offset). Used when the DTV layout is
-    //    unknown or dl_iterate_phdr returns NULL tls_data (e.g. older glibc like CentOS 7).
-    let dtv_resolution = tls_module_info().and_then(|info| {
-        let dtv_off = validated_dtv_offset(own_tp, info.modid, info.tls_block_base)?;
-        Some((info.modid, info.offset, dtv_off))
-    });
-
-    // Fallback: single TP-relative offset from the crashing thread.
+    // Fallback: single TP-relative offset.  Use cached value if available;
+    // otherwise compute from the crashing thread's TP (requires ptrace).
     let tp_offset = if dtv_resolution.is_none() {
-        let stop_deadline = (Instant::now() + stop_timeout).min(deadline);
-        let Ok(()) = attach_thread(crashing_tid, stop_deadline) else {
-            return Ok(());
-        };
-        let crashing_tp = read_thread_pointer(crashing_tid);
-        let _ = detach_thread(crashing_tid);
-        let Ok(crashing_tp) = crashing_tp else {
-            return Ok(());
-        };
-        Some(slot_addr as i64 - crashing_tp as i64)
+        if let Some(off) = cached.and_then(|r| r.tp_offset) {
+            Some(off)
+        } else {
+            let stop_deadline = (Instant::now() + stop_timeout).min(deadline);
+            let Ok(()) = attach_thread(crashing_tid, stop_deadline) else {
+                return Ok(());
+            };
+            let crashing_tp = read_thread_pointer(crashing_tid);
+            let _ = detach_thread(crashing_tid);
+            let Ok(crashing_tp) = crashing_tp else {
+                return Ok(());
+            };
+            Some(slot_addr as i64 - crashing_tp as i64)
+        }
     } else {
         None
     };
