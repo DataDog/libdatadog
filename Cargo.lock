@@ -3163,7 +3163,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-host-identity"
-version = "1.0.0"
+version = "0.1.0"
 dependencies = [
  "indexmap 2.12.1",
  "libc",
@@ -3345,7 +3345,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-networking"
-version = "1.0.0"
+version = "0.1.0"
 dependencies = [
  "anyhow",
  "bytes",
@@ -3399,7 +3399,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-process-utils"
-version = "1.0.0"
+version = "0.1.0"
 dependencies = [
  "libc",
  "nix 0.29.0",
