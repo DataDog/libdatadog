@@ -2904,6 +2904,7 @@ dependencies = [
  "libdd-gotter",
  "libdd-libunwind-sys",
  "libdd-networking",
+ "libdd-otel-thread-ctx",
  "libdd-process-utils",
  "libdd-telemetry",
  "libdd-trace-model",

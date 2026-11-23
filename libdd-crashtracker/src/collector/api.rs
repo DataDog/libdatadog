@@ -89,12 +89,6 @@ pub fn init(
     register_panic_hook()?;
     #[cfg(all(target_os = "linux", target_pointer_width = "64"))]
     super::assert_interceptor::install_assert_hook();
-    // Pre-cache OTel TLS metadata. This is okay because if we unload ddtrace, CT
-    // is also unloaded.
-    #[cfg(all(target_os = "linux", feature = "otel-thread-ctx"))]
-    if config.collect_otel_thread_contexts() {
-        crate::otel_tls_reader::cache_otel_tls_info();
-    }
     enable();
     Ok(())
 }
