@@ -12,6 +12,7 @@ common:
       'libdd-common-ffi/**/*',
       'libdd-regex/**/*',
       'libdd-env/**/*',
+      'libdd-weak-waker/**/*',
     ]
 
 ci-build:

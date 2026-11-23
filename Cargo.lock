@@ -2858,8 +2858,6 @@ dependencies = [
  "anyhow",
  "arc-swap",
  "const_format",
- "futures",
- "futures-util",
  "hex",
  "http 1.1.0",
  "proptest",
@@ -3363,6 +3361,7 @@ dependencies = [
  "libdd-common",
  "libdd-host-identity",
  "libdd-process-utils",
+ "libdd-weak-waker",
  "pin-project",
  "rand 0.8.8",
  "rcgen",
@@ -3610,6 +3609,7 @@ dependencies = [
  "libdd-capabilities-impl",
  "libdd-common",
  "libdd-regex",
+ "libdd-weak-waker",
  "tokio",
  "tracing",
  "wasm-bindgen-futures",
@@ -3893,6 +3893,14 @@ dependencies = [
  "http 1.1.0",
  "wasm-bindgen-test",
  "zrip",
+]
+
+[[package]]
+name = "libdd-weak-waker"
+version = "0.1.0"
+dependencies = [
+ "futures",
+ "futures-util",
 ]
 
 [[package]]

@@ -1,9 +1,9 @@
 // Copyright 2026-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-//! Re-export of [`libdd_common::weak_waker::WeakWakerFuture`].
+//! Re-export of [`libdd_weak_waker::WeakWakerFuture`].
 
-pub(crate) use libdd_common::weak_waker::WeakWakerFuture;
+pub(crate) use libdd_weak_waker::WeakWakerFuture;
 
 #[cfg(test)]
 mod tests {

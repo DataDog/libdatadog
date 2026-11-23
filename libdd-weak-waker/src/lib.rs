@@ -1,6 +1,7 @@
 // Copyright 2026-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
-
+//! Future wrapper that holds the task waker weakly.
+//!
 //! # Goal
 //!
 //! This module solves a very specific problem.
@@ -31,6 +32,15 @@
 //! When the async runtime holding the task is dropped, the task will be dropped which
 //! will free the original waker, allowing the async runtime's scheduler to be dropped
 //! too.
+
+#![cfg_attr(not(test), no_std)]
+#![cfg_attr(not(test), deny(clippy::panic))]
+#![cfg_attr(not(test), deny(clippy::unwrap_used))]
+#![cfg_attr(not(test), deny(clippy::expect_used))]
+#![cfg_attr(not(test), deny(clippy::todo))]
+#![cfg_attr(not(test), deny(clippy::unimplemented))]
+
+extern crate alloc;
 
 use alloc::sync::Arc;
 use core::future::Future;
@@ -65,6 +75,9 @@ impl Drop for WeakWaker {
     }
 }
 
+/// Future wrapper that passes a weak waker to the inner future.
+///
+/// See the [crate-level documentation](crate) for details.
 pub struct WeakWakerFuture<F: Future> {
     fut: F,
     weak_waker: WeakWaker,
@@ -73,7 +86,7 @@ pub struct WeakWakerFuture<F: Future> {
 impl<F: Future> WeakWakerFuture<F> {
     /// Wrap a future so that the waker passed to it is held only weakly.
     ///
-    /// See the [module-level documentation](self) for details.
+    /// See the [crate-level documentation](crate) for details.
     #[must_use = "futures do nothing unless you `.await` or poll them"]
     pub fn new(fut: F) -> WeakWakerFuture<F> {
         WeakWakerFuture {

@@ -85,7 +85,7 @@ mod native {
     use http_body_util::BodyExt;
     use hyper::body::Incoming;
     use hyper_util::rt::TokioTimer;
-    use libdd_common::weak_waker::WeakWakerFuture;
+    use libdd_weak_waker::WeakWakerFuture;
     use pin_project::pin_project;
 
     /// Hyper executor that spawns tasks on the current tokio runtime and gives them a weak waker.
