@@ -3,7 +3,7 @@
 
 [package]
 name = "libdd-ai-usage-ffi"
-version = "0.1.0"
+version = "1.0.0"
 rust-version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -23,7 +23,7 @@ crate-type = ["lib", "staticlib", "cdylib"]
 bench = false
 
 [dependencies]
-libdd-ai-usage = { path = "../libdd-ai-usage", version = "0.1.0", default-features = false }
+libdd-ai-usage = { path = "../libdd-ai-usage", version = "1.0.0", default-features = false }
 serde_json = { workspace = true, features = ["std"] }
 
 [dev-dependencies]
