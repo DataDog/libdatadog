@@ -19,8 +19,8 @@ use core::mem::MaybeUninit;
 use core::ptr::NonNull;
 
 /// Inline storage. The buffer is minimally 8-aligned so we
-/// don't loose capacity when allocating pointers for instance.
-/// from an initally non aligned adress.
+/// don't lose capacity when allocating pointers for instance
+/// from an initially non-aligned address.
 #[repr(align(8))]
 struct AlignedStorage<const N: usize>([MaybeUninit<u8>; N]);
 

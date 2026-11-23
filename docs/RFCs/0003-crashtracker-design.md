@@ -230,7 +230,7 @@ Other options include
 
 - Using a daemonized sidecar.
   This is supported for PHP, but [still has gotchas in a containerized environment where process 1 is non reaping](https://github.com/DataDog/libdatadog/pull/696#discussion_r1819075313).
-- [Adding support for this to the agent](https://github.com/DataDog/libdatadog/pull/696#discussion_r1820226183), avoiding the need for a seperate process on the machine.
+- [Adding support for this to the agent](https://github.com/DataDog/libdatadog/pull/696#discussion_r1820226183), avoiding the need for a separate process on the machine.
 - [Forking the crashing process](https://github.com/DataDog/libdatadog/pull/696#discussion_r1819312104), and then directly use the forked process to collect and transmit the crash report, avoiding the need for a separate binary and IPC.
 
 ### Scrubbing potentially sensitive data
