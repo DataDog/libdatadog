@@ -12,15 +12,21 @@ use libdd_common::Endpoint;
 pub trait EndpointExt {
     /// Apply standard headers (user-agent, api-key, test-token) to an
     /// [`http::request::Builder`].
+    ///
+    /// Entity headers (`datadog-container-id`, `datadog-entity-id`, `datadog-external-env`) are
+    /// not added. Requests that need them chain
+    /// `libdd_host_identity::entity_id::EntityHeadersExt::with_entity_headers()`.
     fn set_standard_headers(
         &self,
         builder: http::request::Builder,
         user_agent: &str,
     ) -> http::request::Builder;
 
-    /// Return a request builder with the following headers:
+    /// Return a request builder for this endpoint's URL with the following headers:
     /// - User agent
-    /// - Api key
+    /// - Api key and test token, when set
+    ///
+    /// Entity headers are not added; see [`EndpointExt::set_standard_headers`].
     fn to_request_builder(&self, user_agent: &str) -> anyhow::Result<http::request::Builder>;
 
     /// Creates a reqwest ClientBuilder configured for this endpoint.
