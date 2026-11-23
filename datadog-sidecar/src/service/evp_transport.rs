@@ -544,6 +544,13 @@ impl EvpTransport {
         self.config == other.config && self.producer == other.producer
     }
 
+    pub(super) fn can_pack_within_scope(&self, other: &Self) -> bool {
+        match self.config.mode {
+            EvpTransportMode::AgentOnly => true,
+            EvpTransportMode::PreferLocalThenDirect => self.id == other.id,
+        }
+    }
+
     pub(super) fn scope_handle(&self) -> Arc<str> {
         self.deduplication_scope.clone()
     }

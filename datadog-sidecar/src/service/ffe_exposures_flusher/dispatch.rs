@@ -176,6 +176,7 @@ impl Lane {
             .iter()
             .map(|e| hashes.hash_one((&batch.context, &e.flag_key, &e.subject_id)));
         if let Some(tail) = self.queue.back_mut()
+            && tail.route.can_pack_within_scope(&route)
             && tail.batch.context == batch.context
             && tail.batch.exposures.len() + batch.exposures.len() <= HTTP_BATCH_ROWS
         {

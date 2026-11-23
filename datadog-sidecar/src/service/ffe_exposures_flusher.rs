@@ -498,6 +498,74 @@ mod tests {
     }
 
     #[test]
+    fn packed_rows_keep_their_session_route() {
+        use crate::service::evp_transport::{EvpProducerIdentity, EvpTransportConfig};
+
+        let endpoint = Endpoint {
+            url: "http://localhost:8080/".parse().unwrap(),
+            ..Endpoint::default()
+        };
+        let stateful = || {
+            EvpTransport::new_with_identity(
+                EvpTransportConfig::prefer_local_then_direct(
+                    endpoint.clone(),
+                    None,
+                    EVP_SUBDOMAIN_VALUE,
+                ),
+                EvpProducerIdentity::new("dd-trace-php", "1").unwrap(),
+            )
+            .unwrap()
+        };
+        let fixed = || EvpTransport::agent_only(endpoint.clone(), EVP_SUBDOMAIN_VALUE).unwrap();
+        let first = stateful();
+        let second = stateful();
+        let agent = fixed();
+        let (tx, rx) = mpsc::channel(5);
+        for (route, subject) in [
+            (first.clone(), "a"),
+            (first.clone(), "b"),
+            (second.clone(), "c"),
+            (agent.clone(), "d"),
+            (fixed(), "e"),
+        ] {
+            tx.try_send((
+                route,
+                FfeExposureBatch {
+                    context: context(),
+                    exposures: vec![exposure(subject, "alloc", "v")],
+                },
+                None,
+            ))
+            .unwrap();
+        }
+        drop(tx);
+
+        let writes = std::cell::RefCell::new(Vec::new());
+        tokio::runtime::Builder::new_current_thread()
+            .build()
+            .unwrap()
+            .block_on(dispatch::dispatch(rx, |route, batch| {
+                let subjects: Vec<_> = batch
+                    .exposures
+                    .into_iter()
+                    .map(|row| row.subject_id)
+                    .collect();
+                writes.borrow_mut().push((route, subjects));
+                future::ready(())
+            }));
+        let mut writes = writes.into_inner();
+        writes.sort_by(|a, b| a.1.cmp(&b.1));
+        assert_eq!(
+            writes,
+            [
+                (first, vec![String::from("a"), String::from("b")]),
+                (second, vec![String::from("c")]),
+                (agent, vec![String::from("d"), String::from("e")]),
+            ]
+        );
+    }
+
+    #[test]
     fn writer_releases_capacity_during_the_next_coalescing_window() {
         tokio::runtime::Builder::new_current_thread()
             .enable_time()
