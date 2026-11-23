@@ -8,10 +8,13 @@ use crate::CrashtrackerConfiguration;
 use crate::StacktraceCollection;
 use crate::crash_info::CrashInfo;
 use anyhow::Context;
+use std::fs::File;
+use std::os::fd::{AsFd, OwnedFd};
+use std::os::unix::{fs::FileTypeExt, net::UnixStream as StdUnixStream};
 use std::time::Duration;
 use tokio::{
     io::{AsyncBufReadExt, BufReader},
-    net::UnixListener,
+    net::{UnixListener, UnixStream, unix::pipe},
 };
 
 /*-----------------------------------------
@@ -19,17 +22,31 @@ use tokio::{
 ------------------------------------------*/
 
 pub fn receiver_entry_point_stdin() -> anyhow::Result<()> {
-    let stream = BufReader::new(tokio::io::stdin());
     let rt = tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()?;
-    // The crashing process started this receiver with its own privileges.
-    rt.block_on(receiver_entry_point(
-        receiver_timeout(),
-        stream,
-        ReceiverFileAccess::Trusted,
-    ))?;
-    Ok(())
+    rt.block_on(async {
+        let input = File::from(std::io::stdin().as_fd().try_clone_to_owned()?);
+        let kind = input.metadata()?.file_type();
+        let timeout = receiver_timeout();
+        let access = ReceiverFileAccess::Trusted;
+        if kind.is_socket() {
+            let socket = StdUnixStream::from(OwnedFd::from(input));
+            socket.set_nonblocking(true)?;
+            receiver_entry_point(
+                timeout,
+                BufReader::new(UnixStream::from_std(socket)?),
+                access,
+            )
+            .await
+        } else if kind.is_fifo() {
+            let pipe = pipe::Receiver::from_file(input)?;
+            receiver_entry_point(timeout, BufReader::new(pipe), access).await
+        } else {
+            drop(input);
+            receiver_entry_point(timeout, BufReader::new(tokio::io::stdin()), access).await
+        }
+    })
 }
 
 pub async fn async_receiver_entry_point_unix_listener(

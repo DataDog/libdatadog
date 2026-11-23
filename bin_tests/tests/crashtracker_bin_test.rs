@@ -707,7 +707,6 @@ fn wait_for_socket(path: &str, timeout: std::time::Duration) -> bool {
 
 /// Wait for a child process to exit within a timeout. If it doesn't exit in time,
 /// kill it and return the exit status.
-#[cfg(target_os = "linux")]
 fn wait_or_kill(child: &mut process::Child, timeout: std::time::Duration) -> process::ExitStatus {
     let deadline = std::time::Instant::now() + timeout;
     loop {
@@ -2282,6 +2281,41 @@ fn crash_tracking_empty_endpoint() {
     let _ = child.wait();
 }
 
+#[test]
+#[cfg_attr(miri, ignore)]
+fn test_receiver_exits_on_timeout_without_collector_input() -> anyhow::Result<()> {
+    use std::os::fd::OwnedFd;
+    use std::os::unix::net::UnixStream;
+    use std::time::Duration;
+
+    let receiver = artifacts::crashtracker_receiver(BuildProfile::Debug);
+    let artifacts = fetch_built_artifacts(&[&receiver])?;
+    let (collector_socket, receiver_socket) = UnixStream::pair()?;
+    let mut child = process::Command::new(&artifacts[&receiver])
+        .stdin(process::Stdio::from(OwnedFd::from(receiver_socket)))
+        .stderr(process::Stdio::piped())
+        .env("DD_CRASHTRACKER_RECEIVER_TIMEOUT_MS", "100")
+        .spawn()?;
+
+    let status = wait_or_kill(&mut child, Duration::from_secs(3));
+    drop(collector_socket);
+    assert!(
+        status.code().is_some(),
+        "receiver did not exit on its own before collector EOF: {status}"
+    );
+    let mut stderr = String::new();
+    child
+        .stderr
+        .take()
+        .context("receiver stderr missing")?
+        .read_to_string(&mut stderr)?;
+    assert!(
+        stderr.lines().any(|line| line.starts_with("Timeout:")),
+        "{stderr}"
+    );
+    Ok(())
+}
+
 /// Verifies graceful degradation: when the receiver's timeout fires before the collector
 /// sends all data, the receiver still uploads a partial crash report (incomplete=true)
 /// rather than silently discarding everything collected up to that point.
@@ -2289,7 +2323,7 @@ fn crash_tracking_empty_endpoint() {
 #[cfg_attr(miri, ignore)]
 #[cfg(unix)]
 fn test_receiver_uploads_partial_report_on_timeout() -> anyhow::Result<()> {
-    use libdd_crashtracker::ErrorKind;
+    use libdd_crashtracker::{ErrorKind, ProcInfo};
     use std::time::{Duration, Instant};
 
     let receiver = artifacts::crashtracker_receiver(BuildProfile::Debug);
@@ -2297,6 +2331,7 @@ fn test_receiver_uploads_partial_report_on_timeout() -> anyhow::Result<()> {
     let fixtures = bin_tests::test_runner::TestFixtures::new()?;
 
     let config = CrashtrackerConfiguration::builder()
+        .collect_all_threads(true)
         .create_alt_stack(true)
         .demangle_names(false)
         .resolve_frames(StacktraceCollection::WithoutSymbols)
@@ -2323,6 +2358,10 @@ fn test_receiver_uploads_partial_report_on_timeout() -> anyhow::Result<()> {
         si_code_human_readable: SiCodes::SEGV_MAPERR,
         si_signo: libc::SIGSEGV,
         si_signo_human_readable: SignalNames::SIGSEGV,
+    };
+    let proc_info = ProcInfo {
+        pid: process::id(),
+        tid: Some(process::id()),
     };
 
     let socket_path = fixtures.output_dir.join("trace_agent.socket");
@@ -2375,6 +2414,9 @@ fn test_receiver_uploads_partial_report_on_timeout() -> anyhow::Result<()> {
         "DD_CRASHTRACK_BEGIN_METADATA".to_string(),
         serde_json::to_string(&metadata)?,
         "DD_CRASHTRACK_END_METADATA".to_string(),
+        "DD_CRASHTRACK_BEGIN_PROCESSINFO".to_string(),
+        serde_json::to_string(&proc_info)?,
+        "DD_CRASHTRACK_END_PROCESSINFO".to_string(),
         "DD_CRASHTRACK_BEGIN_SIGINFO".to_string(),
         serde_json::to_string(&siginfo)?,
         "DD_CRASHTRACK_END_SIGINFO".to_string(),
@@ -2393,6 +2435,8 @@ fn test_receiver_uploads_partial_report_on_timeout() -> anyhow::Result<()> {
     let mut found_incomplete_report = false;
     let mut found_timeout_log = false;
     let mut found_crash_frame = false;
+    #[cfg(target_os = "linux")]
+    let mut found_incomplete_threads = false;
     let deadline = Instant::now() + Duration::from_secs(3);
 
     while Instant::now() < deadline {
@@ -2416,6 +2460,10 @@ fn test_receiver_uploads_partial_report_on_timeout() -> anyhow::Result<()> {
                 // indicates the report was cut short by the timeout.
                 if body.contains("is_crash:true") && body.contains("incomplete:true") {
                     found_incomplete_report = true;
+                    #[cfg(target_os = "linux")]
+                    {
+                        found_incomplete_threads = body.contains(",threads_incomplete:1,");
+                    }
                 }
                 if found_incomplete_report && found_timeout_log && found_crash_frame {
                     break;
@@ -2428,8 +2476,8 @@ fn test_receiver_uploads_partial_report_on_timeout() -> anyhow::Result<()> {
         }
     }
 
+    let status = wait_or_kill(&mut child, Duration::from_secs(3));
     drop(stdin);
-    let status = child.wait()?;
     assert!(
         status.success(),
         "receiver should exit cleanly after timeout; got: {status:?}"
@@ -2446,6 +2494,11 @@ fn test_receiver_uploads_partial_report_on_timeout() -> anyhow::Result<()> {
     assert!(
         found_timeout_log,
         "receiver should emit a receiver_issue:timeout debug telemetry log when read times out"
+    );
+    #[cfg(target_os = "linux")]
+    assert!(
+        found_incomplete_threads,
+        "receiver should mark thread collection incomplete"
     );
 
     Ok(())

@@ -39,6 +39,9 @@ pub enum EmitterError {
     AtomicSetError(#[from] crate::collector::atomic_set::AtomicSetError),
     #[error("Serialization error: {0}")]
     SerializationError(#[from] serde_json::Error),
+    #[cfg(all(target_os = "linux", feature = "otel-thread-ctx"))]
+    #[error(transparent)]
+    Ptrace(#[from] crate::ptrace_collector::PtraceError),
 }
 
 /// Crash-kind-specific data passed to `emit_crashreport`.
@@ -151,13 +154,19 @@ pub(crate) fn emit_crashreport(
 
     #[cfg(all(target_os = "linux", feature = "otel-thread-ctx"))]
     if config.collect_otel_thread_contexts() {
-        let _ = emit_otel_thread_contexts(
-            pipe,
-            ppid,
-            crashing_tid,
-            config.max_threads(),
-            threads_deadline,
-        );
+        let _ = std::thread::scope(|scope| {
+            std::thread::Builder::new()
+                .spawn_scoped(scope, || {
+                    emit_otel_thread_contexts(
+                        pipe,
+                        ppid,
+                        crashing_tid,
+                        config.max_threads(),
+                        threads_deadline,
+                    )
+                })
+                .map(|tracer| tracer.join())
+        });
     }
 
     writeln!(pipe, "{DD_CRASHTRACK_DONE}")?;
@@ -468,8 +477,7 @@ fn emit_threads<W: Write + Send>(
         crash_site_registers, parse_hex_address, stream_thread_contexts, thread_data_from_capture,
     };
 
-    let budget = deadline.saturating_duration_since(Instant::now());
-    if budget.is_zero() {
+    if Instant::now() >= deadline {
         return Ok(());
     }
 
@@ -534,7 +542,7 @@ fn emit_threads<W: Write + Send>(
                     ppid,
                     crashing_tid,
                     config.max_threads(),
-                    budget,
+                    deadline,
                     crashing_context
                         .as_ref()
                         .filter(|_| config.unwind_from_ucontext()),
@@ -1005,7 +1013,7 @@ fn emit_otel_thread_contexts(
 ) -> Result<(), EmitterError> {
     use crate::otel_tls_reader::{ProcMemReader, tls_module_info, validated_dtv_offset};
     use crate::ptrace_collector::{
-        attach_thread, detach_thread, enumerate_threads, read_thread_pointer,
+        PtraceError, attach_thread, detach_thread, enumerate_threads, read_thread_pointer,
     };
 
     let slot_addr = libdd_otel_thread_ctx::linux::tls_slot_address();
@@ -1014,6 +1022,11 @@ fn emit_otel_thread_contexts(
     }
 
     let stop_timeout = core::time::Duration::from_millis(100);
+    let attach = |tid| match attach_thread(tid, (Instant::now() + stop_timeout).min(deadline)) {
+        Ok(()) => Ok(true),
+        Err(PtraceError::Attach(..)) => Ok(false),
+        Err(error) => Err(error),
+    };
 
     // Read the collector's own TP for computing offsets.
     #[cfg(target_arch = "x86_64")]
@@ -1045,21 +1058,9 @@ fn emit_otel_thread_contexts(
         Some((info.modid, info.offset, dtv_off))
     });
 
-    // Fallback: single TP-relative offset from the crashing thread.
-    let tp_offset = if dtv_resolution.is_none() {
-        let stop_deadline = (Instant::now() + stop_timeout).min(deadline);
-        let Ok(()) = attach_thread(crashing_tid, stop_deadline) else {
-            return Ok(());
-        };
-        let crashing_tp = read_thread_pointer(crashing_tid);
-        let _ = detach_thread(crashing_tid);
-        let Ok(crashing_tp) = crashing_tp else {
-            return Ok(());
-        };
-        Some(slot_addr as i64 - crashing_tp as i64)
-    } else {
-        None
-    };
+    let tp_offset = dtv_resolution
+        .is_none()
+        .then(|| (slot_addr as i64).wrapping_sub(own_tp as i64));
 
     let Ok(tids) = enumerate_threads(ppid) else {
         return Ok(());
@@ -1076,65 +1077,54 @@ fn emit_otel_thread_contexts(
 
     // attach, resolve TLS, read record, detach, emit.
     let mut try_emit_otel = |tid: libc::pid_t| -> Result<bool, EmitterError> {
-        let stop_deadline = (Instant::now() + stop_timeout).min(deadline);
-        if attach_thread(tid, stop_deadline).is_err() {
+        if !attach(tid)? {
             return Ok(false);
         }
 
         // Keep the thread stopped while reading TP, resolving TLS, and reading
         // the record so it cannot resume and invalidate the addresses.
-        let emitted = (|| -> Result<bool, EmitterError> {
+        let record_len = (|| {
             let mem = match mem.as_mut() {
                 Some(m) => m,
                 None => match ProcMemReader::open(pid) {
                     Ok(m) => mem.insert(m),
-                    Err(_) => return Ok(false),
+                    Err(_) => return None,
                 },
             };
 
-            let tp = match read_thread_pointer(tid) {
-                Ok(tp) => tp,
-                Err(_) => return Ok(false),
-            };
+            let tp = read_thread_pointer(tid).ok()?;
 
             // Try DTV walk; fall back to TP-relative offset.
             let slot_addr = if let Some((modid, offset, dtv_off)) = dtv_resolution {
-                match mem.resolve_tls_addr(tp, dtv_off, modid, offset) {
-                    Ok(addr) => addr,
-                    Err(_) => return Ok(false),
-                }
-            } else if let Some(off) = tp_offset {
-                (tp as i64).wrapping_add(off) as u64
+                mem.resolve_tls_addr(tp, dtv_off, modid, offset).ok()?
             } else {
-                return Ok(false);
+                (tp as i64).wrapping_add(tp_offset?) as u64
             };
 
             let record_ptr = match mem.read_tls_slot(slot_addr) {
                 Ok(ptr) if ptr != 0 => ptr,
-                _ => return Ok(false),
+                _ => return None,
             };
-            let record_len = match mem.read_record(record_ptr, &mut record_buf) {
-                Ok(Some(n)) => n,
-                _ => return Ok(false),
-            };
-
-            writeln!(w, "{DD_CRASHTRACK_BEGIN_OTEL_THREAD_CTX} {tid}")?;
-            for byte in &record_buf[..record_len] {
-                write!(w, "{byte:02x}")?;
-            }
-            writeln!(w)?;
-            writeln!(w, "{DD_CRASHTRACK_END_OTEL_THREAD_CTX}")?;
-            w.flush()?;
-            Ok(true)
+            mem.read_record(record_ptr, &mut record_buf).ok().flatten()
         })();
 
-        let _ = detach_thread(tid);
-        emitted
+        detach_thread(tid)?;
+        let Some(record_len) = record_len else {
+            return Ok(false);
+        };
+        writeln!(w, "{DD_CRASHTRACK_BEGIN_OTEL_THREAD_CTX} {tid}")?;
+        for byte in &record_buf[..record_len] {
+            write!(w, "{byte:02x}")?;
+        }
+        writeln!(w)?;
+        writeln!(w, "{DD_CRASHTRACK_END_OTEL_THREAD_CTX}")?;
+        w.flush()?;
+        Ok(true)
     };
 
     // Process the crashing thread first so it is never dropped by the cap.
     if crashing_tid != 0 && tids.contains(&crashing_tid) {
-        let _ = try_emit_otel(crashing_tid);
+        try_emit_otel(crashing_tid)?;
     }
 
     for tid in tids {
@@ -1144,7 +1134,7 @@ fn emit_otel_thread_contexts(
         if Instant::now() >= deadline || processed >= max_threads {
             break;
         }
-        if matches!(try_emit_otel(tid), Ok(true)) {
+        if try_emit_otel(tid)? {
             processed += 1;
         }
     }

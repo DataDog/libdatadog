@@ -448,8 +448,7 @@ pub(crate) async fn receive_report_from_stream(
     let mut lines = stream.lines();
     // Start the absolute deadline immediately so a collector that never writes
     // cannot make the receiver wait forever
-    let absolute_deadline = Instant::now() + timeout;
-    let mut per_report_deadline: Option<Instant> = None;
+    let deadline = Instant::now() + timeout;
 
     //TODO: This assumes that the input is valid UTF-8.
     loop {
@@ -481,16 +480,7 @@ pub(crate) async fn receive_report_from_stream(
                 eprintln!("No config found, skipping crash ping");
             }
         }
-        // Use the tighter of the two deadlines: the absolute deadline (from
-        // connection accept) prevents infinite waits when the collector never
-        // writes; the per-report deadline (from first data) bounds report
-        // processing time.
-        let effective_deadline = match per_report_deadline {
-            Some(d) => d.min(absolute_deadline),
-            None => absolute_deadline,
-        };
-        let remaining_timeout = effective_deadline.saturating_duration_since(Instant::now());
-        let next_line = tokio::time::timeout(remaining_timeout, lines.next_line()).await;
+        let next_line = tokio::time::timeout_at(deadline.into(), lines.next_line()).await;
         let Ok(next_line) = next_line else {
             builder.with_log_message(format!("Timeout: {next_line:?}"), true)?;
             debug_logger.emit(
@@ -543,12 +533,6 @@ pub(crate) async fn receive_report_from_stream(
                 );
                 break;
             }
-        }
-
-        if per_report_deadline.is_none() {
-            // We've received the first message from the collector. Start the
-            // per-report clock so that slow report processing is also bounded.
-            per_report_deadline = Some(Instant::now() + timeout);
         }
     }
 
@@ -621,17 +605,12 @@ pub(crate) async fn receive_report_from_stream(
     {
         let parent_pid = proc_info.pid;
         let crashing_tid = proc_info.tid;
-        // If we never received a first line (per_report_deadline is None)
-        // use the absolute deadline; fall back to zero if that also passed.
-        let remaining_budget = per_report_deadline
-            .unwrap_or(absolute_deadline)
-            .saturating_duration_since(Instant::now());
         if let Err(e) = collect_and_add_thread_contexts(
             &mut builder,
             &config,
             parent_pid,
             crashing_tid,
-            remaining_budget,
+            deadline,
         ) {
             let _ =
                 builder.with_log_message(format!("Failed to collect thread contexts: {e}"), true);
@@ -706,9 +685,14 @@ fn collect_and_add_thread_contexts(
     config: &CrashtrackerConfiguration,
     parent_pid: u32,
     crashing_tid: Option<u32>,
-    budget: Duration,
+    deadline: Instant,
 ) -> anyhow::Result<()> {
     use crate::ptrace_collector::{stream_thread_contexts, thread_data_from_capture};
+
+    const THREADS_INCOMPLETE: &str = "threads_incomplete";
+    if Instant::now() >= deadline {
+        return builder.with_counter(THREADS_INCOMPLETE.to_string(), 1);
+    }
 
     let parent_pid = parent_pid as i32;
     let crashing_tid = crashing_tid.unwrap_or(0) as i32;
@@ -722,34 +706,56 @@ fn collect_and_add_thread_contexts(
     let mut crashing_stack = None;
     let collector_stack = builder.error.stack.as_ref();
 
-    let incomplete = stream_thread_contexts(
-        parent_pid,
-        crashing_tid,
-        config.max_threads(),
-        budget,
-        crashing_context.as_ref(),
-        |tid, captured| {
-            let used_saved_context = captured.as_ref().is_some_and(|ctx| ctx.used_saved_context);
-            let mut thread =
-                thread_data_from_capture(parent_pid, crashing_tid, crash_site, tid, captured);
-            if thread.crashed
-                && used_saved_context
-                && let Some(collector) = collector_stack
-            {
-                recover_collector_callers(&mut thread.stack, collector);
-            }
-            if thread.crashed
-                && should_promote_crashing_stack(config, used_saved_context)
-                && !thread.stack.frames.is_empty()
-            {
-                crashing_stack = Some(thread.stack.clone());
-            }
-            threads.push(thread);
-        },
-    )?;
+    let collection = std::thread::scope(|scope| {
+        let tracer = std::thread::Builder::new().spawn_scoped(scope, || {
+            stream_thread_contexts(
+                parent_pid,
+                crashing_tid,
+                config.max_threads(),
+                deadline,
+                crashing_context.as_ref(),
+                |tid, captured| {
+                    let used_saved_context =
+                        captured.as_ref().is_some_and(|ctx| ctx.used_saved_context);
+                    let mut thread = thread_data_from_capture(
+                        parent_pid,
+                        crashing_tid,
+                        crash_site,
+                        tid,
+                        captured,
+                    );
+                    if thread.crashed
+                        && used_saved_context
+                        && let Some(collector) = collector_stack
+                    {
+                        recover_collector_callers(&mut thread.stack, collector);
+                    }
+                    if thread.crashed
+                        && should_promote_crashing_stack(config, used_saved_context)
+                        && !thread.stack.frames.is_empty()
+                    {
+                        crashing_stack = Some(thread.stack.clone());
+                    }
+                    threads.push(thread);
+                },
+            )
+        })?;
+        tracer
+            .join()
+            .map_err(|_| anyhow::anyhow!("Thread context collector panicked"))
+    })?;
+
+    let incomplete = match collection {
+        Ok(incomplete) => incomplete,
+        Err(error) => {
+            builder
+                .with_log_message(format!("Failed to collect thread contexts: {error}"), true)?;
+            true
+        }
+    };
 
     if incomplete {
-        let _ = builder.with_counter("threads_incomplete".to_string(), 1);
+        builder.with_counter(THREADS_INCOMPLETE.to_string(), 1)?;
     }
     if let Some(stack) = crashing_stack {
         builder.with_stack(stack)?;
