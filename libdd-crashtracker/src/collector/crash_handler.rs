@@ -343,13 +343,13 @@ fn handle_posix_signal_impl(
 
     let receiver = Receiver::from_crashtracker_config(config)?;
 
-    // Fork-exec receivers (pid=None): the collector child does thread collection.
-    // Socket-based receivers (pid=Some, e.g. sidecar): the receiver does it.
+    // Socket-based receivers (pid=None, e.g. sidecar): the collector child does thread collection.
+    // Fork-exec receivers (pid=Some): the receiver does it.
     #[cfg(target_os = "linux")]
     let collector_threads = receiver.handle.pid.is_none() && config.collect_all_threads();
 
     // Grant ptrace permission to the receiver when it will handle thread
-    // collection (sidecar path). The collector child gets its own grant via
+    // collection (fork-exec path). The collector child gets its own grant via
     // the ptrace gate inside Collector::spawn.
     #[cfg(target_os = "linux")]
     if !collector_threads && config.collect_all_threads() && receiver.handle.pid.is_some() {

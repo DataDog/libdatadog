@@ -657,38 +657,6 @@ pub(crate) async fn receive_report_from_stream(
         }
     }
 
-    // When the collector sent threads but skipped ptracing the crashing thread
-    // (because it would deadlock), the crashing thread's stack is incomplete.
-    // Do a targeted ptrace of just the crashing thread to fill it in.
-    #[cfg(target_os = "linux")]
-    if config.collect_all_threads() && !access.is_restricted() && builder.error.threads.is_some() {
-        let enrich_info = builder
-            .proc_info
-            .as_ref()
-            .map(|pi| (pi.pid, pi.tid.unwrap_or(0) as i32));
-        let crashing_incomplete = builder
-            .error
-            .threads
-            .as_ref()
-            .and_then(|threads| threads.iter().find(|t| t.crashed))
-            .is_some_and(|t| t.stack.frames.is_empty() || t.stack.incomplete);
-        if let Some((parent_pid, crashing_tid)) = enrich_info
-            && crashing_incomplete
-            && crashing_tid != 0
-        {
-            let remaining_budget = per_report_deadline
-                .unwrap_or(absolute_deadline)
-                .saturating_duration_since(Instant::now());
-            enrich_crashing_thread_stack(
-                &mut builder,
-                &config,
-                parent_pid,
-                crashing_tid,
-                remaining_budget,
-            );
-        }
-    }
-
     let crash_info = builder.build()?;
 
     if crash_info.incomplete {
@@ -843,7 +811,9 @@ fn collect_and_add_thread_contexts(
                     parent_pid as u32,
                     &mut otel_record_buf,
                 );
-                if let Some(ctx) = ctx {
+                if let Some(mut ctx) = ctx {
+                    ctx.thread_name =
+                        crate::otel_tls_reader::read_thread_name(parent_pid as u32, tid);
                     otel_contexts.push(ctx);
                 }
             }
@@ -884,81 +854,6 @@ fn collect_and_add_thread_contexts(
     }
 
     Ok(())
-}
-
-/// Targeted ptrace of just the crashing thread when the collector sent threads
-/// but skipped ptracing the crashing thread (because it was in the signal handler).
-///
-/// Uses the builder's ucontext to seed libunwind at the actual crash site, then
-/// updates both the crashing thread entry in `builder.error.threads` and the
-/// primary stack.
-#[cfg(target_os = "linux")]
-fn enrich_crashing_thread_stack(
-    builder: &mut CrashInfoBuilder,
-    config: &CrashtrackerConfiguration,
-    parent_pid: u32,
-    crashing_tid: i32,
-    budget: Duration,
-) {
-    use crate::ptrace_collector::{
-        capture_with_retry, crash_site_registers, thread_data_from_capture,
-    };
-    use libdd_libunwind_sys::UnwAddrSpace;
-
-    if budget.is_zero() {
-        return;
-    }
-
-    let Some(addr_space) = UnwAddrSpace::new() else {
-        return;
-    };
-
-    let crashing_context = if config.unwind_from_ucontext() {
-        builder.ucontext.clone()
-    } else {
-        None
-    };
-
-    let overall_deadline = Instant::now() + budget;
-    let captured = capture_with_retry(
-        crashing_tid,
-        &addr_space,
-        overall_deadline,
-        crashing_context.as_ref(),
-    );
-
-    if captured.is_none() {
-        return;
-    }
-
-    let crash_site = builder.ucontext.as_ref().and_then(crash_site_registers);
-    let used_saved_context = captured.as_ref().is_some_and(|ctx| ctx.used_saved_context);
-    let parent_pid_i32 = parent_pid as i32;
-    let mut thread = thread_data_from_capture(
-        parent_pid_i32,
-        crashing_tid,
-        crash_site,
-        crashing_tid,
-        captured,
-    );
-
-    // Recover callers from the collector's stack if available
-    if used_saved_context && let Some(collector) = builder.error.stack.as_ref() {
-        recover_collector_callers(&mut thread.stack, collector);
-    }
-
-    // Update the crashing thread entry
-    if let Some(threads) = builder.error.threads.as_mut()
-        && let Some(existing) = threads.iter_mut().find(|t| t.crashed)
-    {
-        existing.stack = thread.stack.clone();
-    }
-
-    // Promote the stack if appropriate
-    if should_promote_crashing_stack(config, used_saved_context) && !thread.stack.frames.is_empty()
-    {
-        let _ = builder.with_stack(thread.stack);
-    }
 }
 
 /// Decode a hex-encoded 640-byte OTel record into an `OtelThreadContext`.
