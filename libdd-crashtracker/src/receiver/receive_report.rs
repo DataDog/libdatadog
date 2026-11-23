@@ -110,6 +110,8 @@ pub(crate) enum StdinState {
     /// A single OTel thread context record. The tid comes from the begin
     /// marker; the hex-encoded 640-byte record is on the next line.
     OtelThreadCtx(i32),
+    /// OTel TLS resolution data (DTV walk parameters and/or TP-relative offset).
+    OtelTlsResolution,
 }
 
 /// A state machine that processes data from the crash-tracker collector line by
@@ -376,6 +378,23 @@ fn process_line(
         StdinState::Waiting if line.starts_with(DD_CRASHTRACK_BEGIN_WHOLE_STACKTRACE) => {
             StdinState::WholeStackTrace
         }
+        StdinState::OtelTlsResolution
+            if line.starts_with(DD_CRASHTRACK_END_OTEL_TLS_RESOLUTION) =>
+        {
+            StdinState::Waiting
+        }
+        StdinState::OtelTlsResolution => {
+            #[cfg(all(target_os = "linux", feature = "otel-thread-ctx"))]
+            if let Ok(resolution) =
+                serde_json::from_str::<crate::otel_tls_reader::OtelTlsResolution>(line)
+            {
+                builder.otel_tls_resolution = Some(resolution);
+            }
+            StdinState::OtelTlsResolution
+        }
+        StdinState::Waiting if line.starts_with(DD_CRASHTRACK_BEGIN_OTEL_TLS_RESOLUTION) => {
+            StdinState::OtelTlsResolution
+        }
         StdinState::Waiting if line.starts_with(DD_CRASHTRACK_BEGIN_OTEL_THREAD_CTX) => {
             // "DD_CRASHTRACK_BEGIN_OTEL_THREAD_CTX <tid>"
             let tid = line
@@ -638,6 +657,38 @@ pub(crate) async fn receive_report_from_stream(
         }
     }
 
+    // When the collector sent threads but skipped ptracing the crashing thread
+    // (because it would deadlock), the crashing thread's stack is incomplete.
+    // Do a targeted ptrace of just the crashing thread to fill it in.
+    #[cfg(target_os = "linux")]
+    if config.collect_all_threads() && !access.is_restricted() && builder.error.threads.is_some() {
+        let enrich_info = builder
+            .proc_info
+            .as_ref()
+            .map(|pi| (pi.pid, pi.tid.unwrap_or(0) as i32));
+        let crashing_incomplete = builder
+            .error
+            .threads
+            .as_ref()
+            .and_then(|threads| threads.iter().find(|t| t.crashed))
+            .is_some_and(|t| t.stack.frames.is_empty() || t.stack.incomplete);
+        if let Some((parent_pid, crashing_tid)) = enrich_info
+            && crashing_incomplete
+            && crashing_tid != 0
+        {
+            let remaining_budget = per_report_deadline
+                .unwrap_or(absolute_deadline)
+                .saturating_duration_since(Instant::now());
+            enrich_crashing_thread_stack(
+                &mut builder,
+                &config,
+                parent_pid,
+                crashing_tid,
+                remaining_budget,
+            );
+        }
+    }
+
     let crash_info = builder.build()?;
 
     if crash_info.incomplete {
@@ -700,6 +751,38 @@ fn attach_additional_files(
     Ok(())
 }
 
+/// Try to read a single thread's OTel context using the saved thread pointer and
+/// resolution data, via `/proc/<pid>/mem`. Returns `None` on any failure.
+#[cfg(all(target_os = "linux", feature = "otel-thread-ctx"))]
+fn try_read_otel_context(
+    tid: libc::pid_t,
+    thread_pointer: Option<u64>,
+    resolution: Option<&crate::otel_tls_reader::OtelTlsResolution>,
+    mem: &mut Option<crate::otel_tls_reader::ProcMemReader>,
+    pid: u32,
+    record_buf: &mut [u8; 640],
+) -> Option<crate::crash_info::OtelThreadContext> {
+    let tp = thread_pointer?;
+    let resolution = resolution?;
+    let mem = match mem.as_mut() {
+        Some(m) => m,
+        None => mem.insert(crate::otel_tls_reader::ProcMemReader::open(pid).ok()?),
+    };
+    let slot_addr = if let Some(ref dtv) = resolution.dtv {
+        mem.resolve_tls_addr(tp, dtv.dtv_offset, dtv.modid, dtv.offset)
+            .ok()?
+    } else {
+        let off = resolution.tp_offset?;
+        (tp as i64).wrapping_add(off) as u64
+    };
+    let record_ptr = mem.read_tls_slot(slot_addr).ok()?;
+    if record_ptr == 0 {
+        return None;
+    }
+    let len = mem.read_record(record_ptr, record_buf).ok()??;
+    crate::otel_tls_reader::decode_record(tid, &record_buf[..len])
+}
+
 #[cfg(target_os = "linux")]
 fn collect_and_add_thread_contexts(
     builder: &mut CrashInfoBuilder,
@@ -722,13 +805,49 @@ fn collect_and_add_thread_contexts(
     let mut crashing_stack = None;
     let collector_stack = builder.error.stack.as_ref();
 
+    // Set up OTel TLS resolution data and ProcMemReader for single-pass collection.
+    // The resolution data was sent by the collector and parsed from the protocol.
+    // We read the OTel record from /proc/<pid>/mem using the saved thread pointer
+    // (captured during the same ptrace attachment as the stack), so no second
+    // ptrace pass is needed.
+    #[cfg(feature = "otel-thread-ctx")]
+    let otel_resolution = builder.otel_tls_resolution.as_ref();
+    #[cfg(feature = "otel-thread-ctx")]
+    let mut otel_mem: Option<crate::otel_tls_reader::ProcMemReader> = None;
+    #[cfg(feature = "otel-thread-ctx")]
+    let mut otel_record_buf = [0u8; 640];
+    #[cfg(feature = "otel-thread-ctx")]
+    let mut otel_contexts: Vec<crate::crash_info::OtelThreadContext> = Vec::new();
+    #[cfg(feature = "otel-thread-ctx")]
+    let collect_otel = config.collect_otel_thread_contexts() && otel_resolution.is_some();
+
     let incomplete = stream_thread_contexts(
         parent_pid,
         crashing_tid,
         config.max_threads(),
         budget,
         crashing_context.as_ref(),
+        false, // skip_crashing_ptrace: receiver ptraces all threads including crashing
         |tid, captured| {
+            // Single-pass OTel: use the saved thread pointer to read the OTel TLS
+            // record via /proc/<pid>/mem (no ptrace needed -- the thread is already
+            // detached by the time the callback runs, but /proc/<pid>/mem is
+            // readable for same-uid processes).
+            #[cfg(feature = "otel-thread-ctx")]
+            if collect_otel {
+                let ctx = try_read_otel_context(
+                    tid,
+                    captured.as_ref().and_then(|ctx| ctx.thread_pointer),
+                    otel_resolution,
+                    &mut otel_mem,
+                    parent_pid as u32,
+                    &mut otel_record_buf,
+                );
+                if let Some(ctx) = ctx {
+                    otel_contexts.push(ctx);
+                }
+            }
+
             let used_saved_context = captured.as_ref().is_some_and(|ctx| ctx.used_saved_context);
             let mut thread =
                 thread_data_from_capture(parent_pid, crashing_tid, crash_site, tid, captured);
@@ -755,7 +874,91 @@ fn collect_and_add_thread_contexts(
         builder.with_stack(stack)?;
     }
     let _ = builder.with_threads(threads);
+
+    #[cfg(feature = "otel-thread-ctx")]
+    if !otel_contexts.is_empty() {
+        builder
+            .otel_thread_contexts
+            .get_or_insert_with(Vec::new)
+            .extend(otel_contexts);
+    }
+
     Ok(())
+}
+
+/// Targeted ptrace of just the crashing thread when the collector sent threads
+/// but skipped ptracing the crashing thread (because it was in the signal handler).
+///
+/// Uses the builder's ucontext to seed libunwind at the actual crash site, then
+/// updates both the crashing thread entry in `builder.error.threads` and the
+/// primary stack.
+#[cfg(target_os = "linux")]
+fn enrich_crashing_thread_stack(
+    builder: &mut CrashInfoBuilder,
+    config: &CrashtrackerConfiguration,
+    parent_pid: u32,
+    crashing_tid: i32,
+    budget: Duration,
+) {
+    use crate::ptrace_collector::{
+        capture_with_retry, crash_site_registers, thread_data_from_capture,
+    };
+    use libdd_libunwind_sys::UnwAddrSpace;
+
+    if budget.is_zero() {
+        return;
+    }
+
+    let Some(addr_space) = UnwAddrSpace::new() else {
+        return;
+    };
+
+    let crashing_context = if config.unwind_from_ucontext() {
+        builder.ucontext.clone()
+    } else {
+        None
+    };
+
+    let overall_deadline = Instant::now() + budget;
+    let captured = capture_with_retry(
+        crashing_tid,
+        &addr_space,
+        overall_deadline,
+        crashing_context.as_ref(),
+    );
+
+    if captured.is_none() {
+        return;
+    }
+
+    let crash_site = builder.ucontext.as_ref().and_then(crash_site_registers);
+    let used_saved_context = captured.as_ref().is_some_and(|ctx| ctx.used_saved_context);
+    let parent_pid_i32 = parent_pid as i32;
+    let mut thread = thread_data_from_capture(
+        parent_pid_i32,
+        crashing_tid,
+        crash_site,
+        crashing_tid,
+        captured,
+    );
+
+    // Recover callers from the collector's stack if available
+    if used_saved_context && let Some(collector) = builder.error.stack.as_ref() {
+        recover_collector_callers(&mut thread.stack, collector);
+    }
+
+    // Update the crashing thread entry
+    if let Some(threads) = builder.error.threads.as_mut()
+        && let Some(existing) = threads.iter_mut().find(|t| t.crashed)
+    {
+        existing.stack = thread.stack.clone();
+    }
+
+    // Promote the stack if appropriate
+    if should_promote_crashing_stack(config, used_saved_context) && !thread.stack.frames.is_empty()
+    {
+        let _ = builder.with_stack(thread.stack);
+    }
 }
 
 /// Decode a hex-encoded 640-byte OTel record into an `OtelThreadContext`.

@@ -174,6 +174,22 @@ impl ProcMemReader {
     }
 }
 
+/// Serializable resolution data for the receiver to resolve OTel TLS addresses
+/// from thread pointers without needing a second ptrace pass.
+#[derive(Debug, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct OtelTlsResolution {
+    pub dtv: Option<DtvResolution>,
+    pub tp_offset: Option<i64>,
+}
+
+/// DTV-based resolution parameters.
+#[derive(Debug, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct DtvResolution {
+    pub modid: usize,
+    pub offset: usize,
+    pub dtv_offset: isize,
+}
+
 /// TLS module metadata discovered via `dl_iterate_phdr`.
 pub(crate) struct TlsModuleInfo {
     /// TLS module ID (index into the DTV).

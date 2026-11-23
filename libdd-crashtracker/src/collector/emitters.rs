@@ -76,6 +76,7 @@ pub(crate) fn emit_crashreport(
     ppid: i32,
     crashing_tid: libc::pid_t,
     #[cfg_attr(not(target_os = "linux"), allow(unused_variables))] threads_deadline: Instant,
+    #[cfg_attr(not(target_os = "linux"), allow(unused_variables))] collector_threads: bool,
 ) -> Result<(), EmitterError> {
     // Crash-ping
     // The receiver dispatches the crash ping as soon as it sees the metadata
@@ -137,7 +138,7 @@ pub(crate) fn emit_crashreport(
 
     // Send the basic report first so a failed unwind cannot lose it.
     #[cfg(target_os = "linux")]
-    if config.collect_all_threads() {
+    if collector_threads {
         let _ = emit_threads(
             pipe,
             config,
@@ -149,8 +150,19 @@ pub(crate) fn emit_crashreport(
         );
     }
 
+    // Always emit the OTel TLS resolution data when available, so the receiver
+    // can resolve OTel contexts from thread pointers captured during the single
+    // ptrace pass (no second ptrace needed).
     #[cfg(all(target_os = "linux", feature = "otel-thread-ctx"))]
     if config.collect_otel_thread_contexts() {
+        let _ = emit_otel_tls_resolution(pipe);
+    }
+
+    // The collector only does its own otel ptrace pass when it is already doing
+    // thread collection (single-pass: TP is captured alongside the stack).
+    // When collector_threads is false, the receiver will handle otel collection.
+    #[cfg(all(target_os = "linux", feature = "otel-thread-ctx"))]
+    if collector_threads && config.collect_otel_thread_contexts() {
         let _ = emit_otel_thread_contexts(
             pipe,
             ppid,
@@ -538,6 +550,7 @@ fn emit_threads<W: Write + Send>(
                     crashing_context
                         .as_ref()
                         .filter(|_| config.unwind_from_ucontext()),
+                    true, // skip_crashing_ptrace: the crashing thread is in the signal handler
                     |tid, captured| {
                         if write_result.is_ok() {
                             write_result = emit(tid, captured);
@@ -977,6 +990,59 @@ fn emit_text_file(w: &mut impl Write, path: &str) -> Result<(), EmitterError> {
         }
     }
     writeln!(w, "\n{DD_CRASHTRACK_END_FILE} \"{path}\"")?;
+    w.flush()?;
+    Ok(())
+}
+
+/// Emit the OTel TLS resolution data (DTV walk parameters and/or TP-relative offset)
+/// so the receiver can resolve OTel TLS addresses from saved thread pointers without
+/// a second ptrace pass.
+#[cfg(all(target_os = "linux", feature = "otel-thread-ctx"))]
+fn emit_otel_tls_resolution(w: &mut impl Write) -> Result<(), EmitterError> {
+    use crate::otel_tls_reader::{
+        DtvResolution, OtelTlsResolution, tls_module_info, validated_dtv_offset,
+    };
+
+    let slot_addr = libdd_otel_thread_ctx::linux::tls_slot_address();
+    if slot_addr == 0 {
+        return Ok(()); // Symbol not linked.
+    }
+
+    // Read our own TP for computing offsets.
+    #[cfg(target_arch = "x86_64")]
+    let own_tp: u64 = unsafe {
+        let tp: u64;
+        core::arch::asm!("movq %fs:0, {}", out(reg) tp, options(att_syntax, nomem, nostack));
+        tp
+    };
+    #[cfg(target_arch = "aarch64")]
+    let own_tp: u64 = unsafe {
+        let tp: u64;
+        core::arch::asm!("mrs {}, tpidr_el0", out(reg) tp, options(nomem, nostack));
+        tp
+    };
+
+    let dtv = tls_module_info().and_then(|info| {
+        let dtv_off = validated_dtv_offset(own_tp, info.modid, info.tls_block_base)?;
+        Some(DtvResolution {
+            modid: info.modid,
+            offset: info.offset,
+            dtv_offset: dtv_off,
+        })
+    });
+
+    let tp_offset = if dtv.is_none() {
+        Some(slot_addr as i64 - own_tp as i64)
+    } else {
+        None
+    };
+
+    let resolution = OtelTlsResolution { dtv, tp_offset };
+
+    writeln!(w, "{DD_CRASHTRACK_BEGIN_OTEL_TLS_RESOLUTION}")?;
+    serde_json::to_writer(&mut *w, &resolution)?;
+    writeln!(w)?;
+    writeln!(w, "{DD_CRASHTRACK_END_OTEL_TLS_RESOLUTION}")?;
     w.flush()?;
     Ok(())
 }

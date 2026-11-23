@@ -32,6 +32,9 @@ pub struct CapturedThreadContext {
     pub stack_trace: StackTrace,
     /// Whether the unwind started from the saved crash registers.
     pub used_saved_context: bool,
+    /// The thread pointer register read while the thread was ptrace-stopped.
+    /// Set only when the `otel-thread-ctx` feature is enabled.
+    pub thread_pointer: Option<u64>,
 }
 
 #[derive(Debug)]
@@ -493,6 +496,13 @@ pub fn capture_thread_context(
 ) -> Result<CapturedThreadContext, PtraceError> {
     attach_thread(tid, stop_deadline)?;
 
+    // Read the thread pointer while the thread is still ptrace-stopped.
+    // The receiver uses it to resolve OTel TLS addresses without a second ptrace pass.
+    #[cfg(feature = "otel-thread-ctx")]
+    let thread_pointer = read_thread_pointer(tid).ok();
+    #[cfg(not(feature = "otel-thread-ctx"))]
+    let thread_pointer = None;
+
     // A failed seed leaves the thread's registers untouched, so fall back to
     // unwinding from where the thread is stopped rather than losing its stack.
     let mut original_registers =
@@ -513,6 +523,7 @@ pub fn capture_thread_context(
     Ok(CapturedThreadContext {
         stack_trace,
         used_saved_context,
+        thread_pointer,
     })
 }
 
@@ -546,7 +557,7 @@ fn is_transient_ptrace_error(err: &PtraceError) -> bool {
 /// A capture that succeeds but produces zero frames is also retried: on a
 /// running thread with a confirmed non-zero IP, empty frames indicates a
 /// transient issue.
-fn capture_with_retry(
+pub(crate) fn capture_with_retry(
     tid: libc::pid_t,
     addr_space: &UnwAddrSpace,
     overall_deadline: Instant,
@@ -583,12 +594,18 @@ fn capture_with_retry(
 /// The callback owns each capture, or receives None if attachment or unwinding failed.
 /// Each stop also has a STOP_TIMEOUT_PER_THREAD limit. Returns true if threads were left
 /// unvisited.
+///
+/// When `skip_crashing_ptrace` is true, the crashing thread is emitted with `None`
+/// capture instead of being ptraced. This is used in the collector child where the
+/// crashing thread is the parent process's signal handler thread -- ptracing it
+/// would deadlock because it is waiting for the collector to finish.
 pub(crate) fn stream_thread_contexts<F>(
     parent_pid: libc::pid_t,
     crashing_tid: libc::pid_t,
     max_threads: usize,
     timeout: Duration,
     crashing_context: Option<&Ucontext>,
+    skip_crashing_ptrace: bool,
     mut callback: F,
 ) -> Result<bool, PtraceError>
 where
@@ -609,13 +626,17 @@ where
 
     // Process the crashing thread first so it is never dropped by the cap.
     if crashing_tid != 0 && tids.contains(&crashing_tid) {
-        let context = capture_with_retry(
-            crashing_tid,
-            &addr_space,
-            overall_deadline,
-            crashing_context,
-        );
-        callback(crashing_tid, context);
+        if skip_crashing_ptrace {
+            callback(crashing_tid, None);
+        } else {
+            let context = capture_with_retry(
+                crashing_tid,
+                &addr_space,
+                overall_deadline,
+                crashing_context,
+            );
+            callback(crashing_tid, context);
+        }
         processed += 1;
     }
 
@@ -833,6 +854,7 @@ mod tests {
             2,
             Duration::from_secs(5),
             None,
+            false,
             |_tid, _ctx| collected += 1,
         );
 
@@ -866,6 +888,7 @@ mod tests {
             64,
             Duration::from_secs(5),
             None,
+            false,
             |tid, _ctx| {
                 if tid == worker_tid {
                     seen_worker = true;

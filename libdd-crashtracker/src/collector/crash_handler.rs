@@ -343,14 +343,21 @@ fn handle_posix_signal_impl(
 
     let receiver = Receiver::from_crashtracker_config(config)?;
 
-    // Enable ptrace permissions for receiver if multi-thread collection is enabled.
-    // For fork/exec receivers, we have the child PID directly (trusted: we spawned it).
-    // For socket-based receivers (PHP sidecar), verify the peer PID matches the
-    // expected receiver PID that was registered during trusted initialization
+    // Fork-exec receivers (pid=None): the collector child does thread collection.
+    // Socket-based receivers (pid=Some, e.g. sidecar): the receiver does it.
     #[cfg(target_os = "linux")]
-    if config.collect_all_threads() {
+    let collector_threads = receiver.handle.pid.is_none() && config.collect_all_threads();
+
+    // Grant ptrace permission to the receiver when it will handle thread
+    // collection (sidecar path). The collector child gets its own grant via
+    // the ptrace gate inside Collector::spawn.
+    #[cfg(target_os = "linux")]
+    if !collector_threads && config.collect_all_threads() && receiver.handle.pid.is_some() {
         grant_ptracer_permission(&receiver);
     }
+
+    #[cfg(not(target_os = "linux"))]
+    let collector_threads = false;
 
     collect_and_finish(
         receiver,
@@ -360,9 +367,11 @@ fn handle_posix_signal_impl(
         message,
         CrashKindData::UnixSignal { sig_info, ucontext },
         &timeout_manager,
+        collector_threads,
     )
 }
 
+#[allow(clippy::too_many_arguments)]
 fn collect_and_finish(
     receiver: Receiver,
     config: &CrashtrackerConfiguration,
@@ -371,6 +380,7 @@ fn collect_and_finish(
     message: Option<&str>,
     crash: CrashKindData,
     timeout_manager: &TimeoutManager,
+    collector_threads: bool,
 ) -> Result<(), CrashHandlerError> {
     let collector = Collector::spawn(
         &receiver,
@@ -380,9 +390,17 @@ fn collect_and_finish(
         message,
         crash,
         std::time::Instant::now() + timeout_manager.remaining(),
+        collector_threads,
     )?;
     collector.finish(timeout_manager);
     receiver.finish(timeout_manager);
+
+    // Revoke ptrace permission now that both collector and receiver are done.
+    #[cfg(target_os = "linux")]
+    unsafe {
+        libc::prctl(libc::PR_SET_PTRACER, 0 as libc::c_ulong);
+    }
+
     Ok(())
 }
 
@@ -510,9 +528,15 @@ pub fn report_unhandled_exception(
     let receiver = Receiver::from_crashtracker_config(&config)?;
 
     #[cfg(target_os = "linux")]
-    if config.collect_all_threads() {
+    let collector_threads = receiver.handle.pid.is_none() && config.collect_all_threads();
+
+    #[cfg(target_os = "linux")]
+    if !collector_threads && config.collect_all_threads() && receiver.handle.pid.is_some() {
         grant_ptracer_permission(&receiver);
     }
+
+    #[cfg(not(target_os = "linux"))]
+    let collector_threads = false;
 
     let timeout_manager = TimeoutManager::new(config.timeout());
 
@@ -544,6 +568,7 @@ pub fn report_unhandled_exception(
         Some(message.as_str()),
         CrashKindData::UnhandledException { stacktrace },
         &timeout_manager,
+        collector_threads,
     )
 }
 #[cfg(test)]
