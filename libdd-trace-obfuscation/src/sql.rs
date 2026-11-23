@@ -107,23 +107,47 @@ fn find_quoted_string_end(bytes: &[u8], start: usize) -> Option<usize> {
     short_end
 }
 
-/// Find the end of a dollar-quoted string $tag$...$tag$
-/// Returns (`inner_start`, `inner_end`, `outer_end`) or None if not a valid dollar quote
-fn find_dollar_quote_end(bytes: &[u8], start: usize) -> Option<(usize, usize, usize)> {
+/// Whether `tag` (the text between the `$`s) is a valid `PostgreSQL` dollar-quote tag: empty, or a
+/// letter (including non-ASCII) or `_` followed by letters, digits or `_`. See
+/// <https://www.postgresql.org/docs/current/sql-syntax-lexical.html#SQL-SYNTAX-DOLLAR-QUOTING>.
+fn is_postgres_dollar_tag(tag: &[u8]) -> bool {
+    match tag.split_first() {
+        None => true,
+        Some((&first, rest)) => {
+            is_ident_start(first)
+                && rest
+                    .iter()
+                    .all(|&b| b.is_ascii_alphanumeric() || b == b'_' || b > 127)
+        }
+    }
+}
+
+/// What [`find_dollar_quote_end`] found at a `$`.
+enum DollarQuote {
+    /// No opening tag here, so this `$` does not start a dollar-quoted string.
+    NotAQuote,
+    /// A valid opening tag with no matching closing tag: the string runs to the end of the input.
+    Unterminated,
+    /// A complete `$tag$...$tag$`: (`inner_start`, `inner_end`, `outer_end`).
+    Terminated(usize, usize, usize),
+}
+
+/// Find the end of a dollar-quoted string `$tag$...$tag$` starting at `start`.
+fn find_dollar_quote_end(bytes: &[u8], start: usize) -> DollarQuote {
     let n = bytes.len();
     if start >= n || bytes[start] != b'$' {
-        return None;
+        return DollarQuote::NotAQuote;
     }
     // Collect the tag: $<tag>$ — Go allows spaces and other chars in tags
     let mut tag_end = start + 1;
     while tag_end < n && bytes[tag_end] != b'$' {
         if bytes[tag_end] == b'\n' {
-            return None; // tags don't span lines
+            return DollarQuote::NotAQuote; // tags don't span lines
         }
         tag_end += 1;
     }
     if tag_end >= n {
-        return None;
+        return DollarQuote::NotAQuote;
     }
     // tag is bytes[start..=tag_end], e.g. $func$ or $$
     let tag = &bytes[start..=tag_end];
@@ -133,11 +157,18 @@ fn find_dollar_quote_end(bytes: &[u8], start: usize) -> Option<(usize, usize, us
     let mut i = inner_start;
     while i + tag.len() <= n {
         if bytes[i] == b'$' && bytes[i..].starts_with(tag) {
-            return Some((inner_start, i, i + tag.len()));
+            return DollarQuote::Terminated(inner_start, i, i + tag.len());
         }
         i += 1;
     }
-    None
+    // No closing tag. A tag PostgreSQL accepts opens a string that runs to the end of the input
+    // (e.g. a truncated query), so it must not be emitted. Anything else, such as `$foo, bar$`, is
+    // not a dollar quote, and falls back to identifiers.
+    if is_postgres_dollar_tag(&tag[1..tag.len() - 1]) {
+        DollarQuote::Unterminated
+    } else {
+        DollarQuote::NotAQuote
+    }
 }
 
 /// Maximum recursion depth for nested dollar-quoted strings (`$tag$...$tag$`).
@@ -985,12 +1016,11 @@ impl<'a> Tokenizer<'a> {
                             }
                         }
                         // Dollar-quoted string: $tag$...$tag$ or $$...$$
-                        _ if next == Some(b'$')
-                            || next.is_some_and(|c| c.is_ascii_alphabetic() || c == b'_') =>
-                        {
+                        _ if next == Some(b'$') || next.is_some_and(is_ident_start) => {
                             let start = self.pos;
-                            if let Some((inner_start, inner_end, outer_end)) =
-                                find_dollar_quote_end(self.bytes, start)
+                            let quote = find_dollar_quote_end(self.bytes, start);
+                            if let DollarQuote::Terminated(inner_start, inner_end, outer_end) =
+                                quote
                             {
                                 if self.maybe_consume_alias_next() {
                                     self.pos = outer_end;
@@ -1044,6 +1074,18 @@ impl<'a> Tokenizer<'a> {
                                     self.emit_placeholder();
                                 }
                                 self.pos = outer_end;
+                            } else if matches!(quote, DollarQuote::Unterminated) {
+                                // No closing tag (e.g. a truncated query): like an unterminated
+                                // '...' string, the literal runs to the end of the input.
+                                self.pos = self.bytes.len();
+                                if self.maybe_consume_alias_next() {
+                                    continue;
+                                }
+                                if self.is_normalize_only() {
+                                    self.emit(&self.s[start..]);
+                                } else {
+                                    self.emit_placeholder();
+                                }
                             } else {
                                 // Not a valid dollar quote, check if it's an identifier starting
                                 // with $
@@ -2452,6 +2494,197 @@ mod tests {
             !got.contains(secret),
             "obfuscated SQL must not contain the nested literal: {got:?}"
         );
+    }
+
+    /// `(name, config)` pairs covering the obfuscating modes that handle dollar-quoted strings.
+    fn dollar_quote_configs() -> [(&'static str, SqlConfig); 3] {
+        [
+            ("default", SqlConfig::default()),
+            (
+                "dollar_quoted_func",
+                SqlConfig {
+                    dollar_quoted_func: true,
+                    ..Default::default()
+                },
+            ),
+            (
+                "obfuscate_and_normalize",
+                SqlConfig {
+                    obfuscation_mode: SqlObfuscationMode::ObfuscateAndNormalize,
+                    ..Default::default()
+                },
+            ),
+        ]
+    }
+
+    /// Checks each `(input, [default, dollar_quoted_func, obfuscate_and_normalize])` case against
+    /// [`dollar_quote_configs`] for `PostgreSQL`, reporting every mismatch at once.
+    fn check_dollar_quote_cases(cases: &[(&str, [&str; 3])]) {
+        let mut errors = String::new();
+        for (input, expected) in cases {
+            for ((name, config), expected) in dollar_quote_configs().iter().zip(expected) {
+                let got = obfuscate_sql(input, config, DbmsKind::Postgresql);
+                if got.as_deref() != Ok(*expected) {
+                    let _ = writeln!(
+                        errors,
+                        "{name}: {input:?}\n  expected {expected:?}\n  got      {got:?}"
+                    );
+                }
+            }
+        }
+        assert!(errors.is_empty(), "{errors}");
+    }
+
+    /// A dollar-quoted string with no matching closing tag (for example a truncated query) is
+    /// replaced up to the end of the input, as an unterminated `'...'` string is, so its contents
+    /// never reach the output.
+    #[test]
+    fn test_unterminated_dollar_quote_does_not_leak_literal() {
+        check_dollar_quote_cases(&[
+            ("SELECT $tag$secret", ["SELECT ?", "SELECT ?", "SELECT ?"]),
+            (
+                "SELECT $tag$secret$other$",
+                ["SELECT ?", "SELECT ?", "SELECT ?"],
+            ),
+            (
+                "SELECT * FROM t WHERE a = $$secret' AND b = 1",
+                [
+                    "SELECT * FROM t WHERE a = ?",
+                    "SELECT * FROM t WHERE a = ?",
+                    "SELECT * FROM t WHERE a = ?",
+                ],
+            ),
+            ("SELECT $$", ["SELECT ?", "SELECT ?", "SELECT ?"]),
+        ]);
+    }
+
+    /// A dollar-quote tag may start with a non-ASCII letter, as a `PostgreSQL` identifier may. See
+    /// <https://www.postgresql.org/docs/current/sql-syntax-lexical.html#SQL-SYNTAX-DOLLAR-QUOTING>.
+    #[test]
+    fn test_dollar_quote_tag_may_start_with_non_ascii_letter() {
+        check_dollar_quote_cases(&[
+            (
+                "SELECT $é$secret$é$",
+                // dollar_quoted_func obfuscates the body as SQL, where `secret` is an identifier,
+                // just as it does for an ASCII tag.
+                ["SELECT ?", "SELECT $é$secret$é$", "SELECT ?"],
+            ),
+            (
+                "SELECT $é$'secret'$é$",
+                ["SELECT ?", "SELECT ?", "SELECT ?"],
+            ),
+            ("SELECT $é1_$secret", ["SELECT ?", "SELECT ?", "SELECT ?"]),
+        ]);
+    }
+
+    /// Only a tag `PostgreSQL` accepts opens an unterminated dollar quote. Text between two `$`s
+    /// that is not a valid tag, such as `$foo, bar$`, is not swallowed up to the end of the
+    /// input. A complete `$a b$...$a b$` is still replaced, as the Agent does.
+    #[test]
+    fn test_unclosed_invalid_dollar_tag_is_not_a_dollar_quote() {
+        check_dollar_quote_cases(&[
+            (
+                "SELECT $foo, bar$baz FROM t WHERE id = 1",
+                [
+                    "SELECT $foo, bar$baz FROM t WHERE id = ?",
+                    "SELECT $foo, bar$baz FROM t WHERE id = ?",
+                    "SELECT $foo, bar$baz FROM t WHERE id = ?",
+                ],
+            ),
+            (
+                "SELECT $a b$secret$a b$",
+                ["SELECT ?", "SELECT $a b$secret$a b$", "SELECT ?"],
+            ),
+        ]);
+    }
+
+    /// Well-formed dollar-quoted strings, positional parameters and identifiers containing `$`.
+    #[test]
+    fn test_dollar_sign_tokens() {
+        check_dollar_quote_cases(&[
+            (
+                "SELECT $tag$$tag$",
+                ["SELECT ?", "SELECT $tag$$tag$", "SELECT ?"],
+            ),
+            (
+                "SELECT $eEGKEwMKHi$$eEGKEwMKHi$",
+                ["SELECT ?", "SELECT $eEGKEwMKHi$$eEGKEwMKHi$", "SELECT ?"],
+            ),
+            (
+                "SELECT $tag$$5.00$tag$",
+                ["SELECT ?", "SELECT ?", "SELECT ?"],
+            ),
+            (
+                "SELECT $tag$$$tag$",
+                ["SELECT ?", "SELECT $tag$$$tag$", "SELECT ?"],
+            ),
+            ("SELECT $$abc$$", ["SELECT ?", "SELECT $$abc$$", "SELECT ?"]),
+            ("SELECT $$$$", ["SELECT ?", "SELECT $$$$", "SELECT ?"]),
+            (
+                "SELECT $tag$abc$tag$",
+                ["SELECT ?", "SELECT $tag$abc$tag$", "SELECT ?"],
+            ),
+            (
+                "SELECT $tag$ab$tactac$tx$tag$",
+                ["SELECT ?", "SELECT $tag$ab$tactac$tx$tag$", "SELECT ?"],
+            ),
+            (
+                "SELECT * FROM users WHERE name = $eEGKEwMKHi$$eEGKEwMKHi$",
+                [
+                    "SELECT * FROM users WHERE name = ?",
+                    "SELECT * FROM users WHERE name = $eEGKEwMKHi$$eEGKEwMKHi$",
+                    "SELECT * FROM users WHERE name = ?",
+                ],
+            ),
+            (
+                "SELECT * FROM t WHERE a = $1 AND b = $2",
+                [
+                    "SELECT * FROM t WHERE a = ? AND b = ?",
+                    "SELECT * FROM t WHERE a = ? AND b = ?",
+                    "SELECT * FROM t WHERE a = ? AND b = ?",
+                ],
+            ),
+            (
+                "select * from dollarField$ as df from some$dollar$filled_thing$$",
+                [
+                    "select * from dollarField$ from some$dollar$filled_thing$$",
+                    "select * from dollarField$ from some$dollar$filled_thing$$",
+                    "select * from dollarField$ from some$dollar$filled_thing$$",
+                ],
+            ),
+            (
+                "SELECT $foo FROM t",
+                [
+                    "SELECT $foo FROM t",
+                    "SELECT $foo FROM t",
+                    "SELECT $foo FROM t",
+                ],
+            ),
+            (
+                "SELECT $func$INSERT INTO t VALUES ('a', 1)$func$ FROM users",
+                [
+                    "SELECT ? FROM users",
+                    "SELECT $func$INSERT INTO t VALUES ( ? )$func$ FROM users",
+                    "SELECT ? FROM users",
+                ],
+            ),
+        ]);
+    }
+
+    /// `NormalizeOnly` keeps literals as sent, including an unterminated dollar-quoted string.
+    #[test]
+    fn test_normalize_only_keeps_unterminated_dollar_quote() {
+        let config = SqlConfig {
+            obfuscation_mode: SqlObfuscationMode::NormalizeOnly,
+            ..Default::default()
+        };
+        for input in ["SELECT $tag$secret", "SELECT $tag$secret$other$"] {
+            assert_eq!(
+                obfuscate_sql(input, &config, DbmsKind::Postgresql).as_deref(),
+                Ok(input),
+                "input: {input:?}"
+            );
+        }
     }
 
     #[test]
