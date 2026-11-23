@@ -31,6 +31,7 @@ use crate::span::v1;
 use crate::span::v04::{AttributeAnyValue, AttributeArrayValue, Span, SpanEvent, SpanLink};
 use crate::span::{SPAN_LINK_FLAGS_SET_SENTINEL, TraceData};
 use crate::tracer_metadata::TracerMetadata;
+use libdd_trace_normalization::normalize_utils::resource_fallback;
 use serde::{
     Serialize, Serializer,
     ser::{SerializeMap, SerializeSeq},
@@ -237,7 +238,6 @@ fn encode_span<T: TraceData>(
         &hex_u64(span.parent_id),
     )?;
 
-    // Resource defaults to name when empty.
     let name_str: &str = span.name.borrow();
     let resource_str: &str = span.resource.borrow();
     let service_str: &str = span.service.borrow();
@@ -246,11 +246,7 @@ fn encode_span<T: TraceData>(
         bytes,
         &mut first,
         br#""resource":"#,
-        if resource_str.is_empty() {
-            name_str
-        } else {
-            resource_str
-        },
+        resource_fallback(resource_str, name_str).unwrap_or(resource_str),
     )?;
     serialize_fixed_entry(bytes, &mut first, br#""service":"#, service_str)?;
     serialize_fixed_entry(bytes, &mut first, br#""error":"#, &span.error)?;
@@ -766,18 +762,13 @@ fn encode_span_v1<'a, T: TraceData, S: Serializer>(
     map.serialize_entry("span_id", &hex_u64(span.span_id))?;
     map.serialize_entry("parent_id", &hex_u64(span.parent_id))?;
 
-    // Resource defaults to name when empty.
     let name_str: &str = span.name.borrow();
     let resource_str: &str = span.resource.borrow();
     let service_str: &str = span.service.borrow();
     map.serialize_entry("name", name_str)?;
     map.serialize_entry(
         "resource",
-        if resource_str.is_empty() {
-            name_str
-        } else {
-            resource_str
-        },
+        resource_fallback(resource_str, name_str).unwrap_or(resource_str),
     )?;
     map.serialize_entry("service", service_str)?;
     // v0.4's `error` is emitted as an integer (0/1) on the wire, unlike v1's own `bool` field.

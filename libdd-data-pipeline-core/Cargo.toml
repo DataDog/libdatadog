@@ -25,7 +25,13 @@ libdd-trace-obfuscation = { version = "12.0.0", path = "../libdd-trace-obfuscati
 bytes.workspace = true
 futures = { workspace = true, features = ["executor"] }
 libdd-tinybytes = { version = "1.2.0", path = "../libdd-tinybytes", features = ["bytes_string"] }
+
+[target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
 zstd.workspace = true
+
+[[example]]
+name = "agentless_policy"
+crate-type = ["cdylib"]
 
 [features]
 default = []
