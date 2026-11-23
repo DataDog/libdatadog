@@ -103,38 +103,24 @@ impl core::fmt::Display for InvalidTagPair<'_> {
 }
 
 fn try_to_utf8_lossy(bytes: &[u8]) -> Result<Cow<'_, str>, alloc::collections::TryReserveError> {
-    let Err(mut error) = core::str::from_utf8(bytes) else {
-        // SAFETY: the let-else above verified the whole slice.
-        return Ok(Cow::Borrowed(unsafe {
-            core::str::from_utf8_unchecked(bytes)
-        }));
-    };
+    if let Ok(valid) = core::str::from_utf8(bytes) {
+        return Ok(Cow::Borrowed(valid));
+    }
 
     let mut output = String::new();
-    let mut remaining = bytes;
-    loop {
-        let valid_len = error.valid_up_to();
-        // SAFETY: Utf8Error guarantees the prefix before valid_up_to is valid UTF-8.
-        let valid = unsafe { core::str::from_utf8_unchecked(&remaining[..valid_len]) };
-        output.try_reserve(valid.len() + '\u{FFFD}'.len_utf8())?;
-        output.push_str(valid);
-        output.push('\u{FFFD}');
-
-        match error.error_len() {
-            Some(invalid_len) => {
-                remaining = &remaining[valid_len + invalid_len..];
-                match core::str::from_utf8(remaining) {
-                    Ok(valid) => {
-                        output.try_reserve(valid.len())?;
-                        output.push_str(valid);
-                        return Ok(Cow::Owned(output));
-                    }
-                    Err(next_error) => error = next_error,
-                }
-            }
-            None => return Ok(Cow::Owned(output)),
+    for chunk in bytes.utf8_chunks() {
+        let replacement_len = if chunk.invalid().is_empty() {
+            0
+        } else {
+            '\u{FFFD}'.len_utf8()
+        };
+        output.try_reserve(chunk.valid().len() + replacement_len)?;
+        output.push_str(chunk.valid());
+        if replacement_len != 0 {
+            output.push('\u{FFFD}');
         }
     }
+    Ok(Cow::Owned(output))
 }
 
 #[repr(C)]
@@ -160,6 +146,30 @@ pub unsafe extern "C" fn ddog_Vec_Tag_parse(string: CharSlice) -> ParseTagsResul
 #[cfg(test)]
 mod tests {
     use crate::tags::*;
+
+    #[test]
+    fn utf8_lossy_matches_standard_library() {
+        let cases: &[&[u8]] = &[
+            b"",
+            b"valid",
+            b"\xFF",
+            b"\xC3\x28 \xFF test",
+            b"\xF0\x90\x80",
+            b"\xF0\x90\x80\x80",
+            b"\x80\x80",
+        ];
+
+        for bytes in cases {
+            assert_eq!(
+                try_to_utf8_lossy(bytes).unwrap(),
+                String::from_utf8_lossy(bytes)
+            );
+        }
+        assert!(matches!(
+            try_to_utf8_lossy(b"valid").unwrap(),
+            Cow::Borrowed(_)
+        ));
+    }
 
     #[test]
     fn empty_tag_name() {

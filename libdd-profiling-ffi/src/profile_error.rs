@@ -27,7 +27,9 @@ impl fmt::Display for ProfileError {
         match self {
             Self::AllocError => f.write_str("memory allocation failed"),
             Self::CapacityOverflow => {
-                f.write_str("memory allocation failed because the computed capacity overflowed")
+                f.write_str(
+                    "memory allocation failed because the computed capacity exceeded the collection's maximum",
+                )
             }
             Self::ReferenceCountOverflow => f.write_str("reference count overflow"),
             Self::Other(message) => match message.to_str() {
@@ -287,9 +289,11 @@ mod tests {
 
     #[test]
     fn test_capacity_overflow() {
+        const MESSAGE: &str = "memory allocation failed because the computed capacity exceeded the collection's maximum";
         let err = ProfileError::CapacityOverflow;
+        assert_eq!(err.to_string(), MESSAGE);
         let cow: Cow<'static, CStr> = err.into();
-        assert!(cow.to_str().unwrap().contains("capacity exceeded"));
+        assert_eq!(cow.to_str().unwrap(), MESSAGE);
     }
 
     #[test]
