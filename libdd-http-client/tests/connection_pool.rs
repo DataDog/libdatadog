@@ -67,3 +67,38 @@ async fn test_concurrent_requests_succeed() {
 
     mock.assert_calls_async(3).await;
 }
+
+/// A periodic hyper client keeps a pooled connection after its runtime drops. Sending again on a
+/// new runtime must still work, as after `ForkSafeRuntime::before_fork` and `after_fork_*`.
+#[cfg(all(feature = "hyper-backend", not(feature = "reqwest-backend")))]
+#[cfg_attr(miri, ignore)]
+#[test]
+fn test_periodic_hyper_client_works_across_runtimes() {
+    ensure_crypto_provider();
+    let server = MockServer::start();
+    let mock = server.mock(|when, then| {
+        when.method(GET).path("/ping");
+        then.status(200).body("pong");
+    });
+
+    let client = HttpClient::builder()
+        .base_url(server.url("/"))
+        .timeout(Duration::from_secs(5))
+        .periodic(true)
+        .build()
+        .unwrap();
+
+    for round in 0..2 {
+        let rt = tokio::runtime::Builder::new_multi_thread()
+            .worker_threads(1)
+            .enable_all()
+            .build()
+            .unwrap();
+        let req = HttpRequest::new(HttpMethod::Get, server.url("/ping"));
+        let response = rt.block_on(client.send(req)).unwrap();
+        assert_eq!(response.status_code(), 200, "round {round} failed");
+        drop(rt);
+    }
+
+    mock.assert_calls(2);
+}
