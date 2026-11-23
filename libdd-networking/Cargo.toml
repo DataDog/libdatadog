@@ -55,6 +55,7 @@ tower-service = { workspace = true, optional = true }
 libdd-process-utils = { version = "1.0.0", path = "../libdd-process-utils", optional = true }
 
 [dev-dependencies]
+httpmock.workspace = true
 rand = { workspace = true, default-features = true }
 rcgen.workspace = true
 tempfile.workspace = true
@@ -74,7 +75,6 @@ http-client = [
   "dep:hyper",
   "dep:hyper-util",
   "dep:libdd-process-utils",
-  "dep:libdd-weak-waker",
   "dep:pin-project",
   "dep:thiserror",
   "dep:tokio",
@@ -91,6 +91,9 @@ tls-core = ["dep:hyper-rustls", "dep:rustls", "dep:rustls-platform-verifier", "h
 # for crates that build their own TLS configurations, without enabling libdd-networking's own connector TLS stack.
 tls-distrust = ["dep:rustls", "dep:rustls-platform-verifier"]
 use_webpki_roots = ["dep:webpki-root-certs", "dep:webpki-roots", "hyper-rustls/webpki-roots"]
+# Spawn the hyper client tasks with `WeakWakerExecutor` instead of `TokioExecutor`, so an idle
+# pooled connection does not keep the tokio runtime driver alive after the runtime drops.
+weak-waker = ["http-client", "dep:libdd-weak-waker"]
 
 [lints.clippy]
 std_instead_of_alloc = "warn"

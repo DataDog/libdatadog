@@ -10,9 +10,11 @@
 //!   the client drops. The pooled sender shares the request channel with the connection task, and
 //!   the channel keeps the task's tokio waker, which holds the scheduler handle;
 //! * a client without pooling does not leak;
-//! * clients built with `WeakWakerExecutor` (all `http_common` constructors) do not leak.
+//! * with the `weak-waker` feature, the `http_common` constructors use `WeakWakerExecutor` and do
+//!   not leak.
 //!
-//! The leaking case is `#[ignore]`d; run it with `--run-ignored all`.
+//! The cases for the `http_common` constructors need the `weak-waker` feature. The leaking case
+//! is `#[ignore]`d; run it with `--run-ignored all`.
 
 #![cfg(all(target_os = "linux", feature = "http-client"))]
 
@@ -22,9 +24,12 @@ use core::time::Duration;
 use std::sync::Mutex;
 use std::time::Instant;
 
-use common::{KeepAliveServer, get_ok};
+use common::{get_ok, start_server};
+use httpmock::MockServer;
 use libdd_networking::connector::Connector;
-use libdd_networking::http_common::{self, GenericHttpClient};
+#[cfg(feature = "weak-waker")]
+use libdd_networking::http_common;
+use libdd_networking::http_common::GenericHttpClient;
 
 /// fd counts are process-wide, so tests that read them must not overlap.
 static FD_LOCK: Mutex<()> = Mutex::new(());
@@ -60,25 +65,26 @@ fn build_runtime() -> tokio::runtime::Runtime {
 fn send_block_on(
     rt: &tokio::runtime::Runtime,
     client: &GenericHttpClient<Connector>,
-    server: &KeepAliveServer,
+    server: &MockServer,
 ) {
     rt.block_on(async {
-        get_ok(client, server.addr).await;
+        get_ok(client, &server.url("/")).await;
         tokio::time::sleep(Duration::from_millis(50)).await;
     });
 }
 
 /// Send one request from a task spawned on the runtime, so the request runs with a tokio waker.
+#[cfg(feature = "weak-waker")]
 fn send_spawned(
     rt: &tokio::runtime::Runtime,
     client: &GenericHttpClient<Connector>,
-    server: &KeepAliveServer,
+    server: &MockServer,
 ) {
     let (done_tx, done_rx) = std::sync::mpsc::channel();
     let client = client.clone();
-    let addr = server.addr;
+    let url = server.url("/");
     rt.spawn(async move {
-        get_ok(&client, addr).await;
+        get_ok(&client, &url).await;
         tokio::time::sleep(Duration::from_millis(50)).await;
         let _ = done_tx.send(());
     });
@@ -96,13 +102,13 @@ fn wait_for_baseline(baseline: (usize, usize)) -> (usize, usize) {
     }
 }
 
-type Send = fn(&tokio::runtime::Runtime, &GenericHttpClient<Connector>, &KeepAliveServer);
+type Send = fn(&tokio::runtime::Runtime, &GenericHttpClient<Connector>, &MockServer);
 
 /// Send with `send` on a fresh runtime, drop the runtime while keeping the client, and check
 /// the driver fds are back to baseline.
 fn run_case(client: GenericHttpClient<Connector>, send: Send) {
     let _guard = lock();
-    let server = KeepAliveServer::start();
+    let server = start_server();
     let baseline = driver_fds();
     let rt = build_runtime();
     eprintln!("baseline={baseline:?} with runtime={:?}", driver_fds());
@@ -133,6 +139,7 @@ fn diag_1_tokio_executor_leaks() {
     run_case(tokio_executor_periodic_client(), send_block_on);
 }
 
+#[cfg(feature = "weak-waker")]
 #[test]
 fn diag_2_default_client_releases() {
     run_case(http_common::new_default_client(), send_block_on);
@@ -164,11 +171,13 @@ fn diag_6_tokio_timer_alone() {
     assert_eq!(after, baseline);
 }
 
+#[cfg(feature = "weak-waker")]
 #[test]
 fn diag_7_periodic_client_releases() {
     run_case(http_common::new_client_periodic(), send_block_on);
 }
 
+#[cfg(feature = "weak-waker")]
 #[test]
 fn diag_8_client_builder_releases() {
     let mut builder = http_common::client_builder();
@@ -176,20 +185,23 @@ fn diag_8_client_builder_releases() {
     run_case(builder.build(Connector::default()), send_block_on);
 }
 
+#[cfg(feature = "weak-waker")]
 #[test]
 fn diag_9_spawned_request_releases() {
     run_case(http_common::new_client_periodic(), send_spawned);
 }
 
+#[cfg(feature = "weak-waker")]
 #[test]
 fn diag_9_spawned_request_default_client_releases() {
     run_case(http_common::new_default_client(), send_spawned);
 }
 
+#[cfg(feature = "weak-waker")]
 #[test]
 fn diag_10_fork_like_cycle() {
     let _guard = lock();
-    let server = KeepAliveServer::start();
+    let server = start_server();
     let client = http_common::new_client_periodic();
     let baseline = driver_fds();
     for round in 0..2 {

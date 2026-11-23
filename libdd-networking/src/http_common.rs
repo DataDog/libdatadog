@@ -85,7 +85,6 @@ mod native {
     use http_body_util::BodyExt;
     use hyper::body::Incoming;
     use hyper_util::rt::TokioTimer;
-    use libdd_weak_waker::WeakWakerFuture;
     use pin_project::pin_project;
 
     /// Hyper executor that spawns tasks on the current tokio runtime and gives them a weak waker.
@@ -102,9 +101,13 @@ mod native {
     /// Unlike [`hyper_util::rt::TokioExecutor`], this executor does not panic outside a tokio
     /// runtime. It drops the task instead. Hyper then reports the connection as closed, or
     /// skips pool cleanup for the idle task.
+    ///
+    /// The client builders of this module use it when the `weak-waker` feature is enabled.
+    #[cfg(feature = "weak-waker")]
     #[derive(Clone, Copy, Debug, Default)]
     pub struct WeakWakerExecutor;
 
+    #[cfg(feature = "weak-waker")]
     impl<F> hyper::rt::Executor<F> for WeakWakerExecutor
     where
         F: Future + Send + 'static,
@@ -112,8 +115,7 @@ mod native {
     {
         fn execute(&self, fut: F) {
             if let Ok(handle) = tokio::runtime::Handle::try_current() {
-                // The task is detached, like with `tokio::spawn`.
-                drop(handle.spawn(WeakWakerFuture::new(fut)));
+                handle.spawn(libdd_weak_waker::WeakWakerFuture::new(fut));
             }
         }
     }
@@ -348,16 +350,25 @@ mod native {
 
     pub type GenericHttpClient<C> = hyper_util::client::legacy::Client<C, Body>;
 
-    /// Create a hyper client builder that spawns its tasks with [`WeakWakerExecutor`].
+    /// Executor used by the client builders of this module.
+    #[cfg(feature = "weak-waker")]
+    type ClientExecutor = WeakWakerExecutor;
+    #[cfg(not(feature = "weak-waker"))]
+    type ClientExecutor = hyper_util::rt::TokioExecutor;
+
+    /// Create a hyper client builder.
+    ///
+    /// The builder spawns its tasks with `WeakWakerExecutor` when the `weak-waker` feature is
+    /// enabled, and with [`hyper_util::rt::TokioExecutor`] otherwise.
     pub fn client_builder() -> hyper_util::client::legacy::Builder {
-        hyper_util::client::legacy::Client::builder(WeakWakerExecutor)
+        hyper_util::client::legacy::Client::builder(ClientExecutor::default())
     }
 }
 
 #[cfg(not(target_arch = "wasm32"))]
 pub use native::*;
 
-#[cfg(all(test, not(target_arch = "wasm32")))]
+#[cfg(all(test, feature = "weak-waker", not(target_arch = "wasm32")))]
 mod weak_waker_executor_tests {
     use super::WeakWakerExecutor;
     use alloc::sync::Arc;
@@ -377,19 +388,17 @@ mod weak_waker_executor_tests {
             .unwrap()
     }
 
-    /// Spawn a task that waits on a channel whose sender stays outside the runtime, drop the
-    /// runtime, then return the sentinel count seen while the sender still lives.
-    fn count_after_runtime_drop<E: Executor<futures::future::BoxFuture<'static, ()>>>(
-        executor: E,
-    ) -> usize {
+    #[test]
+    fn runtime_drop_releases_handle() {
         let sentinel = Arc::new(());
         let rt = runtime_owning(&sentinel);
+        // The sender stays outside the runtime, like the pooled sender of an idle connection.
         let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<()>();
         {
             let _guard = rt.enter();
-            executor.execute(Box::pin(async move {
+            WeakWakerExecutor.execute(async move {
                 let _ = rx.recv().await;
-            }));
+            });
         }
         // Let the task run until it waits on the channel.
         rt.block_on(async {
@@ -398,21 +407,8 @@ mod weak_waker_executor_tests {
             }
         });
         drop(rt);
-        let count = Arc::strong_count(&sentinel);
-        drop(tx);
         assert_eq!(Arc::strong_count(&sentinel), 1);
-        count
-    }
-
-    #[test]
-    fn runtime_drop_releases_handle() {
-        assert_eq!(count_after_runtime_drop(WeakWakerExecutor), 1);
-    }
-
-    #[test]
-    fn tokio_executor_keeps_handle_after_runtime_drop() {
-        // Control case: with a plain tokio waker, the channel keeps the runtime handle alive.
-        assert!(count_after_runtime_drop(hyper_util::rt::TokioExecutor::new()) > 1);
+        drop(tx);
     }
 
     #[test]

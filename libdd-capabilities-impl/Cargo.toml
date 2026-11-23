@@ -36,3 +36,5 @@ tokio = { workspace = true, features = ["fs", "macros", "rt", "time"] }
 default = ["https"]
 https = ["libdd-networking/https"]
 fips = ["libdd-networking/fips"]
+# See the `weak-waker` feature of libdd-networking.
+weak-waker = ["libdd-networking/weak-waker"]

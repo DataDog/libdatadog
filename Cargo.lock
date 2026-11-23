@@ -3355,6 +3355,7 @@ dependencies = [
  "http-body",
  "http-body-util",
  "httparse",
+ "httpmock",
  "hyper",
  "hyper-rustls",
  "hyper-util",
