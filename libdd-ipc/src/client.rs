@@ -36,6 +36,8 @@ pub struct IpcClientConn {
     /// Reusable receive buffer.  Sized to hold a maximum payload plus the platform wire overhead
     /// (`HANDLE_SUFFIX_SIZE`), so that messages can be read directly without an intermediate copy.
     recv_buf: Vec<u8>,
+    #[cfg(windows)]
+    deadline_read: Option<crate::platform::DeadlineRead>,
     /// Set to true when a fatal I/O error occurs on send or receive.
     closed: bool,
     /// Largest message the connection accepts, cached from [`SeqpacketConn::max_send_size`].
@@ -51,6 +53,8 @@ impl IpcClientConn {
             ack_count: 0,
             abandoned_reply: 0,
             recv_buf: vec![0u8; max_message_size() + HANDLE_SUFFIX_SIZE],
+            #[cfg(windows)]
+            deadline_read: None,
             closed: false,
         }
     }
@@ -165,7 +169,7 @@ impl IpcClientConn {
             }
         })?;
         while Instant::now() < deadline {
-            match self.conn.try_recv_raw(&mut self.recv_buf) {
+            match self.recv_reply(false) {
                 Ok((len, _)) => {
                     self.ack_count += 1;
                     if self.ack_count == self.send_count {
@@ -173,13 +177,10 @@ impl IpcClientConn {
                     }
                 }
                 Err(e) if e.kind() == io::ErrorKind::WouldBlock => {
-                    #[cfg(unix)]
-                    if self.conn.wait_for_packet(deadline).is_err() {
+                    if self.wait_for_reply(deadline).is_err() {
                         self.closed = true;
                         return Err(DeadlineCallError::Uncertain);
                     }
-                    #[cfg(windows)]
-                    std::thread::yield_now();
                 }
                 Err(e) if e.kind() == io::ErrorKind::Interrupted => continue,
                 Err(_) => {
@@ -192,10 +193,43 @@ impl IpcClientConn {
         Err(DeadlineCallError::Uncertain)
     }
 
+    fn wait_for_reply(&mut self, deadline: Instant) -> io::Result<()> {
+        #[cfg(unix)]
+        {
+            self.conn.wait_for_packet(deadline)
+        }
+        #[cfg(windows)]
+        {
+            let reader = match &mut self.deadline_read {
+                Some(reader) => reader,
+                None => self
+                    .deadline_read
+                    .insert(crate::platform::DeadlineRead::new(&self.conn)?),
+            };
+            reader.wait(&mut self.recv_buf, deadline)
+        }
+    }
+
+    fn recv_reply(&mut self, blocking: bool) -> io::Result<(usize, Vec<OwnedFd>)> {
+        #[cfg(windows)]
+        if let Some(result) = self
+            .deadline_read
+            .as_mut()
+            .and_then(|r| r.finish(&mut self.recv_buf, blocking))
+        {
+            return result;
+        }
+        if blocking {
+            self.conn.recv_raw_blocking(&mut self.recv_buf)
+        } else {
+            self.conn.try_recv_raw(&mut self.recv_buf)
+        }
+    }
+
     fn drain_abandoned_reply(&mut self) -> bool {
         // A typed reply can exceed the single-byte buffers used by drain_acks_nonblocking.
         for _ in 0..64 {
-            match self.conn.try_recv_raw(&mut self.recv_buf) {
+            match self.recv_reply(false) {
                 Ok(_) => self.ack_count += 1,
                 Err(e) if e.kind() == io::ErrorKind::WouldBlock => break,
                 Err(e) if e.kind() == io::ErrorKind::Interrupted => continue,
@@ -247,13 +281,10 @@ impl IpcClientConn {
             self.send_count, target, self.ack_count
         );
         loop {
-            let (n, resp_fds) = self
-                .conn
-                .recv_raw_blocking(&mut self.recv_buf)
-                .inspect_err(|e| {
-                    warn!("call: recv failed ({}), marking closed", e);
-                    self.closed = true;
-                })?;
+            let (n, resp_fds) = self.recv_reply(true).inspect_err(|e| {
+                warn!("call: recv failed ({}), marking closed", e);
+                self.closed = true;
+            })?;
             self.ack_count += 1;
             trace!("call: got ack {} (target={})", self.ack_count, target);
             if self.ack_count == target {
@@ -267,6 +298,33 @@ impl IpcClientConn {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(windows)]
+    #[test]
+    fn stalled_read_retires_before_the_next_blocking_reply() {
+        let (conn, peer) = SeqpacketConn::socketpair().unwrap();
+        let mut client = IpcClientConn::new(conn);
+        let timeout = Instant::now() + Duration::from_millis(50);
+        assert_eq!(
+            client.call_until(vec![1], timeout),
+            Err(DeadlineCallError::Uncertain)
+        );
+        assert!(client.deadline_read.is_some());
+        assert_eq!(client.outstanding(), 1);
+
+        let server = std::thread::spawn(move || {
+            let mut buf = [0; 128];
+            for expected in [1, 2] {
+                let (n, _) = peer.recv_raw_blocking(&mut buf).unwrap();
+                assert_eq!(&buf[..n], &[expected]);
+            }
+            peer.send_raw_blocking(vec![3], &[]).unwrap();
+            peer.send_raw_blocking(vec![4], &[]).unwrap();
+        });
+        assert_eq!(client.call(vec![2], &[]).unwrap().0, [4]);
+        assert_eq!(client.outstanding(), 0);
+        server.join().unwrap();
+    }
 
     #[test]
     #[cfg(target_os = "linux")]

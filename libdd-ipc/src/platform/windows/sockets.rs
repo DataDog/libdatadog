@@ -24,6 +24,7 @@
 
 mod reader;
 mod writer;
+pub(crate) use reader::DeadlineRead;
 use reader::PipeReader;
 use writer::PipeWriter;
 

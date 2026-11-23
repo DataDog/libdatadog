@@ -2,15 +2,123 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use super::make_overlapped;
+use std::cell::UnsafeCell;
 use std::io;
 use std::os::windows::io::{AsRawHandle, FromRawHandle, IntoRawHandle, OwnedHandle, RawHandle};
 use std::ptr::{null, null_mut};
 use std::sync::atomic::{AtomicUsize, Ordering};
-use windows_sys::Win32::Foundation::HANDLE;
+use std::time::Instant;
+use windows_sys::Win32::Foundation::{
+    ERROR_IO_INCOMPLETE, ERROR_IO_PENDING, HANDLE, WAIT_OBJECT_0, WAIT_TIMEOUT,
+};
 use windows_sys::Win32::Storage::FileSystem::ReadFile;
-use windows_sys::Win32::System::IO::{CancelIoEx, GetOverlappedResult};
+use windows_sys::Win32::System::IO::{CancelIoEx, GetOverlappedResult, OVERLAPPED};
 use windows_sys::Win32::System::Pipes::PeekNamedPipe;
-use windows_sys::Win32::System::Threading::CreateEventA;
+use windows_sys::Win32::System::Threading::{CreateEventA, INFINITE, WaitForSingleObject};
+
+pub(crate) struct DeadlineRead {
+    pipe: OwnedHandle,
+    event: OwnedHandle,
+    op: Box<UnsafeCell<OVERLAPPED>>,
+    buffer: Option<Vec<u8>>,
+}
+
+// The kernel owns the boxed operation and buffer until completion. Rust accesses them exclusively.
+unsafe impl Send for DeadlineRead {}
+unsafe impl Sync for DeadlineRead {}
+
+impl DeadlineRead {
+    pub(crate) fn new(conn: &super::SeqpacketConn) -> io::Result<Self> {
+        let pipe = conn.handle.try_clone()?;
+        let event = create_event()?;
+        let op = Box::new(UnsafeCell::new(make_overlapped(
+            event.as_raw_handle() as HANDLE | 1,
+        )));
+        Ok(Self {
+            pipe,
+            event,
+            op,
+            buffer: None,
+        })
+    }
+
+    pub(crate) fn wait(&mut self, buf: &mut Vec<u8>, deadline: Instant) -> io::Result<()> {
+        let pipe = self.pipe.as_raw_handle() as HANDLE;
+        if self.buffer.is_none() {
+            let len = u32::try_from(buf.len()).map_err(|_| io::ErrorKind::InvalidInput)?;
+            // Suppress IOCP notifications: the pipe writer owns the TP_IO callbacks.
+            *self.op.get_mut() = make_overlapped(self.event.as_raw_handle() as HANDLE | 1);
+            let bytes = self.buffer.insert(std::mem::take(buf));
+            if unsafe { ReadFile(pipe, bytes.as_mut_ptr(), len, null_mut(), self.op.get()) } != 0 {
+                return Ok(());
+            }
+            let err = io::Error::last_os_error();
+            if err.raw_os_error() != Some(ERROR_IO_PENDING as i32) {
+                std::mem::swap(buf, bytes);
+                self.buffer = None;
+                return Err(err);
+            }
+        }
+        let ms = deadline
+            .saturating_duration_since(Instant::now())
+            .as_nanos()
+            .div_ceil(1_000_000);
+        let timeout = u32::try_from(ms).unwrap_or(INFINITE - 1).min(INFINITE - 1);
+        match unsafe { WaitForSingleObject(self.event.as_raw_handle() as HANDLE, timeout) } {
+            WAIT_OBJECT_0 | WAIT_TIMEOUT => Ok(()),
+            _ => Err(io::Error::last_os_error()),
+        }
+    }
+
+    pub(crate) fn finish(
+        &mut self,
+        buf: &mut Vec<u8>,
+        blocking: bool,
+    ) -> Option<io::Result<(usize, Vec<OwnedHandle>)>> {
+        self.buffer.as_ref()?;
+        let mut n = 0;
+        let ok = unsafe {
+            GetOverlappedResult(
+                self.pipe.as_raw_handle() as HANDLE,
+                self.op.get(),
+                &mut n,
+                i32::from(blocking),
+            )
+        };
+        let result = if ok == 0 {
+            Err(io::Error::last_os_error())
+        } else {
+            Ok(n as usize)
+        };
+        if result
+            .as_ref()
+            .is_err_and(|e| e.raw_os_error() == Some(ERROR_IO_INCOMPLETE as i32))
+        {
+            return Some(Err(io::ErrorKind::WouldBlock.into()));
+        }
+        *buf = self.buffer.take()?;
+        Some(result.and_then(|len| parse_message(buf, len)))
+    }
+}
+
+impl Drop for DeadlineRead {
+    fn drop(&mut self) {
+        if self.buffer.is_some() {
+            // A timeout leaves the ordered read alive for late-reply accounting. Only teardown
+            // cancels it.
+            unsafe { CancelIoEx(self.pipe.as_raw_handle() as HANDLE, self.op.get()) };
+            let _ = self.finish(&mut Vec::new(), true);
+        }
+    }
+}
+
+fn create_event() -> io::Result<OwnedHandle> {
+    let event = unsafe { CreateEventA(null(), 1, 0, null()) };
+    if event == 0 {
+        return Err(io::Error::last_os_error());
+    }
+    Ok(unsafe { OwnedHandle::from_raw_handle(event as RawHandle) })
+}
 
 /// Reads one message directly into the caller's buffer.
 ///
@@ -45,13 +153,7 @@ impl PipeReader {
 
         let event = match self.take_cached_event() {
             Some(event) => event,
-            None => {
-                let event = unsafe { CreateEventA(null(), 1, 0, null()) };
-                if event == 0 {
-                    return Err(io::Error::last_os_error());
-                }
-                unsafe { OwnedHandle::from_raw_handle(event as RawHandle) }
-            }
+            None => create_event()?,
         };
         let result = Self::read_with_event(pipe, event.as_raw_handle() as HANDLE, buf, blocking);
         self.cache_event(event);
