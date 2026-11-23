@@ -5,11 +5,13 @@
 
 #![allow(dead_code)]
 
+extern crate alloc;
+
+use alloc::sync::Arc;
 use core::net::SocketAddr;
 use core::sync::atomic::{AtomicUsize, Ordering};
 use std::io::{BufRead, BufReader, Write};
 use std::net::TcpListener;
-use std::sync::Arc;
 
 use libdd_networking::connector::Connector;
 use libdd_networking::http_common::{self, Body, GenericHttpClient};
