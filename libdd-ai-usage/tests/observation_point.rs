@@ -36,6 +36,7 @@ fn observed(
         .collect())
 }
 
+#[cfg_attr(miri, ignore = "no unsafe in path; pure point logic")]
 #[test]
 fn a_stated_point_is_on_every_point() {
     assert_eq!(OBSERVATION_POINTS.len(), 7);
@@ -51,6 +52,7 @@ fn a_stated_point_is_on_every_point() {
     }
 }
 
+#[cfg_attr(miri, ignore = "no unsafe in path; pure point logic")]
 #[test]
 fn an_absent_point_is_rejected() {
     for (profile, members, _) in PROVIDER_PROFILES {
@@ -63,6 +65,7 @@ fn an_absent_point_is_rejected() {
         }
     }
 }
+#[cfg_attr(miri, ignore = "no unsafe in path; pure point logic")]
 #[test]
 fn a_value_outside_the_list_is_rejected() {
     for (profile, members, _) in PROVIDER_PROFILES {
@@ -85,6 +88,7 @@ fn a_value_outside_the_list_is_rejected() {
     }
 }
 
+#[cfg_attr(miri, ignore = "no unsafe in path; pure point logic")]
 #[test]
 fn gateway_request_points_always_say_gateway() {
     for stated in [

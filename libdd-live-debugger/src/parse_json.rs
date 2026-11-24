@@ -657,6 +657,7 @@ mod tests {
         Probe, ProbeType, SourceLine, SpanDecorationProbe, SpanProbeTarget, parse_json,
     };
 
+    #[cfg_attr(miri, ignore = "no unsafe in path; pure serde deserialization")]
     #[test]
     fn test_spandecoration_probe_deserialize() {
         let json = r#"
@@ -772,6 +773,7 @@ mod tests {
         }
     }
 
+    #[cfg_attr(miri, ignore = "no unsafe in path; pure serde deserialization")]
     #[test]
     fn test_log_probe_deserialize() {
         let json = r#"
@@ -883,6 +885,7 @@ mod tests {
         }
     }
 
+    #[cfg_attr(miri, ignore = "no unsafe in path; pure serde deserialization")]
     #[test]
     fn test_metric_probe_deserialize() {
         let json = r#"
@@ -941,6 +944,7 @@ mod tests {
         }
     }
 
+    #[cfg_attr(miri, ignore = "no unsafe in path; pure serde deserialization")]
     #[test]
     fn test_line_probe_lines_accept_strings_ints_and_ranges() {
         let probe = parse_line_probe(r#"["10", 12, "20-25", " 30 - 31 "]"#, "").unwrap();
@@ -957,6 +961,7 @@ mod tests {
         assert_eq!(rendered, vec!["10", "12", "20-25", "30-31"]);
     }
 
+    #[cfg_attr(miri, ignore = "no unsafe in path; pure serde deserialization")]
     #[test]
     fn test_line_probe_lines_reject_invalid() {
         for lines in [r#"["0"]"#, r#"["9-3"]"#, r#"["a"]"#, r#"["5-"]"#, r#"[0]"#] {
@@ -968,6 +973,7 @@ mod tests {
         }
     }
 
+    #[cfg_attr(miri, ignore = "no unsafe in path; pure serde deserialization")]
     #[test]
     fn test_line_probe_source_file_normalized() {
         let probe = parse_line_probe(r#"["10"]"#, "").unwrap();
@@ -977,6 +983,7 @@ mod tests {
         );
     }
 
+    #[cfg_attr(miri, ignore = "no unsafe in path; pure serde deserialization")]
     #[test]
     fn test_log_probe_sampling_defaults() {
         let rate = |extra: &str| match parse_line_probe(r#"["10"]"#, extra).unwrap().probe {
@@ -999,6 +1006,7 @@ mod tests {
         );
     }
 
+    #[cfg_attr(miri, ignore = "no unsafe in path; pure serde deserialization")]
     #[test]
     fn test_line_probe_evaluate_at_defaults_to_entry() {
         let probe = parse_line_probe(r#"["10"]"#, "").unwrap();

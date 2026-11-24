@@ -299,6 +299,7 @@ pub fn parse_tags(str: &str) -> (Vec<Tag>, Option<String>) {
 mod tests {
     use super::*;
 
+    #[cfg_attr(miri, ignore = "pure tag parsing/validation; no unsafe in path")]
     #[test]
     fn test_validate_serialized() {
         assert_eq!(validate_serialized("key:value"), Ok(()));
@@ -315,6 +316,7 @@ mod tests {
         );
     }
 
+    #[cfg_attr(miri, ignore = "pure tag parsing/validation; no unsafe in path")]
     #[test]
     fn test_tag_parser() {
         let mut parser = TagParser::new("key:value, :leading middle:colon trailing:  bare");
@@ -338,6 +340,7 @@ mod tests {
         assert_eq!(parser.next(), None);
     }
 
+    #[cfg_attr(miri, ignore = "pure tag parsing/validation; no unsafe in path")]
     #[test]
     fn test_tag_parser_skips_empty_chunks() {
         for input in ["", ",", " , ", ",, ,"] {
@@ -357,6 +360,7 @@ mod alloc_tests {
     use proptest::prelude::*;
 
     proptest! {
+        #[cfg_attr(miri, ignore = "proptest over pure tag validation; no unsafe")]
         #[test]
         fn prop_component_and_serialized_validation_are_consistent(
             key in any::<String>(),
@@ -370,6 +374,7 @@ mod alloc_tests {
             );
         }
 
+        #[cfg_attr(miri, ignore = "proptest over pure tag validation; no unsafe")]
         #[test]
         fn prop_constructor_and_validation_are_consistent(
             key in any::<String>(),
@@ -385,6 +390,7 @@ mod alloc_tests {
             }
         }
 
+        #[cfg_attr(miri, ignore = "proptest over pure tag validation; no unsafe")]
         #[test]
         fn prop_serialized_constructor_and_validation_are_consistent(
             value in any::<String>(),
@@ -405,6 +411,7 @@ mod alloc_tests {
         assert!(is_send(tag!("src_library", "libdatadog")));
     }
 
+    #[cfg_attr(miri, ignore = "pure tag construction/parsing; no unsafe in path")]
     #[test]
     fn test_validation() {
         assert_eq!(Tag::validate("key", "value"), Ok(()));
@@ -427,18 +434,21 @@ mod alloc_tests {
         );
     }
 
+    #[cfg_attr(miri, ignore = "pure tag construction/parsing; no unsafe in path")]
     #[test]
     fn test_empty_key() {
         let error = Tag::new("", "woof").expect_err("empty key is not allowed");
         assert_eq!(error.to_string(), "tag ':woof' begins with a colon");
     }
 
+    #[cfg_attr(miri, ignore = "pure tag construction/parsing; no unsafe in path")]
     #[test]
     fn test_empty_value() {
         let error = Tag::new("key1", "").expect_err("empty value is an error");
         assert_eq!(error.to_string(), "tag 'key1:' ends with a colon");
     }
 
+    #[cfg_attr(miri, ignore = "pure tag construction/parsing; no unsafe in path")]
     #[test]
     fn test_bad_utf8() {
         // 0b1111_0xxx is the start of a 4-byte sequence, but there aren't any
@@ -461,6 +471,7 @@ mod alloc_tests {
         assert_eq!("env:staging:east", result.to_string());
     }
 
+    #[cfg_attr(miri, ignore = "pure tag construction/parsing; no unsafe in path")]
     #[test]
     fn test_suspicious_tags() {
         // Based on tag rules, these should all fail. However, there is a risk
@@ -478,22 +489,26 @@ mod alloc_tests {
         }
     }
 
+    #[cfg_attr(miri, ignore = "pure tag construction/parsing; no unsafe in path")]
     #[test]
     fn test_missing_colon_parsing() {
         let tag = Tag::from_value("tag").unwrap();
         assert_eq!("tag", tag.to_string());
     }
 
+    #[cfg_attr(miri, ignore = "pure tag construction/parsing; no unsafe in path")]
     #[test]
     fn test_leading_colon_parsing() {
         let _ = Tag::from_value(":tag").expect_err("Cannot start with a colon");
     }
 
+    #[cfg_attr(miri, ignore = "pure tag construction/parsing; no unsafe in path")]
     #[test]
     fn test_tailing_colon_parsing() {
         let _ = Tag::from_value("tag:").expect_err("Cannot end with a colon");
     }
 
+    #[cfg_attr(miri, ignore = "pure tag construction/parsing; no unsafe in path")]
     #[test]
     fn test_tag_parser_preserves_parse_tags_errors() {
         let (tags, error) = parse_tags("valid:value,:leading,trailing:,also:valid");
@@ -512,6 +527,7 @@ mod alloc_tests {
         );
     }
 
+    #[cfg_attr(miri, ignore = "pure tag construction/parsing; no unsafe in path")]
     #[test]
     fn test_tags_parsing() {
         let cases = [

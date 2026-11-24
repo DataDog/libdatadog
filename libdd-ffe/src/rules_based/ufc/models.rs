@@ -855,6 +855,7 @@ mod tests {
         }
     }
 
+    #[cfg_attr(miri, ignore = "no unsafe in path; serde parsing of server responses")]
     #[test]
     fn features_parse_with_mixed_value_types() {
         let features = parse_features(
@@ -883,6 +884,7 @@ mod tests {
         assert_eq!(features[3].value, FeatureValue::Number(3.0));
     }
 
+    #[cfg_attr(miri, ignore = "no unsafe in path; serde parsing of server responses")]
     #[test]
     fn features_field_is_lenient() {
         // A missing, `null`, non-list or malformed `features` field never fails the flag.
@@ -902,6 +904,7 @@ mod tests {
         }
     }
 
+    #[cfg_attr(miri, ignore = "no unsafe in path; serde parsing of server responses")]
     #[test]
     fn features_skip_entries_with_unrepresentable_numbers() {
         let features = parse_features(
@@ -915,6 +918,7 @@ mod tests {
         assert_eq!(features[0].key.as_str(), "valid");
     }
 
+    #[cfg_attr(miri, ignore = "no unsafe in path; serde parsing of server responses")]
     #[test]
     fn features_skip_invalid_entries() {
         let features = parse_features(
@@ -937,6 +941,7 @@ mod tests {
         assert_eq!(features[0].destinations.len(), 1);
     }
 
+    #[cfg_attr(miri, ignore = "no unsafe in path; serde parsing of server responses")]
     #[test]
     fn features_keep_first_valid_entry_on_repeated_key() {
         let features = parse_features(
@@ -957,6 +962,7 @@ mod tests {
         );
     }
 
+    #[cfg_attr(miri, ignore = "no unsafe in path; serde parsing of server responses")]
     #[test]
     fn observe_full_evaluation_data_defaults_to_false_when_absent() {
         let ufc: UniversalFlagConfigWire = serde_json::from_str(
@@ -972,6 +978,7 @@ mod tests {
         assert!(!ufc.observe_full_evaluation_data);
     }
 
+    #[cfg_attr(miri, ignore = "no unsafe in path; serde parsing of server responses")]
     #[test]
     fn observe_full_evaluation_data_parses_when_present() {
         let ufc: UniversalFlagConfigWire = serde_json::from_str(
@@ -990,6 +997,7 @@ mod tests {
 
     /// A malformed value for this field must never discard the rest of the configuration. Each
     /// case must parse, fall back to `false`, and keep the sibling flag usable.
+    #[cfg_attr(miri, ignore = "no unsafe in path; serde parsing of server responses")]
     #[test]
     fn observe_full_evaluation_data_falls_back_to_false_when_malformed() {
         for malformed in [r#"null"#, r#""true""#, r#"1"#, r#"{}"#, r#"[]"#] {
@@ -1022,6 +1030,7 @@ mod tests {
         }
     }
 
+    #[cfg_attr(miri, ignore = "no unsafe in path; serde parsing of server responses")]
     #[test]
     fn parse_partially_if_unexpected() {
         let ufc: UniversalFlagConfigWire = serde_json::from_str(

@@ -287,6 +287,10 @@ mod tests {
         rt.block_on(async { sleep(Duration::from_millis(10)).await });
     }
 
+    #[cfg_attr(
+        miri,
+        ignore = "plain tokio block_on and timeout logic; no unsafe in path"
+    )]
     #[test]
     fn test_block_on_with_timeout_completes() {
         let shared_runtime = BasicRuntime::new().expect("BasicRuntime::new");
@@ -298,6 +302,10 @@ mod tests {
         assert_eq!(value, 42);
     }
 
+    #[cfg_attr(
+        miri,
+        ignore = "plain tokio block_on and timeout logic; no unsafe in path"
+    )]
     #[test]
     fn test_block_on_with_timeout_times_out() {
         let shared_runtime = BasicRuntime::new().expect("BasicRuntime::new");
@@ -312,6 +320,10 @@ mod tests {
         assert!(matches!(err, BlockOnTimeoutError::TimedOut(_)));
     }
 
+    #[cfg_attr(
+        miri,
+        ignore = "plain tokio block_on and timeout logic; no unsafe in path"
+    )]
     #[test]
     fn test_block_on_with_timeout_errors_when_timers_disabled() {
         // `from_handle` accepts any caller-provided runtime, including one built without
@@ -332,6 +344,10 @@ mod tests {
         assert!(matches!(err, BlockOnTimeoutError::Io(_)));
     }
 
+    #[cfg_attr(
+        miri,
+        ignore = "plain tokio block_on and timeout logic; no unsafe in path"
+    )]
     #[test]
     fn test_block_on_with_timeout_errors_when_timers_disabled_multi_thread() {
         let rt = Arc::new(

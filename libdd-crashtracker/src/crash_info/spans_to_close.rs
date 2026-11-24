@@ -188,6 +188,7 @@ mod tests {
             "attributes":{"rank":1,"ml.batch_size":16,"loss":0.5,"big":18446744073709551615,
               "ok":true,"ml.dataset":"synthetic","whole":16.0}}]}]}"#;
 
+    #[cfg_attr(miri, ignore = "pure serde deserialization; no unsafe in path")]
     #[test]
     fn parses_every_field() {
         let block = SpansToClose::parse(BLOCK).unwrap();
@@ -236,6 +237,7 @@ mod tests {
         );
     }
 
+    #[cfg_attr(miri, ignore = "pure serde deserialization; no unsafe in path")]
     #[test]
     fn optional_fields_default_and_unknown_fields_are_ignored() {
         let block = SpansToClose::parse(
@@ -251,6 +253,7 @@ mod tests {
         assert!(span.attributes.is_empty());
     }
 
+    #[cfg_attr(miri, ignore = "pure serde deserialization; no unsafe in path")]
     #[test]
     fn agent_url_is_optional() {
         let span = r#""span_id":"0000000000000002","service":"s","name":"n","start_unix_ns":5"#;
@@ -269,6 +272,7 @@ mod tests {
         }
     }
 
+    #[cfg_attr(miri, ignore = "pure serde deserialization; no unsafe in path")]
     #[test]
     fn rejects_what_it_cannot_read_faithfully() {
         let span = r#""span_id":"0000000000000002","service":"s","name":"n","start_unix_ns":5"#;

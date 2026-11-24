@@ -50,6 +50,7 @@ pub(crate) fn fuzzer_inner_loop<A: crate::Allocator>(
 pub(crate) mod tests {
     use crate::utils::is_aligned_to;
 
+    #[cfg_attr(miri, ignore = "no unsafe in path; pure pointer alignment arithmetic")]
     #[test]
     fn test_is_aligned_to() {
         assert!(is_aligned_to(12 as *const u8, 1));

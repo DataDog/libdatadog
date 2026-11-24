@@ -54,6 +54,7 @@ mod tests {
     use super::*;
     use std::fmt::Write as _;
 
+    #[cfg_attr(miri, ignore = "pure fixed-buffer string formatting; no unsafe")]
     #[test]
     fn writes_multiple_pieces() {
         let mut buf = [0u8; 32];
@@ -64,6 +65,7 @@ mod tests {
         assert_eq!(s.into_str(), "service:web,env:prod");
     }
 
+    #[cfg_attr(miri, ignore = "pure fixed-buffer string formatting; no unsafe")]
     #[test]
     fn rejects_overflow() {
         let mut buf = [0u8; 4];
@@ -72,6 +74,7 @@ mod tests {
         assert_eq!(s.into_str(), "");
     }
 
+    #[cfg_attr(miri, ignore = "pure fixed-buffer string formatting; no unsafe")]
     #[test]
     fn writes_unicode() {
         let mut buf = [0u8; 32];
@@ -82,6 +85,7 @@ mod tests {
         assert_eq!(s.into_str(), "caf\u{00e9}-PROD");
     }
 
+    #[cfg_attr(miri, ignore = "pure fixed-buffer string formatting; no unsafe")]
     #[test]
     fn formats_integral_floats() {
         // `f64` Display prints integral values without a fraction, matching

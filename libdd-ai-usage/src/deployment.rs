@@ -167,6 +167,7 @@ mod tests {
     use super::*;
     use crate::point::{Attributes, MetricPoint};
 
+    #[cfg_attr(miri, ignore = "no unsafe in path; pure attribute grammar logic")]
     #[test]
     fn the_value_grammar_admits_identifiers_and_no_free_text() {
         for good in [
@@ -194,6 +195,7 @@ mod tests {
         assert!(!is_deployment_value(&"t".repeat(129)));
     }
 
+    #[cfg_attr(miri, ignore = "no unsafe in path; pure attribute grammar logic")]
     #[test]
     fn an_unknown_name_rejects_even_beside_a_bad_value() {
         let attributes: BTreeMap<String, String> = [
@@ -205,6 +207,7 @@ mod tests {
         assert_eq!(error.code(), ErrorCode::DeploymentAttributeUnknown);
     }
 
+    #[cfg_attr(miri, ignore = "no unsafe in path; pure attribute grammar logic")]
     #[test]
     fn a_point_keeps_its_own_value_and_resource_attributes_stay_off_points() {
         let mut own = Attributes::new();
@@ -241,6 +244,7 @@ mod tests {
         );
     }
 
+    #[cfg_attr(miri, ignore = "no unsafe in path; pure attribute grammar logic")]
     #[test]
     fn a_value_that_is_not_a_string_is_dropped_and_null_is_absent() {
         let projection = Projection {
@@ -279,6 +283,7 @@ mod tests {
         assert_eq!(apply("[]"), Err("field_type_invalid"));
     }
 
+    #[cfg_attr(miri, ignore = "no unsafe in path; pure attribute grammar logic")]
     #[test]
     fn points_the_attributes_make_equal_are_one_point() {
         let mut own = Attributes::new();

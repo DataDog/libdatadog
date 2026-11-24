@@ -390,6 +390,7 @@ mod tests {
         assert_eq!(config.read(), (true, b"returned".as_slice()));
     }
 
+    #[cfg_attr(miri, ignore = "shm path string derivation; no unsafe in path")]
     #[test]
     fn shm_paths_distinguish_endpoints() {
         assert_ne!(

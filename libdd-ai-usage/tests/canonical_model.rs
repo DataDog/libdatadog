@@ -55,6 +55,7 @@ fn map(pairs: &[(&str, &str)]) -> BTreeMap<String, String> {
         .collect()
 }
 
+#[cfg_attr(miri, ignore = "no unsafe in path; pure projection model logic")]
 #[test]
 fn only_cost_points_carry_the_canonical_name() {
     let projection = project(&format!(
@@ -89,6 +90,7 @@ fn only_cost_points_carry_the_canonical_name() {
     }
 }
 
+#[cfg_attr(miri, ignore = "no unsafe in path; pure projection model logic")]
 #[test]
 fn a_canonical_name_is_never_filled_in() {
     assert!(canonical(&project(COST).expect("valid")).is_empty());
@@ -98,6 +100,7 @@ fn a_canonical_name_is_never_filled_in() {
     assert!(canonical(&project(&nulls).expect("valid")).is_empty());
 }
 
+#[cfg_attr(miri, ignore = "no unsafe in path; pure projection model logic")]
 #[test]
 fn a_canonical_name_without_a_cost_is_valid_and_unrecorded() {
     let projection = project(NAME).expect("valid");
@@ -110,6 +113,7 @@ fn a_canonical_name_without_a_cost_is_valid_and_unrecorded() {
     );
 }
 
+#[cfg_attr(miri, ignore = "no unsafe in path; pure projection model logic")]
 #[test]
 fn canonical_name_rejections() {
     let cases: Vec<(&str, String, &str)> = vec![

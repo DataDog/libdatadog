@@ -484,6 +484,7 @@ mod tests {
         }
     }
 
+    #[cfg_attr(miri, ignore = "no unsafe in path; pure env/string parsing logic")]
     #[test]
     fn test_metadata_is_not_relevant_by_default() {
         let mocked_env = MockEnv::new(&[]);
@@ -492,6 +493,7 @@ mod tests {
         assert!(metadata.is_none());
     }
 
+    #[cfg_attr(miri, ignore = "no unsafe in path; pure env/string parsing logic")]
     #[test]
     fn test_metadata_is_relevant_first() {
         let mocked_env = MockEnv::new(&[(SERVICE_CONTEXT, "true")]);
@@ -500,6 +502,7 @@ mod tests {
         assert!(metadata.is_some());
     }
 
+    #[cfg_attr(miri, ignore = "no unsafe in path; pure env/string parsing logic")]
     #[test]
     fn test_metadata_is_relevant_second() {
         let mocked_env = MockEnv::new(&[(SERVICE_CONTEXT, "t")]);
@@ -508,6 +511,7 @@ mod tests {
         assert!(metadata.is_some());
     }
 
+    #[cfg_attr(miri, ignore = "no unsafe in path; pure env/string parsing logic")]
     #[test]
     fn test_metadata_is_relevant_third() {
         let mocked_env = MockEnv::new(&[(SERVICE_CONTEXT, "TrUe")]);
@@ -516,6 +520,7 @@ mod tests {
         assert!(metadata.is_some());
     }
 
+    #[cfg_attr(miri, ignore = "no unsafe in path; pure env/string parsing logic")]
     #[test]
     fn test_metadata_is_relevant_fourth() {
         let mocked_env = MockEnv::new(&[(SERVICE_CONTEXT, "1")]);
@@ -524,6 +529,7 @@ mod tests {
         assert!(metadata.is_some());
     }
 
+    #[cfg_attr(miri, ignore = "no unsafe in path; pure env/string parsing logic")]
     #[test]
     fn test_metadata_is_relevant_fifth() {
         let mocked_env = MockEnv::new(&[(SERVICE_CONTEXT, "yEs")]);
@@ -532,6 +538,7 @@ mod tests {
         assert!(metadata.is_some());
     }
 
+    #[cfg_attr(miri, ignore = "no unsafe in path; pure env/string parsing logic")]
     #[test]
     fn test_metadata_is_relevant_sixth() {
         let mocked_env = MockEnv::new(&[(SERVICE_CONTEXT, "Y")]);
@@ -540,6 +547,7 @@ mod tests {
         assert!(metadata.is_some());
     }
 
+    #[cfg_attr(miri, ignore = "no unsafe in path; pure env/string parsing logic")]
     #[test]
     fn test_metadata_is_not_relevant_if_explicit() {
         let mocked_env = MockEnv::new(&[(SERVICE_CONTEXT, "0")]);
@@ -548,6 +556,7 @@ mod tests {
         assert!(metadata.is_none());
     }
 
+    #[cfg_attr(miri, ignore = "no unsafe in path; pure env/string parsing logic")]
     #[test]
     fn test_extract_subscription_without_plus_sign() {
         let mocked_env = MockEnv::new(&[(WEBSITE_OWNER_NAME, "foo"), (SERVICE_CONTEXT, "1")]);
@@ -559,6 +568,7 @@ mod tests {
         assert_eq!(metadata.get_subscription_id(), expected_id);
     }
 
+    #[cfg_attr(miri, ignore = "no unsafe in path; pure env/string parsing logic")]
     #[test]
     fn test_extract_subscription_with_plus_sign() {
         let mocked_env = MockEnv::new(&[(WEBSITE_OWNER_NAME, "foo+bar"), (SERVICE_CONTEXT, "1")]);
@@ -569,6 +579,7 @@ mod tests {
         assert_eq!(metadata.get_subscription_id(), expected_id);
     }
 
+    #[cfg_attr(miri, ignore = "no unsafe in path; pure env/string parsing logic")]
     #[test]
     fn test_extract_subscription_with_empty_string() {
         let mocked_env = MockEnv::new(&[(WEBSITE_OWNER_NAME, ""), (SERVICE_CONTEXT, "1")]);
@@ -578,6 +589,7 @@ mod tests {
         assert_eq!(metadata.get_subscription_id(), UNKNOWN_VALUE);
     }
 
+    #[cfg_attr(miri, ignore = "no unsafe in path; pure env/string parsing logic")]
     #[test]
     fn test_extract_subscription_with_only_whitespaces() {
         let mocked_env = MockEnv::new(&[(WEBSITE_OWNER_NAME, "    "), (SERVICE_CONTEXT, "1")]);
@@ -587,6 +599,7 @@ mod tests {
         assert_eq!(metadata.get_subscription_id(), UNKNOWN_VALUE);
     }
 
+    #[cfg_attr(miri, ignore = "no unsafe in path; pure env/string parsing logic")]
     #[test]
     fn test_extract_subscription_with_only_plus_sign() {
         let mocked_env = MockEnv::new(&[(WEBSITE_OWNER_NAME, "+"), (SERVICE_CONTEXT, "1")]);
@@ -596,6 +609,7 @@ mod tests {
         assert_eq!(metadata.get_subscription_id(), UNKNOWN_VALUE);
     }
 
+    #[cfg_attr(miri, ignore = "no unsafe in path; pure env/string parsing logic")]
     #[test]
     fn test_extract_subscription_with_whitespaces_separated_by_plus() {
         let mocked_env = MockEnv::new(&[(WEBSITE_OWNER_NAME, "   + "), (SERVICE_CONTEXT, "1")]);
@@ -605,6 +619,7 @@ mod tests {
         assert_eq!(metadata.get_subscription_id(), UNKNOWN_VALUE);
     }
 
+    #[cfg_attr(miri, ignore = "no unsafe in path; pure env/string parsing logic")]
     #[test]
     fn test_extract_subscription_plus_sign_and_other_string() {
         let mocked_env = MockEnv::new(&[(WEBSITE_OWNER_NAME, "+other"), (SERVICE_CONTEXT, "1")]);
@@ -614,6 +629,7 @@ mod tests {
         assert_eq!(metadata.get_subscription_id(), UNKNOWN_VALUE);
     }
 
+    #[cfg_attr(miri, ignore = "no unsafe in path; pure env/string parsing logic")]
     #[test]
     fn test_extract_resource_group_pattern_match_linux() {
         let mocked_env = MockEnv::new(&[
@@ -632,6 +648,7 @@ mod tests {
         assert_eq!(metadata.get_resource_group(), expected_resource_group);
     }
 
+    #[cfg_attr(miri, ignore = "no unsafe in path; pure env/string parsing logic")]
     #[test]
     fn test_extract_resource_group_pattern_match_windows() {
         let mocked_env = MockEnv::new(&[
@@ -650,6 +667,7 @@ mod tests {
         assert_eq!(metadata.get_resource_group(), expected_resource_group);
     }
 
+    #[cfg_attr(miri, ignore = "no unsafe in path; pure env/string parsing logic")]
     #[test]
     fn test_extract_resource_group_no_pattern_match() {
         let mocked_env = MockEnv::new(&[
@@ -663,6 +681,7 @@ mod tests {
         assert_eq!(metadata.get_resource_group(), UNKNOWN_VALUE);
     }
 
+    #[cfg_attr(miri, ignore = "no unsafe in path; pure env/string parsing logic")]
     #[test]
     fn test_use_resource_group_from_env_var_if_available() {
         let mocked_env = MockEnv::new(&[
@@ -682,6 +701,7 @@ mod tests {
         assert_eq!(metadata.get_resource_group(), expected_resource_group);
     }
 
+    #[cfg_attr(miri, ignore = "no unsafe in path; pure env/string parsing logic")]
     #[test]
     fn test_flex_consumption_resource_group_is_none_without_dd_azure_resource_group() {
         let mocked_env = MockEnv::new(&[
@@ -698,6 +718,7 @@ mod tests {
         assert_eq!(metadata.get_resource_group(), UNKNOWN_VALUE);
     }
 
+    #[cfg_attr(miri, ignore = "no unsafe in path; pure env/string parsing logic")]
     #[test]
     fn test_flex_consumption_uses_dd_azure_resource_group() {
         let mocked_env = MockEnv::new(&[
@@ -717,6 +738,7 @@ mod tests {
         assert_eq!(metadata.get_resource_group(), "test-flex-rg");
     }
 
+    #[cfg_attr(miri, ignore = "no unsafe in path; pure env/string parsing logic")]
     #[test]
     fn test_dd_azure_resource_group_has_highest_priority() {
         let mocked_env = MockEnv::new(&[
@@ -738,6 +760,7 @@ mod tests {
         assert_eq!(metadata.get_resource_group(), expected_resource_group);
     }
 
+    #[cfg_attr(miri, ignore = "no unsafe in path; pure env/string parsing logic")]
     #[test]
     fn test_build_resource_id() {
         let mocked_env = MockEnv::new(&[
@@ -755,6 +778,7 @@ mod tests {
         )
     }
 
+    #[cfg_attr(miri, ignore = "no unsafe in path; pure env/string parsing logic")]
     #[test]
     fn test_build_resource_id_with_deployment_slot() {
         let mocked_env = MockEnv::new(&[
@@ -773,6 +797,7 @@ mod tests {
         );
     }
 
+    #[cfg_attr(miri, ignore = "no unsafe in path; pure env/string parsing logic")]
     #[test]
     fn test_build_resource_id_omits_production_slot() {
         let mocked_env = MockEnv::new(&[
@@ -791,6 +816,7 @@ mod tests {
         );
     }
 
+    #[cfg_attr(miri, ignore = "no unsafe in path; pure env/string parsing logic")]
     #[test]
     fn test_region() {
         let mocked_env = MockEnv::new(&[(REGION_NAME, "eastus2"), (SERVICE_CONTEXT, "1")]);
@@ -800,6 +826,7 @@ mod tests {
         assert_eq!(metadata.get_region(), "eastus2");
     }
 
+    #[cfg_attr(miri, ignore = "no unsafe in path; pure env/string parsing logic")]
     #[test]
     fn test_build_resource_id_with_missing_subscription_id() {
         let mocked_env = MockEnv::new(&[
@@ -813,6 +840,7 @@ mod tests {
         assert_eq!(metadata.get_resource_id(), UNKNOWN_VALUE)
     }
 
+    #[cfg_attr(miri, ignore = "no unsafe in path; pure env/string parsing logic")]
     #[test]
     fn test_build_resource_id_with_missing_site_name() {
         let mocked_env = MockEnv::new(&[
@@ -826,6 +854,7 @@ mod tests {
         assert_eq!(metadata.get_resource_id(), UNKNOWN_VALUE)
     }
 
+    #[cfg_attr(miri, ignore = "no unsafe in path; pure env/string parsing logic")]
     #[test]
     fn test_build_resource_id_with_missing_resource_group() {
         let mocked_env = MockEnv::new(&[
@@ -839,6 +868,7 @@ mod tests {
         assert_eq!(metadata.get_resource_id(), UNKNOWN_VALUE)
     }
 
+    #[cfg_attr(miri, ignore = "no unsafe in path; pure env/string parsing logic")]
     #[test]
     fn test_build_resource_id_with_missing_info() {
         let mocked_env = MockEnv::new(&[(SERVICE_CONTEXT, "1")]);
@@ -847,6 +877,7 @@ mod tests {
         assert_eq!(metadata.get_resource_id(), UNKNOWN_VALUE)
     }
 
+    #[cfg_attr(miri, ignore = "no unsafe in path; pure env/string parsing logic")]
     #[test]
     fn test_site_type_and_kind_default() {
         let mocked_env = MockEnv::new(&[(SERVICE_CONTEXT, "1")]);
@@ -856,6 +887,7 @@ mod tests {
         assert_eq!(metadata.get_site_kind(), "app")
     }
 
+    #[cfg_attr(miri, ignore = "no unsafe in path; pure env/string parsing logic")]
     #[test]
     fn test_site_type_and_kind_if_worker_runtime_not_specified() {
         let mocked_env = MockEnv::new(&[
@@ -868,6 +900,7 @@ mod tests {
         assert_eq!(metadata.get_site_type(), "function")
     }
 
+    #[cfg_attr(miri, ignore = "no unsafe in path; pure env/string parsing logic")]
     #[test]
     fn test_site_type_and_kind_if_extension_version_not_specified() {
         let mocked_env = MockEnv::new(&[
@@ -880,6 +913,7 @@ mod tests {
         assert_eq!(metadata.get_site_type(), "function")
     }
 
+    #[cfg_attr(miri, ignore = "no unsafe in path; pure env/string parsing logic")]
     #[test]
     fn test_site_type_and_kind_if_both_specified() {
         let mocked_env = MockEnv::new(&[
@@ -893,6 +927,7 @@ mod tests {
         assert_eq!(metadata.get_site_type(), "function")
     }
 
+    #[cfg_attr(miri, ignore = "no unsafe in path; pure env/string parsing logic")]
     #[test]
     fn test_check_other_simple_env_retrieval() {
         let expected_site_name = "my_site_name".to_owned();
@@ -940,6 +975,7 @@ mod tests {
         assert_eq!(expected_runtime_version, metadata.get_runtime_version());
     }
 
+    #[cfg_attr(miri, ignore = "no unsafe in path; pure env/string parsing logic")]
     #[test]
     fn test_get_app_service_tags() {
         let expected_site_name = "my_site_name";
@@ -1011,6 +1047,7 @@ mod tests {
         assert_eq!(iter.len(), 10);
     }
 
+    #[cfg_attr(miri, ignore = "no unsafe in path; pure env/string parsing logic")]
     #[test]
     fn test_get_function_tags() {
         let expected_site_name = "my_site_name";
@@ -1092,6 +1129,7 @@ mod tests {
         assert_eq!(iter.len(), 12);
     }
 
+    #[cfg_attr(miri, ignore = "no unsafe in path; pure env/string parsing logic")]
     #[test]
     fn test_get_trimmed_env_var_missing() {
         // The proc-environ snapshot is frozen at exec time, so we can't inject
@@ -1102,6 +1140,7 @@ mod tests {
         );
     }
 
+    #[cfg_attr(miri, ignore = "no unsafe in path; pure env/string parsing logic")]
     #[test]
     fn test_instance_name_computer_name_wins_over_pod_and_container() {
         let mocked_env = MockEnv::new(&[
@@ -1114,6 +1153,7 @@ mod tests {
         assert_eq!(metadata.get_instance_name(), "10-20-30-40");
     }
 
+    #[cfg_attr(miri, ignore = "no unsafe in path; pure env/string parsing logic")]
     #[test]
     fn test_instance_name_pod_name_preferred_over_container_name() {
         let mocked_env = MockEnv::new(&[
@@ -1125,6 +1165,7 @@ mod tests {
         assert_eq!(metadata.get_instance_name(), "0--abc-test");
     }
 
+    #[cfg_attr(miri, ignore = "no unsafe in path; pure env/string parsing logic")]
     #[test]
     fn test_instance_name_falls_back_to_container_name() {
         let mocked_env = MockEnv::new(&[
@@ -1135,6 +1176,7 @@ mod tests {
         assert_eq!(metadata.get_instance_name(), "0--abc-test");
     }
 
+    #[cfg_attr(miri, ignore = "no unsafe in path; pure env/string parsing logic")]
     #[test]
     fn test_instance_name_empty_string_treated_as_missing() {
         let mocked_env = MockEnv::new(&[
@@ -1147,6 +1189,7 @@ mod tests {
         assert_eq!(metadata.get_instance_name(), "worker-1");
     }
 
+    #[cfg_attr(miri, ignore = "no unsafe in path; pure env/string parsing logic")]
     #[test]
     fn test_instance_name_whitespace_only_treated_as_missing() {
         let mocked_env = MockEnv::new(&[
@@ -1159,6 +1202,7 @@ mod tests {
         assert_eq!(metadata.get_instance_name(), "worker-2");
     }
 
+    #[cfg_attr(miri, ignore = "no unsafe in path; pure env/string parsing logic")]
     #[test]
     fn test_instance_name_no_instance_vars_is_unknown() {
         let mocked_env = MockEnv::new(&[(FUNCTIONS_WORKER_RUNTIME, "node")]);

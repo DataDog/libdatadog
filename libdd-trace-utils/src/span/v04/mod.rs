@@ -500,6 +500,7 @@ mod tests {
     use std::borrow::Cow;
     use std::collections::HashMap;
 
+    #[cfg_attr(miri, ignore = "pure cow-based span trait reads; no unsafe in path")]
     #[test]
     fn model_traits_expose_v04_links_and_events() {
         use libdd_trace_model::{
@@ -550,6 +551,10 @@ mod tests {
         assert_eq!(span.span_events().count(), 1);
     }
 
+    #[cfg_attr(
+        miri,
+        ignore = "cow-based span rmp-serde serialization; no unsafe in path"
+    )]
     #[test]
     fn skip_serializing_empty_fields_test() {
         let expected = b"\x87\xa7service\xa0\xa4name\xa0\xa8resource\xa0\xa8trace_id\x00\xa7span_id\x00\xa5start\x00\xa8duration\x00";
@@ -636,6 +641,10 @@ mod tests {
         }
     }
 
+    #[cfg_attr(
+        miri,
+        ignore = "cow-based span rmp-serde serialization; no unsafe in path"
+    )]
     #[test]
     fn serialize_event_test() {
         // `expected` is created by transforming the span into bytes

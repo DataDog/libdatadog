@@ -456,6 +456,7 @@ mod tests {
         ]
     }
 
+    #[cfg_attr(miri, ignore = "pure vec merge of prost payloads; no unsafe in path")]
     #[test]
     fn test_append_traces_v07() {
         let mut two_traces = create_dummy_collection_v07();
@@ -498,6 +499,7 @@ mod tests {
         assert_eq!(4, trace.size());
     }
 
+    #[cfg_attr(miri, ignore = "pure vec merge of prost payloads; no unsafe in path")]
     #[test]
     fn test_merge_traces() {
         let mut trace = create_dummy_collection_v07();

@@ -578,6 +578,7 @@ mod tests {
     static ENABLED: LazyLock<AtomicI32> = LazyLock::new(AtomicI32::default);
     static DISABLED: LazyLock<AtomicI32> = LazyLock::new(AtomicI32::default);
 
+    #[cfg_attr(miri, ignore = "log-path and log-writer logic; no unsafe in path")]
     #[test]
     fn test_appsec_sidecar_log_path() {
         assert!(is_sidecar_log_path("<sidecar log>".as_ref()));
@@ -599,6 +600,7 @@ mod tests {
         }
     }
 
+    #[cfg_attr(miri, ignore = "log-path and log-writer logic; no unsafe in path")]
     #[test]
     fn test_appsec_log_writer_uses_normalized_log_target() {
         use tracing_log::log::Log;
@@ -644,6 +646,7 @@ mod tests {
         assert!(!contents.contains("similar target message"));
     }
 
+    #[cfg_attr(miri, ignore = "log-path and log-writer logic; no unsafe in path")]
     #[test]
     fn test_refcounting_temporarily_retained_map() {
         let map = TemporarilyRetainedMap::<_, i32> {

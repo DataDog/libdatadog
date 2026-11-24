@@ -141,6 +141,7 @@ mod tests {
     use std::io::Seek;
     use std::io::Write;
 
+    #[cfg_attr(miri, ignore = "pure /proc/status parsing; unsafe clone not exercised")]
     #[test]
     fn test_is_being_traced_in_middle() {
         let lines: &[&[u8]] = &[b"First:item\n", b"TracerPid: 2\n", b"Another: 21"];
@@ -148,6 +149,7 @@ mod tests {
         assert!(is_being_traced_internal(f).unwrap_or(false))
     }
 
+    #[cfg_attr(miri, ignore = "pure /proc/status parsing; unsafe clone not exercised")]
     #[test]
     fn test_is_being_traced_at_the_end() {
         let lines: &[&[u8]] = &[b"First:item\n", b"Another: 21\n", b"TracerPid: 2\n"];
@@ -155,6 +157,7 @@ mod tests {
         assert!(is_being_traced_internal(f).unwrap_or(false))
     }
 
+    #[cfg_attr(miri, ignore = "pure /proc/status parsing; unsafe clone not exercised")]
     #[test]
     fn test_is_being_traced_at_the_end_with_no_newline_at_the_end() {
         let lines: &[&[u8]] = &[b"First:item\n", b"Another: 21\n", b"TracerPid: 2"];
@@ -162,6 +165,7 @@ mod tests {
         assert!(is_being_traced_internal(f).unwrap_or(false))
     }
 
+    #[cfg_attr(miri, ignore = "pure /proc/status parsing; unsafe clone not exercised")]
     #[test]
     fn test_is_being_traced_at_the_beginning() {
         let lines: &[&[u8]] = &[b"TracerPid: 2\n", b"nFirst:item\n", b"Another: 21"];
@@ -169,6 +173,7 @@ mod tests {
         assert!(is_being_traced_internal(f).unwrap_or(false))
     }
 
+    #[cfg_attr(miri, ignore = "pure /proc/status parsing; unsafe clone not exercised")]
     #[test]
     fn test_is_being_traced_with_first_string_larger_than_buffer() {
         // Create a string larger than BUFFER_SIZE
@@ -183,6 +188,7 @@ mod tests {
         assert!(is_being_traced_internal(f).unwrap_or(false))
     }
 
+    #[cfg_attr(miri, ignore = "pure /proc/status parsing; unsafe clone not exercised")]
     #[test]
     fn test_is_being_traced_with_marker_in_between_buffer_read() {
         let large_string = "A".repeat(BUFFER_SIZE - 4);
@@ -196,6 +202,7 @@ mod tests {
         assert!(is_being_traced_internal(f).unwrap_or(false))
     }
 
+    #[cfg_attr(miri, ignore = "pure /proc/status parsing; unsafe clone not exercised")]
     #[test]
     fn test_is_being_traced_with_value_zero() {
         let lines: &[&[u8]] = &[b"First:item\n", b"TracerPid: 0\n", b"AnotherItem: 21\n"];
@@ -203,6 +210,7 @@ mod tests {
         assert!(!is_being_traced_internal(f).unwrap_or(true))
     }
 
+    #[cfg_attr(miri, ignore = "pure /proc/status parsing; unsafe clone not exercised")]
     #[test]
     fn test_is_being_traced_with_no_tracerpid() {
         let lines: &[&[u8]] = &[b"First:item\n", b"AnotherItem: 21\n"];
@@ -210,6 +218,7 @@ mod tests {
         assert!(!is_being_traced_internal(f).unwrap_or(true))
     }
 
+    #[cfg_attr(miri, ignore = "pure /proc/status parsing; unsafe clone not exercised")]
     #[test]
     fn test_is_being_traced_with_very_large_content_and_no_tracerpid() {
         // Create a file with a size twice as the buffer and no

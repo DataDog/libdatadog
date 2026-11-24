@@ -511,6 +511,7 @@ mod tests {
         str_at(p["attributes"].as_array().unwrap(), "status.code") == Some(STATUS_CODE_ERROR)
     }
 
+    #[cfg_attr(miri, ignore = "pure otlp mapping logic; no unsafe in path")]
     #[test]
     fn metric_shape_and_resource_attributes() {
         assert!(map_stats_to_otlp_metrics(&[], &resource()).is_none());
@@ -544,6 +545,7 @@ mod tests {
         );
     }
 
+    #[cfg_attr(miri, ignore = "pure otlp mapping logic; no unsafe in path")]
     #[test]
     fn data_point_attributes() {
         let g_pair = group_with_exact(&[1_000_000_000], &[], |g| {
@@ -600,6 +602,7 @@ mod tests {
         assert_eq!(str_at(custom, "span.kind"), Some("SPAN_KIND_INTERNAL"));
     }
 
+    #[cfg_attr(miri, ignore = "pure otlp mapping logic; no unsafe in path")]
     #[test]
     fn empty_optional_data_point_attributes_are_omitted() {
         let g = group_with_exact(&[1_000_000_000], &[], |g| {
@@ -620,6 +623,7 @@ mod tests {
         }
     }
 
+    #[cfg_attr(miri, ignore = "pure otlp mapping logic; no unsafe in path")]
     #[test]
     fn is_trace_root_preserves_trilean_semantics() {
         for (value, expected) in [
@@ -642,6 +646,7 @@ mod tests {
         }
     }
 
+    #[cfg_attr(miri, ignore = "pure otlp mapping logic; no unsafe in path")]
     #[test]
     fn emits_canonical_grpc_status_name_for_rpc_response_status_code() {
         let g = group_with_exact(&[1_000_000_000], &[], |g| {
@@ -662,6 +667,7 @@ mod tests {
         }
     }
 
+    #[cfg_attr(miri, ignore = "pure otlp mapping logic; no unsafe in path")]
     #[test]
     fn histogram_values_are_exact_and_distribution_uses_sketch() {
         // Single 1s ok span: count/sum/min/max all exact, distribution shaped by the sketch.
@@ -691,6 +697,7 @@ mod tests {
         assert_eq!(counts.iter().filter(|c| c.as_str() != Some("0")).count(), 3);
     }
 
+    #[cfg_attr(miri, ignore = "pure otlp mapping logic; no unsafe in path")]
     #[test]
     fn mixed_ok_and_error_have_exact_independent_sums() {
         // 2 ok spans + 1 error span. ok_sum + error_sum must equal the combined group duration.
@@ -720,6 +727,7 @@ mod tests {
         assert_eq!(ok_s + err_s, ns_to_s(combined_ns));
     }
 
+    #[cfg_attr(miri, ignore = "pure otlp mapping logic; no unsafe in path")]
     #[test]
     fn emits_additional_metric_tags_as_attributes() {
         let g = group_with_exact(&[1_000_000_000], &[], |g| {
@@ -751,6 +759,7 @@ mod tests {
         assert_eq!(str_at(a, "tracer_blocked_value"), Some(""));
     }
 
+    #[cfg_attr(miri, ignore = "pure otlp mapping logic; no unsafe in path")]
     #[test]
     fn test_grpc_status_code_to_name() {
         assert_eq!(grpc_status_code_to_name("0"), Some("OK"));

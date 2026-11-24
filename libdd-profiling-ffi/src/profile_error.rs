@@ -184,6 +184,7 @@ mod tests {
     use super::*;
     use std::io::ErrorKind;
 
+    #[cfg_attr(miri, ignore = "no unsafe in path; pure error variant mapping")]
     #[test]
     fn test_alloc_error() {
         let err = ProfileError::AllocError;
@@ -195,6 +196,7 @@ mod tests {
         );
     }
 
+    #[cfg_attr(miri, ignore = "no unsafe in path; pure error variant mapping")]
     #[test]
     fn test_capacity_overflow() {
         let err = ProfileError::CapacityOverflow;
@@ -202,6 +204,7 @@ mod tests {
         assert!(cow.to_str().unwrap().contains("capacity exceeded"));
     }
 
+    #[cfg_attr(miri, ignore = "no unsafe in path; pure error variant mapping")]
     #[test]
     fn test_reference_count_overflow() {
         let err = ProfileError::ReferenceCountOverflow;
@@ -209,6 +212,7 @@ mod tests {
         assert_eq!(cow.to_str().unwrap(), "reference count overflow");
     }
 
+    #[cfg_attr(miri, ignore = "no unsafe in path; pure error variant mapping")]
     #[test]
     fn test_from_static_cstr() {
         let msg = c"test error";
@@ -218,6 +222,7 @@ mod tests {
         assert_eq!(cow.to_str().unwrap(), "test error");
     }
 
+    #[cfg_attr(miri, ignore = "no unsafe in path; pure error variant mapping")]
     #[test]
     fn test_from_cstring() {
         let msg = CString::new("dynamic error").unwrap();
@@ -227,6 +232,7 @@ mod tests {
         assert_eq!(cow.to_str().unwrap(), "dynamic error");
     }
 
+    #[cfg_attr(miri, ignore = "no unsafe in path; pure error variant mapping")]
     #[test]
     fn test_from_arc_overflow() {
         let arc_err = ArcOverflow;
@@ -238,6 +244,7 @@ mod tests {
         }
     }
 
+    #[cfg_attr(miri, ignore = "no unsafe in path; pure error variant mapping")]
     #[test]
     fn test_from_allocator_api2_try_reserve_error_capacity() {
         use allocator_api2::vec::Vec as Vec2;
@@ -253,6 +260,7 @@ mod tests {
         }
     }
 
+    #[cfg_attr(miri, ignore = "no unsafe in path; pure error variant mapping")]
     #[test]
     fn test_from_allocator_api2_alloc_error() {
         let alloc_err = allocator_api2::alloc::AllocError;
@@ -264,6 +272,7 @@ mod tests {
         }
     }
 
+    #[cfg_attr(miri, ignore = "no unsafe in path; pure error variant mapping")]
     #[test]
     fn test_from_std_try_reserve_error() {
         let mut v = vec![0u8];
@@ -276,6 +285,7 @@ mod tests {
         }
     }
 
+    #[cfg_attr(miri, ignore = "no unsafe in path; pure error variant mapping")]
     #[test]
     fn test_from_set_error() {
         let set_err = SetError::OutOfMemory;
@@ -285,6 +295,7 @@ mod tests {
         assert_eq!(cow.to_str().unwrap(), "set error: out of memory");
     }
 
+    #[cfg_attr(miri, ignore = "no unsafe in path; pure error variant mapping")]
     #[test]
     fn test_from_empty_handle_error() {
         let handle_err = EmptyHandleError;
@@ -297,12 +308,14 @@ mod tests {
         );
     }
 
+    #[cfg_attr(miri, ignore = "no unsafe in path; pure error variant mapping")]
     #[test]
     fn test_empty_handle_error_display() {
         let err = EmptyHandleError;
         assert_eq!(err.to_string(), "handle used with an interior null pointer");
     }
 
+    #[cfg_attr(miri, ignore = "no unsafe in path; pure error variant mapping")]
     #[test]
     fn test_from_io_error_out_of_memory() {
         let io_err = std::io::Error::from(ErrorKind::OutOfMemory);
@@ -314,6 +327,7 @@ mod tests {
         }
     }
 
+    #[cfg_attr(miri, ignore = "no unsafe in path; pure error variant mapping")]
     #[test]
     fn test_from_io_error_storage_full() {
         let io_err = std::io::Error::from(ErrorKind::StorageFull);
@@ -325,6 +339,7 @@ mod tests {
         }
     }
 
+    #[cfg_attr(miri, ignore = "no unsafe in path; pure error variant mapping")]
     #[test]
     fn test_from_io_error_write_zero() {
         let io_err = std::io::Error::from(ErrorKind::WriteZero);
@@ -360,6 +375,7 @@ mod tests {
         assert!(cstr.to_str().unwrap().contains("memory allocator"));
     }
 
+    #[cfg_attr(miri, ignore = "no unsafe in path; pure debug formatting")]
     #[test]
     fn test_profile_error_debug() {
         let err = ProfileError::AllocError;

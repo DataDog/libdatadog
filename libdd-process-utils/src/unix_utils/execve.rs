@@ -106,6 +106,7 @@ mod tests {
     // and calls exec() in the child.
     use super::*;
 
+    #[cfg_attr(miri, ignore = "only prepares cstrings; unsafe execve path not called")]
     #[test]
     fn test_prepared_execve_new_basic() {
         let binary_path = "/bin/echo";
@@ -122,6 +123,7 @@ mod tests {
         assert!(core::mem::size_of_val(&prepared) > 0);
     }
 
+    #[cfg_attr(miri, ignore = "only prepares cstrings; unsafe execve path not called")]
     #[test]
     fn test_prepared_execve_new_empty_args() {
         let binary_path = "/bin/true";
@@ -134,6 +136,7 @@ mod tests {
         assert!(core::mem::size_of_val(&prepared) > 0);
     }
 
+    #[cfg_attr(miri, ignore = "only prepares cstrings; unsafe execve path not called")]
     #[test]
     fn test_prepared_execve_new_complex_args() {
         let binary_path = "/usr/bin/env";
@@ -155,6 +158,7 @@ mod tests {
         assert!(core::mem::size_of_val(&prepared) > 0);
     }
 
+    #[cfg_attr(miri, ignore = "only prepares cstrings; unsafe execve path not called")]
     #[test]
     fn test_prepared_execve_new_special_characters() {
         let binary_path = "/bin/test";
@@ -178,6 +182,7 @@ mod tests {
         ));
     }
 
+    #[cfg_attr(miri, ignore = "only prepares cstrings; unsafe execve path not called")]
     #[test]
     fn test_prepared_execve_new_null_bytes_in_env() {
         let binary_path = "/bin/test";
@@ -196,6 +201,7 @@ mod tests {
         ));
     }
 
+    #[cfg_attr(miri, ignore = "only prepares cstrings; unsafe execve path not called")]
     #[test]
     fn test_prepared_execve_new_null_bytes_in_binary_path() {
         let binary_path = "/bin/test\0with\0nulls";
@@ -211,6 +217,7 @@ mod tests {
         ));
     }
 
+    #[cfg_attr(miri, ignore = "only prepares cstrings; unsafe execve path not called")]
     #[test]
     fn test_prepared_execve_new_unicode() {
         let binary_path = "/bin/echo";
@@ -231,6 +238,7 @@ mod tests {
         assert!(core::mem::size_of_val(&prepared) > 0);
     }
 
+    #[cfg_attr(miri, ignore = "only prepares cstrings; unsafe execve path not called")]
     #[test]
     fn test_prepared_execve_new_large_args() {
         let binary_path = "/bin/echo";
@@ -243,6 +251,7 @@ mod tests {
         assert!(core::mem::size_of_val(&prepared) > 0);
     }
 
+    #[cfg_attr(miri, ignore = "only prepares cstrings; unsafe execve path not called")]
     #[test]
     fn test_prepared_execve_new_large_env() {
         let binary_path = "/bin/echo";
@@ -257,6 +266,7 @@ mod tests {
         assert!(core::mem::size_of_val(&prepared) > 0);
     }
 
+    #[cfg_attr(miri, ignore = "only prepares cstrings; unsafe execve path not called")]
     #[test]
     fn test_prepared_execve_new_empty_binary_path() {
         let binary_path = "";
@@ -269,6 +279,7 @@ mod tests {
         assert!(core::mem::size_of_val(&prepared) > 0);
     }
 
+    #[cfg_attr(miri, ignore = "only prepares cstrings; unsafe execve path not called")]
     #[test]
     fn test_prepared_execve_new_empty_env_keys() {
         let binary_path = "/bin/echo";
@@ -284,6 +295,7 @@ mod tests {
         assert!(core::mem::size_of_val(&prepared) > 0);
     }
 
+    #[cfg_attr(miri, ignore = "only prepares cstrings; unsafe execve path not called")]
     #[test]
     fn test_prepared_execve_error_variants() {
         // Test binary path error

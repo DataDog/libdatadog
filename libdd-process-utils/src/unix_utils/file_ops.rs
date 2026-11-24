@@ -137,6 +137,7 @@ mod tests {
         assert!(content.contains("appended content"));
     }
 
+    #[cfg_attr(miri, ignore = "safe std::fs open failure path; no unsafe in path")]
     #[test]
     fn test_open_file_or_quiet_invalid_path() {
         // Test with an invalid path that should fail
@@ -147,6 +148,7 @@ mod tests {
         assert_eq!(error.kind(), io::ErrorKind::NotFound);
     }
 
+    #[cfg_attr(miri, ignore = "safe std::fs open failure path; no unsafe in path")]
     #[test]
     fn test_open_file_or_quiet_empty_string() {
         // Test with empty string (should fail as it's treated as a file path)
@@ -157,6 +159,7 @@ mod tests {
         assert_eq!(error.kind(), io::ErrorKind::NotFound);
     }
 
+    #[cfg_attr(miri, ignore = "safe std::fs open failure path; no unsafe in path")]
     #[test]
     fn test_open_file_or_quiet_permission_denied() {
         // Test with a path that should cause permission denied

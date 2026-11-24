@@ -94,6 +94,7 @@ mod tests {
         }
     }
 
+    #[cfg_attr(miri, ignore = "pure sampling decision logic; no unsafe in crate")]
     #[test]
     fn check_debug_impl() {
         let sampler = RateSampler::new(0.5);
@@ -102,6 +103,7 @@ mod tests {
         assert!(debug_output.contains("sample_rate: 0.5"));
     }
 
+    #[cfg_attr(miri, ignore = "pure sampling decision logic; no unsafe in crate")]
     #[test]
     fn test_rate_sampler_new() {
         // Standard rates
@@ -135,6 +137,7 @@ mod tests {
         assert_eq!(sampler_over_one.sample_rate, 1.0);
     }
 
+    #[cfg_attr(miri, ignore = "pure sampling decision logic; no unsafe in crate")]
     #[test]
     fn test_rate_sampler_should_sample() {
         // Sample Rate 0.0: Should always return false
@@ -189,6 +192,7 @@ mod tests {
         );
     }
 
+    #[cfg_attr(miri, ignore = "pure sampling decision logic; no unsafe in crate")]
     #[test]
     fn test_half_rate_sampling() {
         let sampler_half = RateSampler::new(0.5);

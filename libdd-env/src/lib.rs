@@ -70,6 +70,10 @@ mod tests {
         unsafe { std::env::remove_var(TEST_VAR) };
     }
 
+    #[cfg_attr(
+        miri,
+        ignore = "only unsafe is set_var in test helper; safe env parsing"
+    )]
     #[test]
     fn env_bool_matches_true_case_insensitively() {
         let _lock = ENV_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
@@ -90,6 +94,10 @@ mod tests {
         assert_eq!(env_bool(TEST_VAR), Some(false));
     }
 
+    #[cfg_attr(
+        miri,
+        ignore = "only unsafe is set_var in test helper; safe env parsing"
+    )]
     #[test]
     fn env_from_str_parses_with_t() {
         let _lock = ENV_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
@@ -104,6 +112,10 @@ mod tests {
         assert_eq!(env_from_str::<u16>(TEST_VAR), None);
     }
 
+    #[cfg_attr(
+        miri,
+        ignore = "only unsafe is set_var in test helper; safe env parsing"
+    )]
     #[test]
     fn env_duration_parses_seconds() {
         let _lock = ENV_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
@@ -116,6 +128,10 @@ mod tests {
         assert_eq!(env_duration(TEST_VAR), None);
     }
 
+    #[cfg_attr(
+        miri,
+        ignore = "only unsafe is set_var in test helper; safe env parsing"
+    )]
     #[test]
     fn env_str_not_empty_ignores_empty_values() {
         let _lock = ENV_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());

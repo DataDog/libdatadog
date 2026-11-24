@@ -316,6 +316,7 @@ impl Error for TraceExporterError {}
 mod tests {
     use super::*;
 
+    #[cfg_attr(miri, ignore = "pure error mapping; no unsafe in path")]
     #[test]
     fn test_request_error() {
         let error = RequestError::new(StatusCode::NOT_FOUND, "Not found");

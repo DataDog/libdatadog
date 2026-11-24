@@ -43,6 +43,7 @@ fn sorted(names: &[&str]) -> Vec<String> {
     names
 }
 
+#[cfg_attr(miri, ignore = "no unsafe in path; pure token accounting logic")]
 #[test]
 fn each_estimated_side_marks_its_own_points() {
     assert_eq!(TOKEN_SOURCES, ["reported", "estimated"]);
@@ -68,6 +69,7 @@ fn each_estimated_side_marks_its_own_points() {
     }
 }
 
+#[cfg_attr(miri, ignore = "no unsafe in path; pure token accounting logic")]
 #[test]
 fn the_breakdown_marks_parts_by_side() {
     assert_eq!(
@@ -94,6 +96,7 @@ fn the_breakdown_marks_parts_by_side() {
     );
 }
 
+#[cfg_attr(miri, ignore = "no unsafe in path; pure token accounting logic")]
 #[test]
 fn rejections() {
     for (stated, code) in [
@@ -121,6 +124,7 @@ fn rejections() {
     }
 }
 
+#[cfg_attr(miri, ignore = "no unsafe in path; pure token accounting logic")]
 #[test]
 fn a_reported_or_estimated_cost_beside_an_estimate_is_valid() {
     for source in ["reported", "estimated"] {

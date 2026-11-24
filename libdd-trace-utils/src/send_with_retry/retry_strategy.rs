@@ -311,6 +311,7 @@ mod tests {
         );
     }
 
+    #[cfg_attr(miri, ignore = "pure retry delay math; no unsafe in path")]
     #[test]
     fn test_retry_delays() {
         let retry_strategy = RetryStrategy::new(3, 100, RetryBackoffType::Exponential, None);
@@ -329,6 +330,7 @@ mod tests {
         );
     }
 
+    #[cfg_attr(miri, ignore = "pure retry delay math; no unsafe in path")]
     #[test]
     fn test_zero_jitter_is_supported() {
         let retry_strategy = RetryStrategy::new(1, 100, RetryBackoffType::Constant, Some(0));

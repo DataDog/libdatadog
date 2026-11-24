@@ -77,6 +77,7 @@ mod tests {
     use super::*;
     use std::fmt::Write;
 
+    #[cfg_attr(miri, ignore = "no unsafe in path; pure string writer logic")]
     #[test]
     fn test_new_and_default() {
         let writer = FallibleStringWriter::new();
@@ -88,6 +89,7 @@ mod tests {
         assert_eq!(s, "");
     }
 
+    #[cfg_attr(miri, ignore = "no unsafe in path; pure string writer logic")]
     #[test]
     fn test_write_str() {
         let mut writer = FallibleStringWriter::new();
@@ -99,6 +101,7 @@ mod tests {
         assert_eq!(s, "Hello, World!");
     }
 
+    #[cfg_attr(miri, ignore = "no unsafe in path; pure string writer logic")]
     #[test]
     fn test_write_formatted() {
         let mut writer = FallibleStringWriter::new();
@@ -110,6 +113,7 @@ mod tests {
         assert_eq!(s, "x = 10, y = 20, sum = 30");
     }
 
+    #[cfg_attr(miri, ignore = "no unsafe in path; pure string writer logic")]
     #[test]
     fn test_try_push_str() {
         let mut writer = FallibleStringWriter::new();
@@ -121,6 +125,7 @@ mod tests {
         assert_eq!(s, "Hello World");
     }
 
+    #[cfg_attr(miri, ignore = "no unsafe in path; pure string writer logic")]
     #[test]
     fn test_try_reserve() {
         // Marcus Aurelius, Meditations (public domain)
@@ -150,6 +155,7 @@ mod tests {
         assert!(result.capacity() >= capacity);
     }
 
+    #[cfg_attr(miri, ignore = "no unsafe in path; pure string writer logic")]
     #[test]
     fn test_from_existing_string() {
         // Test From<String>, new_from_existing, and appending
@@ -164,6 +170,7 @@ mod tests {
         assert_eq!(String::from(writer), "prefix-suffix");
     }
 
+    #[cfg_attr(miri, ignore = "no unsafe in path; pure string writer logic")]
     #[test]
     fn test_write_unicode() {
         let mut writer = FallibleStringWriter::new();
@@ -173,6 +180,7 @@ mod tests {
         assert_eq!(s, "Hello 👋 World 🌍");
     }
 
+    #[cfg_attr(miri, ignore = "no unsafe in path; pure string writer logic")]
     #[test]
     fn test_write_long_string() {
         let mut writer = FallibleStringWriter::new();

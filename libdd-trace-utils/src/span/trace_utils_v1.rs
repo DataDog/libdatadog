@@ -230,6 +230,10 @@ mod tests {
         assert_eq!(get_root_span_index(&trace).unwrap(), 0);
     }
 
+    #[cfg_attr(
+        miri,
+        ignore = "empty-trace index error path; no span constructed, no unsafe in path"
+    )]
     #[test]
     fn test_get_root_span_index_empty_trace_errors() {
         let trace: Vec<SpanBytes> = vec![];

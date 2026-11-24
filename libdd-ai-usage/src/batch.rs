@@ -886,6 +886,7 @@ mod tests {
         "duration_seconds": 1.5, "streaming": false, "input_tokens": 10, "output_tokens": 2,
         "cost_usd": 0.1, "cost_source": "estimated", "observation_point": "gateway"}"#;
 
+    #[cfg_attr(miri, ignore = "no unsafe in path; pure aggregation logic")]
     #[test]
     fn counters_are_summed_exactly_and_samples_are_kept() {
         let mut batch = MetricBatch::new();
@@ -918,6 +919,7 @@ mod tests {
         assert_eq!(MetricBatch::new().len(), 0);
     }
 
+    #[cfg_attr(miri, ignore = "no unsafe in path; pure aggregation logic")]
     #[test]
     fn a_bounded_batch_drops_what_does_not_fit_and_counts_it() {
         let call = attempt(CALL);
@@ -954,6 +956,7 @@ mod tests {
         assert_eq!(batch.max_len(), None);
     }
 
+    #[cfg_attr(miri, ignore = "no unsafe in path; pure aggregation logic")]
     #[test]
     fn a_full_batch_drops_whole_requests() {
         let call = attempt(CALL);
@@ -1019,6 +1022,7 @@ mod tests {
         assert!(batch.is_empty());
     }
 
+    #[cfg_attr(miri, ignore = "no unsafe in path; pure aggregation logic")]
     #[test]
     fn dogstatsd_lines_carry_the_profile_and_usd() {
         let mut batch = MetricBatch::new();
@@ -1052,6 +1056,7 @@ mod tests {
         assert_eq!(samples, 2);
     }
 
+    #[cfg_attr(miri, ignore = "no unsafe in path; pure aggregation logic")]
     #[test]
     fn resources_with_the_same_datadog_tags_share_their_counts() {
         let mut upper = attempt(CALL);
@@ -1074,6 +1079,7 @@ mod tests {
         assert!(cost[0].contains("service:api"), "{cost:?}");
     }
 
+    #[cfg_attr(miri, ignore = "no unsafe in path; pure aggregation logic")]
     #[test]
     fn histogram_sums_follow_the_recording_order_across_resources() {
         // Recorded API, api, API: grouped by resource, the sum would add
@@ -1099,6 +1105,7 @@ mod tests {
         assert_eq!(samples, 3);
     }
 
+    #[cfg_attr(miri, ignore = "no unsafe in path; pure aggregation logic")]
     #[test]
     fn a_resource_never_states_the_profile() {
         let mut stated = attempt(CALL);
@@ -1114,6 +1121,7 @@ mod tests {
         assert!(!groups[0].0.contains_key(PROFILE_ATTRIBUTE));
     }
 
+    #[cfg_attr(miri, ignore = "no unsafe in path; pure aggregation logic")]
     #[test]
     fn points_of_another_profile_are_refused_whole() {
         let mut batch = MetricBatch::new();

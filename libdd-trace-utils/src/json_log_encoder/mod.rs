@@ -261,6 +261,10 @@ mod tests {
             .collect()
     }
 
+    #[cfg_attr(
+        miri,
+        ignore = "serializes cow-based SpanSlice to json; pure safe path, no unsafe"
+    )]
     #[test]
     fn golden_known_span() {
         let span = SpanSlice {
@@ -304,6 +308,10 @@ mod tests {
         assert_eq!(String::from_utf8(out).unwrap(), expected);
     }
 
+    #[cfg_attr(
+        miri,
+        ignore = "serializes cow-based SpanSlice to json; pure safe path, no unsafe"
+    )]
     #[test]
     fn meta_struct_is_omitted() {
         let span = SpanSlice {
@@ -326,6 +334,10 @@ mod tests {
         assert!(v["traces"][0][0]["trace_id"].is_string());
     }
 
+    #[cfg_attr(
+        miri,
+        ignore = "serializes cow-based SpanSlice to json; pure safe path, no unsafe"
+    )]
     #[test]
     fn hex_high_bits_and_root_parent() {
         // trace_id with the high 64 bits set => 32 hex chars.
@@ -347,6 +359,10 @@ mod tests {
         assert!(text.contains("\"parent_id\":\"0000000000000000\""));
     }
 
+    #[cfg_attr(
+        miri,
+        ignore = "serializes cow-based SpanSlice to json; pure safe path, no unsafe"
+    )]
     #[test]
     fn error_is_integer() {
         let span = SpanSlice {
@@ -359,6 +375,10 @@ mod tests {
         assert!(text.contains("\"error\":1,"), "got: {text}");
     }
 
+    #[cfg_attr(
+        miri,
+        ignore = "serializes cow-based SpanSlice to json; pure safe path, no unsafe"
+    )]
     #[test]
     fn empty_maps_and_type_omitted() {
         let span = SpanSlice {
@@ -376,6 +396,10 @@ mod tests {
         assert!(!text.contains("\"type\""));
     }
 
+    #[cfg_attr(
+        miri,
+        ignore = "serializes cow-based SpanSlice to json; pure safe path, no unsafe"
+    )]
     #[test]
     fn string_escaping() {
         let span = SpanSlice {
@@ -394,6 +418,10 @@ mod tests {
         }
     }
 
+    #[cfg_attr(
+        miri,
+        ignore = "serializes cow-based SpanSlice to json; pure safe path, no unsafe"
+    )]
     #[test]
     fn size_cap_batches_into_multiple_lines() {
         // Build several spans that individually fit but together exceed a small cap.
@@ -426,6 +454,10 @@ mod tests {
         }
     }
 
+    #[cfg_attr(
+        miri,
+        ignore = "serializes cow-based SpanSlice to json; pure safe path, no unsafe"
+    )]
     #[test]
     fn oversize_single_span_dropped() {
         let big = "a".repeat(10_000);
@@ -451,6 +483,10 @@ mod tests {
         assert_eq!(parsed["traces"][0][0]["name"].as_str().unwrap(), "ok");
     }
 
+    #[cfg_attr(
+        miri,
+        ignore = "serializes cow-based SpanSlice to json; pure safe path, no unsafe"
+    )]
     #[test]
     fn metric_non_finite_serializes_null() {
         // serde_json renders non-finite f64 as JSON null; the line must remain
@@ -472,6 +508,10 @@ mod tests {
         assert!(metrics["inf"].is_null(), "got: {metrics}");
     }
 
+    #[cfg_attr(
+        miri,
+        ignore = "serializes cow-based SpanSlice to json; pure safe path, no unsafe"
+    )]
     #[test]
     fn multi_trace_flattened_into_one_line() {
         // Two input traces, both well under the cap, flatten into a single line
@@ -497,6 +537,10 @@ mod tests {
         assert_eq!(parsed["traces"].as_array().unwrap().len(), 1);
     }
 
+    #[cfg_attr(
+        miri,
+        ignore = "serializes cow-based SpanSlice to json; pure safe path, no unsafe"
+    )]
     #[test]
     fn span_links_and_events_emitted_when_present() {
         use crate::span::v04::{SpanEvent, SpanLink};
@@ -565,6 +609,10 @@ mod tests {
         );
     }
 
+    #[cfg_attr(
+        miri,
+        ignore = "serializes cow-based SpanSlice to json; pure safe path, no unsafe"
+    )]
     #[test]
     fn empty_inner_trace_writes_nothing() {
         // One trace containing zero spans: nothing is emitted and no spans counted.
@@ -576,6 +624,10 @@ mod tests {
         assert_eq!(stats.spans_dropped, 0);
     }
 
+    #[cfg_attr(
+        miri,
+        ignore = "serializes cow-based SpanSlice to json; pure safe path, no unsafe"
+    )]
     #[test]
     fn empty_input_writes_nothing() {
         let traces: Vec<Vec<SpanSlice>> = vec![];
@@ -589,6 +641,10 @@ mod tests {
     // parses as JSON, top-level `traces` is a non-empty array whose `[0]` is a
     // non-empty array whose `[0]` has a non-null string `trace_id`, and every
     // line ends with `\n`.
+    #[cfg_attr(
+        miri,
+        ignore = "serializes cow-based SpanSlice to json; pure safe path, no unsafe"
+    )]
     #[test]
     fn forwarder_is_trace_contract() {
         let trace: Vec<SpanSlice> = (1u64..=5)

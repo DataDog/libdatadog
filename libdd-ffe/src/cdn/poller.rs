@@ -528,6 +528,7 @@ mod tests {
         }
     }
 
+    #[cfg_attr(miri, ignore = "no unsafe in path; safe async retry/poll logic")]
     #[test]
     fn retries_only_transport_timeouts_and_selected_statuses() {
         for status in [408, 429, 500, 503, 599] {
@@ -538,6 +539,7 @@ mod tests {
         }
     }
 
+    #[cfg_attr(miri, ignore = "no unsafe in path; safe async retry/poll logic")]
     #[test]
     fn retry_delay_applies_clamps_and_jitter() {
         assert_eq!(
@@ -562,6 +564,7 @@ mod tests {
         );
     }
 
+    #[cfg_attr(miri, ignore = "no unsafe in path; safe async retry/poll logic")]
     #[test]
     fn etag_advances_only_after_parse_and_apply_succeed() {
         let mut poller = test_poller(true);
@@ -587,6 +590,7 @@ mod tests {
         assert_eq!(poller.state.etag().as_deref(), Some("new"));
     }
 
+    #[cfg_attr(miri, ignore = "no unsafe in path; safe async retry/poll logic")]
     #[test]
     fn malformed_jsonapi_resources_keep_the_previous_configuration_and_etag() {
         let mut poller = test_poller(false);
@@ -617,6 +621,7 @@ mod tests {
         }
     }
 
+    #[cfg_attr(miri, ignore = "no unsafe in path; safe async retry/poll logic")]
     #[test]
     fn jsonapi_requires_objects_and_string_discriminators() {
         let valid: serde_json::Value = serde_json::from_slice(EMPTY_CONFIG).unwrap();
@@ -650,6 +655,7 @@ mod tests {
         }
     }
 
+    #[cfg_attr(miri, ignore = "no unsafe in path; safe async retry/poll logic")]
     #[test]
     fn jsonapi_accepts_escaped_discriminators_and_unknown_fields() {
         let mut valid: serde_json::Value = serde_json::from_slice(EMPTY_CONFIG).unwrap();
@@ -671,6 +677,7 @@ mod tests {
         assert_eq!(poller.sink.applications.load(Ordering::Relaxed), 1);
     }
 
+    #[cfg_attr(miri, ignore = "no unsafe in path; safe async retry/poll logic")]
     #[test]
     fn configuration_spanning_gzip_members_is_published() {
         fn member(bytes: &[u8]) -> Vec<u8> {
@@ -699,6 +706,7 @@ mod tests {
         assert_eq!(poller.sink.applications.load(Ordering::Relaxed), 1);
     }
 
+    #[cfg_attr(miri, ignore = "no unsafe in path; safe async retry/poll logic")]
     #[test]
     fn only_server_format_is_published_and_invalid_formats_keep_the_etag() {
         let mut poller = test_poller(false);
@@ -731,6 +739,7 @@ mod tests {
         }
     }
 
+    #[cfg_attr(miri, ignore = "no unsafe in path; safe async retry/poll logic")]
     #[test]
     fn retry_after_accepts_seconds_and_http_dates_without_overflow() {
         let now = SystemTime::UNIX_EPOCH + Duration::from_secs(1_800_000_000);
@@ -757,6 +766,7 @@ mod tests {
         }
     }
 
+    #[cfg_attr(miri, ignore = "no unsafe in path; safe async retry/poll logic")]
     #[tokio::test(start_paused = true)]
     async fn server_delay_does_not_reduce_backoff_or_extend_the_attempt_limit() {
         let responses = ["10", "1", "100"].map(|delay| {
@@ -775,6 +785,7 @@ mod tests {
         assert_eq!(poller.transport.calls.load(Ordering::Relaxed), 3);
     }
 
+    #[cfg_attr(miri, ignore = "no unsafe in path; safe async retry/poll logic")]
     #[tokio::test(start_paused = true)]
     async fn final_retry_after_delays_the_next_poll_and_remains_cancellable() {
         // The fourth request starts a new poll. It must wait for both the
@@ -807,6 +818,7 @@ mod tests {
         }
     }
 
+    #[cfg_attr(miri, ignore = "no unsafe in path; safe async retry/poll logic")]
     #[tokio::test(start_paused = true)]
     async fn cancellation_interrupts_a_server_requested_wait() {
         let mut response = response(503, None, b"");
@@ -836,6 +848,7 @@ mod tests {
         )
     }
 
+    #[cfg_attr(miri, ignore = "no unsafe in path; safe async retry/poll logic")]
     #[test]
     fn non_200_responses_are_never_decoded() {
         let mut poller = test_poller(false);
@@ -852,6 +865,7 @@ mod tests {
         assert_eq!(poller.state.etag().as_deref(), Some("current"));
     }
 
+    #[cfg_attr(miri, ignore = "no unsafe in path; safe async retry/poll logic")]
     #[test]
     fn a_304_without_an_accepted_etag_does_not_confirm_configuration() {
         let mut poller = test_poller(false);
@@ -862,6 +876,7 @@ mod tests {
         assert_eq!(poller.sink.applications.load(Ordering::Relaxed), 0);
     }
 
+    #[cfg_attr(miri, ignore = "no unsafe in path; safe async retry/poll logic")]
     #[test]
     fn warning_categories_are_suppressed_independently() {
         let warnings = WarningSlots::default();
@@ -873,6 +888,7 @@ mod tests {
         assert!(warnings.take(WarningCategory::Request));
     }
 
+    #[cfg_attr(miri, ignore = "no unsafe in path; safe async retry/poll logic")]
     #[tokio::test]
     async fn a_poll_retries_three_times_without_overlapping_requests() {
         let transport = QueueTransport::new([
@@ -905,6 +921,7 @@ mod tests {
         assert_eq!(state.etag().as_deref(), Some("accepted"));
     }
 
+    #[cfg_attr(miri, ignore = "no unsafe in path; safe async retry/poll logic")]
     #[tokio::test]
     async fn cancellation_before_a_poll_prevents_the_first_request() {
         let transport = QueueTransport::new([]);

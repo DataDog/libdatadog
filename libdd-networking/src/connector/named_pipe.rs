@@ -55,6 +55,7 @@ pub fn named_pipe_path_from_uri(uri: &http::Uri) -> anyhow::Result<PathBuf> {
     }
 }
 
+#[cfg_attr(miri, ignore = "no unsafe in path; pure named-pipe path encoding")]
 #[test]
 fn test_encode_named_pipe_for_local_server() {
     let expected_path = r"\\.\pipe\pipename".as_ref();
@@ -65,6 +66,7 @@ fn test_encode_named_pipe_for_local_server() {
     assert_eq!(actual_path.as_path(), Path::new(expected_path))
 }
 
+#[cfg_attr(miri, ignore = "no unsafe in path; pure named-pipe path encoding")]
 #[test]
 fn test_encode_named_pipe_for_remote_server() {
     let expected_path = r"\\servername\pipe\pipename".as_ref();

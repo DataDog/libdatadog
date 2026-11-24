@@ -158,6 +158,7 @@ pub(crate) mod prost_codec {
         // Round-trips through the `BufMut`/`Buf`-generic core (`encode_into`/`decode_from`) that
         // the `Encoder`/`Decoder` impls delegate to, over a plain `BytesMut`; see
         // `ProstEncoder::encode_into` for why the `Codec` traits can't be driven directly.
+        #[cfg_attr(miri, ignore = "pure prost codec roundtrip; no unsafe in path")]
         #[test]
         fn prost_codec_round_trips() {
             let msg = ExportTraceServiceRequest {
@@ -593,6 +594,7 @@ mod build_tests {
         }
     }
 
+    #[cfg_attr(miri, ignore = "pure endpoint/uri config building; no unsafe in path")]
     #[test]
     fn rejects_https() {
         let err = build_grpc_transport("https://localhost:4317", cfg())
@@ -601,16 +603,19 @@ mod build_tests {
         assert!(err.contains("TLS") || err.contains("https"), "got: {err}");
     }
 
+    #[cfg_attr(miri, ignore = "pure endpoint/uri config building; no unsafe in path")]
     #[test]
     fn rejects_malformed_url() {
         assert!(build_grpc_transport("not a url", cfg()).is_err());
     }
 
+    #[cfg_attr(miri, ignore = "pure endpoint/uri config building; no unsafe in path")]
     #[test]
     fn accepts_http_without_a_runtime() {
         assert!(build_grpc_transport("http://localhost:4317", cfg()).is_ok());
     }
 
+    #[cfg_attr(miri, ignore = "pure endpoint/uri config building; no unsafe in path")]
     #[cfg(unix)]
     #[test]
     fn accepts_unix_without_a_runtime_or_socket() {
@@ -625,6 +630,7 @@ mod build_tests {
         );
     }
 
+    #[cfg_attr(miri, ignore = "pure endpoint/uri config building; no unsafe in path")]
     #[test]
     fn rejects_invalid_unix_endpoints() {
         for endpoint in [
@@ -650,6 +656,7 @@ mod build_tests {
         assert!(error.to_string().contains("not supported on this platform"));
     }
 
+    #[cfg_attr(miri, ignore = "pure endpoint/uri config building; no unsafe in path")]
     #[test]
     fn supplies_http_default_port_for_dialing() {
         let transport = build_grpc_transport("http://collector", cfg()).unwrap();
@@ -667,6 +674,7 @@ mod build_tests {
         assert_eq!(ipv6_transport.service, H2Service::Tcp("[::1]:80".into()));
     }
 
+    #[cfg_attr(miri, ignore = "pure endpoint/uri config building; no unsafe in path")]
     #[test]
     fn preserves_explicit_port_for_dialing() {
         let transport = build_grpc_transport("http://collector:4317", cfg()).unwrap();
@@ -676,6 +684,7 @@ mod build_tests {
         assert_eq!(ipv6_transport.service, H2Service::Tcp("[::1]:4317".into()));
     }
 
+    #[cfg_attr(miri, ignore = "pure endpoint/uri config building; no unsafe in path")]
     #[test]
     fn rejects_invalid_dial_authorities() {
         for endpoint in [
@@ -693,12 +702,14 @@ mod build_tests {
         }
     }
 
+    #[cfg_attr(miri, ignore = "pure endpoint/uri config building; no unsafe in path")]
     #[test]
     fn normalizes_origin_path_prefix() {
         let t = build_grpc_transport("http://localhost:4317/otel/", cfg()).unwrap();
         assert_eq!(t.origin.path(), "/otel");
     }
 
+    #[cfg_attr(miri, ignore = "pure endpoint/uri config building; no unsafe in path")]
     #[test]
     fn build_skips_invalid_headers_and_keeps_valid() {
         let config = OtlpGrpcTraceConfig {
@@ -1173,6 +1184,7 @@ mod send_tests {
         )
     }
 
+    #[cfg_attr(miri, ignore = "pure tonic status/metadata mapping; no unsafe in path")]
     #[test]
     fn resource_exhausted_with_retry_info_is_retryable() {
         let retry_after = Duration::new(3, 250_000_000);
@@ -1189,6 +1201,7 @@ mod send_tests {
         }
     }
 
+    #[cfg_attr(miri, ignore = "pure tonic status/metadata mapping; no unsafe in path")]
     #[test]
     fn unavailable_honors_retry_info_delay() {
         let retry_after = Duration::from_secs(7);
@@ -1206,6 +1219,7 @@ mod send_tests {
         }
     }
 
+    #[cfg_attr(miri, ignore = "pure tonic status/metadata mapping; no unsafe in path")]
     #[test]
     fn status_transient_remains_retryable_request_error() {
         for (code, http_status) in [
@@ -1229,6 +1243,7 @@ mod send_tests {
         }
     }
 
+    #[cfg_attr(miri, ignore = "pure tonic status/metadata mapping; no unsafe in path")]
     #[test]
     fn status_unknown_with_io_source_maps_to_io() {
         let io_err = std::io::Error::new(std::io::ErrorKind::ConnectionRefused, "refused");
@@ -1245,6 +1260,7 @@ mod send_tests {
         }
     }
 
+    #[cfg_attr(miri, ignore = "pure tonic status/metadata mapping; no unsafe in path")]
     #[test]
     fn status_unavailable_with_io_source_maps_to_io() {
         let io_err = std::io::Error::new(std::io::ErrorKind::ConnectionReset, "reset");
@@ -1262,6 +1278,7 @@ mod send_tests {
         }
     }
 
+    #[cfg_attr(miri, ignore = "pure tonic status/metadata mapping; no unsafe in path")]
     #[test]
     fn status_unknown_without_io_source_maps_to_request() {
         assert!(matches!(
@@ -1270,6 +1287,7 @@ mod send_tests {
         ));
     }
 
+    #[cfg_attr(miri, ignore = "pure tonic status/metadata mapping; no unsafe in path")]
     #[test]
     fn status_application_errors_map_to_request() {
         for (code, http_status) in [
@@ -1296,6 +1314,7 @@ mod send_tests {
         }
     }
 
+    #[cfg_attr(miri, ignore = "pure tonic status/metadata mapping; no unsafe in path")]
     #[test]
     fn partial_success_details_ignores_empty_response() {
         let empty = ExportTraceServiceResponse::default();
@@ -1309,6 +1328,7 @@ mod send_tests {
         assert!(partial_success_details(&present_but_empty).is_none());
     }
 
+    #[cfg_attr(miri, ignore = "pure tonic status/metadata mapping; no unsafe in path")]
     #[test]
     fn partial_success_details_returns_rejections_and_warnings() {
         let response = ExportTraceServiceResponse {
@@ -1324,6 +1344,7 @@ mod send_tests {
         assert_eq!(details.error_message, "too many spans");
     }
 
+    #[cfg_attr(miri, ignore = "pure tonic status/metadata mapping; no unsafe in path")]
     #[test]
     fn attach_metadata_inserts_headers_token_and_stats() {
         let mut req = Request::new(ExportTraceServiceRequest::default());

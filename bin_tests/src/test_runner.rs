@@ -365,6 +365,7 @@ impl Default for ValidatorBuilder {
 mod tests {
     use super::*;
 
+    #[cfg_attr(miri, ignore = "no unsafe in path; pure config construction")]
     #[test]
     fn test_config_creation() {
         let config = CrashTestConfig::new(
@@ -379,6 +380,7 @@ mod tests {
         assert!(config.env_vars.is_empty());
     }
 
+    #[cfg_attr(miri, ignore = "no unsafe in path; pure config construction")]
     #[test]
     fn test_config_with_env() {
         let config = CrashTestConfig::new(
@@ -392,6 +394,7 @@ mod tests {
         assert_eq!(config.env_vars[0], ("TEST_VAR", "test_value"));
     }
 
+    #[cfg_attr(miri, ignore = "no unsafe in path; pure config construction")]
     #[test]
     fn test_config_from_strings() {
         let config =
@@ -401,6 +404,7 @@ mod tests {
         assert_eq!(config.crash_type, CrashType::NullDeref);
     }
 
+    #[cfg_attr(miri, ignore = "no unsafe in path; pure config construction")]
     #[test]
     fn test_config_from_invalid_strings() {
         let result =
@@ -409,6 +413,7 @@ mod tests {
         assert!(result.is_err());
     }
 
+    #[cfg_attr(miri, ignore = "no unsafe in path; pure config construction")]
     #[test]
     fn test_crash_type_exit_status() {
         // These should expect failure

@@ -258,6 +258,7 @@ mod tests {
             ]
         }"#]
     )]
+    #[cfg_attr(miri, ignore = "pure json parsing; no unsafe in path")]
     #[test]
     fn test_name() {
         let mut deserializer = serde_json::Deserializer::from_str(input);

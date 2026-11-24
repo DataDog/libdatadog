@@ -41,18 +41,21 @@ pub enum HttpClientError {
 mod tests {
     use super::*;
 
+    #[cfg_attr(miri, ignore = "no unsafe in path; pure error display formatting")]
     #[test]
     fn connection_failed_display() {
         let err = HttpClientError::ConnectionFailed("refused".to_owned());
         assert_eq!(err.to_string(), "connection failed: refused");
     }
 
+    #[cfg_attr(miri, ignore = "no unsafe in path; pure error display formatting")]
     #[test]
     fn timed_out_display() {
         let err = HttpClientError::TimedOut;
         assert_eq!(err.to_string(), "request timed out");
     }
 
+    #[cfg_attr(miri, ignore = "no unsafe in path; pure error display formatting")]
     #[test]
     fn request_failed_display() {
         let err = HttpClientError::RequestFailed {
@@ -65,12 +68,14 @@ mod tests {
         );
     }
 
+    #[cfg_attr(miri, ignore = "no unsafe in path; pure error display formatting")]
     #[test]
     fn invalid_config_display() {
         let err = HttpClientError::InvalidConfig("missing url".to_owned());
         assert_eq!(err.to_string(), "invalid configuration: missing url");
     }
 
+    #[cfg_attr(miri, ignore = "no unsafe in path; pure error display formatting")]
     #[test]
     fn io_error_display() {
         let err = HttpClientError::IoError("broken pipe".to_owned());

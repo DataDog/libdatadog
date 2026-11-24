@@ -70,6 +70,7 @@ fn expected_series(case: &Json) -> Vec<Series> {
     series
 }
 
+#[cfg_attr(miri, ignore = "no unsafe in path; pure series serialization logic")]
 #[test]
 fn binding_cases_give_the_expected_series() {
     let mut failures = Vec::new();
@@ -131,6 +132,7 @@ fn binding_cases_give_the_expected_series() {
     );
 }
 
+#[cfg_attr(miri, ignore = "no unsafe in path; pure series serialization logic")]
 #[test]
 fn a_metric_of_another_profile_is_rejected() {
     let point = MetricPoint::counter(
@@ -205,6 +207,7 @@ fn dogstatsd(batch: &MetricBatch) -> Vec<(LineKey, f64)> {
         .collect()
 }
 
+#[cfg_attr(miri, ignore = "no unsafe in path; pure series serialization logic")]
 #[test]
 fn every_api_counter_is_a_rate_over_ten_seconds() {
     assert_eq!(DATADOG_RATE_INTERVAL_SECS, 10);
@@ -238,6 +241,7 @@ fn every_api_counter_is_a_rate_over_ten_seconds() {
     );
 }
 
+#[cfg_attr(miri, ignore = "no unsafe in path; pure series serialization logic")]
 #[test]
 fn an_api_rate_times_its_interval_is_the_dogstatsd_total() {
     let batch = batch();
@@ -295,6 +299,7 @@ fn an_api_rate_times_its_interval_is_the_dogstatsd_total() {
     }
 }
 
+#[cfg_attr(miri, ignore = "no unsafe in path; pure series serialization logic")]
 #[test]
 fn the_same_tokens_over_both_transports_read_as_one_total() {
     // 100 tokens over DogStatsD and 100 over the API in one 10 s bucket: both

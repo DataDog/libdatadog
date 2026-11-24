@@ -229,6 +229,7 @@ mod tests {
         assert_eq!(before_trace_id, test_span.trace_id);
     }
 
+    #[cfg_attr(miri, ignore = "bails on zero trace id before any unsafe")]
     #[test]
     fn test_normalize_no_trace_id() {
         let mut test_span = new_test_span();
@@ -255,6 +256,7 @@ mod tests {
         assert_eq!(before_span_id, test_span.span_id);
     }
 
+    #[cfg_attr(miri, ignore = "bails on zero span id before any unsafe")]
     #[test]
     fn test_normalize_no_span_id() {
         let mut test_span = new_test_span();
@@ -426,6 +428,7 @@ mod tests {
         assert_eq!(test_span.span_id, before_span_id);
     }
 
+    #[cfg_attr(miri, ignore = "bails on empty trace before any unsafe")]
     #[test]
     fn test_normalize_trace_empty() {
         let mut trace = vec![];
@@ -478,6 +481,7 @@ mod tests {
         assert!(normalizer::normalize_trace(&mut trace).is_ok());
     }
 
+    #[cfg_attr(miri, ignore = "pure status-code parsing; no unsafe in path")]
     #[test]
     fn test_is_valid_status_code() {
         assert!(normalizer::is_valid_http_status_code("100"));
@@ -489,6 +493,7 @@ mod tests {
         ));
     }
 
+    #[cfg_attr(miri, ignore = "chunk origin/priority map reads; no unsafe in path")]
     #[test]
     fn test_normalize_chunk_populating_origin() {
         let mut root = new_test_span();
@@ -501,6 +506,7 @@ mod tests {
         assert_eq!("rum".to_string(), chunk.origin);
     }
 
+    #[cfg_attr(miri, ignore = "chunk origin/priority map reads; no unsafe in path")]
     #[test]
     fn test_normalize_chunk_not_populating_origin() {
         let mut root = new_test_span();
@@ -513,6 +519,7 @@ mod tests {
         assert_eq!("lambda".to_string(), chunk.origin);
     }
 
+    #[cfg_attr(miri, ignore = "chunk origin/priority map reads; no unsafe in path")]
     #[test]
     fn test_normalize_chunk_populating_sampling_priority() {
         let mut root = new_test_span();
@@ -527,6 +534,7 @@ mod tests {
         assert_eq!(normalizer::SamplerPriority::UserKeep as i32, chunk.priority);
     }
 
+    #[cfg_attr(miri, ignore = "chunk origin/priority map reads; no unsafe in path")]
     #[test]
     fn test_normalize_chunk_not_populating_sampling_priority() {
         let mut root = new_test_span();
@@ -541,6 +549,7 @@ mod tests {
         assert_eq!(normalizer::SamplerPriority::AutoDrop as i32, chunk.priority);
     }
 
+    #[cfg_attr(miri, ignore = "chunk origin/priority map reads; no unsafe in path")]
     #[test]
     fn test_normalize_chunk_invalid_root_span() {
         let mut chunk = new_test_chunk_with_span(new_test_span());
@@ -553,6 +562,7 @@ mod tests {
         );
     }
 
+    #[cfg_attr(miri, ignore = "chunk origin/priority map reads; no unsafe in path")]
     #[test]
     fn test_normalize_populate_priority_from_any_span() {
         let mut chunk = new_test_chunk_with_span(new_test_span());

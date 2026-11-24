@@ -12,6 +12,7 @@ use crate::data::{
 };
 use crate::data::{Application, Host};
 
+#[cfg_attr(miri, ignore = "pure serde encoding; no unsafe in path")]
 #[cfg(feature = "std")]
 #[test]
 fn encoding_matches_the_owned_serde_model() {
@@ -90,6 +91,7 @@ fn encoding_matches_the_owned_serde_model() {
     assert_eq!(actual, serde_json::to_value(expected).unwrap());
 }
 
+#[cfg_attr(miri, ignore = "pure serde encoding; no unsafe in path")]
 #[test]
 fn reports_a_small_buffer() {
     let application = Application::default();
@@ -111,6 +113,7 @@ fn reports_a_small_buffer() {
     ));
 }
 
+#[cfg_attr(miri, ignore = "pure serde encoding; no unsafe in path")]
 #[test]
 fn rejects_non_finite_values() {
     let application = Application::default();

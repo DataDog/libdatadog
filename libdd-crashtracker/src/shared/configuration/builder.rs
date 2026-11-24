@@ -213,6 +213,7 @@ mod tests {
     use crate::{default_signals, shared::constants};
     use core::time::Duration;
 
+    #[cfg_attr(miri, ignore = "config struct validation; no unsafe in path")]
     #[test]
     fn test_build_defaults() -> anyhow::Result<()> {
         let config = CrashtrackerConfiguration::builder().build()?;
@@ -231,6 +232,7 @@ mod tests {
         Ok(())
     }
 
+    #[cfg_attr(miri, ignore = "config struct validation; no unsafe in path")]
     #[test]
     fn test_opt_in_stack_options_are_off_unless_set() -> anyhow::Result<()> {
         // Defaults serialize exactly as before, so older configs and receivers
@@ -264,6 +266,7 @@ mod tests {
         Ok(())
     }
 
+    #[cfg_attr(miri, ignore = "config struct validation; no unsafe in path")]
     #[test]
     fn test_create_alt_stack_without_use_fails() {
         let result = CrashtrackerConfiguration::builder()
@@ -273,6 +276,7 @@ mod tests {
         assert!(result.is_err());
     }
 
+    #[cfg_attr(miri, ignore = "config struct validation; no unsafe in path")]
     #[test]
     fn stack_post_processing_requires_receiver_symbolization() {
         for mode in [
@@ -305,6 +309,7 @@ mod tests {
         );
     }
 
+    #[cfg_attr(miri, ignore = "config struct validation; no unsafe in path")]
     #[test]
     fn test_create_and_use_alt_stack_succeeds() -> anyhow::Result<()> {
         let config = CrashtrackerConfiguration::builder()
@@ -316,6 +321,7 @@ mod tests {
         Ok(())
     }
 
+    #[cfg_attr(miri, ignore = "config validation and url parsing; no unsafe")]
     #[test]
     fn test_endpoint_empty_url() -> anyhow::Result<()> {
         let config = CrashtrackerConfiguration::builder()
@@ -325,6 +331,7 @@ mod tests {
         Ok(())
     }
 
+    #[cfg_attr(miri, ignore = "config validation and url parsing; no unsafe")]
     #[test]
     fn test_endpoint_file_url() -> anyhow::Result<()> {
         let config = CrashtrackerConfiguration::builder()
@@ -335,6 +342,7 @@ mod tests {
         Ok(())
     }
 
+    #[cfg_attr(miri, ignore = "config validation and url parsing; no unsafe")]
     #[test]
     fn test_endpoint_http_url() -> anyhow::Result<()> {
         let config = CrashtrackerConfiguration::builder()
@@ -347,6 +355,7 @@ mod tests {
         Ok(())
     }
 
+    #[cfg_attr(miri, ignore = "config validation and url parsing; no unsafe")]
     #[test]
     fn test_endpoint_default_timeout_ms() -> anyhow::Result<()> {
         let config = CrashtrackerConfiguration::builder()
@@ -358,6 +367,7 @@ mod tests {
         Ok(())
     }
 
+    #[cfg_attr(miri, ignore = "config validation and url parsing; no unsafe")]
     #[test]
     fn test_endpoint_custom_timeout_ms() -> anyhow::Result<()> {
         let config = CrashtrackerConfiguration::builder()
@@ -369,6 +379,7 @@ mod tests {
         Ok(())
     }
 
+    #[cfg_attr(miri, ignore = "config validation and url parsing; no unsafe")]
     #[test]
     fn test_endpoint_with_api_key() -> anyhow::Result<()> {
         let config = CrashtrackerConfiguration::builder()
@@ -380,6 +391,7 @@ mod tests {
         Ok(())
     }
 
+    #[cfg_attr(miri, ignore = "config validation and url parsing; no unsafe")]
     #[test]
     fn test_endpoint_with_test_token() -> anyhow::Result<()> {
         let config = CrashtrackerConfiguration::builder()
@@ -391,6 +403,7 @@ mod tests {
         Ok(())
     }
 
+    #[cfg_attr(miri, ignore = "config validation and url parsing; no unsafe")]
     #[test]
     fn test_endpoint_with_system_resolver() -> anyhow::Result<()> {
         let config = CrashtrackerConfiguration::builder()
@@ -402,6 +415,7 @@ mod tests {
         Ok(())
     }
 
+    #[cfg_attr(miri, ignore = "config struct validation; no unsafe in path")]
     #[test]
     fn test_signals_default() -> anyhow::Result<()> {
         let config = CrashtrackerConfiguration::builder().build()?;
@@ -409,6 +423,7 @@ mod tests {
         Ok(())
     }
 
+    #[cfg_attr(miri, ignore = "config struct validation; no unsafe in path")]
     #[test]
     fn test_signals_custom() -> anyhow::Result<()> {
         let signals = vec![libc::SIGSEGV, libc::SIGBUS];
@@ -421,6 +436,7 @@ mod tests {
         Ok(())
     }
 
+    #[cfg_attr(miri, ignore = "config struct validation; no unsafe in path")]
     #[test]
     fn test_signals_duplicates_fail() {
         let result = CrashtrackerConfiguration::builder()
@@ -429,6 +445,7 @@ mod tests {
         assert!(result.is_err());
     }
 
+    #[cfg_attr(miri, ignore = "config struct validation; no unsafe in path")]
     #[test]
     fn test_signals_invalid_fail() {
         let result = CrashtrackerConfiguration::builder()
@@ -437,6 +454,7 @@ mod tests {
         assert!(result.is_err());
     }
 
+    #[cfg_attr(miri, ignore = "config struct validation; no unsafe in path")]
     #[test]
     fn test_timeout_default() -> anyhow::Result<()> {
         let config = CrashtrackerConfiguration::builder().build()?;
@@ -444,6 +462,7 @@ mod tests {
         Ok(())
     }
 
+    #[cfg_attr(miri, ignore = "config struct validation; no unsafe in path")]
     #[test]
     fn test_timeout_custom() -> anyhow::Result<()> {
         let config = CrashtrackerConfiguration::builder()
@@ -453,6 +472,7 @@ mod tests {
         Ok(())
     }
 
+    #[cfg_attr(miri, ignore = "config struct validation; no unsafe in path")]
     #[test]
     fn test_additional_files() -> anyhow::Result<()> {
         let files = vec!["/tmp/file1.txt".to_string(), "/tmp/file2.txt".to_string()];
@@ -463,6 +483,7 @@ mod tests {
         Ok(())
     }
 
+    #[cfg_attr(miri, ignore = "config struct validation; no unsafe in path")]
     #[test]
     fn test_demangle_names() -> anyhow::Result<()> {
         let config = CrashtrackerConfiguration::builder()
@@ -472,6 +493,7 @@ mod tests {
         Ok(())
     }
 
+    #[cfg_attr(miri, ignore = "config struct validation; no unsafe in path")]
     #[test]
     fn test_resolve_frames() -> anyhow::Result<()> {
         for variant in [
@@ -488,6 +510,7 @@ mod tests {
         Ok(())
     }
 
+    #[cfg_attr(miri, ignore = "config struct validation; no unsafe in path")]
     #[test]
     fn test_unix_socket_path() -> anyhow::Result<()> {
         let config = CrashtrackerConfiguration::builder()

@@ -89,6 +89,7 @@ mod tests {
     use crate::span::SpanKeyParseError;
     use std::str::FromStr;
 
+    #[cfg_attr(miri, ignore = "pure FromStr key enum mapping; no unsafe in path")]
     #[test]
     fn test_span_key_from_str() {
         assert_eq!(SpanKey::from_str("service").unwrap(), SpanKey::Service);

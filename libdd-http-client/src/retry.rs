@@ -86,6 +86,7 @@ pub(crate) fn is_retryable(err: &HttpClientError) -> bool {
 mod tests {
     use super::*;
 
+    #[cfg_attr(miri, ignore = "no unsafe in path; pure retry-config defaults logic")]
     #[test]
     fn default_config() {
         let config = RetryConfig::new();
@@ -94,6 +95,7 @@ mod tests {
         assert!(config.jitter);
     }
 
+    #[cfg_attr(miri, ignore = "no unsafe in path; pure retry-config builder logic")]
     #[test]
     fn builder_methods() {
         let config = RetryConfig::new()
@@ -105,6 +107,7 @@ mod tests {
         assert!(!config.jitter);
     }
 
+    #[cfg_attr(miri, ignore = "no unsafe in path; pure backoff math")]
     #[test]
     fn exponential_backoff_without_jitter() {
         let config = RetryConfig::new()
@@ -115,6 +118,7 @@ mod tests {
         assert_eq!(config.delay_for_attempt(3), Duration::from_millis(400));
     }
 
+    #[cfg_attr(miri, ignore = "no unsafe in path; pure backoff math")]
     #[test]
     fn jitter_stays_within_bounds() {
         let config = RetryConfig::new()
@@ -126,6 +130,7 @@ mod tests {
         }
     }
 
+    #[cfg_attr(miri, ignore = "no unsafe in path; pure error classification logic")]
     #[test]
     fn retryable_errors() {
         assert!(is_retryable(&HttpClientError::ConnectionFailed(
@@ -145,6 +150,7 @@ mod tests {
         assert!(is_retryable(&HttpClientError::TimedOut));
     }
 
+    #[cfg_attr(miri, ignore = "no unsafe in path; pure error classification logic")]
     #[test]
     fn invalid_config_not_retryable() {
         assert!(!is_retryable(&HttpClientError::InvalidConfig(

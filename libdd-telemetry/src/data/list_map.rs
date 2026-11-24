@@ -160,6 +160,7 @@ mod tests {
 
     use super::*;
 
+    #[cfg_attr(miri, ignore = "pure map serialization; no unsafe in path")]
     #[test]
     fn serializes_array_storage_as_map() {
         let map = ListMap::new([("appsec", 1), ("profiler", 2)]);
@@ -170,6 +171,7 @@ mod tests {
         );
     }
 
+    #[cfg_attr(miri, ignore = "pure map serialization; no unsafe in path")]
     #[test]
     fn insert_replaces_existing_keys() {
         let mut map = ListMap::<_, _, Vec<_>>::default();
@@ -182,6 +184,7 @@ mod tests {
         assert_eq!(collected.into_inner(), [("a", 3), ("b", 2)]);
     }
 
+    #[cfg_attr(miri, ignore = "pure map serialization; no unsafe in path")]
     #[test]
     fn insert_reports_full_storage() {
         type Entry = (&'static str, u8);

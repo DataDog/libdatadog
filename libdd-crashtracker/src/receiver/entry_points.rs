@@ -310,6 +310,7 @@ mod tests {
         }
     }
 
+    #[cfg_attr(miri, ignore = "safe frame trimming logic; no unsafe in path")]
     #[test]
     fn trims_only_leading_signal_delivery_frames() {
         let mut stack = StackTrace::from_frames(
@@ -331,6 +332,7 @@ mod tests {
         );
     }
 
+    #[cfg_attr(miri, ignore = "safe frame trimming logic; no unsafe in path")]
     #[test]
     fn adds_module_offset_only_when_symbolization_has_no_name() {
         let mut stack = StackTrace::from_frames(
@@ -350,6 +352,7 @@ mod tests {
         assert_eq!(stack.frames[1].function.as_deref(), Some("main"));
     }
 
+    #[cfg_attr(miri, ignore = "safe frame trimming logic; no unsafe in path")]
     #[test]
     fn keeps_all_libc_stack() {
         let mut stack = StackTrace::from_frames(
@@ -365,6 +368,7 @@ mod tests {
         assert_eq!(stack.frames.len(), 2);
     }
 
+    #[cfg_attr(miri, ignore = "safe frame trimming logic; no unsafe in path")]
     #[test]
     fn trims_musl_raise_segment_for_thread_directed_signals() {
         // musl raise: the signal is delivered in the hidden __restore_sigs, which
@@ -388,6 +392,7 @@ mod tests {
         }
     }
 
+    #[cfg_attr(miri, ignore = "safe frame trimming logic; no unsafe in path")]
     #[test]
     fn keeps_libc_interrupted_by_thread_directed_signal() {
         for path in ["/lib/libc.so.6", "/lib/ld-musl-x86_64.so.1"] {
@@ -404,6 +409,7 @@ mod tests {
         }
     }
 
+    #[cfg_attr(miri, ignore = "safe frame trimming logic; no unsafe in path")]
     #[test]
     fn keeps_unrelated_libc_frames_for_user_originated_signals() {
         let mut stack = StackTrace::from_frames(

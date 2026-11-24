@@ -5,6 +5,7 @@
 
 use libdd_ai_usage::operation_name_for;
 
+#[cfg_attr(miri, ignore = "no unsafe in path; pure gateway classification logic")]
 #[test]
 fn operations_from_routes_and_paths() {
     for (route, operation) in [

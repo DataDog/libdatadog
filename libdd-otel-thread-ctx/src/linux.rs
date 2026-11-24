@@ -410,6 +410,7 @@ mod tests {
     // `owned-context` or `shared-context` is enabled. They don't touch the TLS slot, hence no
     // Miri opt-out is needed.
 
+    #[cfg_attr(miri, ignore = "safe attrs_data byte encoding; no unsafe in path")]
     #[test]
     fn attribute_encoding_basic() {
         let attrs: &[(u8, &str)] = &[(1, "GET"), (2, "/api/v1")];
@@ -429,6 +430,7 @@ mod tests {
         assert_eq!(&record.attrs_data[25..32], b"/api/v1");
     }
 
+    #[cfg_attr(miri, ignore = "safe attrs_data byte encoding; no unsafe in path")]
     #[test]
     fn attribute_truncation_on_overflow() {
         // Build attributes whose combined encoded size exceeds MAX_ATTRS_DATA_SIZE.
@@ -457,6 +459,7 @@ mod tests {
         assert_eq!(record.attrs_data[276], 255);
     }
 
+    #[cfg_attr(miri, ignore = "safe attrs_data byte encoding; no unsafe in path")]
     #[test]
     fn long_value_capped_at_255_bytes() {
         let long_val = "a".repeat(300);

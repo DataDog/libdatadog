@@ -50,6 +50,7 @@ pub enum DogStatsDAction<'a, T: AsRef<str>, V: IntoIterator<Item = &'a Tag>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[cfg_attr(miri, ignore = "no unsafe in path; pure enum exhaustiveness check")]
     #[test]
     fn test_owned_sync() {
         // This test ensures that if a new variant is added to either `DogStatsDActionOwned` or

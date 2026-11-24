@@ -181,6 +181,7 @@ mod tests {
 
     /// Exhaustive struct literal on purpose, no `..Default::default()`: adding a field to
     /// [`Selection`] breaks this until it also gets a branch and a `MODULE_SETTERS` entry.
+    #[cfg_attr(miri, ignore = "no unsafe in path; pure feature-flag logic")]
     #[test]
     fn all_fields_set_emits_every_module_feature() {
         let everything = Selection {
@@ -242,6 +243,7 @@ mod tests {
         }
     }
 
+    #[cfg_attr(miri, ignore = "no unsafe in path; pure feature-flag logic")]
     #[test]
     fn crashtracker_pulls_in_its_sub_features() {
         let selection = Selection {
@@ -259,6 +261,7 @@ mod tests {
         }
     }
 
+    #[cfg_attr(miri, ignore = "no unsafe in path; pure feature-flag logic")]
     #[test]
     fn no_module_selected_emits_no_module_features() {
         let features = profiling_features(&Selection::default());
@@ -313,6 +316,7 @@ mod tests {
             .unwrap_or_default()
     }
 
+    #[cfg_attr(miri, ignore = "no unsafe in path; pure feature-flag logic")]
     #[test]
     fn builder_defaults_to_panic_containment() {
         let builder = manifest(&workspace_root().join("builder/Cargo.toml"));

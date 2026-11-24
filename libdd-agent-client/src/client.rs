@@ -339,6 +339,7 @@ mod tests {
         );
     }
 
+    #[cfg_attr(miri, ignore = "no unsafe in path; pure gzip compression via flate2")]
     #[test]
     fn gzip_compress_produces_valid_gzip() {
         let input = Bytes::from_static(b"hello world");
@@ -347,6 +348,7 @@ mod tests {
         assert_eq!(&compressed[..2], &[0x1f, 0x8b]);
     }
 
+    #[cfg_attr(miri, ignore = "no unsafe in path; pure json parsing logic")]
     #[test]
     fn parse_rate_by_service_valid_json() {
         let body = Bytes::from(r#"{"rate_by_service":{"service:env":0.5}}"#);
@@ -354,6 +356,7 @@ mod tests {
         assert_eq!(rates.get("service:env"), Some(&0.5));
     }
 
+    #[cfg_attr(miri, ignore = "no unsafe in path; pure json parsing logic")]
     #[test]
     fn parse_rate_by_service_absent_field() {
         let body = Bytes::from(r#"{"other":"value"}"#);

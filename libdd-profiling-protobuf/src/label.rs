@@ -74,6 +74,7 @@ mod tests {
     use crate::prost_impls;
     use prost::Message;
 
+    #[cfg_attr(miri, ignore = "no unsafe in path; safe-code encode plus prost decode")]
     #[test]
     fn roundtrip() {
         fn test(label: &Label) {

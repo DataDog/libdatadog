@@ -331,6 +331,7 @@ pub async fn flush_all_stats_now(
 mod tests {
     use super::*;
 
+    #[cfg_attr(miri, ignore = "shm path string derivation; no unsafe in path")]
     #[test]
     fn shm_paths_distinguish_concentrators() {
         let path = env_stats_shm_path("env-a", "1.0", "service-a");

@@ -102,6 +102,7 @@ mod tests {
     use libdd_trace_utils::trace_utils::TracerGenericTags;
     use std::convert::TryInto;
 
+    #[cfg_attr(miri, ignore = "pure struct conversion; no unsafe in path")]
     #[test]
     fn test_try_from_tracer_header_tags_ok() {
         let tracer_header_tags = TracerHeaderTags {
@@ -123,6 +124,7 @@ mod tests {
         assert!(serialized.is_ok());
     }
 
+    #[cfg_attr(miri, ignore = "pure struct conversion; no unsafe in path")]
     #[test]
     fn test_try_from_serialized_tracer_header_tags_ok() {
         let tracer_header_tags = TracerHeaderTags {
@@ -162,6 +164,7 @@ mod tests {
         );
     }
 
+    #[cfg_attr(miri, ignore = "pure struct conversion; no unsafe in path")]
     #[test]
     fn test_try_from_serialized_tracer_header_tags_error() {
         let serialized = SerializedTracerHeaderTags {

@@ -616,12 +616,14 @@ mod tests {
     [bracket_in_a_malformed_authority_redacts_everything] [true] [true] ["http://foo.com:abc[x]/y"] ["?"];
     [parity_fuzzing_supp_unicode_frag] [true] [true] ["\u{91cb8}\u{9232f}झ\u{44db0}#\u{3}\n\u{5bb50}\u{925d9}\u{925d5}\u{925d5}\u{925d5}\u{925d5}䕞\u{9a70d}\u{3d2ff}\u{10ef4f}\u{87307}\u{6}\u{10ef0a}\u{10ffff}\u{ad7e5}\u{33f}筚\u{361}➑\u{2}{\u{10de13}\u{10ffff}\u{10ffff}'"] ["%F2%91%B2%B8%F2%92%8C%AF%E0%A4%9D%F1%84%B6%B0#%03%0A%F1%9B%AD%90%F2%92%97%99%F2%92%97%95%F2%92%97%95%F2%92%97%95%F2%92%97%95%E4%95%9E%F2%9A%9C%8D%F0%BD%8B%BF%F4%8E%BD%8F%F2%87%8C%87%06%F4%8E%BC%8A%F4%8F%BF%BF%F2%AD%9F%A5%CC%BF%E7%AD%9A%CD%A1%E2%9E%91%02%7B%F4%8D%B8%93%F4%8F%BF%BF%F4%8F%BF%BF%27"];
     )]
+    #[cfg_attr(miri, ignore = "pure url string obfuscation; no unsafe in path")]
     #[test]
     fn test_name() {
         let result = obfuscate_url_string(input, remove_query_string, remove_path_digits);
         assert_eq!(result, expected_output);
     }
 
+    #[cfg_attr(miri, ignore = "pure url string obfuscation; no unsafe in path")]
     #[test]
     fn should_obfuscate_url_precheck() {
         use super::should_obfuscate_url;
@@ -646,6 +648,7 @@ mod tests {
 
     /// URLs that fail to parse are replaced with `?`, so the precheck has to admit them. The colon
     /// they trip over is the only byte in them that is not a legal URL character.
+    #[cfg_attr(miri, ignore = "pure url string obfuscation; no unsafe in path")]
     #[test]
     fn should_obfuscate_url_admits_unparsable_authorities() {
         use super::should_obfuscate_url;
@@ -685,6 +688,7 @@ mod tests {
     }
 
     /// A `:` that parses leaves the URL unchanged, so the precheck passes it.
+    #[cfg_attr(miri, ignore = "pure url string obfuscation; no unsafe in path")]
     #[test]
     fn should_obfuscate_url_passes_parsable_colons() {
         use super::should_obfuscate_url;
@@ -720,6 +724,7 @@ mod tests {
     }
 
     /// The precheck contract over every short URL built from these pieces.
+    #[cfg_attr(miri, ignore = "pure url string obfuscation; no unsafe in path")]
     #[test]
     fn should_obfuscate_url_never_skips_a_short_rewrite() {
         use super::should_obfuscate_url;
@@ -749,6 +754,7 @@ mod tests {
 
     /// The precheck promises that `false` means the rewrite would not change the URL. Anything the
     /// rewrite can reach belongs in this list.
+    #[cfg_attr(miri, ignore = "pure url string obfuscation; no unsafe in path")]
     #[test]
     fn should_obfuscate_url_never_skips_a_rewrite() {
         use super::should_obfuscate_url;

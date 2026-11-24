@@ -542,12 +542,14 @@ mod tests {
             }
         }
 
+        #[cfg_attr(miri, ignore = "safe span aggregation; no unsafe in path")]
         #[test]
         fn supported_when_all_requirements_met() {
             let info = make_agent_info(Some(true), Some(vec!["/v0.4/traces", STATS_ENDPOINT]));
             assert!(is_stats_computation_supported(&info));
         }
 
+        #[cfg_attr(miri, ignore = "safe span aggregation; no unsafe in path")]
         #[test]
         fn unsupported_when_client_drop_p0s_missing_or_false() {
             let info = make_agent_info(None, Some(vec![STATS_ENDPOINT]));
@@ -557,6 +559,7 @@ mod tests {
             assert!(!is_stats_computation_supported(&info));
         }
 
+        #[cfg_attr(miri, ignore = "safe span aggregation; no unsafe in path")]
         #[test]
         fn unsupported_when_stats_endpoint_absent() {
             let info = make_agent_info(Some(true), Some(vec!["/v0.4/traces"]));
@@ -616,6 +619,7 @@ mod tests {
                 .sum()
         }
 
+        #[cfg_attr(miri, ignore = "safe span aggregation; no unsafe in path")]
         #[test]
         fn add_spans_to_stats_v1_aggregates_eligible_spans_across_chunks() {
             let stats_concentrator = new_concentrator();
@@ -635,6 +639,7 @@ mod tests {
             assert_eq!(total_hits(&stats_concentrator), 2);
         }
 
+        #[cfg_attr(miri, ignore = "safe span aggregation; no unsafe in path")]
         #[test]
         fn add_spans_to_stats_v1_skips_ineligible_spans() {
             let stats_concentrator = new_concentrator();
@@ -653,6 +658,7 @@ mod tests {
             assert_eq!(total_hits(&stats_concentrator), 0);
         }
 
+        #[cfg_attr(miri, ignore = "safe span aggregation; no unsafe in path")]
         #[test]
         fn add_spans_to_stats_v1_falls_back_to_chunk_attributes_for_eligibility() {
             // The span itself is not top-level/measured and has a dedicated span_kind of
@@ -677,6 +683,7 @@ mod tests {
             assert_eq!(total_hits(&stats_concentrator), 1);
         }
 
+        #[cfg_attr(miri, ignore = "safe span aggregation; no unsafe in path")]
         #[test]
         fn add_spans_to_stats_v1_falls_back_to_chunk_attributes_for_aggregation() {
             // The span is eligible via `_top_level` and has no own "http.method" attribute; the
@@ -705,6 +712,7 @@ mod tests {
             assert_eq!(http_methods, vec!["POST"]);
         }
 
+        #[cfg_attr(miri, ignore = "safe span aggregation; no unsafe in path")]
         #[test]
         fn add_spans_to_stats_v1_reads_synthetics_from_chunk_origin() {
             let stats_concentrator = new_concentrator();
@@ -729,6 +737,7 @@ mod tests {
             assert_eq!(synthetics, vec![true]);
         }
 
+        #[cfg_attr(miri, ignore = "safe span aggregation; no unsafe in path")]
         #[test]
         fn add_spans_to_stats_v1_uses_dedicated_span_kind_for_eligibility() {
             // The span itself is not top-level/measured and has no "span.kind" attribute; it's
@@ -749,6 +758,7 @@ mod tests {
             assert_eq!(total_hits(&stats_concentrator), 1);
         }
 
+        #[cfg_attr(miri, ignore = "safe span aggregation; no unsafe in path")]
         #[test]
         fn process_traces_for_stats_v1_is_noop_when_disabled() {
             let client_side_stats = ArcSwap::new(Arc::new(StatsComputationStatus::Disabled));

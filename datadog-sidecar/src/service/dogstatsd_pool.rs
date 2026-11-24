@@ -36,6 +36,10 @@ impl DogStatsDPool {
 mod tests {
     use super::*;
 
+    #[cfg_attr(
+        miri,
+        ignore = "pure pool logic over a lazily constructed client; no unsafe in path"
+    )]
     #[test]
     fn connections_share_the_client_of_an_endpoint_while_it_is_used() {
         let pool = DogStatsDPool::default();

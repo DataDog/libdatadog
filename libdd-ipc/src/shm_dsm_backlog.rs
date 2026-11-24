@@ -353,6 +353,7 @@ mod tests {
     }
 
     /// The positions are part of the payload; this pins them, so that a reordering fails here.
+    #[cfg_attr(miri, ignore = "pure enum ordering check; no unsafe in path")]
     #[test]
     fn tag_positions_are_fixed() {
         let keys: Vec<_> = BacklogTag::iter().map(|t| t.as_ref().to_owned()).collect();
@@ -478,6 +479,7 @@ mod tests {
         );
     }
 
+    #[cfg_attr(miri, ignore = "pure tag parsing; no unsafe in path")]
     #[test]
     fn parsing_refuses_tags_it_cannot_place() {
         assert!(DsmBacklogInput::parse(&["topic:orders", "region:eu"], 1).is_none());

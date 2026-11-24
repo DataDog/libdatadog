@@ -282,6 +282,7 @@ where
 mod tests {
     use super::*;
 
+    #[cfg_attr(miri, ignore = "pure store/flush logic; no unsafe in path")]
     #[test]
     fn test_smoke_insert() {
         let mut store = Store::new(10);
@@ -316,6 +317,7 @@ mod tests {
         }
     }
 
+    #[cfg_attr(miri, ignore = "pure store/flush logic; no unsafe in path")]
     #[test]
     fn test_updated_item_is_requeued_for_flush() {
         let mut store: Store<Keyish, &'static str> = Store::new(10);
@@ -350,6 +352,7 @@ mod tests {
         );
     }
 
+    #[cfg_attr(miri, ignore = "pure store/flush logic; no unsafe in path")]
     #[test]
     fn test_insert_spill() {
         let mut store = Store::new(5);
@@ -365,6 +368,7 @@ mod tests {
         )
     }
 
+    #[cfg_attr(miri, ignore = "pure store/flush logic; no unsafe in path")]
     #[test]
     fn test_insert_spill_no_unflush() {
         let mut store = Store::new(5);
@@ -384,6 +388,7 @@ mod tests {
         assert_eq!(store.unflushed().collect::<Vec<_>>(), &[&6, &7, &8, &9]);
     }
 
+    #[cfg_attr(miri, ignore = "pure store/flush logic; no unsafe in path")]
     #[test]
     fn test_unflush_stored() {
         let mut store = Store::new(5);

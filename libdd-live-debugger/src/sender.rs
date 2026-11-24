@@ -717,6 +717,7 @@ mod tests {
             .as_str()
     }
 
+    #[cfg_attr(miri, ignore = "no unsafe in path; endpoint url logic")]
     #[test]
     fn test_set_endpoint_agent_mode() {
         let mut config = Config::default();
@@ -733,6 +734,7 @@ mod tests {
         );
     }
 
+    #[cfg_attr(miri, ignore = "no unsafe in path; endpoint url logic")]
     #[test]
     fn test_set_endpoint_direct_mode() {
         let mut config = Config::default();
@@ -749,6 +751,7 @@ mod tests {
         );
     }
 
+    #[cfg_attr(miri, ignore = "no unsafe in path; endpoint url logic")]
     #[test]
     fn test_downgrade_to_diagnostics_endpoint() {
         let mut config = Config::default();
@@ -769,6 +772,7 @@ mod tests {
         );
     }
 
+    #[cfg_attr(miri, ignore = "no unsafe in path; endpoint url logic")]
     #[test]
     fn test_debugger_intake_endpoint() {
         let endpoint = debugger_intake_endpoint("datadoghq.com", "test-api-key").unwrap();
@@ -777,6 +781,7 @@ mod tests {
         assert_eq!(endpoint.api_key.as_deref(), Some("test-api-key"));
     }
 
+    #[cfg_attr(miri, ignore = "no unsafe in path; endpoint url logic")]
     #[test]
     fn test_set_symdb_endpoint_direct_mode() {
         let mut config = Config::default();
@@ -784,6 +789,7 @@ mod tests {
         assert_eq!(endpoint_path(&config.symdb_endpoint), "/api/v2/debugger");
     }
 
+    #[cfg_attr(miri, ignore = "no unsafe in path; endpoint url logic")]
     #[test]
     fn test_set_symdb_endpoint_agent_mode() {
         let mut config = Config::default();
@@ -791,6 +797,7 @@ mod tests {
         assert_eq!(endpoint_path(&config.symdb_endpoint), "/symdb/v1/input");
     }
 
+    #[cfg_attr(miri, ignore = "no unsafe in path; endpoint url logic")]
     #[test]
     fn test_additional_debugger_endpoints_derive_paths() {
         let mut config = Config::default();
@@ -908,6 +915,7 @@ mod tests {
         );
     }
 
+    #[cfg_attr(miri, ignore = "no unsafe in path; endpoint url logic")]
     #[test]
     fn test_payload_rejected_display_is_downcastable() {
         let err: anyhow::Error = anyhow::Error::from(PayloadRejected {
@@ -922,6 +930,7 @@ mod tests {
         assert_eq!(err.downcast_ref::<PayloadRejected>().unwrap().status, 404);
     }
 
+    #[cfg_attr(miri, ignore = "no unsafe in path; endpoint url logic")]
     #[test]
     fn test_agent_info_supports_debugger_v2_endpoint() {
         let with_v2 = AgentInfoStruct {

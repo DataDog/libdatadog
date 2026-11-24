@@ -2312,6 +2312,7 @@ mod tests {
     /// Non-ASCII identifiers must survive obfuscation; restricting identifier characters to ASCII
     /// would turn these queries into failures.
     /// See <https://github.com/DataDog/libdatadog/issues/2541>.
+    #[cfg_attr(miri, ignore = "pure sql string obfuscation; no unsafe in path")]
     #[test]
     fn test_non_ascii_identifiers_are_not_a_failure() {
         for query in [
@@ -2333,6 +2334,7 @@ mod tests {
 
     /// The Agent fails on an empty obfuscation result rather than reporting an empty query.
     /// See <https://github.com/DataDog/libdatadog/issues/2541>.
+    #[cfg_attr(miri, ignore = "pure sql string obfuscation; no unsafe in path")]
     #[test]
     fn test_empty_obfuscation_result_is_a_failure() {
         let config = SqlConfig::default();
@@ -2373,6 +2375,7 @@ mod tests {
     /// A resource that cannot be obfuscated is replaced by the Agent's marker, never forwarded as
     /// sent: comment-only SQL would otherwise carry the comment text through untouched.
     /// See <https://github.com/DataDog/libdatadog/issues/2541>.
+    #[cfg_attr(miri, ignore = "pure sql string obfuscation; no unsafe in path")]
     #[test]
     fn test_unobfuscatable_resource_becomes_non_parsable_marker() {
         let config = SqlConfig::default();
@@ -2430,6 +2433,7 @@ mod tests {
         let _ = obfuscate_sql(&sql, &normalize_config, DbmsKind::Postgresql);
     }
 
+    #[cfg_attr(miri, ignore = "pure sql string obfuscation; no unsafe in path")]
     #[test]
     fn test_dollar_quote_nesting_past_depth_limit_does_not_leak_literal() {
         const NESTING: usize = 100; // comfortably past MAX_DOLLAR_QUOTE_DEPTH (64)
@@ -2454,6 +2458,7 @@ mod tests {
         );
     }
 
+    #[cfg_attr(miri, ignore = "pure sql string obfuscation; no unsafe in path")]
     #[test]
     fn test_sql_obfuscation() {
         let mut panic = None;
@@ -2494,6 +2499,7 @@ mod tests {
         Ok(())
     }
 
+    #[cfg_attr(miri, ignore = "pure sql string obfuscation; no unsafe in path")]
     #[test]
     fn test_sql_obfuscation_normalized() {
         let mut panic = None;
@@ -2535,6 +2541,7 @@ mod tests {
         Ok(())
     }
 
+    #[cfg_attr(miri, ignore = "pure sql string obfuscation; no unsafe in path")]
     #[test]
     fn test_keep_identifier_quotation() {
         let config = SqlConfig {
@@ -2555,6 +2562,7 @@ mod tests {
         );
     }
 
+    #[cfg_attr(miri, ignore = "pure sql string obfuscation; no unsafe in path")]
     #[test]
     fn test_remove_space_between_parentheses() {
         let config = SqlConfig {
@@ -2575,6 +2583,7 @@ mod tests {
         );
     }
 
+    #[cfg_attr(miri, ignore = "pure sql string obfuscation; no unsafe in path")]
     #[test]
     fn test_keep_positional_parameter() {
         // When keep_positional_parameter=true, $1/$2 should be kept as-is
@@ -2903,6 +2912,7 @@ mod tests {
         ("2%$2", "? % ?"),
     ];
 
+    #[cfg_attr(miri, ignore = "pure sql string obfuscation; no unsafe in path")]
     #[test]
     fn test_normalize_only() {
         let config = SqlConfig {
@@ -2953,6 +2963,7 @@ mod tests {
         }
     }
 
+    #[cfg_attr(miri, ignore = "pure sql string obfuscation; no unsafe in path")]
     #[test]
     fn test_normalize_only_keep_trailing_semi() {
         let config = SqlConfig {
@@ -2973,6 +2984,7 @@ mod tests {
         );
     }
 
+    #[cfg_attr(miri, ignore = "pure sql string obfuscation; no unsafe in path")]
     #[test]
     fn test_normalize_only_keep_identifier_quotation() {
         let config = SqlConfig {
@@ -2993,6 +3005,7 @@ mod tests {
         );
     }
 
+    #[cfg_attr(miri, ignore = "pure sql string obfuscation; no unsafe in path")]
     #[test]
     fn test_with_cte_stripping() {
         // In legacy mode (obfuscation_mode=""), WITH T1 AS (SELECT...) → WITH T1 SELECT...
@@ -3019,6 +3032,7 @@ mod tests {
         }
     }
 
+    #[cfg_attr(miri, ignore = "pure sql string obfuscation; no unsafe in path")]
     #[test]
     fn test_double_quoted_string_value_quantize() {
         // Double-quoted strings in value context (after =) should be quantized
@@ -3050,6 +3064,7 @@ mod tests {
         }
     }
 
+    #[cfg_attr(miri, ignore = "pure sql string obfuscation; no unsafe in path")]
     #[test]
     fn test_normalize_only_dollar_func() {
         // In normalize_only mode, dollar-quoted strings are normalized (not quantized)
@@ -3070,6 +3085,7 @@ mod tests {
         );
     }
 
+    #[cfg_attr(miri, ignore = "pure sql string obfuscation; no unsafe in path")]
     #[test]
     fn test_dollar_quoted_func_trivial_collapse() {
         // When dollar_quoted_func=true and inner content obfuscates to a single ?, collapse to ?
@@ -3091,6 +3107,7 @@ mod tests {
         );
     }
 
+    #[cfg_attr(miri, ignore = "pure sql string obfuscation; no unsafe in path")]
     #[test]
     fn test_obfuscate_only_keeps_quotes_and_semi() {
         // In obfuscate_only mode: keep double-quoted identifiers, keep $?, keep trailing ;
@@ -3111,6 +3128,7 @@ mod tests {
         );
     }
 
+    #[cfg_attr(miri, ignore = "pure sql string obfuscation; no unsafe in path")]
     #[test]
     fn test_obfuscate_only_dollar_quoted_func_no_collapse() {
         // In obfuscate_only+dollar_quoted_func: VALUES inside func are NOT collapsed
@@ -3132,6 +3150,7 @@ mod tests {
         );
     }
 
+    #[cfg_attr(miri, ignore = "pure sql string obfuscation; no unsafe in path")]
     #[test]
     fn test_normalize_only_procedure() {
         let config = SqlConfig {
@@ -3152,6 +3171,7 @@ mod tests {
         );
     }
 
+    #[cfg_attr(miri, ignore = "pure sql string obfuscation; no unsafe in path")]
     #[test]
     fn test_q41() {
         let config = SqlConfig::default();
@@ -3168,6 +3188,7 @@ mod tests {
 
     // --- Integration test cases added for faster iteration ---
 
+    #[cfg_attr(miri, ignore = "pure sql string obfuscation; no unsafe in path")]
     #[test]
     fn test_pg_json_operators_7() {
         // JSONB ? operator followed by string literal — both should be kept as ?
@@ -3180,6 +3201,7 @@ mod tests {
         assert_eq!(got.as_deref(), Ok(expected), "pg_json_7: {got:?}");
     }
 
+    #[cfg_attr(miri, ignore = "pure sql string obfuscation; no unsafe in path")]
     #[test]
     fn test_quantizer_90() {
         // Inline comment /*!obfuscation*/ should be stripped; consecutive literals after = reset
@@ -3193,6 +3215,7 @@ mod tests {
         assert_eq!(got.as_deref(), Ok(expected), "q90: {got:?}");
     }
 
+    #[cfg_attr(miri, ignore = "pure sql string obfuscation; no unsafe in path")]
     #[test]
     fn test_cassandra_nested_dates() {
         // Consecutive ? placeholders inside nested function calls should be suppressed
@@ -3210,6 +3233,7 @@ mod tests {
         );
     }
 
+    #[cfg_attr(miri, ignore = "pure sql string obfuscation; no unsafe in path")]
     #[test]
     fn test_cassandra_pipe_concat() {
         // || concatenation — Go tokenizes as two separate | tokens with spaces
@@ -3895,6 +3919,7 @@ mod tests {
     }
 
     // {'keep_sql_alias': True}
+    #[cfg_attr(miri, ignore = "pure sql string obfuscation; no unsafe in path")]
     #[test]
     #[allow(deprecated)]
     fn test_suite_keep_sql_alias() {
@@ -3923,6 +3948,7 @@ mod tests {
     }
 
     // {'dollar_quoted_func': True}
+    #[cfg_attr(miri, ignore = "pure sql string obfuscation; no unsafe in path")]
     #[test]
     #[allow(deprecated)]
     fn test_suite_dollar_quoted_func() {
@@ -3951,6 +3977,7 @@ mod tests {
     }
 
     // {'keep_sql_alias': True, 'dollar_quoted_func': True}
+    #[cfg_attr(miri, ignore = "pure sql string obfuscation; no unsafe in path")]
     #[test]
     #[allow(deprecated)]
     fn test_suite_keep_sql_alias_dollar_quoted_func() {
@@ -3980,6 +4007,7 @@ mod tests {
     }
 
     // {'replace_digits': True}
+    #[cfg_attr(miri, ignore = "pure sql string obfuscation; no unsafe in path")]
     #[test]
     #[allow(deprecated)]
     #[allow(
@@ -4179,6 +4207,7 @@ mod tests {
     // 'keep_positional_parameter': True, 'keep_trailing_semicolon': True,
     // 'keep_identifier_quotation': True, 'replace_bind_parameter': True,
     // 'remove_space_between_parentheses': True, 'keep_json_path': True, 'replace_digits': True}
+    #[cfg_attr(miri, ignore = "pure sql string obfuscation; no unsafe in path")]
     #[test]
     #[allow(deprecated)]
     fn test_suite_all_flags() {
@@ -4230,6 +4259,7 @@ mod tests {
     }
 
     // {'dbms': 'mssql'}
+    #[cfg_attr(miri, ignore = "pure sql string obfuscation; no unsafe in path")]
     #[test]
     #[allow(deprecated)]
     fn test_suite_mssql() {
@@ -4270,6 +4300,7 @@ mod tests {
     }
 
     // {'dbms': 'postgresql'}
+    #[cfg_attr(miri, ignore = "pure sql string obfuscation; no unsafe in path")]
     #[test]
     #[allow(deprecated)]
     fn test_suite_postgresql() {
@@ -4340,6 +4371,7 @@ mod tests {
     }
 
     // {'mode': 'normalize_only'}
+    #[cfg_attr(miri, ignore = "pure sql string obfuscation; no unsafe in path")]
     #[test]
     fn test_suite_normalize_only() {
         let config = SqlConfig {
@@ -4392,6 +4424,7 @@ mod tests {
     }
 
     // {'mode': 'normalize_only', 'keep_sql_alias': True}
+    #[cfg_attr(miri, ignore = "pure sql string obfuscation; no unsafe in path")]
     #[test]
     fn test_suite_normalize_only_keep_sql_alias() {
         let config = SqlConfig {
@@ -4420,6 +4453,7 @@ mod tests {
     }
 
     // {'mode': 'normalize_only', 'remove_space_between_parentheses': True}
+    #[cfg_attr(miri, ignore = "pure sql string obfuscation; no unsafe in path")]
     #[test]
     fn test_suite_normalize_only_remove_space_between_parentheses() {
         let config = SqlConfig {
@@ -4448,6 +4482,7 @@ mod tests {
     }
 
     // {'mode': 'normalize_only', 'keep_trailing_semicolon': True}
+    #[cfg_attr(miri, ignore = "pure sql string obfuscation; no unsafe in path")]
     #[test]
     fn test_suite_normalize_only_keep_trailing_semicolon() {
         let config = SqlConfig {
@@ -4476,6 +4511,7 @@ mod tests {
     }
 
     // {'mode': 'normalize_only', 'keep_identifier_quotation': True}
+    #[cfg_attr(miri, ignore = "pure sql string obfuscation; no unsafe in path")]
     #[test]
     fn test_suite_normalize_only_keep_identifier_quotation() {
         let config = SqlConfig {
@@ -4504,6 +4540,7 @@ mod tests {
     }
 
     // {'mode': 'obfuscate_and_normalize'}
+    #[cfg_attr(miri, ignore = "pure sql string obfuscation; no unsafe in path")]
     #[test]
     fn test_suite_obfuscate_and_normalize() {
         let config = SqlConfig {
@@ -4576,6 +4613,7 @@ mod tests {
     }
 
     // {'mode': 'obfuscate_and_normalize', 'replace_digits': True}
+    #[cfg_attr(miri, ignore = "pure sql string obfuscation; no unsafe in path")]
     #[test]
     fn test_suite_obfuscate_and_normalize_replace_digits() {
         let config = SqlConfig {
@@ -4604,6 +4642,7 @@ mod tests {
     }
 
     // {'mode': 'obfuscate_and_normalize', 'keep_sql_alias': True}
+    #[cfg_attr(miri, ignore = "pure sql string obfuscation; no unsafe in path")]
     #[test]
     fn test_suite_obfuscate_and_normalize_keep_sql_alias() {
         let config = SqlConfig {
@@ -4632,6 +4671,7 @@ mod tests {
     }
 
     // {'mode': 'obfuscate_and_normalize', 'dollar_quoted_func': True}
+    #[cfg_attr(miri, ignore = "pure sql string obfuscation; no unsafe in path")]
     #[test]
     fn test_suite_obfuscate_and_normalize_dollar_quoted_func() {
         let config = SqlConfig {
@@ -4660,6 +4700,7 @@ mod tests {
     }
 
     // {'mode': 'obfuscate_and_normalize', 'dollar_quoted_func': True, 'replace_digits': True}
+    #[cfg_attr(miri, ignore = "pure sql string obfuscation; no unsafe in path")]
     #[test]
     fn test_suite_obfuscate_and_normalize_dollar_quoted_func_replace_digits() {
         let config = SqlConfig {
@@ -4689,6 +4730,7 @@ mod tests {
     }
 
     // {'mode': 'obfuscate_and_normalize', 'remove_space_between_parentheses': True}
+    #[cfg_attr(miri, ignore = "pure sql string obfuscation; no unsafe in path")]
     #[test]
     fn test_suite_obfuscate_and_normalize_remove_space_between_parentheses() {
         let config = SqlConfig {
@@ -4717,6 +4759,7 @@ mod tests {
     }
 
     // {'mode': 'obfuscate_and_normalize', 'keep_null': True}
+    #[cfg_attr(miri, ignore = "pure sql string obfuscation; no unsafe in path")]
     #[test]
     fn test_suite_obfuscate_and_normalize_keep_null() {
         let config = SqlConfig {
@@ -4745,6 +4788,7 @@ mod tests {
     }
 
     // {'mode': 'obfuscate_and_normalize', 'keep_boolean': True}
+    #[cfg_attr(miri, ignore = "pure sql string obfuscation; no unsafe in path")]
     #[test]
     fn test_suite_obfuscate_and_normalize_keep_boolean() {
         let config = SqlConfig {
@@ -4773,6 +4817,7 @@ mod tests {
     }
 
     // {'mode': 'obfuscate_and_normalize', 'keep_positional_parameter': True}
+    #[cfg_attr(miri, ignore = "pure sql string obfuscation; no unsafe in path")]
     #[test]
     fn test_suite_obfuscate_and_normalize_keep_positional_parameter() {
         let config = SqlConfig {
@@ -4801,6 +4846,7 @@ mod tests {
     }
 
     // {'mode': 'obfuscate_and_normalize', 'keep_trailing_semicolon': True}
+    #[cfg_attr(miri, ignore = "pure sql string obfuscation; no unsafe in path")]
     #[test]
     fn test_suite_obfuscate_and_normalize_keep_trailing_semicolon() {
         let config = SqlConfig {
@@ -4829,6 +4875,7 @@ mod tests {
     }
 
     // {'mode': 'obfuscate_and_normalize', 'keep_identifier_quotation': True}
+    #[cfg_attr(miri, ignore = "pure sql string obfuscation; no unsafe in path")]
     #[test]
     fn test_suite_obfuscate_and_normalize_keep_identifier_quotation() {
         let config = SqlConfig {
@@ -4857,6 +4904,7 @@ mod tests {
     }
 
     // {'mode': 'obfuscate_and_normalize', 'replace_bind_parameter': True}
+    #[cfg_attr(miri, ignore = "pure sql string obfuscation; no unsafe in path")]
     #[test]
     fn test_suite_obfuscate_and_normalize_replace_bind_parameter() {
         let config = SqlConfig {
@@ -4885,6 +4933,7 @@ mod tests {
     }
 
     // {'mode': 'obfuscate_and_normalize', 'keep_json_path': True}
+    #[cfg_attr(miri, ignore = "pure sql string obfuscation; no unsafe in path")]
     #[test]
     fn test_suite_obfuscate_and_normalize_keep_json_path() {
         let config = SqlConfig {
@@ -4918,6 +4967,7 @@ mod tests {
     }
 
     // {'mode': 'obfuscate_only'}
+    #[cfg_attr(miri, ignore = "pure sql string obfuscation; no unsafe in path")]
     #[test]
     fn test_suite_obfuscate_only() {
         let config = SqlConfig {
@@ -4960,6 +5010,7 @@ mod tests {
     }
 
     // {'mode': 'obfuscate_only', 'replace_digits': True}
+    #[cfg_attr(miri, ignore = "pure sql string obfuscation; no unsafe in path")]
     #[test]
     fn test_suite_obfuscate_only_replace_digits() {
         let config = SqlConfig {
@@ -4988,6 +5039,7 @@ mod tests {
     }
 
     // {'mode': 'obfuscate_only', 'dollar_quoted_func': True}
+    #[cfg_attr(miri, ignore = "pure sql string obfuscation; no unsafe in path")]
     #[test]
     fn test_suite_obfuscate_only_dollar_quoted_func() {
         let config = SqlConfig {
@@ -5016,6 +5068,7 @@ mod tests {
     }
 
     // {'mode': 'obfuscate_only', 'dollar_quoted_func': True, 'replace_digits': True}
+    #[cfg_attr(miri, ignore = "pure sql string obfuscation; no unsafe in path")]
     #[test]
     fn test_suite_obfuscate_only_dollar_quoted_func_replace_digits() {
         let config = SqlConfig {
@@ -5047,6 +5100,7 @@ mod tests {
     // Test that collapse_limit_two_args handles LIMIT case-insensitively.
     // In the deprecated mode, the grouping filter is inactive, so
     // collapse_limit_two_args is the sole mechanism for both cases.
+    #[cfg_attr(miri, ignore = "pure sql string obfuscation; no unsafe in path")]
     #[test]
     fn test_collapse_limit_case_insensitive() {
         #[allow(deprecated)]

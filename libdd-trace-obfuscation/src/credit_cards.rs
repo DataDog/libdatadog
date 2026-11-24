@@ -177,6 +177,7 @@ mod tests {
         FuzzyBool, calculate_luhn, is_card_number, luhn_valid, valid_card_prefix,
     };
 
+    #[cfg_attr(miri, ignore = "pure card-number string logic; no unsafe in path")]
     #[test]
     fn test_valid_card_prefix() {
         let test_cases = vec![
@@ -279,6 +280,7 @@ mod tests {
         }
     }
 
+    #[cfg_attr(miri, ignore = "pure card-number string logic; no unsafe in path")]
     #[test]
     fn test_invalid_cards() {
         let invalid_cards = vec![
@@ -300,6 +302,7 @@ mod tests {
         }
     }
 
+    #[cfg_attr(miri, ignore = "pure card-number string logic; no unsafe in path")]
     #[test]
     #[allow(clippy::too_many_lines)]
     fn test_valid_cards() {
@@ -438,6 +441,7 @@ mod tests {
         }
     }
 
+    #[cfg_attr(miri, ignore = "pure card-number string logic; no unsafe in path")]
     #[test]
     fn test_valid_luhn() {
         let valid_cards = vec![[3, 5, 3, 0, 1, 1, 1, 3, 3, 3, 3, 0, 0, 0, 0, 0]];
@@ -449,6 +453,7 @@ mod tests {
         }
     }
 
+    #[cfg_attr(miri, ignore = "pure card-number string logic; no unsafe in path")]
     #[test]
     fn test_calculate_luhn() {
         let cases = vec![

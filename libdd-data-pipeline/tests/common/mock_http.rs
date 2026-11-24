@@ -265,6 +265,7 @@ mod tests {
     use super::*;
     use libdd_capabilities::HttpClientCapability;
 
+    #[cfg_attr(miri, ignore = "pure mock test helper; no unsafe in path")]
     #[tokio::test]
     async fn test_path_keyed_responses_are_served_in_fifo_order() {
         let mock = MockHttpCapabilities::new();
@@ -325,6 +326,7 @@ mod tests {
         assert_eq!(resp_fallback.status(), 200);
     }
 
+    #[cfg_attr(miri, ignore = "pure mock test helper; no unsafe in path")]
     #[tokio::test]
     async fn test_captured_requests_record_method_uri_and_body() {
         let mock = MockHttpCapabilities::new();
@@ -347,6 +349,7 @@ mod tests {
         assert_eq!(reqs[0].body, Bytes::from("payload"));
     }
 
+    #[cfg_attr(miri, ignore = "pure mock test helper; no unsafe in path")]
     #[tokio::test]
     async fn test_register_on_current_thread_shares_state_with_new_client() {
         let mock = MockHttpCapabilities::new();
@@ -372,6 +375,7 @@ mod tests {
         assert_eq!(mock.captured_request_count(), 1);
     }
 
+    #[cfg_attr(miri, ignore = "pure mock test helper; no unsafe in path")]
     #[tokio::test]
     async fn test_wait_for_requests_returns_true_once_count_reached() {
         let mock = MockHttpCapabilities::new();
@@ -394,6 +398,7 @@ mod tests {
         assert!(arrived);
     }
 
+    #[cfg_attr(miri, ignore = "pure mock test helper; no unsafe in path")]
     #[tokio::test]
     async fn test_wait_for_requests_returns_false_on_timeout() {
         let mock = MockHttpCapabilities::new();
@@ -401,6 +406,7 @@ mod tests {
         assert!(!arrived);
     }
 
+    #[cfg_attr(miri, ignore = "pure mock test helper; no unsafe in path")]
     #[tokio::test]
     async fn test_queue_error_for_path_returns_http_error() {
         use anyhow::anyhow;

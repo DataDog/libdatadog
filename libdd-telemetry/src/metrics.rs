@@ -300,6 +300,7 @@ mod tests {
         }
     }
 
+    #[cfg_attr(miri, ignore = "pure metrics aggregation; no unsafe in path")]
     #[test]
     fn test_bucket_flushes() {
         let mut buckets = MetricBuckets::default();
@@ -381,6 +382,7 @@ mod tests {
         );
     }
 
+    #[cfg_attr(miri, ignore = "pure metrics aggregation; no unsafe in path")]
     #[test]
     fn test_distributions() {
         let mut buckets = MetricBuckets::default();
@@ -475,6 +477,7 @@ mod tests {
         )
     }
 
+    #[cfg_attr(miri, ignore = "pure metrics aggregation; no unsafe in path")]
     #[test]
     fn test_stats() {
         let mut buckets = MetricBuckets::default();

@@ -120,6 +120,10 @@ mod tests {
         }
     }
 
+    #[cfg_attr(
+        miri,
+        ignore = "pure prost stats payload grouping; msgpack via external rmp-serde, no unsafe in path"
+    )]
     #[test]
     fn build_wraps_single_payload() {
         let client = sample_client_payload();
@@ -140,6 +144,10 @@ mod tests {
         assert_eq!(payload.stats[0], client);
     }
 
+    #[cfg_attr(
+        miri,
+        ignore = "pure prost stats payload grouping; msgpack via external rmp-serde, no unsafe in path"
+    )]
     #[test]
     fn encode_roundtrips_through_msgpack() {
         let payload = build_stats_payload(
@@ -181,6 +189,10 @@ mod tests {
             .sum()
     }
 
+    #[cfg_attr(
+        miri,
+        ignore = "pure prost stats payload grouping; msgpack via external rmp-serde, no unsafe in path"
+    )]
     #[test]
     fn split_keeps_single_group_when_under_limit() {
         let groups = split_stats_buckets(vec![bucket(0, 3), bucket(10, 2)], 4000);
@@ -189,6 +201,10 @@ mod tests {
         assert_eq!(total_stats(&groups), 5);
     }
 
+    #[cfg_attr(
+        miri,
+        ignore = "pure prost stats payload grouping; msgpack via external rmp-serde, no unsafe in path"
+    )]
     #[test]
     fn split_breaks_across_multiple_groups() {
         // 5 entries across two buckets, max 2 per payload -> 3 groups (2, 2, 1).
@@ -201,6 +217,10 @@ mod tests {
         assert_eq!(total_stats(&groups), 5);
     }
 
+    #[cfg_attr(
+        miri,
+        ignore = "pure prost stats payload grouping; msgpack via external rmp-serde, no unsafe in path"
+    )]
     #[test]
     fn split_splits_an_oversized_bucket_preserving_metadata() {
         // A single bucket of 5 entries, max 2 -> split into 3 output buckets that
@@ -216,12 +236,20 @@ mod tests {
         assert_eq!(total_stats(&groups), 5);
     }
 
+    #[cfg_attr(
+        miri,
+        ignore = "pure prost stats payload grouping; msgpack via external rmp-serde, no unsafe in path"
+    )]
     #[test]
     fn split_drops_empty_buckets() {
         let groups = split_stats_buckets(vec![bucket(0, 0), bucket(10, 0)], 2);
         assert!(groups.is_empty());
     }
 
+    #[cfg_attr(
+        miri,
+        ignore = "pure prost stats payload grouping; msgpack via external rmp-serde, no unsafe in path"
+    )]
     #[test]
     fn split_handles_zero_max_as_one() {
         let groups = split_stats_buckets(vec![bucket(0, 2)], 0);

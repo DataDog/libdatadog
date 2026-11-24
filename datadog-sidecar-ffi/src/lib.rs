@@ -2119,6 +2119,10 @@ mod tests {
         }
     }
 
+    #[cfg_attr(
+        miri,
+        ignore = "pure native-input string validation; no unsafe in path"
+    )]
     #[test]
     fn evp_producer_identity_validates_native_input() {
         let identity =
@@ -2230,6 +2234,7 @@ mod tests {
         ddog_free_traces(traces);
     }
 
+    #[cfg_attr(miri, ignore = "pure endpoint config logic; no unsafe in path")]
     #[test]
     fn otlp_metrics_endpoint_inherits_agent_test_token_when_missing() {
         let agent_endpoint = Endpoint {
@@ -2244,6 +2249,7 @@ mod tests {
         assert_eq!(endpoint.test_token.as_deref(), Some("agent-token"));
     }
 
+    #[cfg_attr(miri, ignore = "pure endpoint config logic; no unsafe in path")]
     #[test]
     fn otlp_metrics_endpoint_keeps_explicit_test_token() {
         let agent_endpoint = Endpoint {
@@ -2322,6 +2328,10 @@ mod tests {
         assert_eq!(converted.features_json, r#"{"a":"x"}"#);
     }
 
+    #[cfg_attr(
+        miri,
+        ignore = "pure conversion and json pruning logic; no unsafe in path"
+    )]
     #[test]
     fn ffe_flag_evaluation_canonicalizes_features_regardless_of_consent() {
         for consent in [false, true] {
@@ -2345,6 +2355,10 @@ mod tests {
         }
     }
 
+    #[cfg_attr(
+        miri,
+        ignore = "pure conversion of native input structs; no unsafe in path"
+    )]
     #[test]
     fn ffe_exposure_carries_a_present_serial_id() {
         let converted = ffe_exposure_from_ffi(&ffi_exposure(4242, true)).unwrap();
@@ -2352,6 +2366,10 @@ mod tests {
         assert_eq!(converted.serial_id, Some(4242));
     }
 
+    #[cfg_attr(
+        miri,
+        ignore = "pure conversion of native input structs; no unsafe in path"
+    )]
     #[test]
     fn ffe_exposure_carries_a_zero_serial_id() {
         let converted = ffe_exposure_from_ffi(&ffi_exposure(0, true)).unwrap();
@@ -2359,6 +2377,10 @@ mod tests {
         assert_eq!(converted.serial_id, Some(0));
     }
 
+    #[cfg_attr(
+        miri,
+        ignore = "pure conversion of native input structs; no unsafe in path"
+    )]
     #[test]
     fn ffe_exposure_ignores_the_serial_id_value_when_absent() {
         let converted = ffe_exposure_from_ffi(&ffi_exposure(4242, false)).unwrap();
@@ -2366,6 +2388,10 @@ mod tests {
         assert_eq!(converted.serial_id, None);
     }
 
+    #[cfg_attr(
+        miri,
+        ignore = "pure conversion and json pruning logic; no unsafe in path"
+    )]
     #[test]
     fn ffe_flag_evaluation_preserves_service_without_evaluation_context() {
         let event = ffi_flag_evaluation("");
@@ -2380,6 +2406,10 @@ mod tests {
         );
     }
 
+    #[cfg_attr(
+        miri,
+        ignore = "pure conversion and json pruning logic; no unsafe in path"
+    )]
     #[test]
     fn ffe_flag_evaluation_carries_consent_and_sanitizes_errors() {
         for consent in [false, true] {
@@ -2393,6 +2423,10 @@ mod tests {
         }
     }
 
+    #[cfg_attr(
+        miri,
+        ignore = "pure conversion and json pruning logic; no unsafe in path"
+    )]
     #[test]
     fn ffe_flag_evaluation_error_codes_preserve_existing_policy() {
         let long_error = "private-error-canary".repeat(4096);
@@ -2490,6 +2524,10 @@ mod tests {
         }
     }
 
+    #[cfg_attr(
+        miri,
+        ignore = "pure conversion and json pruning logic; no unsafe in path"
+    )]
     #[test]
     fn ffe_flag_evaluation_context_owns_pruned_output_without_changing_input() {
         let original = serde_json::json!({
@@ -2529,6 +2567,10 @@ mod tests {
         assert_eq!(converted, before_normalization);
     }
 
+    #[cfg_attr(
+        miri,
+        ignore = "pure conversion and json pruning logic; no unsafe in path"
+    )]
     #[test]
     fn ffe_flag_evaluation_context_preserves_empty_and_invalid_input_policy() {
         for consent in [false, true] {
@@ -2567,6 +2609,10 @@ mod tests {
         }
     }
 
+    #[cfg_attr(
+        miri,
+        ignore = "pure conversion and json pruning logic; no unsafe in path"
+    )]
     #[test]
     fn ffe_flag_evaluation_keeps_multibyte_context_at_character_limit() {
         let raw =
@@ -2578,6 +2624,10 @@ mod tests {
         assert!(value.get("long").is_none());
     }
 
+    #[cfg_attr(
+        miri,
+        ignore = "pure conversion and json pruning logic; no unsafe in path"
+    )]
     #[test]
     fn ffe_flag_evaluation_prunes_context_field_count_and_long_strings() {
         let mut attrs = serde_json::Map::new();
@@ -2605,6 +2655,10 @@ mod tests {
         assert!(!attrs.contains_key(&format!("field_{MAX_CONTEXT_FIELDS:03}")));
     }
 
+    #[cfg_attr(
+        miri,
+        ignore = "pure conversion and json pruning logic; no unsafe in path"
+    )]
     #[test]
     fn ffe_flag_evaluation_prunes_context_beyond_depth_four() {
         let raw = serde_json::json!({

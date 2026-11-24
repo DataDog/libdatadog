@@ -41,6 +41,7 @@ impl InstanceId {
 mod tests {
     use super::*;
 
+    #[cfg_attr(miri, ignore = "struct construction only; no unsafe in path")]
     #[test]
     fn test_instance_id_new() {
         let session_id = "test_session";

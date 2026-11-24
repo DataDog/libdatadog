@@ -542,6 +542,7 @@ mod tests {
         }
     }
 
+    #[cfg_attr(miri, ignore = "no unsafe in path; pure JSON parsing logic")]
     #[test]
     fn a_number_no_double_holds_is_an_infinity_not_an_error() {
         assert_eq!(number("1e400"), f64::INFINITY);
@@ -551,6 +552,7 @@ mod tests {
         assert_eq!(number("1e-400"), 0.0);
     }
 
+    #[cfg_attr(miri, ignore = "no unsafe in path; pure JSON parsing logic")]
     #[test]
     fn integers_beyond_exact_double_range_read_as_the_nearest_double() {
         assert_eq!(number("9007199254740991"), 9_007_199_254_740_991.0);
@@ -560,6 +562,7 @@ mod tests {
         assert_eq!(number("18446744073709551616"), 18_446_744_073_709_551_616.0);
     }
 
+    #[cfg_attr(miri, ignore = "no unsafe in path; pure JSON parsing logic")]
     #[test]
     fn decimals_are_read_correctly_rounded() {
         for text in [
@@ -581,6 +584,7 @@ mod tests {
         assert_eq!(number("-0.0").to_bits(), (-0.0f64).to_bits());
     }
 
+    #[cfg_attr(miri, ignore = "no unsafe in path; pure JSON parsing logic")]
     #[test]
     fn the_number_grammar_is_json_not_rust() {
         for text in [
@@ -591,6 +595,7 @@ mod tests {
         }
     }
 
+    #[cfg_attr(miri, ignore = "no unsafe in path; pure JSON parsing logic")]
     #[test]
     fn member_order_does_not_matter_and_the_last_repeat_wins() {
         let a = Json::parse(r#"{"b": 1, "a": 2, "b": 3}"#).unwrap();
@@ -600,6 +605,7 @@ mod tests {
         assert_eq!(keys, ["a", "b"]);
     }
 
+    #[cfg_attr(miri, ignore = "no unsafe in path; pure JSON parsing logic")]
     #[test]
     fn strings_decode_escapes_and_surrogate_pairs() {
         let value = Json::parse(r#""a\né😀\/é""#).unwrap();
@@ -616,6 +622,7 @@ mod tests {
         }
     }
 
+    #[cfg_attr(miri, ignore = "no unsafe in path; pure JSON parsing logic")]
     #[test]
     fn structure_errors_are_reported_without_panicking() {
         for text in [

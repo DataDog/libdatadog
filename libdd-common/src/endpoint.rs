@@ -238,6 +238,7 @@ mod tests {
     /// A scheme prefix with an empty path produces an empty (and therefore
     /// dropped) authority. parsing must reject these as malformed rather
     /// than accept them.
+    #[cfg_attr(miri, ignore = "pure uri parsing; no unsafe in path")]
     #[test]
     fn empty_authority_uris_are_rejected() {
         for input in ["unix://", "windows:", "file://"] {

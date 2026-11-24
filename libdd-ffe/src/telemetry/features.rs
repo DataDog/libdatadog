@@ -122,6 +122,7 @@ mod tests {
     use super::*;
     use serde_json::json;
 
+    #[cfg_attr(miri, ignore = "no unsafe in path; pure feature encoding logic")]
     #[test]
     fn keeps_only_scalar_values() {
         let features = features_map(
@@ -133,6 +134,7 @@ mod tests {
         );
     }
 
+    #[cfg_attr(miri, ignore = "no unsafe in path; pure feature encoding logic")]
     #[test]
     fn rejected_input_is_not_logged() {
         crate::test_logging::start_log_capture();
@@ -149,6 +151,7 @@ mod tests {
             && log.message == "ffe features must be a JSON object; omitting features"));
     }
 
+    #[cfg_attr(miri, ignore = "no unsafe in path; pure feature encoding logic")]
     #[test]
     fn malformed_input_yields_no_features() {
         for raw in ["", "not json", "[]", "\"text\"", "1", "null", "{}"] {
@@ -157,6 +160,7 @@ mod tests {
         }
     }
 
+    #[cfg_attr(miri, ignore = "no unsafe in path; pure feature encoding logic")]
     #[test]
     fn canonical_encoding_is_sorted_and_type_tagged() {
         assert_eq!(
@@ -177,6 +181,7 @@ mod tests {
         );
     }
 
+    #[cfg_attr(miri, ignore = "no unsafe in path; pure feature encoding logic")]
     #[test]
     fn features_are_kept_up_to_the_byte_cap() {
         let at_cap = features_of_encoded_len(MAX_FEATURES_BYTES);
@@ -193,6 +198,7 @@ mod tests {
         assert!(truncated.len() <= MAX_FEATURES_BYTES);
     }
 
+    #[cfg_attr(miri, ignore = "no unsafe in path; pure feature encoding logic")]
     #[test]
     fn truncation_keeps_a_sorted_key_prefix() {
         let mut features: BTreeMap<String, Value> =
@@ -204,6 +210,7 @@ mod tests {
         assert_eq!(features_map(&raw), kept);
     }
 
+    #[cfg_attr(miri, ignore = "no unsafe in path; pure feature encoding logic")]
     #[test]
     fn byte_cap_counts_escaped_text() {
         let escaped = r"\u0001".repeat(MAX_FEATURE_TEXT_LENGTH);
@@ -219,6 +226,7 @@ mod tests {
         assert_eq!(features_map(&raw).len(), 2);
     }
 
+    #[cfg_attr(miri, ignore = "no unsafe in path; pure feature encoding logic")]
     #[test]
     fn negative_zero_encodes_like_zero() {
         assert_eq!(
@@ -231,6 +239,7 @@ mod tests {
         );
     }
 
+    #[cfg_attr(miri, ignore = "no unsafe in path; pure feature encoding logic")]
     #[test]
     fn overlong_text_is_skipped_not_truncated() {
         let exact = "é".repeat(MAX_FEATURE_TEXT_LENGTH);
@@ -241,6 +250,7 @@ mod tests {
         assert_eq!(features[&exact], json!(exact));
     }
 
+    #[cfg_attr(miri, ignore = "no unsafe in path; pure feature encoding logic")]
     #[test]
     fn retains_at_most_max_features_in_key_order() {
         let raw = serde_json::to_string(

@@ -236,6 +236,7 @@ fn glob_match_bytes<const ASCII_FOLD: bool>(pattern: &[u8], subject: &[u8]) -> b
 mod tests {
     use super::*;
 
+    #[cfg_attr(miri, ignore = "pure glob matching logic; no unsafe in crate")]
     #[test]
     fn test_glob_exact_match() {
         let matcher = GlobMatcher::new("hello");
@@ -245,6 +246,7 @@ mod tests {
         assert!(!matcher.matches("hell"));
     }
 
+    #[cfg_attr(miri, ignore = "pure glob matching logic; no unsafe in crate")]
     #[test]
     fn test_glob_question_mark() {
         let matcher = GlobMatcher::new("h?llo");
@@ -254,6 +256,7 @@ mod tests {
         assert!(!matcher.matches("heello"));
     }
 
+    #[cfg_attr(miri, ignore = "pure glob matching logic; no unsafe in crate")]
     #[test]
     fn test_glob_asterisk() {
         let matcher = GlobMatcher::new("h*o");
@@ -268,6 +271,7 @@ mod tests {
         assert!(!matcher.matches("world"));
     }
 
+    #[cfg_attr(miri, ignore = "pure glob matching logic; no unsafe in crate")]
     #[test]
     fn test_glob_complex() {
         let matcher = GlobMatcher::new("c*t?r*");
@@ -283,6 +287,7 @@ mod tests {
         assert!(!matcher.matches("svc"));
     }
 
+    #[cfg_attr(miri, ignore = "pure glob matching logic; no unsafe in crate")]
     #[test]
     fn test_debug_impl() {
         let matcher = GlobMatcher::new("svc-*");
@@ -290,6 +295,7 @@ mod tests {
         assert!(dbg.contains("svc-*"));
     }
 
+    #[cfg_attr(miri, ignore = "pure glob matching logic; no unsafe in crate")]
     #[test]
     fn test_double_star_matches_everything() {
         let matcher = GlobMatcher::new("**");
@@ -297,6 +303,7 @@ mod tests {
         assert!(matcher.matches(""));
     }
 
+    #[cfg_attr(miri, ignore = "pure glob matching logic; no unsafe in crate")]
     #[test]
     fn test_all_star_patterns_short_circuit() {
         // Any pattern that is only `*` characters takes the `pattern_is_star` short-circuit.
@@ -323,6 +330,7 @@ mod tests {
         }
     }
 
+    #[cfg_attr(miri, ignore = "pure glob matching logic; no unsafe in crate")]
     #[test]
     fn test_unicode_exact_match_no_wildcard() {
         // No-wildcard unicode pattern: exercises the `pattern_lower == subject_lower` early
@@ -335,6 +343,7 @@ mod tests {
         assert!(!matcher.matches("caf\u{00e9}s")); // longer miss
     }
 
+    #[cfg_attr(miri, ignore = "pure glob matching logic; no unsafe in crate")]
     #[test]
     fn test_unicode_subject_against_ascii_pattern() {
         // Pattern is ASCII but subject is not -> takes the unicode fallback path.
@@ -343,6 +352,7 @@ mod tests {
         assert!(!matcher.matches("\u{00e9}cole")); // "école"
     }
 
+    #[cfg_attr(miri, ignore = "pure glob matching logic; no unsafe in crate")]
     #[test]
     fn test_unicode_pattern() {
         // Non-ASCII pattern -> always unicode path.
@@ -352,6 +362,7 @@ mod tests {
         assert!(!matcher.matches("cafe-shop"));
     }
 
+    #[cfg_attr(miri, ignore = "pure glob matching logic; no unsafe in crate")]
     #[test]
     fn test_unicode_repeated_calls() {
         // Smoke test: repeated unicode calls should all succeed (hits + misses interleaved).
@@ -362,6 +373,7 @@ mod tests {
         }
     }
 
+    #[cfg_attr(miri, ignore = "pure glob matching logic; no unsafe in crate")]
     #[test]
     fn test_clone_independent() {
         let matcher = GlobMatcher::new("caf*");
@@ -370,6 +382,7 @@ mod tests {
         assert!(clone.matches("caf\u{00e9}"));
     }
 
+    #[cfg_attr(miri, ignore = "pure glob matching logic; no unsafe in crate")]
     #[test]
     fn test_ascii_no_wildcard_skips_cache() {
         let matcher = GlobMatcher::new("svc-web");
@@ -383,6 +396,7 @@ mod tests {
         );
     }
 
+    #[cfg_attr(miri, ignore = "pure glob matching logic; no unsafe in crate")]
     #[test]
     fn test_ascii_wildcard_populates_cache() {
         let matcher = GlobMatcher::new("svc-*");
@@ -396,6 +410,7 @@ mod tests {
         );
     }
 
+    #[cfg_attr(miri, ignore = "pure glob matching logic; no unsafe in crate")]
     #[test]
     fn test_unicode_path_populates_cache() {
         let matcher = GlobMatcher::new("caf*");
@@ -404,6 +419,7 @@ mod tests {
         assert_eq!(cache.len(), 1);
     }
 
+    #[cfg_attr(miri, ignore = "pure glob matching logic; no unsafe in crate")]
     #[test]
     fn test_clone_shares_cache() {
         let matcher = GlobMatcher::new("caf*");

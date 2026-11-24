@@ -461,6 +461,7 @@ mod tests {
         tokio::task::yield_now().await;
     }
 
+    #[cfg_attr(miri, ignore = "tokio paused-time idle-timer logic; no unsafe in path")]
     #[tokio::test(start_paused = true)]
     async fn idle_without_connections_expires() {
         let connections = Arc::new(ConnectionActivity::default());
@@ -471,6 +472,7 @@ mod tests {
         task.await.unwrap();
     }
 
+    #[cfg_attr(miri, ignore = "tokio paused-time idle-timer logic; no unsafe in path")]
     #[tokio::test(start_paused = true)]
     async fn short_connections_reset_idle_deadline() {
         let connections = Arc::new(ConnectionActivity::default());
@@ -488,6 +490,7 @@ mod tests {
         task.await.unwrap();
     }
 
+    #[cfg_attr(miri, ignore = "tokio paused-time idle-timer logic; no unsafe in path")]
     #[tokio::test(start_paused = true)]
     async fn linger_starts_after_last_connection_closes() {
         let connections = Arc::new(ConnectionActivity::default());
@@ -506,6 +509,7 @@ mod tests {
         task.await.unwrap();
     }
 
+    #[cfg_attr(miri, ignore = "tokio paused-time idle-timer logic; no unsafe in path")]
     #[tokio::test(start_paused = true)]
     async fn accept_invalidates_an_armed_idle_timer() {
         let connections = Arc::new(ConnectionActivity::default());
@@ -521,6 +525,7 @@ mod tests {
         task.await.unwrap();
     }
 
+    #[cfg_attr(miri, ignore = "tokio paused-time idle-timer logic; no unsafe in path")]
     #[tokio::test(start_paused = true)]
     async fn noop_idle_cancel_allows_later_thread_mode_connections() {
         let connections = Arc::new(ConnectionActivity::default());

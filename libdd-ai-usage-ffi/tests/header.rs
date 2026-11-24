@@ -37,6 +37,7 @@ fn header_is_current() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "no unsafe in path; pure header text check")]
 fn the_header_states_the_abi_version_and_no_removed_function() {
     let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("include/ai_usage.h");
     let header = fs::read_to_string(path).unwrap();

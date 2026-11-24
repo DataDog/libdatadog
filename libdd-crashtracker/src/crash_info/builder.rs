@@ -471,6 +471,7 @@ mod tests {
     use super::*;
     use crate::crash_info::test_utils::TestInstance;
 
+    #[cfg_attr(miri, ignore = "builder/serde struct logic; no unsafe in path")]
     #[test]
     fn test_crash_info_builder_to_crash_ping() {
         let sig_info = SigInfo::test_instance(42);
@@ -490,6 +491,7 @@ mod tests {
         assert!(crash_ping.message().contains("crash processing started"));
     }
 
+    #[cfg_attr(miri, ignore = "builder/serde struct logic; no unsafe in path")]
     #[test]
     fn test_with_message() {
         let mut builder = CrashInfoBuilder::new();
@@ -511,6 +513,7 @@ mod tests {
         assert!(crash_ping.message().contains(&test_message));
     }
 
+    #[cfg_attr(miri, ignore = "builder/serde struct logic; no unsafe in path")]
     #[test]
     fn test_has_data_empty() {
         // A fresh builder has a freshly generated uuid, which must not count as
@@ -518,6 +521,7 @@ mod tests {
         assert!(!CrashInfoBuilder::new().has_data());
     }
 
+    #[cfg_attr(miri, ignore = "builder/serde struct logic; no unsafe in path")]
     #[test]
     fn test_has_data_after_setting() {
         let mut builder = CrashInfoBuilder::new();
@@ -533,12 +537,14 @@ mod tests {
         assert!(builder.has_data());
     }
 
+    #[cfg_attr(miri, ignore = "builder/serde struct logic; no unsafe in path")]
     #[test]
     fn test_has_message_empty() {
         let builder = CrashInfoBuilder::new();
         assert!(!builder.has_message());
     }
 
+    #[cfg_attr(miri, ignore = "builder/serde struct logic; no unsafe in path")]
     #[test]
     fn test_has_message_after_setting() {
         let mut builder = CrashInfoBuilder::new();
@@ -546,6 +552,7 @@ mod tests {
         assert!(builder.has_message());
     }
 
+    #[cfg_attr(miri, ignore = "builder/serde struct logic; no unsafe in path")]
     #[test]
     fn test_message_overwrite() {
         let mut builder = CrashInfoBuilder::new();
@@ -572,6 +579,7 @@ mod tests {
         assert_eq!(report.error.message.as_deref(), Some("second message"));
     }
 
+    #[cfg_attr(miri, ignore = "builder/serde struct logic; no unsafe in path")]
     #[test]
     fn test_message_with_special_characters() {
         let mut builder = CrashInfoBuilder::new();
@@ -590,6 +598,7 @@ mod tests {
         assert_eq!(report.error.message.as_deref(), Some(special_message));
     }
 
+    #[cfg_attr(miri, ignore = "builder/serde struct logic; no unsafe in path")]
     #[test]
     fn test_very_long_message() {
         let mut builder = CrashInfoBuilder::new();
@@ -610,6 +619,7 @@ mod tests {
         assert!(report.error.message.as_ref().unwrap().len() >= 10000);
     }
 
+    #[cfg_attr(miri, ignore = "builder/serde struct logic; no unsafe in path")]
     #[test]
     fn test_no_frames_is_incomplete() {
         // When we receive an end stacktrace marker but no frames were collected,
@@ -628,6 +638,7 @@ mod tests {
         assert!(stack.incomplete);
     }
 
+    #[cfg_attr(miri, ignore = "builder/serde struct logic; no unsafe in path")]
     #[test]
     fn test_with_stack_set_complete_with_frames() {
         // When we have frames and call set_complete, it should mark them complete
@@ -647,6 +658,7 @@ mod tests {
         assert!(!stack.incomplete);
     }
 
+    #[cfg_attr(miri, ignore = "builder/serde struct logic; no unsafe in path")]
     #[test]
     fn test_crash_info_builder_empty_stack_is_incomplete() {
         // When no frames were captured, the stack and CrashInfo should be marked

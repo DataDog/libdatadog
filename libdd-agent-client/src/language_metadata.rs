@@ -50,6 +50,7 @@ impl LanguageMetadata {
 mod tests {
     use super::*;
 
+    #[cfg_attr(miri, ignore = "no unsafe in path; pure struct field checks")]
     #[test]
     fn new_stores_fields() {
         let m = LanguageMetadata::new("python", "3.12.1", "CPython", "", "2.18.0");
@@ -60,12 +61,14 @@ mod tests {
         assert_eq!(m.tracer_version, "2.18.0");
     }
 
+    #[cfg_attr(miri, ignore = "no unsafe in path; pure user-agent string formatting")]
     #[test]
     fn user_agent_format() {
         let m = LanguageMetadata::new("python", "3.12.1", "CPython", "", "2.18.0");
         assert_eq!(m.user_agent(), "dd-trace-python/2.18.0");
     }
 
+    #[cfg_attr(miri, ignore = "no unsafe in path; pure user-agent string formatting")]
     #[test]
     fn user_agent_ruby() {
         let m = LanguageMetadata::new("ruby", "3.2.0", "MRI", "", "1.13.0");

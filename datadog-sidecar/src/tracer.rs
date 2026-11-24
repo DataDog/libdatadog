@@ -135,6 +135,7 @@ mod tests {
     use http::uri::{Authority, Parts};
     use libdd_trace_utils::config_utils::PROD_INTAKE_SUBDOMAIN;
 
+    #[cfg_attr(miri, ignore = "url building; no unsafe in path")]
     #[test]
     fn agentless_trace_intake_url() {
         for site in ["datadoghq.com", "datadoghq.eu"] {

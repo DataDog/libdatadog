@@ -975,6 +975,7 @@ mod tests {
         assert_eq!(flushed.stats[0].stats[0].hits, 400);
     }
 
+    #[cfg_attr(miri, ignore = "pure duration binning arithmetic; no unsafe in path")]
     #[test]
     fn test_histogram_bins() {
         assert_eq!(bin_for_duration(0), 0);
@@ -1062,6 +1063,7 @@ mod tests {
 
     /// A layout describes a segment or it does not; there is no partial acceptance, because
     /// every offset and loop bound in the module is derived from one.
+    #[cfg_attr(miri, ignore = "pure layout arithmetic; no unsafe in path")]
     #[test]
     fn a_layout_is_accepted_only_if_it_fits_the_mapping() {
         let page = page_size::get();
@@ -1435,6 +1437,7 @@ mod tests {
 
     /// The memory budget for additional metric tags is nil: they share the peer tag arrays, and
     /// their count sits in what used to be the key's tail padding.
+    #[cfg_attr(miri, ignore = "pure size_of layout assertions; no unsafe in path")]
     #[test]
     fn additional_tags_do_not_grow_a_slot() {
         assert_eq!(size_of::<ShmKeyHeader>(), 332);
@@ -1755,6 +1758,7 @@ mod tests {
         }
     }
 
+    #[cfg_attr(miri, ignore = "pure struct conversion; no unsafe in path")]
     #[test]
     fn an_owned_input_lends_out_both_kinds_of_tags() {
         let owned = OwnedShmSpanInput {

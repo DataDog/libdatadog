@@ -820,6 +820,10 @@ mod tests {
         }
     }
 
+    #[cfg_attr(
+        miri,
+        ignore = "mapper dedup logic; only sibling tinybytes unsafe in path, covered by libdd-tinybytes miri tests"
+    )]
     #[test]
     fn resource_duplicates_do_not_consume_span_attribute_limit() {
         let field_keys = [

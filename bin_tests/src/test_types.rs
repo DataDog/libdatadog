@@ -235,6 +235,7 @@ impl std::str::FromStr for CrashType {
 mod tests {
     use super::*;
 
+    #[cfg_attr(miri, ignore = "no unsafe in path; pure enum/parse logic")]
     #[test]
     fn test_mode_str_roundtrip() {
         for mode in TestMode::all() {
@@ -244,6 +245,7 @@ mod tests {
         }
     }
 
+    #[cfg_attr(miri, ignore = "no unsafe in path; pure enum/parse logic")]
     #[test]
     fn test_crash_type_signal_info() {
         assert_eq!(CrashType::NullDeref.signal_name(), "SIGSEGV");
@@ -256,6 +258,7 @@ mod tests {
         }
     }
 
+    #[cfg_attr(miri, ignore = "no unsafe in path; pure enum/parse logic")]
     #[test]
     fn test_crash_type_expects_success() {
         assert!(!CrashType::NullDeref.expects_success());

@@ -420,6 +420,7 @@ async fn parse_multipart(boundary: String, body: Vec<u8>) -> anyhow::Result<Vec<
 mod tests {
     use super::*;
 
+    #[cfg_attr(miri, ignore = "no unsafe in path; pure parsing logic")]
     #[test]
     fn test_temp_file_guard_and_path_generation() {
         // Test that create_temp_file_path generates correct path format
@@ -449,6 +450,7 @@ mod tests {
         assert!(!path.exists());
     }
 
+    #[cfg_attr(miri, ignore = "no unsafe in path; pure parsing logic")]
     #[test]
     fn test_parse_http_request_basic() {
         let request = b"POST /v1/input HTTP/1.1\r\nHost: example.com\r\nContent-Type: application/json\r\n\r\n{\"test\":true}";
@@ -465,6 +467,7 @@ mod tests {
         assert!(parsed.multipart_parts.is_empty());
     }
 
+    #[cfg_attr(miri, ignore = "no unsafe in path; pure parsing logic")]
     #[test]
     fn test_parse_http_request_with_custom_headers() {
         let request =
@@ -479,6 +482,7 @@ mod tests {
         assert!(parsed.multipart_parts.is_empty());
     }
 
+    #[cfg_attr(miri, ignore = "no unsafe in path; pure parsing logic")]
     #[test]
     fn test_parse_http_request_with_multipart() {
         let content_type = "multipart/form-data; boundary=----WebKitFormBoundary";
@@ -498,6 +502,7 @@ mod tests {
         assert_eq!(parsed.multipart_parts[0].content, b"value");
     }
 
+    #[cfg_attr(miri, ignore = "no unsafe in path; pure parsing logic")]
     #[tokio::test]
     async fn test_parse_http_request_async_with_multipart() {
         let content_type = "multipart/form-data; boundary=----WebKitFormBoundary";

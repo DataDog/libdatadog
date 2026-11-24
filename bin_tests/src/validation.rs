@@ -271,6 +271,7 @@ mod tests {
     use super::*;
     use serde_json::json;
 
+    #[cfg_attr(miri, ignore = "no unsafe in path; pure payload validation")]
     #[test]
     fn test_validator_chaining() {
         let payload = json!({
@@ -303,6 +304,7 @@ mod tests {
         assert!(result.is_ok());
     }
 
+    #[cfg_attr(miri, ignore = "no unsafe in path; pure payload validation")]
     #[test]
     fn test_validator_failure() {
         let payload = json!({

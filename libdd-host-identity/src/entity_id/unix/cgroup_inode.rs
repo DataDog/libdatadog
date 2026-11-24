@@ -104,6 +104,7 @@ mod tests {
     use super::*;
     use maplit::hashmap;
 
+    #[cfg_attr(miri, ignore = "no unsafe in path; pure cgroup file parsing logic")]
     #[test]
     fn test_cgroup_node_path_parsing() {
         let test_root_dir: &Path = Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/tests"));

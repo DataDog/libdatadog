@@ -288,6 +288,7 @@ mod tests {
     use super::JsonObfuscatorConfig;
 
     /// Accept `/info` and obfuscation-config field names, ignoring unknown fields.
+    #[cfg_attr(miri, ignore = "pure serde config parsing; no unsafe in path")]
     #[test]
     fn test_agent_json_obfuscation_field_names() {
         let from_info: JsonObfuscatorConfig =

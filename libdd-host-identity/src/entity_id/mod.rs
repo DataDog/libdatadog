@@ -136,6 +136,7 @@ fn append_headers(
 mod tests {
     use super::*;
 
+    #[cfg_attr(miri, ignore = "no unsafe in path; pure http header building logic")]
     #[test]
     fn builder_carries_available_entity_headers() {
         let request = http::Request::builder()
@@ -157,6 +158,7 @@ mod tests {
         }
     }
 
+    #[cfg_attr(miri, ignore = "no unsafe in path; pure http header building logic")]
     #[test]
     fn append_headers_sets_every_entity_header() {
         let headers = [

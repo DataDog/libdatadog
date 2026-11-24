@@ -917,6 +917,7 @@ mod tests {
         }
     }
 
+    #[cfg_attr(miri, ignore = "pure stats aggregation logic; no unsafe in path")]
     #[test]
     fn test_float_to_u32_rejects_malformed_values() {
         assert_eq!(float_to_u32(0.0), Some(0));
@@ -929,6 +930,7 @@ mod tests {
         assert_eq!(float_to_u32((u32::MAX as f64) + 1.0), None);
     }
 
+    #[cfg_attr(miri, ignore = "pure stats aggregation logic; no unsafe in path")]
     #[test]
     fn test_aggregation_key_from_span() {
         let test_cases: Vec<(SpanBytes, OwnedAggregationKey)> = vec![
@@ -1806,6 +1808,7 @@ mod tests {
     /// - spans with an absent, empty, or internal kind and a non-empty _dd.base_service use only
     ///   _dd.base_service;
     /// - server and unknown kinds get no peer tags, even when _dd.base_service is configured.
+    #[cfg_attr(miri, ignore = "pure stats aggregation logic; no unsafe in path")]
     #[test]
     fn test_base_service_peer_tag_selection_in_aggregation_key() {
         // (span.kind (None = absent), _dd.base_service (None = absent), configured
@@ -2002,6 +2005,7 @@ mod tests {
     /// V1 counterpart of `test_base_service_peer_tag_selection_in_aggregation_key`, covering what
     /// differs from v0.4: the kind is the dedicated `span_kind` field (`Internal` reads as unset),
     /// and both the kind and `_dd.base_service` fall back to the chunk's attributes.
+    #[cfg_attr(miri, ignore = "pure stats aggregation logic; no unsafe in path")]
     #[test]
     fn test_base_service_peer_tag_selection_v1() {
         use libdd_trace_utils::span::v1::{
@@ -2097,6 +2101,7 @@ mod tests {
         }
     }
 
+    #[cfg_attr(miri, ignore = "pure stats aggregation logic; no unsafe in path")]
     #[test]
     fn test_peer_tag_ip_quantization_in_aggregation_key() {
         let peer_tag_keys = vec!["peer.hostname".to_string(), "db.instance".to_string()];
@@ -2174,6 +2179,7 @@ mod tests {
         );
     }
 
+    #[cfg_attr(miri, ignore = "pure stats aggregation logic; no unsafe in path")]
     #[test]
     fn test_grpc_status_str_to_int_value() {
         // Numeric strings parse directly

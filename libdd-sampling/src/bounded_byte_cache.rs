@@ -122,6 +122,7 @@ where
 mod tests {
     use super::*;
 
+    #[cfg_attr(miri, ignore = "pure lru cache logic; no unsafe in crate")]
     #[test]
     fn test_basic_put_and_get() {
         let mut cache: BoundedByteCache<Vec<u8>, bool> = BoundedByteCache::new(256, 1024);
@@ -130,6 +131,7 @@ mod tests {
         assert_eq!(cache.len(), 1);
     }
 
+    #[cfg_attr(miri, ignore = "pure lru cache logic; no unsafe in crate")]
     #[test]
     fn test_evicts_lru_when_over_byte_budget() {
         // Each entry costs PER_ENTRY_OVERHEAD (64) + 4 (key) + 1 (bool) = 69 bytes. Budget
@@ -147,6 +149,7 @@ mod tests {
         assert!(cache.current_bytes() <= budget);
     }
 
+    #[cfg_attr(miri, ignore = "pure lru cache logic; no unsafe in crate")]
     #[test]
     fn test_evicts_lru_when_over_entry_count() {
         // Generous byte budget; entry-count cap of 2 drives eviction.
@@ -160,6 +163,7 @@ mod tests {
         assert_eq!(cache.get(b"c".as_ref()), Some(&true));
     }
 
+    #[cfg_attr(miri, ignore = "pure lru cache logic; no unsafe in crate")]
     #[test]
     fn test_oversize_entry_is_rejected() {
         // Any entry costs at least PER_ENTRY_OVERHEAD bytes, so a 32-byte budget rejects
@@ -170,6 +174,7 @@ mod tests {
         assert_eq!(cache.current_bytes(), 0);
     }
 
+    #[cfg_attr(miri, ignore = "pure lru cache logic; no unsafe in crate")]
     #[test]
     fn test_replacing_key_does_not_double_count() {
         let mut cache: BoundedByteCache<Vec<u8>, bool> = BoundedByteCache::new(256, 1024);
@@ -181,6 +186,7 @@ mod tests {
         assert_eq!(cache.len(), 1);
     }
 
+    #[cfg_attr(miri, ignore = "pure lru cache logic; no unsafe in crate")]
     #[test]
     fn test_get_bumps_recency() {
         // Budget for exactly two 4-byte-keyed entries (69 B each = 138 B total).
@@ -193,6 +199,7 @@ mod tests {
         assert_eq!(cache.get(b"bbbb".as_ref()), None);
     }
 
+    #[cfg_attr(miri, ignore = "pure lru cache logic; no unsafe in crate")]
     #[test]
     fn test_many_inserts_stay_within_both_limits() {
         let max_entries = 8;
@@ -207,6 +214,7 @@ mod tests {
         }
     }
 
+    #[cfg_attr(miri, ignore = "pure lru cache logic; no unsafe in crate")]
     #[test]
     fn test_zero_entries_clamps_to_one() {
         let mut cache: BoundedByteCache<Vec<u8>, bool> = BoundedByteCache::new(0, 1024);

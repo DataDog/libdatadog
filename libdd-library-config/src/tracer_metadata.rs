@@ -296,6 +296,7 @@ mod tests {
             .as_ref()
     }
 
+    #[cfg_attr(miri, ignore = "no unsafe in path; safe protobuf construction")]
     #[test]
     fn tracer_metadata_equality() {
         let a = TracerMetadata {
@@ -315,6 +316,7 @@ mod tests {
         assert_ne!(a, c);
     }
 
+    #[cfg_attr(miri, ignore = "no unsafe in path; safe protobuf construction")]
     #[test]
     fn absent_optional_metadata_is_omitted_from_process_context() {
         let ctx = TracerMetadata::default().to_otel_process_ctx();
@@ -333,6 +335,7 @@ mod tests {
         assert!(find_extra_attr(&ctx, "threadlocal.attribute_key_map").is_none());
     }
 
+    #[cfg_attr(miri, ignore = "no unsafe in path; safe protobuf construction")]
     #[test]
     fn present_optional_metadata_is_emitted_in_process_context() {
         let ctx = TracerMetadata {
@@ -367,6 +370,7 @@ mod tests {
     }
 
     #[cfg(feature = "otel-thread-ctx")]
+    #[cfg_attr(miri, ignore = "no unsafe in path; safe protobuf construction")]
     #[test]
     fn threadlocal_attrs_present_with_correct_values() {
         let ctx = TracerMetadata {
@@ -417,6 +421,7 @@ mod tests {
     }
 
     #[cfg(feature = "otel-thread-ctx")]
+    #[cfg_attr(miri, ignore = "no unsafe in path; safe protobuf construction")]
     #[test]
     fn threadlocal_schema_version_override() {
         let ctx = TracerMetadata {
@@ -437,6 +442,7 @@ mod tests {
     }
 
     #[cfg(feature = "otel-thread-ctx")]
+    #[cfg_attr(miri, ignore = "no unsafe in path; safe protobuf construction")]
     #[test]
     fn threadlocal_extra_attributes_are_emitted() {
         let ctx = TracerMetadata {
@@ -478,6 +484,7 @@ mod tests {
     }
 
     #[cfg(feature = "otel-thread-ctx")]
+    #[cfg_attr(miri, ignore = "no unsafe in path; safe protobuf construction")]
     #[test]
     fn default_threadlocal_metadata_preserves_legacy_metadata() {
         let mut metadata = TracerMetadata {

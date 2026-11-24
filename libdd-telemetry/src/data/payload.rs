@@ -68,6 +68,7 @@ mod tests {
     };
     use serde_json::json;
 
+    #[cfg_attr(miri, ignore = "pure serde serialization; no unsafe in path")]
     #[test]
     fn test_app_started_serialization() {
         let payload = Payload::AppStarted(AppStarted {
@@ -123,6 +124,7 @@ mod tests {
         assert_eq!(serialized, expected);
     }
 
+    #[cfg_attr(miri, ignore = "pure serde serialization; no unsafe in path")]
     #[test]
     fn test_app_dependencies_loaded_serialization() {
         let payload = Payload::AppDependenciesLoaded(AppDependenciesLoaded {
@@ -164,6 +166,7 @@ mod tests {
         assert_eq!(serialized, expected);
     }
 
+    #[cfg_attr(miri, ignore = "pure serde serialization; no unsafe in path")]
     #[test]
     fn test_app_integrations_change_serialization() {
         let payload = Payload::AppIntegrationsChange(AppIntegrationsChange {
@@ -216,6 +219,7 @@ mod tests {
         assert_eq!(serialized, expected);
     }
 
+    #[cfg_attr(miri, ignore = "pure serde serialization; no unsafe in path")]
     #[test]
     fn test_app_client_configuration_change_serialization() {
         let payload = Payload::AppClientConfigurationChange(AppClientConfigurationChange {
@@ -248,6 +252,7 @@ mod tests {
         assert_eq!(serialized, expected);
     }
 
+    #[cfg_attr(miri, ignore = "pure serde serialization; no unsafe in path")]
     #[test]
     fn test_app_endpoints_serialization() {
         let payload = Payload::AppEndpoints(AppEndpoints {
@@ -294,6 +299,7 @@ mod tests {
         assert_eq!(serialized, expected);
     }
 
+    #[cfg_attr(miri, ignore = "pure serde serialization; no unsafe in path")]
     #[test]
     fn test_app_heartbeat_serialization() {
         let payload = Payload::AppHeartbeat(());
@@ -307,6 +313,7 @@ mod tests {
         assert_eq!(serialized, expected);
     }
 
+    #[cfg_attr(miri, ignore = "pure serde serialization; no unsafe in path")]
     #[test]
     fn test_app_closing_serialization() {
         let payload = Payload::AppClosing(());
@@ -320,6 +327,7 @@ mod tests {
         assert_eq!(serialized, expected);
     }
 
+    #[cfg_attr(miri, ignore = "pure serde serialization; no unsafe in path")]
     #[test]
     fn test_generate_metrics_serialization() {
         let payload = Payload::GenerateMetrics(GenerateMetrics {
@@ -376,6 +384,7 @@ mod tests {
         assert_eq!(serialized, expected);
     }
 
+    #[cfg_attr(miri, ignore = "pure serde serialization; no unsafe in path")]
     #[test]
     fn test_sketches_serialization() {
         let payload = Payload::Sketches(Distributions {
@@ -414,6 +423,7 @@ mod tests {
         assert_eq!(serialized, expected);
     }
 
+    #[cfg_attr(miri, ignore = "pure serde serialization; no unsafe in path")]
     #[test]
     fn test_logs_serialization() {
         let payload = Payload::Logs(Logs {
@@ -470,6 +480,7 @@ mod tests {
         assert_eq!(serialized, expected);
     }
 
+    #[cfg_attr(miri, ignore = "pure serde serialization; no unsafe in path")]
     #[test]
     fn test_message_batch_serialization() {
         let payload = Payload::MessageBatch(vec![
@@ -517,6 +528,7 @@ mod tests {
         assert_eq!(serialized, expected);
     }
 
+    #[cfg_attr(miri, ignore = "pure serde serialization; no unsafe in path")]
     #[test]
     fn test_app_product_change_serialization() {
         let products = Products::new(vec![(
@@ -547,6 +559,7 @@ mod tests {
         assert_eq!(serialized, expected);
     }
 
+    #[cfg_attr(miri, ignore = "pure serde serialization; no unsafe in path")]
     #[test]
     fn test_dependency_metadata_serialization() {
         let plain = Payload::AppDependenciesLoaded(AppDependenciesLoaded {
@@ -615,6 +628,7 @@ mod tests {
         );
     }
 
+    #[cfg_attr(miri, ignore = "pure serde serialization; no unsafe in path")]
     #[test]
     fn test_app_extended_heartbeat_serialization() {
         let payload = Payload::AppExtendedHeartbeat(AppStarted {

@@ -132,6 +132,7 @@ pub fn usd_from_nano_usd(nanos: u64) -> f64 {
 mod tests {
     use super::*;
 
+    #[cfg_attr(miri, ignore = "no unsafe in path; pure numeric conversion logic")]
     #[test]
     fn usd_converts_on_the_shortest_decimal_never_in_floating_point() {
         // The floating product of this amount is below the half and rounds
@@ -150,6 +151,7 @@ mod tests {
         assert_eq!(exact_u64((usd * 1e9).round_ties_even()), Some(1_000_000));
     }
 
+    #[cfg_attr(miri, ignore = "no unsafe in path; pure numeric conversion logic")]
     #[test]
     fn usd_conversion_matches_the_contract_examples() {
         for (usd, nanos) in [
@@ -172,6 +174,7 @@ mod tests {
         }
     }
 
+    #[cfg_attr(miri, ignore = "no unsafe in path; pure numeric conversion logic")]
     #[test]
     fn usd_at_or_above_the_limit_is_unusable_before_any_conversion() {
         for usd in [
@@ -195,6 +198,7 @@ mod tests {
         assert_eq!(nano_usd_from_usd(below_limit), None);
     }
 
+    #[cfg_attr(miri, ignore = "no unsafe in path; pure numeric conversion logic")]
     #[test]
     fn the_standard_library_prints_the_shortest_decimal_without_an_exponent() {
         for (value, text) in [
@@ -210,6 +214,7 @@ mod tests {
         }
     }
 
+    #[cfg_attr(miri, ignore = "no unsafe in path; pure numeric conversion logic")]
     #[test]
     fn counts_read_exactly_at_and_around_the_bound() {
         assert_eq!(read_count(0.0), CountReading::Count(0));
@@ -233,6 +238,7 @@ mod tests {
         }
     }
 
+    #[cfg_attr(miri, ignore = "no unsafe in path; pure numeric conversion logic")]
     #[test]
     fn exact_integer_conversion_round_trips_over_the_whole_range() {
         let mut samples = vec![0u64, 1, 2, 3, 255, 256, 1 << 31, (1 << 32) - 1, 1 << 32];
@@ -269,6 +275,7 @@ mod tests {
         );
     }
 
+    #[cfg_attr(miri, ignore = "no unsafe in path; pure numeric conversion logic")]
     #[test]
     fn nano_usd_numbers_and_the_histogram_division() {
         assert_eq!(nano_usd_from_number(250_000_000.0), Some(250_000_000));
@@ -283,6 +290,7 @@ mod tests {
         assert_eq!(usd_from_nano_usd(10_500_000), 0.0105);
     }
 
+    #[cfg_attr(miri, ignore = "no unsafe in path; pure numeric conversion logic")]
     #[test]
     fn every_whole_double_below_two_to_the_128_is_an_exact_integer() {
         for (double, integer) in [

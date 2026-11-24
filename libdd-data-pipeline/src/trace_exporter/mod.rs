@@ -1761,6 +1761,7 @@ mod tests {
     use libdd_trace_utils::span::v04::SpanBytes;
     use std::net;
 
+    #[cfg_attr(miri, ignore = "pure tag/header mapping; no unsafe in path")]
     #[test]
     fn grpc_retry_delay_applies_backoff_and_cap() {
         let retry_after = Duration::new(2, 250_000_000);
@@ -1791,12 +1792,14 @@ mod tests {
         );
     }
 
+    #[cfg_attr(miri, ignore = "pure tag/header mapping; no unsafe in path")]
     #[test]
     fn grpc_retry_delay_adds_bounded_jitter() {
         let delay = grpc_retry_delay(1, None, Duration::from_millis(50));
         assert_eq!(delay, Some(Duration::from_millis(150)));
     }
 
+    #[cfg_attr(miri, ignore = "pure tag/header mapping; no unsafe in path")]
     #[test]
     fn test_from_tracer_tags_to_tracer_header_tags() {
         let tracer_tags = TracerMetadata {
@@ -1821,6 +1824,7 @@ mod tests {
         assert!(tracer_header_tags.generic.client_computed_top_level);
     }
 
+    #[cfg_attr(miri, ignore = "pure tag/header mapping; no unsafe in path")]
     #[test]
     fn test_from_tracer_tags_to_hashmap() {
         let tracer_tags = TracerMetadata {
@@ -3046,6 +3050,7 @@ mod tests {
         );
     }
 
+    #[cfg_attr(miri, ignore = "pure tag/header mapping; no unsafe in path")]
     #[test]
     fn test_add_native_export_marker() {
         let mut span = SpanBytes::default();

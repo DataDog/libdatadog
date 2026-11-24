@@ -289,6 +289,7 @@ mod tests {
     use super::*;
     use std::ffi::CStr;
 
+    #[cfg_attr(miri, ignore = "no unsafe in path; pure status construction")]
     #[test]
     fn test_ok_status() {
         let status = ProfileStatus::OK;
@@ -310,6 +311,7 @@ mod tests {
         assert!(result.is_ok());
     }
 
+    #[cfg_attr(miri, ignore = "no unsafe in path; pure status construction")]
     #[test]
     fn test_from_result_ok() {
         let result: Result<(), anyhow::Error> = Ok(());
@@ -366,6 +368,7 @@ mod tests {
         // The allocated memory should have been freed (can't really test this without valgrind)
     }
 
+    #[cfg_attr(miri, ignore = "compile-time Send/Sync assertion; no unsafe executed")]
     #[test]
     fn test_send_sync() {
         // Just check that ProfileStatus implements Send and Sync

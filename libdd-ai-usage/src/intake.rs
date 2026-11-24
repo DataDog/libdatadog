@@ -404,6 +404,7 @@ impl MetricBatch {
 mod tests {
     use super::*;
 
+    #[cfg_attr(miri, ignore = "no unsafe in path; pure intake serialization logic")]
     #[test]
     fn base64_is_standard_and_padded() {
         assert_eq!(base64(b""), "");
@@ -414,6 +415,7 @@ mod tests {
         assert_eq!(base64(&[0xff, 0xfe, 0x00]), "//4A");
     }
 
+    #[cfg_attr(miri, ignore = "no unsafe in path; pure intake serialization logic")]
     #[test]
     fn a_take_serializes_as_submitted() {
         let sketch = Sketch::of(&[1.0]).unwrap();
@@ -449,6 +451,7 @@ mod tests {
         assert_eq!(serde_json::to_value(&take).unwrap().to_string(), text);
     }
 
+    #[cfg_attr(miri, ignore = "no unsafe in path; pure intake serialization logic")]
     #[test]
     fn a_take_now_reads_the_clock() {
         let mut batch = MetricBatch::new();
@@ -458,6 +461,7 @@ mod tests {
         assert!(batch.take_intake(0).unwrap().timestamp > taken.timestamp);
     }
 
+    #[cfg_attr(miri, ignore = "no unsafe in path; pure intake serialization logic")]
     #[test]
     fn keys_follow_intake() {
         // The bias puts 1e-9 in key 1's neighborhood and 1.0 at the bias.

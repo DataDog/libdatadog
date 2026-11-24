@@ -386,6 +386,7 @@ mod test {
         };
     }
 
+    #[cfg_attr(miri, ignore = "no unsafe in path; pure mapping arithmetic")]
     #[test]
     fn test_exponential_mapping_within_tolerances() {
         let mapping = LogMapping::default();
@@ -399,6 +400,7 @@ mod test {
         }
     }
 
+    #[cfg_attr(miri, ignore = "no unsafe in path; pure mapping arithmetic")]
     #[test]
     fn test_exponential_mapping_relative_accuracy() {
         let mapping = LogMapping::default();
@@ -410,6 +412,7 @@ mod test {
         );
     }
 
+    #[cfg_attr(miri, ignore = "no unsafe in path; pure sketch binning logic")]
     #[test]
     fn test_sketch_add() {
         let mut sketch = DDSketch::default();
@@ -436,18 +439,21 @@ mod test {
         }
     }
 
+    #[cfg_attr(miri, ignore = "no unsafe in path; pure sketch binning logic")]
     #[test]
     fn test_skecth_add_negative() {
         let mut sketch = DDSketch::default();
         assert!(sketch.add(-1.0).is_err());
     }
 
+    #[cfg_attr(miri, ignore = "no unsafe in path; pure sketch binning logic")]
     #[test]
     fn test_skecth_add_nan() {
         let mut sketch = DDSketch::default();
         assert!(sketch.add(f64::NAN).is_err());
     }
 
+    #[cfg_attr(miri, ignore = "no unsafe in path; pure sketch binning logic")]
     #[test]
     fn test_sketch_count_add_with_count() {
         let mut sketch = DDSketch::default();
@@ -461,6 +467,7 @@ mod test {
         assert_within!(sketch.count(), 21.0, f64::EPSILON);
     }
 
+    #[cfg_attr(miri, ignore = "no unsafe in path; pure protobuf logic")]
     #[test]
     fn a_custom_mapping_is_what_the_protobuf_reports() {
         let mut sketch = DDSketch::with_log_mapping(1.015625, 1.8761281912861705).unwrap();
@@ -475,6 +482,7 @@ mod test {
 
     /// Counting a point into the bin `bin_index` names has to leave the sketch exactly as
     /// adding the point itself would.
+    #[cfg_attr(miri, ignore = "no unsafe in path; pure sketch binning logic")]
     #[test]
     fn adding_to_a_bin_matches_adding_its_points() {
         let points: &[f64] = &[1e-6, 0.003, 0.1, 2.0, 10.0, 25.0, 10000.0];
@@ -489,6 +497,7 @@ mod test {
         assert_eq!(by_point.into_pb(), by_bin.into_pb());
     }
 
+    #[cfg_attr(miri, ignore = "no unsafe in path; pure sketch binning logic")]
     #[test]
     fn points_counted_as_zero_have_no_bin() {
         let sketch = DDSketch::default();
@@ -499,6 +508,7 @@ mod test {
         assert!(sketch.bin_index(1.0).is_some());
     }
 
+    #[cfg_attr(miri, ignore = "no unsafe in path; pure sketch binning logic")]
     #[test]
     fn bins_only_take_positive_finite_counts() {
         let mut sketch = DDSketch::default();
@@ -510,6 +520,7 @@ mod test {
         assert_eq!(sketch.count(), 1.0);
     }
 
+    #[cfg_attr(miri, ignore = "no unsafe in path; pure mapping arithmetic")]
     #[test]
     fn bins_only_take_indices_the_mapping_produces() {
         let mut sketch = DDSketch::default();
@@ -527,6 +538,7 @@ mod test {
         assert_eq!(sketch.count(), 2.0);
     }
 
+    #[cfg_attr(miri, ignore = "no unsafe in path; pure sketch binning logic")]
     #[test]
     fn test_sketch_count_add() {
         let mut sketch = DDSketch::default();
@@ -547,6 +559,7 @@ mod test {
         assert_within!(sketch.count(), 108.0, f64::EPSILON);
     }
 
+    #[cfg_attr(miri, ignore = "no unsafe in path; pure protobuf logic")]
     #[test]
     fn test_sketch_pb_roundtrip() {
         let mut sketch = DDSketch::default();
@@ -560,6 +573,7 @@ mod test {
         assert_eq!(decoded.ordered_bins().len(), expected_bins);
     }
 
+    #[cfg_attr(miri, ignore = "no unsafe in path; pure protobuf logic")]
     #[test]
     fn test_skecth_encode() {
         let mut sketch = DDSketch::default();
@@ -572,6 +586,7 @@ mod test {
         assert!(!pb_sketch.is_empty());
     }
 
+    #[cfg_attr(miri, ignore = "no unsafe in path; pure bin store logic")]
     #[test]
     fn test_low_collapsing_store() {
         let mut store = LowCollapsingDenseStore::new(5).unwrap();
@@ -595,6 +610,7 @@ mod test {
         }
     }
 
+    #[cfg_attr(miri, ignore = "no unsafe in path; pure bin store logic")]
     #[test]
     fn test_low_collapsing_store_low_bins_are_collapsed() {
         let mut store = LowCollapsingDenseStore::new(5).unwrap();
@@ -629,6 +645,7 @@ mod test {
         }
     }
 
+    #[cfg_attr(miri, ignore = "no unsafe in path; pure bin store logic")]
     #[test]
     fn test_low_collapsing_store_up_expansion() {
         let mut store = LowCollapsingDenseStore::new(3).unwrap();
@@ -641,6 +658,7 @@ mod test {
         )
     }
 
+    #[cfg_attr(miri, ignore = "no unsafe in path; pure bin store logic")]
     #[test]
     fn test_low_collapsing_store_down_expansion() {
         let mut store = LowCollapsingDenseStore::new(3).unwrap();

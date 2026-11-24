@@ -678,18 +678,21 @@ mod tests {
         obfuscate_resource_for_stats(span_type, resource, None, &SqlConfig::default())
     }
 
+    #[cfg_attr(miri, ignore = "obfuscates plain pb span strings; no unsafe in path")]
     #[test]
     fn test_obfuscate_resource_for_stats_sql() {
         let result = obfuscate_stats("sql", "SELECT * FROM users WHERE id = 42");
         assert_eq!(result.unwrap(), "SELECT * FROM users WHERE id = ?");
     }
 
+    #[cfg_attr(miri, ignore = "obfuscates plain pb span strings; no unsafe in path")]
     #[test]
     fn test_obfuscate_resource_for_stats_cassandra() {
         let result = obfuscate_stats("cassandra", "SELECT * FROM table1 WHERE id = 42");
         assert_eq!(result.unwrap(), "SELECT * FROM table1 WHERE id = ?");
     }
 
+    #[cfg_attr(miri, ignore = "obfuscates plain pb span strings; no unsafe in path")]
     #[test]
     fn test_obfuscate_resource_for_stats_redis() {
         let result = obfuscate_stats("redis", "SET mykey myvalue\nGET mykey");
@@ -698,12 +701,14 @@ mod tests {
         assert_eq!(result.unwrap(), "SET GET");
     }
 
+    #[cfg_attr(miri, ignore = "obfuscates plain pb span strings; no unsafe in path")]
     #[test]
     fn test_obfuscate_resource_for_stats_valkey() {
         let result = obfuscate_stats("valkey", "SET mykey myvalue\nGET mykey");
         assert_eq!(result.unwrap(), "SET GET");
     }
 
+    #[cfg_attr(miri, ignore = "obfuscates plain pb span strings; no unsafe in path")]
     #[test]
     fn test_obfuscate_resource_for_stats_no_match() {
         assert!(obfuscate_stats("http", "/api/users").is_none());
@@ -711,6 +716,7 @@ mod tests {
         assert!(obfuscate_stats("grpc", "MyService/MyMethod").is_none());
     }
 
+    #[cfg_attr(miri, ignore = "obfuscates plain pb span strings; no unsafe in path")]
     #[test]
     fn test_obfuscate_resource_for_stats_empty_sql() {
         assert!(obfuscate_stats("sql", "").is_none());
@@ -719,6 +725,7 @@ mod tests {
     /// A stats resource that cannot be obfuscated has to aggregate under the Agent's marker.
     /// `None` would make the concentrator keep the resource as sent, forwarding the SQL text.
     /// See <https://github.com/DataDog/libdatadog/issues/2541>.
+    #[cfg_attr(miri, ignore = "obfuscates plain pb span strings; no unsafe in path")]
     #[test]
     fn test_obfuscate_resource_for_stats_unobfuscatable_sql() {
         for resource in UNOBFUSCATABLE_SQL {
@@ -732,6 +739,7 @@ mod tests {
         }
     }
 
+    #[cfg_attr(miri, ignore = "obfuscates plain pb span strings; no unsafe in path")]
     #[test]
     fn test_obfuscates_span_url_strings() {
         let mut span = test_utils::create_test_span(111, 222, 0, 1, true);
@@ -775,6 +783,7 @@ mod tests {
         assert_eq!(span.meta.get("custom.tag").unwrap(), "/foo/bar/extra");
     }
 
+    #[cfg_attr(miri, ignore = "obfuscates plain pb span strings; no unsafe in path")]
     #[test]
     fn obfuscate_all_redis_args() {
         let mut span = test_utils::create_test_span(111, 222, 0, 1, true);
@@ -794,6 +803,7 @@ mod tests {
         assert_eq!(span.meta.get("redis.raw_command").unwrap(), "GEOADD ?");
     }
 
+    #[cfg_attr(miri, ignore = "obfuscates plain pb span strings; no unsafe in path")]
     #[test]
     fn obfuscate_redis_raw_query() {
         let mut span = test_utils::create_test_span(111, 222, 0, 1, true);
@@ -816,6 +826,7 @@ mod tests {
         );
     }
 
+    #[cfg_attr(miri, ignore = "obfuscates plain pb span strings; no unsafe in path")]
     #[test]
     fn obfuscate_credit_card_arbitrary_meta_key() {
         let mut span = test_utils::create_test_span(111, 222, 0, 1, true);
@@ -828,6 +839,7 @@ mod tests {
         assert_eq!(span.meta.get("some.custom.tag").unwrap(), "?");
     }
 
+    #[cfg_attr(miri, ignore = "obfuscates plain pb span strings; no unsafe in path")]
     #[test]
     fn obfuscate_credit_card_keep_values_skipped() {
         let mut span = test_utils::create_test_span(111, 222, 0, 1, true);
@@ -845,6 +857,7 @@ mod tests {
         assert_eq!(span.meta.get("protected.key").unwrap(), "4111111111111111");
     }
 
+    #[cfg_attr(miri, ignore = "obfuscates plain pb span strings; no unsafe in path")]
     #[test]
     fn obfuscate_credit_card_skip_list_key_skipped() {
         let mut span = test_utils::create_test_span(111, 222, 0, 1, true);
@@ -864,6 +877,7 @@ mod tests {
         span
     }
 
+    #[cfg_attr(miri, ignore = "obfuscates plain pb span strings; no unsafe in path")]
     #[test]
     fn obfuscate_sql_resource_and_query() {
         let span = sql_pb_span("sql", "SELECT * FROM users WHERE id = 42");
@@ -877,6 +891,7 @@ mod tests {
     /// SQL that cannot be obfuscated is discarded for the Agent's marker in both the resource and
     /// `sql.query`, rather than reaching the backend as sent.
     /// See <https://github.com/DataDog/libdatadog/issues/2541>.
+    #[cfg_attr(miri, ignore = "obfuscates plain pb span strings; no unsafe in path")]
     #[test]
     fn obfuscate_unobfuscatable_sql_resource_is_replaced() {
         for resource in UNOBFUSCATABLE_SQL {
@@ -896,6 +911,7 @@ mod tests {
     }
 
     /// An exactly empty SQL resource stays empty and gains no `sql.query`, matching the Agent.
+    #[cfg_attr(miri, ignore = "obfuscates plain pb span strings; no unsafe in path")]
     #[test]
     fn obfuscate_empty_sql_resource_is_untouched() {
         let span = sql_pb_span("sql", "");

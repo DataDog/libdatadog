@@ -59,6 +59,7 @@ fn is_named_otel_mapping(line: &str) -> bool {
 mod tests {
     use super::is_named_otel_mapping;
 
+    #[cfg_attr(miri, ignore = "no unsafe in path; pure string predicate")]
     #[test]
     fn recognizes_exact_mapping_names() {
         assert!(is_named_otel_mapping(

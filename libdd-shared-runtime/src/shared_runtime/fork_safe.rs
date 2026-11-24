@@ -330,6 +330,7 @@ mod tests {
         assert!(shared_runtime.after_fork_parent().is_ok());
     }
 
+    #[cfg_attr(miri, ignore = "constructs the runtime only; no unsafe in path")]
     #[test]
     fn test_fork_safe_runtime_creation() {
         let shared_runtime = ForkSafeRuntime::new();

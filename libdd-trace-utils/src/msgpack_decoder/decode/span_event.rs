@@ -326,6 +326,7 @@ mod tests {
     use crate::msgpack_decoder::decode::error::DecodeError;
     use std::str::FromStr;
 
+    #[cfg_attr(miri, ignore = "pure FromStr key enum mapping; no unsafe in path")]
     #[test]
     fn test_span_event_key_from_str() {
         // Valid cases
@@ -346,6 +347,7 @@ mod tests {
         ));
     }
 
+    #[cfg_attr(miri, ignore = "pure FromStr key enum mapping; no unsafe in path")]
     #[test]
     fn test_attribute_any_key_from_str() {
         // Valid cases
@@ -381,6 +383,7 @@ mod tests {
         ));
     }
 
+    #[cfg_attr(miri, ignore = "pure FromStr key enum mapping; no unsafe in path")]
     #[test]
     fn test_attribute_array_key_from_str() {
         // Valid cases

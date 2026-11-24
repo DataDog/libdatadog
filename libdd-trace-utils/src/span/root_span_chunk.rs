@@ -178,6 +178,7 @@ mod tests {
         );
     }
 
+    #[cfg_attr(miri, ignore = "pure prost span root detection; no unsafe in path")]
     #[test]
     fn single_protobuf_span_is_its_own_root() {
         let span = pb::Span {

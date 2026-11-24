@@ -463,6 +463,7 @@ const fn is_space(c: char) -> bool {
 mod tests {
     use super::*;
 
+    #[cfg_attr(miri, ignore = "pure json scanner state machine; no unsafe in path")]
     #[test]
     fn test_valid_empty_object() {
         let mut s = Scanner::default();
@@ -473,6 +474,7 @@ mod tests {
         assert_eq!(s.position, 2);
     }
 
+    #[cfg_attr(miri, ignore = "pure json scanner state machine; no unsafe in path")]
     #[test]
     fn test_valid_nested_json() {
         let mut s = Scanner::default();
@@ -482,6 +484,7 @@ mod tests {
         assert_eq!(s.eof(), Op::End);
     }
 
+    #[cfg_attr(miri, ignore = "pure json scanner state machine; no unsafe in path")]
     #[test]
     fn test_truncated_input_returns_error_on_eof() {
         let mut s = Scanner::default();
@@ -491,12 +494,14 @@ mod tests {
         assert_eq!(s.eof(), Op::Error);
     }
 
+    #[cfg_attr(miri, ignore = "pure json scanner state machine; no unsafe in path")]
     #[test]
     fn test_invalid_input_returns_error() {
         let mut s = Scanner::default();
         assert_eq!(s.step(')'), Op::Error);
     }
 
+    #[cfg_attr(miri, ignore = "pure json scanner state machine; no unsafe in path")]
     #[test]
     fn test_multiple_json_objects_no_errors() {
         let mut s = Scanner::default();

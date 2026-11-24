@@ -548,6 +548,7 @@ pub fn merge_counter_points(points: Vec<MetricPoint>) -> Vec<MetricPoint> {
 mod tests {
     use super::*;
 
+    #[cfg_attr(miri, ignore = "no unsafe in path; pure point merge logic")]
     #[test]
     fn codes_are_unique_stable_strings_and_issues_sort_by_string() {
         let errors: BTreeSet<&str> = ErrorCode::ALL.iter().map(|c| c.as_str()).collect();
@@ -563,6 +564,7 @@ mod tests {
         assert_eq!(by_enum, IssueCode::ALL);
     }
 
+    #[cfg_attr(miri, ignore = "no unsafe in path; pure point merge logic")]
     #[test]
     fn counter_sums_are_exact_in_any_order() {
         // Five increments that sum to 2^53 + 2. Added one by one as doubles
@@ -594,6 +596,7 @@ mod tests {
         }
     }
 
+    #[cfg_attr(miri, ignore = "no unsafe in path; pure point merge logic")]
     #[test]
     fn an_exact_sum_with_no_double_keeps_its_integer_through_a_merge() {
         // 2^53 + 1 has no double: its point value is 2^53. Adding 1 to that
@@ -611,6 +614,7 @@ mod tests {
         }
     }
 
+    #[cfg_attr(miri, ignore = "no unsafe in path; pure point merge logic")]
     #[test]
     fn only_counter_points_of_one_identity_are_merged() {
         let mut other = Attributes::new();
@@ -635,6 +639,7 @@ mod tests {
         assert_eq!(edited.exact(), Some(7));
     }
 
+    #[cfg_attr(miri, ignore = "no unsafe in path; pure point merge logic")]
     #[test]
     fn point_values_serialize_as_integers_when_whole() {
         let point = MetricPoint::counter("m", "{token}", 12.0, Attributes::new());

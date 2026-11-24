@@ -309,6 +309,7 @@ mod tests {
         encoder.finish().expect("finish test payload")
     }
 
+    #[cfg_attr(miri, ignore = "no unsafe in path; gzip/header/url construction logic")]
     #[test]
     fn decoded_body_limit_applies_after_gzip() {
         let payload = vec![b'a'; 256];
@@ -324,6 +325,7 @@ mod tests {
         );
     }
 
+    #[cfg_attr(miri, ignore = "no unsafe in path; gzip/header/url construction logic")]
     #[test]
     fn gzip_member_limits_and_trailing_bytes_are_checked() {
         let mut members = gzip(&[b'a'; 32]);
@@ -349,6 +351,7 @@ mod tests {
         }
     }
 
+    #[cfg_attr(miri, ignore = "no unsafe in path; gzip/header/url construction logic")]
     #[test]
     fn request_authentication_is_managed_only() {
         let managed =
@@ -384,6 +387,7 @@ mod tests {
         assert_eq!(custom_request.uri(), "https://localhost/custom");
     }
 
+    #[cfg_attr(miri, ignore = "normalize_tag unsafe covered by sibling miri tests")]
     #[test]
     fn service_header_is_omitted_without_a_service() {
         let endpoint =
@@ -402,6 +406,7 @@ mod tests {
         assert!(crate::test_logging::captured_logs().is_empty());
     }
 
+    #[cfg_attr(miri, ignore = "normalize_tag unsafe covered by sibling miri tests")]
     #[test]
     fn the_service_is_sent_normalized_or_not_at_all() {
         // The trace normalizer has its own tests. These rows check only that the
@@ -461,6 +466,7 @@ mod tests {
         );
     }
 
+    #[cfg_attr(miri, ignore = "no unsafe in path; gzip/header/url construction logic")]
     #[test]
     fn custom_basic_auth_preserves_the_exact_path_and_query() {
         let endpoint = CdnEndpoint::build(
@@ -491,6 +497,7 @@ mod tests {
         )));
     }
 
+    #[cfg_attr(miri, ignore = "no unsafe in path; gzip/header/url construction logic")]
     #[test]
     fn custom_basic_auth_accepts_password_only_credentials() {
         for (userinfo, expected) in [
@@ -515,6 +522,7 @@ mod tests {
         }
     }
 
+    #[cfg_attr(miri, ignore = "no unsafe in path; gzip/header/url construction logic")]
     #[test]
     fn custom_basic_auth_accepts_unescaped_password_characters() {
         for (password, expected_authorization) in [
@@ -586,6 +594,7 @@ mod tests {
         server.abort();
     }
 
+    #[cfg_attr(miri, ignore = "tokio TCP + hyper machinery; no crate unsafe")]
     #[tokio::test]
     async fn retry_after_survives_discarding_an_error_body() {
         use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -614,6 +623,7 @@ mod tests {
         server.await.unwrap();
     }
 
+    #[cfg_attr(miri, ignore = "tokio TCP + hyper machinery; no crate unsafe")]
     #[tokio::test]
     async fn native_http_transport_does_not_follow_redirects() {
         use tokio::io::{AsyncReadExt, AsyncWriteExt};

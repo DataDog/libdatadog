@@ -45,6 +45,7 @@ fn attempt(duration: f64) -> libdd_ai_usage::Projection {
     project_result(Profile::ProviderAttempt, &observation).unwrap()
 }
 
+#[cfg_attr(miri, ignore = "no unsafe in path; pure intake serialization logic")]
 #[test]
 fn sketches_decode_as_intake_sparse() {
     let sketch = Sketch::of(&[0.25, 1.5, 1.5, -3.0, 0.0]).unwrap();
@@ -60,6 +61,7 @@ fn sketches_decode_as_intake_sparse() {
     assert!(decoded.k.contains(&0) && decoded.k.iter().all(|k| *k >= 0));
 }
 
+#[cfg_attr(miri, ignore = "no unsafe in path; pure intake serialization logic")]
 #[test]
 fn a_take_is_rates_sketches_and_a_fresh_second() {
     let mut batch = MetricBatch::new();

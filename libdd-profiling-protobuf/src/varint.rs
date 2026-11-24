@@ -65,6 +65,7 @@ unsafe impl Value for i64 {
 mod tests {
     use super::*;
 
+    #[cfg_attr(miri, ignore = "no unsafe in path; pure varint length arithmetic")]
     #[test]
     fn test_varint_range() {
         assert_eq!(0u64.proto_len(), 1);

@@ -227,6 +227,7 @@ impl MetricBatch {
 mod tests {
     use super::*;
 
+    #[cfg_attr(miri, ignore = "no unsafe in path; pure line formatting logic")]
     #[test]
     fn constant_tags_are_split_and_trimmed() {
         assert_eq!(

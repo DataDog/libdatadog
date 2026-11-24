@@ -699,6 +699,10 @@ mod tests {
         idx.map(|idx| idx.try_into().unwrap())
     }
 
+    #[cfg_attr(
+        miri,
+        ignore = "coalesce size logic over prost payloads; no unsafe in path"
+    )]
     #[test]
     fn test_coalescing_does_not_exceed_max_size() {
         fn dummy() -> SendData {
@@ -1409,6 +1413,10 @@ mod tests {
         assert_eq!(res.unwrap().1, expected_output);
     }
 
+    #[cfg_attr(
+        miri,
+        ignore = "pure root-span index logic on prost spans; no unsafe in path"
+    )]
     #[test]
     fn test_get_root_span_index_from_complete_trace() {
         let trace = vec![
@@ -1422,6 +1430,10 @@ mod tests {
         assert_eq!(root_span_index.unwrap(), 0);
     }
 
+    #[cfg_attr(
+        miri,
+        ignore = "pure root-span index logic on prost spans; no unsafe in path"
+    )]
     #[test]
     fn test_get_root_span_index_from_partial_trace() {
         let trace = vec![
@@ -1436,6 +1448,10 @@ mod tests {
         assert_eq!(root_span_index.unwrap(), 1);
     }
 
+    #[cfg_attr(
+        miri,
+        ignore = "pure string tag writes on prost spans; no unsafe in path"
+    )]
     #[test]
     fn test_set_serverless_root_span_tags_azure_function() {
         let mut span = create_test_span(1234, 12342, 12341, 1, false);
@@ -1460,6 +1476,10 @@ mod tests {
         );
     }
 
+    #[cfg_attr(
+        miri,
+        ignore = "pure string tag writes on prost spans; no unsafe in path"
+    )]
     #[test]
     fn test_set_serverless_root_span_tags_cloud_function() {
         let mut span = create_test_span(1234, 12342, 12341, 1, false);
@@ -1484,6 +1504,7 @@ mod tests {
         );
     }
 
+    #[cfg_attr(miri, ignore = "pure prost span flag logic; no unsafe in path")]
     #[test]
     fn test_has_top_level() {
         let top_level_span = create_test_span(123, 1234, 12, 1, true);
@@ -1492,6 +1513,7 @@ mod tests {
         assert!(!has_top_level(&not_top_level_span));
     }
 
+    #[cfg_attr(miri, ignore = "pure prost span flag logic; no unsafe in path")]
     #[test]
     fn test_is_measured() {
         let mut measured_span = create_test_span(123, 1234, 12, 1, true);
@@ -1501,6 +1523,7 @@ mod tests {
         assert!(!is_measured(&not_measured_span));
     }
 
+    #[cfg_attr(miri, ignore = "pure prost span flag logic; no unsafe in path")]
     #[test]
     fn test_compute_top_level() {
         let mut span_with_different_service = create_test_span(123, 5, 2, 1, false);
@@ -1608,6 +1631,10 @@ mod tests {
         );
     }
 
+    #[cfg_attr(
+        miri,
+        ignore = "rmp-serde decode into prost types; external crates only, no unsafe in path"
+    )]
     #[test]
     fn test_rmp_serde_deserialize_meta_with_null_values() {
         // Create a JSON representation with null value in meta
@@ -1659,6 +1686,10 @@ mod tests {
         );
     }
 
+    #[cfg_attr(
+        miri,
+        ignore = "pure string tag enrichment on prost spans; no unsafe in path"
+    )]
     #[test]
     fn test_enrich_span_with_azure_function_metadata_adds_tags_for_non_apim() {
         let mut span = create_test_span(1234, 12342, 12341, 1, false);
@@ -1685,6 +1716,10 @@ mod tests {
         }
     }
 
+    #[cfg_attr(
+        miri,
+        ignore = "pure string tag enrichment on prost spans; no unsafe in path"
+    )]
     #[test]
     fn test_enrich_span_with_azure_function_metadata_skips_azure_apim() {
         let mut span = create_test_span(1234, 12342, 12341, 1, false);
@@ -1926,6 +1961,7 @@ mod tests {
         assert_eq!(payloads[0].env, "prod");
     }
 
+    #[cfg_attr(miri, ignore = "pure prost span field search; no unsafe in path")]
     #[test]
     fn test_search_trace_for_field_skips_span_with_same_id_as_root() {
         // A span with the same span_id as root is treated as the root and skipped

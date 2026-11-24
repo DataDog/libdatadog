@@ -416,6 +416,7 @@ impl super::test_utils::TestInstance for StackFrame {
 mod tests {
     use super::*;
 
+    #[cfg_attr(miri, ignore = "external demangle crates only; no own-crate unsafe")]
     #[test]
     fn test_demangle_rust() {
         let mut frame = StackFrame::new();
@@ -428,6 +429,7 @@ mod tests {
         );
     }
 
+    #[cfg_attr(miri, ignore = "external demangle crates only; no own-crate unsafe")]
     #[test]
     fn test_demangle_cpp() {
         let mut frame = StackFrame::new();
@@ -437,6 +439,7 @@ mod tests {
         assert_eq!(frame.mangled_name, Some("_ZN3Foo3barEv".to_string()));
     }
 
+    #[cfg_attr(miri, ignore = "external demangle crates only; no own-crate unsafe")]
     #[test]
     fn test_demangle_msvc() {
         let mut frame = StackFrame::new();
@@ -446,6 +449,7 @@ mod tests {
         assert_eq!(frame.mangled_name, Some("?bar@Foo@@QEAAXXZ".to_string()));
     }
 
+    #[cfg_attr(miri, ignore = "external demangle crates only; no own-crate unsafe")]
     #[test]
     fn test_demangle_unmangled() {
         let mut frame = StackFrame::new();
@@ -455,6 +459,7 @@ mod tests {
         assert_eq!(frame.mangled_name, None);
     }
 
+    #[cfg_attr(miri, ignore = "external demangle crates only; no own-crate unsafe")]
     #[test]
     fn test_demangle_empty() {
         let mut frame = StackFrame::new();
@@ -463,6 +468,7 @@ mod tests {
         assert_eq!(frame.mangled_name, None);
     }
 
+    #[cfg_attr(miri, ignore = "external demangle crates only; no own-crate unsafe")]
     #[test]
     fn test_demangle_invalid() {
         let mut frame = StackFrame::new();

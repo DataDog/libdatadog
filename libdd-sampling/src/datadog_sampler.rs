@@ -385,6 +385,7 @@ mod tests {
     use std::borrow::Cow;
     use std::collections::HashMap;
 
+    #[cfg_attr(miri, ignore = "pure sampling decision logic; no unsafe in crate")]
     #[test]
     fn test_otel_consistent_sampling() {
         use crate::dd_sampling::mechanism;
@@ -450,6 +451,7 @@ mod tests {
         );
     }
 
+    #[cfg_attr(miri, ignore = "pure sampling decision logic; no unsafe in crate")]
     #[test]
     fn test_reconcile_rv_nudges_only_on_disagreement() {
         // Worked example (rate 0.1): DD keeps, but rv < th, so a downstream
@@ -479,6 +481,7 @@ mod tests {
         assert_eq!(reconcile_rv(0, 0, false), 0);
     }
 
+    #[cfg_attr(miri, ignore = "pure sampling decision logic; no unsafe in crate")]
     #[test]
     fn test_otel_consistent_sampling_reconciles_disagreement() {
         // rate 0.1 -> th = 0xe6666666666668. Pick a trace id whose raw rv
@@ -806,6 +809,7 @@ mod tests {
         TestSamplingData::new(is_parent_sampled, trace_id, name, attributes)
     }
 
+    #[cfg_attr(miri, ignore = "pure sampling decision logic; no unsafe in crate")]
     #[test]
     fn test_sampling_rule_creation() {
         let rule = SamplingRule::new(
@@ -834,6 +838,7 @@ mod tests {
         assert_eq!(rule.provenance, "customer");
     }
 
+    #[cfg_attr(miri, ignore = "pure sampling decision logic; no unsafe in crate")]
     #[test]
     fn test_sampling_rule_with_no_rule() {
         // Create a rule without specifying any criteria
@@ -887,6 +892,7 @@ mod tests {
         assert!(rule_with_empty_strings.matches(&span));
     }
 
+    #[cfg_attr(miri, ignore = "pure sampling decision logic; no unsafe in crate")]
     #[test]
     fn test_sampling_rule_matches() {
         // Rule constrained on service, operation name, and a required tag value.
@@ -941,6 +947,7 @@ mod tests {
         );
     }
 
+    #[cfg_attr(miri, ignore = "pure sampling decision logic; no unsafe in crate")]
     #[test]
     fn test_sample_method() {
         // Create two rules with different rates
@@ -956,6 +963,7 @@ mod tests {
         assert!(!rule_never.sample(&trace_id));
     }
 
+    #[cfg_attr(miri, ignore = "pure sampling decision logic; no unsafe in crate")]
     #[test]
     fn test_datadog_sampler_creation() {
         // Create a sampler with default config
@@ -969,6 +977,7 @@ mod tests {
         assert_eq!(sampler_with_rules.rules.len(), 1);
     }
 
+    #[cfg_attr(miri, ignore = "pure sampling decision logic; no unsafe in crate")]
     #[test]
     fn test_service_key_generation() {
         let test_service_name = "test-service".to_string();
@@ -995,6 +1004,7 @@ mod tests {
         );
     }
 
+    #[cfg_attr(miri, ignore = "pure sampling decision logic; no unsafe in crate")]
     #[test]
     fn test_service_key_falls_back_to_heap_for_oversized_names() {
         // Service names longer than the 128-byte stack buffer take the fallback path
@@ -1009,6 +1019,7 @@ mod tests {
         );
     }
 
+    #[cfg_attr(miri, ignore = "pure sampling decision logic; no unsafe in crate")]
     #[test]
     fn test_update_service_rates() {
         let sampler = DatadogSampler::new(vec![], 100);
@@ -1049,6 +1060,7 @@ mod tests {
         }
     }
 
+    #[cfg_attr(miri, ignore = "pure sampling decision logic; no unsafe in crate")]
     #[test]
     fn test_find_matching_rule() {
         // Create rules with different priorities and service matchers
@@ -1151,6 +1163,7 @@ mod tests {
         }
     }
 
+    #[cfg_attr(miri, ignore = "pure sampling decision logic; no unsafe in crate")]
     #[test]
     fn test_get_sampling_mechanism() {
         let sampler = DatadogSampler::new(vec![], 100);
@@ -1184,6 +1197,7 @@ mod tests {
         assert_eq!(mechanism5, mechanism::DEFAULT);
     }
 
+    #[cfg_attr(miri, ignore = "pure sampling decision logic; no unsafe in crate")]
     #[test]
     fn test_add_dd_sampling_tags() {
         // Test with RecordAndSample decision and LocalUserTraceSamplingRule mechanism
@@ -1359,6 +1373,7 @@ mod tests {
         }
     }
 
+    #[cfg_attr(miri, ignore = "pure sampling decision logic; no unsafe in crate")]
     #[test]
     fn test_format_sampling_rate() {
         // Exact values
@@ -1405,6 +1420,7 @@ mod tests {
         assert_eq!(format_sampling_rate(f64::NEG_INFINITY), None);
     }
 
+    #[cfg_attr(miri, ignore = "pure sampling decision logic; no unsafe in crate")]
     #[test]
     fn test_should_sample_parent_context() {
         let sampler = DatadogSampler::new(vec![], 100);
@@ -1438,6 +1454,7 @@ mod tests {
         );
     }
 
+    #[cfg_attr(miri, ignore = "pure sampling decision logic; no unsafe in crate")]
     #[test]
     fn test_should_sample_with_rule() {
         // Create a rule that always samples
@@ -1478,6 +1495,7 @@ mod tests {
         );
     }
 
+    #[cfg_attr(miri, ignore = "pure sampling decision logic; no unsafe in crate")]
     #[test]
     fn test_should_sample_with_service_rates() {
         // Initialize sampler
@@ -1532,6 +1550,7 @@ mod tests {
         );
     }
 
+    #[cfg_attr(miri, ignore = "pure sampling decision logic; no unsafe in crate")]
     #[test]
     fn test_sampling_rule_matches_float_attributes() {
         // Helper to create attributes with a float value
@@ -1613,6 +1632,7 @@ mod tests {
         assert!(!rule_prefix.matches(&span));
     }
 
+    #[cfg_attr(miri, ignore = "pure sampling decision logic; no unsafe in crate")]
     #[test]
     fn test_operation_name() {
         // Test that the sampler correctly matches rules based on operation names
@@ -1642,6 +1662,7 @@ mod tests {
         assert!(sampler.sample(&data).get_priority().is_keep());
     }
 
+    #[cfg_attr(miri, ignore = "pure sampling decision logic; no unsafe in crate")]
     #[test]
     fn test_on_rules_update_callback() {
         // Create a sampler with initial rules
@@ -1712,6 +1733,7 @@ mod tests {
         assert_eq!(sampler.rules.len(), 0); // Should now have no rules
     }
 
+    #[cfg_attr(miri, ignore = "pure sampling decision logic; no unsafe in crate")]
     #[test]
     fn test_on_agent_response_updates_service_rates() {
         let sampler = DatadogSampler::new(vec![], 100);
@@ -1733,6 +1755,7 @@ mod tests {
         callback(r#"{"other_field":1}"#);
     }
 
+    #[cfg_attr(miri, ignore = "pure sampling decision logic; no unsafe in crate")]
     #[test]
     fn test_rate_limiter_drop_branch() {
         // Rule with sample_rate=1.0 keeps everything, but rate_limit=0 then drops
@@ -1750,6 +1773,7 @@ mod tests {
         );
     }
 
+    #[cfg_attr(miri, ignore = "pure sampling decision logic; no unsafe in crate")]
     #[test]
     fn test_get_trace_root_sampling_info() {
         let sampler = DatadogSampler::new(vec![], 100);

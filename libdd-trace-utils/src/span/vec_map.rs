@@ -562,6 +562,10 @@ mod tests {
     use crate::span::BytesData;
     use libdd_tinybytes::BytesString;
 
+    #[cfg_attr(
+        miri,
+        ignore = "pure &str VecMap logic; dedup/StackBump allocator not reached, no unsafe in path"
+    )]
     #[test]
     fn remove_returns_shadowing_value_and_drops_duplicates() {
         let mut map: VecMap<&str, i32> = VecMap::new();
@@ -624,6 +628,10 @@ mod tests {
         assert_eq!(entries(&map), vec![("a", 3), ("c", 4)]);
     }
 
+    #[cfg_attr(
+        miri,
+        ignore = "pure &str VecMap logic; dedup/StackBump allocator not reached, no unsafe in path"
+    )]
     #[test]
     fn insert_or_replace_keeps_map_deduped() {
         let mut map: VecMap<&str, i32> = VecMap::new();
@@ -653,6 +661,10 @@ mod tests {
         assert_eq!(ValueMap::get(&map, "k"), Some(&AttributeValue::Int(2)));
     }
 
+    #[cfg_attr(
+        miri,
+        ignore = "pure &str VecMap logic; dedup/StackBump allocator not reached, no unsafe in path"
+    )]
     #[test]
     fn get_returns_last_inserted() {
         let mut m = VecMap::new();
@@ -661,6 +673,10 @@ mod tests {
         assert_eq!(m.get("a"), Some(&2));
     }
 
+    #[cfg_attr(
+        miri,
+        ignore = "pure &str VecMap logic; dedup/StackBump allocator not reached, no unsafe in path"
+    )]
     #[test]
     fn get_mut_returns_last_inserted() {
         let mut m = VecMap::new();
@@ -672,6 +688,10 @@ mod tests {
         assert_eq!(m.iter().next().unwrap().1, 1);
     }
 
+    #[cfg_attr(
+        miri,
+        ignore = "pure &str VecMap logic; dedup/StackBump allocator not reached, no unsafe in path"
+    )]
     #[test]
     fn remove_removes_all_occurrences() {
         let mut m = VecMap::new();
@@ -684,6 +704,10 @@ mod tests {
         assert_eq!(m.len(), 1);
     }
 
+    #[cfg_attr(
+        miri,
+        ignore = "pure &str VecMap logic; dedup/StackBump allocator not reached, no unsafe in path"
+    )]
     #[test]
     fn contains_key_works() {
         let mut m = VecMap::new();
@@ -692,6 +716,10 @@ mod tests {
         assert!(m.contains_key("x"));
     }
 
+    #[cfg_attr(
+        miri,
+        ignore = "pure &str VecMap logic; dedup/StackBump allocator not reached, no unsafe in path"
+    )]
     #[test]
     fn from_iterator() {
         let m: VecMap<&str, i32> = vec![("a", 1), ("b", 2)].into_iter().collect();
@@ -699,6 +727,10 @@ mod tests {
         assert_eq!(m.get("b"), Some(&2));
     }
 
+    #[cfg_attr(
+        miri,
+        ignore = "pure &str VecMap logic; dedup/StackBump allocator not reached, no unsafe in path"
+    )]
     #[test]
     fn into_iter_consuming() {
         let mut m = VecMap::new();
@@ -708,18 +740,30 @@ mod tests {
         assert_eq!(pairs, vec![("a", 1), ("b", 2)]);
     }
 
+    #[cfg_attr(
+        miri,
+        ignore = "pure &str VecMap logic; dedup/StackBump allocator not reached, no unsafe in path"
+    )]
     #[test]
     fn is_deduped_true_initially() {
         let m: VecMap<&str, i32> = VecMap::new();
         assert!(m.is_deduped());
     }
 
+    #[cfg_attr(
+        miri,
+        ignore = "pure &str VecMap logic; dedup/StackBump allocator not reached, no unsafe in path"
+    )]
     #[test]
     fn is_deduped_false_after_from() {
         let m: VecMap<&str, i32> = vec![("a", 1)].into();
         assert!(!m.is_deduped());
     }
 
+    #[cfg_attr(
+        miri,
+        ignore = "pure &str VecMap logic; dedup/StackBump allocator not reached, no unsafe in path"
+    )]
     #[test]
     fn is_deduped_false_after_collect() {
         let m: VecMap<&str, i32> = vec![("a", 1)].into_iter().collect();
@@ -867,6 +911,10 @@ mod tests {
         assert_eq!(iter.len(), 2);
     }
 
+    #[cfg_attr(
+        miri,
+        ignore = "pure String VecMap iter/len; dedup/StackBump allocator not reached, no unsafe in path"
+    )]
     #[test]
     fn deduped_vec_map_empty() {
         let m: VecMap<String, i32> = VecMap::new();
@@ -914,6 +962,10 @@ mod tests {
         assert_eq!(m.get(&NonCloneKey(2)), Some(&"b"));
     }
 
+    #[cfg_attr(
+        miri,
+        ignore = "pure &str VecMap serde; as_deduped_map path, no unsafe in path"
+    )]
     #[test]
     fn serialize_deduplicates_keeping_last() {
         let mut m = VecMap::new();

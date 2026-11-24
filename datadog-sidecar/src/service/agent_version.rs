@@ -23,6 +23,7 @@ pub(super) fn agent_supports_v1_traces(version: &str) -> Option<bool> {
 mod tests {
     use super::agent_supports_v1_traces;
 
+    #[cfg_attr(miri, ignore = "pure version parsing; no unsafe in path")]
     #[test]
     fn agents_before_the_v1_stats_fix() {
         for version in [
@@ -46,6 +47,7 @@ mod tests {
         }
     }
 
+    #[cfg_attr(miri, ignore = "pure version parsing; no unsafe in path")]
     #[test]
     fn agents_with_the_v1_stats_fix() {
         for version in [
@@ -62,6 +64,7 @@ mod tests {
         }
     }
 
+    #[cfg_attr(miri, ignore = "pure version parsing; no unsafe in path")]
     #[test]
     fn unparseable_versions() {
         for version in [

@@ -187,6 +187,7 @@ mod tests {
         }
     }
 
+    #[cfg_attr(miri, ignore = "pure header/payload building; no unsafe in path")]
     #[test]
     fn test_trace_serializer_new() {
         let serializer = TraceSerializer::new();
@@ -196,6 +197,7 @@ mod tests {
         );
     }
 
+    #[cfg_attr(miri, ignore = "pure header/payload building; no unsafe in path")]
     #[test]
     fn test_build_traces_headers() {
         let serializer = TraceSerializer::new();
@@ -225,6 +227,7 @@ mod tests {
         assert!(!headers.contains_key("datadog-client-computed-top-level"));
     }
 
+    #[cfg_attr(miri, ignore = "pure header/payload building; no unsafe in path")]
     #[test]
     fn test_build_traces_headers_with_agent_version() {
         let agent_version = AgentResponsePayloadVersion::new();
@@ -309,6 +312,7 @@ mod tests {
         assert_eq!(original_span.error, deserialized_span.error);
     }
 
+    #[cfg_attr(miri, ignore = "pure header/payload building; no unsafe in path")]
     #[test]
     fn test_prepare_traces_payload_v04() {
         let serializer = TraceSerializer::new();
@@ -337,6 +341,7 @@ mod tests {
         assert_eq!(prepared.headers.get("datadog-meta-lang").unwrap(), "rust");
     }
 
+    #[cfg_attr(miri, ignore = "pure header/payload building; no unsafe in path")]
     #[test]
     fn test_prepare_traces_payload_v05() {
         let serializer = TraceSerializer::new();
@@ -358,6 +363,7 @@ mod tests {
         assert!(!prepared.headers.is_empty());
     }
 
+    #[cfg_attr(miri, ignore = "pure header/payload building; no unsafe in path")]
     #[test]
     fn test_prepare_traces_payload_with_agent_version() {
         let agent_version = AgentResponsePayloadVersion::new();
@@ -379,6 +385,7 @@ mod tests {
         assert!(prepared.headers.contains_key(DATADOG_RATES_PAYLOAD_VERSION));
     }
 
+    #[cfg_attr(miri, ignore = "pure header/payload building; no unsafe in path")]
     #[test]
     fn test_prepare_traces_payload_empty_traces() {
         let serializer = TraceSerializer::new();
@@ -400,6 +407,7 @@ mod tests {
         assert_eq!(prepared.headers.get(DATADOG_TRACE_COUNT).unwrap(), "0");
     }
 
+    #[cfg_attr(miri, ignore = "pure header/payload building; no unsafe in path")]
     #[test]
     fn test_header_tags_conversion() {
         let header_tags = TracerHeaderTags {

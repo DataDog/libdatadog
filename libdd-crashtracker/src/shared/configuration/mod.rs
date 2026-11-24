@@ -261,6 +261,7 @@ impl CrashtrackerConfiguration {
 mod tests {
     use super::CrashtrackerReceiverConfig;
 
+    #[cfg_attr(miri, ignore = "config struct construction; no unsafe in path")]
     #[test]
     fn test_receiver_config_new() -> anyhow::Result<()> {
         let args = vec!["foo".to_string()];

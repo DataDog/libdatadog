@@ -251,6 +251,7 @@ mod tests {
 
     // --- SamplingPriority ---
 
+    #[cfg_attr(miri, ignore = "pure enum conversion logic; no unsafe in crate")]
     #[test]
     fn test_priority_into_i8() {
         assert_eq!(priority::AUTO_KEEP.into_i8(), 1);
@@ -259,6 +260,7 @@ mod tests {
         assert_eq!(priority::USER_REJECT.into_i8(), -1);
     }
 
+    #[cfg_attr(miri, ignore = "pure enum conversion logic; no unsafe in crate")]
     #[test]
     fn test_priority_is_keep() {
         assert!(priority::AUTO_KEEP.is_keep());
@@ -267,6 +269,7 @@ mod tests {
         assert!(!priority::USER_REJECT.is_keep());
     }
 
+    #[cfg_attr(miri, ignore = "pure enum conversion logic; no unsafe in crate")]
     #[test]
     fn test_priority_display() {
         assert_eq!(priority::AUTO_KEEP.to_string(), "1");
@@ -275,6 +278,7 @@ mod tests {
         assert_eq!(priority::USER_REJECT.to_string(), "-1");
     }
 
+    #[cfg_attr(miri, ignore = "pure enum conversion logic; no unsafe in crate")]
     #[test]
     fn test_priority_from_str() {
         assert_eq!(
@@ -299,6 +303,7 @@ mod tests {
 
     // --- SamplingMechanism ---
 
+    #[cfg_attr(miri, ignore = "pure enum conversion logic; no unsafe in crate")]
     #[test]
     fn test_mechanism_into_u8() {
         assert_eq!(mechanism::DEFAULT.into_u8(), 0);
@@ -308,6 +313,7 @@ mod tests {
         assert_eq!(mechanism::REMOTE_DYNAMIC_TRACE_SAMPLING_RULE.into_u8(), 12);
     }
 
+    #[cfg_attr(miri, ignore = "pure enum conversion logic; no unsafe in crate")]
     #[test]
     fn test_mechanism_to_priority_auto_pair() {
         // DEFAULT and AGENT_RATE_BY_SERVICE use AUTO priority
@@ -325,6 +331,7 @@ mod tests {
         assert_eq!(mechanism::APPSEC.to_priority(false), priority::AUTO_REJECT);
     }
 
+    #[cfg_attr(miri, ignore = "pure enum conversion logic; no unsafe in crate")]
     #[test]
     fn test_mechanism_to_priority_user_pair() {
         // Rule-based mechanisms use USER priority
@@ -355,6 +362,7 @@ mod tests {
         );
     }
 
+    #[cfg_attr(miri, ignore = "pure enum conversion logic; no unsafe in crate")]
     #[test]
     fn test_mechanism_to_priority_unknown_falls_back_to_auto() {
         let unknown = SamplingMechanism::from_u8(99);
@@ -362,6 +370,7 @@ mod tests {
         assert_eq!(unknown.to_priority(false), priority::AUTO_REJECT);
     }
 
+    #[cfg_attr(miri, ignore = "pure enum conversion logic; no unsafe in crate")]
     #[test]
     fn test_mechanism_to_cow() {
         assert_eq!(mechanism::DEFAULT.to_cow(), "-0");
@@ -384,6 +393,7 @@ mod tests {
         assert_eq!(SamplingMechanism::from_u8(99).to_cow(), "-99");
     }
 
+    #[cfg_attr(miri, ignore = "pure enum conversion logic; no unsafe in crate")]
     #[test]
     fn test_mechanism_display() {
         assert_eq!(mechanism::DEFAULT.to_string(), "-0");
@@ -394,6 +404,7 @@ mod tests {
         );
     }
 
+    #[cfg_attr(miri, ignore = "pure enum conversion logic; no unsafe in crate")]
     #[test]
     fn test_mechanism_from_str() {
         assert_eq!(
@@ -414,6 +425,7 @@ mod tests {
         );
     }
 
+    #[cfg_attr(miri, ignore = "pure enum conversion logic; no unsafe in crate")]
     #[test]
     fn test_mechanism_is_probability() {
         use mechanism::*;
@@ -440,6 +452,7 @@ mod tests {
         }
     }
 
+    #[cfg_attr(miri, ignore = "pure enum conversion logic; no unsafe in crate")]
     #[test]
     fn test_mechanism_from_str_errors() {
         assert!("not_a_number".parse::<SamplingMechanism>().is_err());

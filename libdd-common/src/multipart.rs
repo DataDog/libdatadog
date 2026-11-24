@@ -105,6 +105,7 @@ impl MultipartFormData {
 mod tests {
     use super::*;
 
+    #[cfg_attr(miri, ignore = "pure multipart body formatting; no unsafe in path")]
     #[test]
     fn encode_single_text_field() {
         let form = MultipartFormData::encode(vec![MultipartPart::new("field", b"value".to_vec())]);
@@ -115,6 +116,7 @@ mod tests {
         assert!(body.contains(&format!("--{BOUNDARY}--")));
     }
 
+    #[cfg_attr(miri, ignore = "pure multipart body formatting; no unsafe in path")]
     #[test]
     fn encode_with_filename_and_content_type() {
         let form = MultipartFormData::encode(vec![
@@ -128,6 +130,7 @@ mod tests {
         assert!(body.contains("Content-Type: application/octet-stream"));
     }
 
+    #[cfg_attr(miri, ignore = "pure multipart body formatting; no unsafe in path")]
     #[test]
     fn encode_multiple_parts() {
         let form = MultipartFormData::encode(vec![
@@ -147,6 +150,7 @@ mod tests {
         assert!(body_str.contains("filename=\"data.bin\""));
     }
 
+    #[cfg_attr(miri, ignore = "pure multipart body formatting; no unsafe in path")]
     #[test]
     fn content_type_includes_boundary() {
         let form = MultipartFormData::encode(vec![]);

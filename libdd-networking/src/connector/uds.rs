@@ -30,6 +30,7 @@ pub fn socket_path_from_uri(uri: &http::Uri) -> anyhow::Result<PathBuf> {
     Ok(PathBuf::from(OsString::from_vec(path)))
 }
 
+#[cfg_attr(miri, ignore = "no unsafe in path; pure socket path hex encoding")]
 #[test]
 fn test_encode_unix_socket_path_absolute() {
     let expected_path = "/path/to/a/socket.sock".as_ref();
@@ -40,6 +41,7 @@ fn test_encode_unix_socket_path_absolute() {
     assert_eq!(actual_path.as_path(), Path::new(expected_path))
 }
 
+#[cfg_attr(miri, ignore = "no unsafe in path; pure socket path hex encoding")]
 #[test]
 fn test_encode_unix_socket_relative_path() {
     let expected_path = "relative/path/to/a/socket.sock".as_ref();

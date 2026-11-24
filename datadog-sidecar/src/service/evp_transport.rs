@@ -1061,6 +1061,10 @@ mod tests {
         assert!(evaluation_sent);
     }
 
+    #[cfg_attr(
+        miri,
+        ignore = "route selection over a scripted mock http client; no unsafe in path"
+    )]
     #[tokio::test]
     async fn concurrent_first_flush_prefers_v4_and_performs_one_shared_discovery() {
         let mut client = ScriptedCapabilities::new(vec![
@@ -1105,6 +1109,10 @@ mod tests {
         }
     }
 
+    #[cfg_attr(
+        miri,
+        ignore = "route selection over a scripted mock http client; no unsafe in path"
+    )]
     #[tokio::test]
     async fn v2_is_used_when_v4_is_not_advertised() {
         let client =
@@ -1118,6 +1126,10 @@ mod tests {
         );
     }
 
+    #[cfg_attr(
+        miri,
+        ignore = "route selection over a scripted mock http client; no unsafe in path"
+    )]
     #[tokio::test]
     async fn discovery_requires_both_identity_headers() {
         for body in [
@@ -1138,6 +1150,10 @@ mod tests {
         }
     }
 
+    #[cfg_attr(
+        miri,
+        ignore = "route selection over a scripted mock http client; no unsafe in path"
+    )]
     #[tokio::test]
     async fn prefixed_agent_discovery_and_v4_delivery_preserve_prefix() {
         let client = ScriptedCapabilities::new(vec![
@@ -1175,6 +1191,10 @@ mod tests {
         );
     }
 
+    #[cfg_attr(
+        miri,
+        ignore = "route selection over a scripted mock http client; no unsafe in path"
+    )]
     #[tokio::test]
     async fn missing_local_route_selects_authenticated_direct_and_stays_sticky() {
         let client = ScriptedCapabilities::new(vec![
@@ -1205,6 +1225,10 @@ mod tests {
         }
     }
 
+    #[cfg_attr(
+        miri,
+        ignore = "route selection over a scripted mock http client; no unsafe in path"
+    )]
     #[tokio::test]
     async fn generic_target_preserves_target_content_type_and_payload() {
         let local_client =
@@ -1279,6 +1303,10 @@ mod tests {
         assert_eq!(request.body(), &payload);
     }
 
+    #[cfg_attr(
+        miri,
+        ignore = "route selection over a scripted mock http client; no unsafe in path"
+    )]
     #[tokio::test]
     async fn discovery_failure_selects_direct() {
         let client = ScriptedCapabilities::new(vec![
@@ -1295,6 +1323,10 @@ mod tests {
         );
     }
 
+    #[cfg_attr(
+        miri,
+        ignore = "route selection over a scripted mock http client; no unsafe in path"
+    )]
     #[tokio::test]
     async fn rejected_local_route_replays_current_batch_direct() {
         for status in [404, 405] {
@@ -1316,6 +1348,10 @@ mod tests {
         }
     }
 
+    #[cfg_attr(
+        miri,
+        ignore = "route selection over a scripted mock http client; no unsafe in path"
+    )]
     #[tokio::test]
     async fn non_replayable_local_statuses_switch_only_future_batches_to_direct() {
         for status in [403, 429, 500, 503] {
@@ -1343,6 +1379,10 @@ mod tests {
         }
     }
 
+    #[cfg_attr(
+        miri,
+        ignore = "route selection over a scripted mock http client; no unsafe in path"
+    )]
     #[tokio::test]
     async fn other_client_errors_keep_local_without_replaying_the_batch() {
         for status in [400, 401, 413, 422] {
@@ -1364,6 +1404,10 @@ mod tests {
         }
     }
 
+    #[cfg_attr(
+        miri,
+        ignore = "route selection over a scripted mock http client; no unsafe in path"
+    )]
     #[tokio::test]
     async fn definitive_pre_send_failure_replays_current_batch() {
         let refused = std::io::Error::from(std::io::ErrorKind::ConnectionRefused);
@@ -1380,6 +1424,10 @@ mod tests {
         assert!(requests[2].0.starts_with("https://event-platform-intake."));
     }
 
+    #[cfg_attr(
+        miri,
+        ignore = "route selection over a scripted mock http client; no unsafe in path"
+    )]
     #[tokio::test]
     async fn ambiguous_failure_changes_only_future_routing() {
         let reset = std::io::Error::from(std::io::ErrorKind::ConnectionReset);
@@ -1400,6 +1448,10 @@ mod tests {
         );
     }
 
+    #[cfg_attr(
+        miri,
+        ignore = "route selection over a scripted mock http client; no unsafe in path"
+    )]
     #[tokio::test]
     async fn non_replayable_local_statuses_enter_bounded_cooldown_without_direct_credentials() {
         for status in [403, 429, 500, 503] {
@@ -1439,6 +1491,10 @@ mod tests {
         }
     }
 
+    #[cfg_attr(
+        miri,
+        ignore = "route selection over a scripted mock http client; no unsafe in path"
+    )]
     #[tokio::test]
     async fn unavailable_route_reprobes_once_after_cooldown_and_recovers() {
         let mut client = ScriptedCapabilities::new(vec![
@@ -1483,6 +1539,10 @@ mod tests {
         );
     }
 
+    #[cfg_attr(
+        miri,
+        ignore = "route selection over a scripted mock http client; no unsafe in path"
+    )]
     #[tokio::test]
     async fn agent_only_mode_keeps_historical_v2_without_discovery_or_fallback() {
         for first_failure in [
@@ -1527,6 +1587,10 @@ mod tests {
         }
     }
 
+    #[cfg_attr(
+        miri,
+        ignore = "route selection over a scripted mock http client; no unsafe in path"
+    )]
     #[test]
     fn agent_only_mode_discards_all_direct_credentials() {
         let transport = EvpTransport::new_with_identity(
@@ -1550,6 +1614,10 @@ mod tests {
         assert!(transport.config.direct_endpoint.is_none());
     }
 
+    #[cfg_attr(
+        miri,
+        ignore = "route selection over a scripted mock http client; no unsafe in path"
+    )]
     #[tokio::test]
     async fn agent_only_v2_delivery_preserves_agent_path_prefix() {
         let client = ScriptedCapabilities::new(vec![response(202, "")]);
@@ -1569,6 +1637,10 @@ mod tests {
         );
     }
 
+    #[cfg_attr(
+        miri,
+        ignore = "route selection over a scripted mock http client; no unsafe in path"
+    )]
     #[tokio::test]
     async fn redirect_response_is_not_followed_or_replayed() {
         let client = ScriptedCapabilities::new(vec![info_response(&[]), response(302, "redirect")]);
@@ -1584,6 +1656,10 @@ mod tests {
         );
     }
 
+    #[cfg_attr(
+        miri,
+        ignore = "route selection over a scripted mock http client; no unsafe in path"
+    )]
     #[test]
     fn equivalent_connections_share_deduplication_but_not_route_state() {
         let first = agentless(Some("api-key"));
@@ -1593,6 +1669,10 @@ mod tests {
         assert_ne!(first, second);
     }
 
+    #[cfg_attr(
+        miri,
+        ignore = "route selection over a scripted mock http client; no unsafe in path"
+    )]
     #[test]
     fn deduplication_uses_effective_configuration() {
         let first = EvpTransport::agent_only(
@@ -1616,6 +1696,10 @@ mod tests {
         assert_eq!(first.deduplication_scope(), second.deduplication_scope());
     }
 
+    #[cfg_attr(
+        miri,
+        ignore = "route selection over a scripted mock http client; no unsafe in path"
+    )]
     #[test]
     fn distinct_configurations_keep_exposure_deduplication_isolated() {
         let baseline = agentless(Some("api-key"));
@@ -1673,6 +1757,10 @@ mod tests {
         }
     }
 
+    #[cfg_attr(
+        miri,
+        ignore = "route selection over a scripted mock http client; no unsafe in path"
+    )]
     #[tokio::test]
     async fn distinct_sessions_keep_direct_credentials_isolated() {
         let client = ScriptedCapabilities::new(vec![
@@ -1693,6 +1781,10 @@ mod tests {
         assert_eq!(requests[3].1.get("dd-api-key").unwrap(), "second-key");
     }
 
+    #[cfg_attr(
+        miri,
+        ignore = "route selection over a scripted mock http client; no unsafe in path"
+    )]
     #[tokio::test]
     async fn unchanged_session_configuration_preserves_sticky_direct_and_deduplication() {
         let mut session = crate::service::ConnectionSession::for_test(
@@ -1721,6 +1813,10 @@ mod tests {
         assert_eq!(client.requests().len(), 3, "configuration re-probed local");
     }
 
+    #[cfg_attr(
+        miri,
+        ignore = "route selection over a scripted mock http client; no unsafe in path"
+    )]
     #[tokio::test]
     async fn unchanged_session_configuration_preserves_unavailable_cooldown() {
         let mut session = crate::service::ConnectionSession::for_test(
@@ -1935,6 +2031,10 @@ mod tests {
         }
     }
 
+    #[cfg_attr(
+        miri,
+        ignore = "route selection over a scripted mock http client; no unsafe in path"
+    )]
     #[test]
     fn configuration_errors_are_typed_without_retaining_credentials() {
         use EvpTransportConfigError::*;
@@ -1998,6 +2098,10 @@ mod tests {
         );
     }
 
+    #[cfg_attr(
+        miri,
+        ignore = "route selection over a scripted mock http client; no unsafe in path"
+    )]
     #[test]
     fn delivery_failure_retains_native_error_for_diagnostics() {
         for (kind, pre_send) in [
@@ -2021,6 +2125,10 @@ mod tests {
         }
     }
 
+    #[cfg_attr(
+        miri,
+        ignore = "route selection over a scripted mock http client; no unsafe in path"
+    )]
     #[test]
     fn direct_endpoint_validation_rejects_credential_exfiltration_targets() {
         for url in [
@@ -2160,6 +2268,10 @@ mod tests {
         }
     }
 
+    #[cfg_attr(
+        miri,
+        ignore = "route selection over a scripted mock http client; no unsafe in path"
+    )]
     #[test]
     fn definitive_connection_failure_recognizes_wrapped_platform_sentinels() {
         let windows_refused =
@@ -2176,6 +2288,10 @@ mod tests {
         assert!(!is_definitive_connection_failure(&reset));
     }
 
+    #[cfg_attr(
+        miri,
+        ignore = "route selection over a scripted mock http client; no unsafe in path"
+    )]
     #[test]
     fn producer_identity_rejects_untrusted_header_values_and_wire_input() {
         assert!(EvpProducerIdentity::new("", "1.0.0").is_err());

@@ -399,6 +399,7 @@ impl GatewayRequestObservation {
 mod tests {
     use super::*;
 
+    #[cfg_attr(miri, ignore = "no unsafe in path; pure grammar logic")]
     #[test]
     fn grammars_match_the_contract() {
         assert!(is_identifier("aws.bedrock"));
@@ -437,6 +438,7 @@ mod tests {
         assert!(!is_rate_card(&format!("{}@1", "i".repeat(65))));
     }
 
+    #[cfg_attr(miri, ignore = "no unsafe in path; pure grammar logic")]
     #[test]
     fn a_boolean_is_not_a_number_and_null_is_absent() {
         let read = |text: &str| ProviderAttemptObservation::from_json(&Json::parse(text).unwrap());

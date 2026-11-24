@@ -169,6 +169,7 @@ mod tests {
 
     // --- SamplingRuleConfig ---
 
+    #[cfg_attr(miri, ignore = "pure serde config parsing; no unsafe in crate")]
     #[test]
     fn test_sampling_rule_config_defaults() {
         let config = SamplingRuleConfig::default();
@@ -181,6 +182,7 @@ mod tests {
         assert_eq!(config.provenance, "default");
     }
 
+    #[cfg_attr(miri, ignore = "pure serde config parsing; no unsafe in crate")]
     #[test]
     fn test_sampling_rule_config_default_matches_serde_default() {
         // Constructing from an empty-but-valid JSON object must yield the same value
@@ -190,6 +192,7 @@ mod tests {
         assert_eq!(from_serde, SamplingRuleConfig::default());
     }
 
+    #[cfg_attr(miri, ignore = "pure serde config parsing; no unsafe in crate")]
     #[test]
     fn test_sampling_rule_config_serde_default_provenance() {
         // When provenance is absent from JSON, serde fills it in as "default"
@@ -198,6 +201,7 @@ mod tests {
         assert_eq!(config.provenance, "default");
     }
 
+    #[cfg_attr(miri, ignore = "pure serde config parsing; no unsafe in crate")]
     #[test]
     fn test_sampling_rule_config_deserialize_full() {
         let json = r#"{
@@ -217,6 +221,7 @@ mod tests {
         assert_eq!(config.provenance, "customer");
     }
 
+    #[cfg_attr(miri, ignore = "pure serde config parsing; no unsafe in crate")]
     #[test]
     fn test_sampling_rule_config_deserialize_minimal() {
         let json = r#"{"sample_rate": 1.0}"#;
@@ -226,6 +231,7 @@ mod tests {
         assert_eq!(config.provenance, "default");
     }
 
+    #[cfg_attr(miri, ignore = "pure serde config parsing; no unsafe in crate")]
     #[test]
     fn test_sampling_rule_config_roundtrip() {
         let original = SamplingRuleConfig {
@@ -241,6 +247,7 @@ mod tests {
         assert_eq!(original, restored);
     }
 
+    #[cfg_attr(miri, ignore = "pure serde config parsing; no unsafe in crate")]
     #[test]
     fn test_sampling_rule_config_tags_accepts_map_shape() {
         // Already supported — guard against regression.
@@ -257,6 +264,7 @@ mod tests {
         );
     }
 
+    #[cfg_attr(miri, ignore = "pure serde config parsing; no unsafe in crate")]
     #[test]
     fn test_sampling_rule_config_tags_accepts_rc_list_shape() {
         // Remote Config wire shape: list of {key, value_glob} entries.
@@ -276,6 +284,7 @@ mod tests {
         );
     }
 
+    #[cfg_attr(miri, ignore = "pure serde config parsing; no unsafe in crate")]
     #[test]
     fn test_sampling_rule_config_tags_list_with_malformed_entry_rejects() {
         // A list entry missing `value_glob` must reject the whole rule rather
@@ -293,6 +302,7 @@ mod tests {
         assert!(result.is_err(), "expected deserialization to fail");
     }
 
+    #[cfg_attr(miri, ignore = "pure serde config parsing; no unsafe in crate")]
     #[test]
     fn test_sampling_rule_config_tags_absent_defaults_to_empty() {
         let json = r#"{"sample_rate": 0.5}"#;
@@ -300,6 +310,7 @@ mod tests {
         assert!(cfg.tags.is_empty());
     }
 
+    #[cfg_attr(miri, ignore = "pure serde config parsing; no unsafe in crate")]
     #[test]
     fn test_sampling_rule_config_display() {
         let config = SamplingRuleConfig {
@@ -314,18 +325,21 @@ mod tests {
 
     // --- ParsedSamplingRules ---
 
+    #[cfg_attr(miri, ignore = "pure serde config parsing; no unsafe in crate")]
     #[test]
     fn test_parsed_sampling_rules_empty_string() {
         let parsed: ParsedSamplingRules = "".parse().unwrap();
         assert!(parsed.rules.is_empty());
     }
 
+    #[cfg_attr(miri, ignore = "pure serde config parsing; no unsafe in crate")]
     #[test]
     fn test_parsed_sampling_rules_whitespace_only() {
         let parsed: ParsedSamplingRules = "   ".parse().unwrap();
         assert!(parsed.rules.is_empty());
     }
 
+    #[cfg_attr(miri, ignore = "pure serde config parsing; no unsafe in crate")]
     #[test]
     fn test_parsed_sampling_rules_valid_json() {
         let json = r#"[{"sample_rate": 0.5, "service": "svc"}, {"sample_rate": 1.0}]"#;
@@ -335,12 +349,14 @@ mod tests {
         assert_eq!(parsed.rules[1].sample_rate, 1.0);
     }
 
+    #[cfg_attr(miri, ignore = "pure serde config parsing; no unsafe in crate")]
     #[test]
     fn test_parsed_sampling_rules_invalid_json() {
         let result: Result<ParsedSamplingRules, _> = "not json".parse();
         assert!(result.is_err());
     }
 
+    #[cfg_attr(miri, ignore = "pure serde config parsing; no unsafe in crate")]
     #[test]
     fn test_parsed_sampling_rules_deref() {
         let json = r#"[{"sample_rate": 0.5}]"#;
@@ -350,6 +366,7 @@ mod tests {
         assert_eq!(parsed[0].sample_rate, 0.5);
     }
 
+    #[cfg_attr(miri, ignore = "pure serde config parsing; no unsafe in crate")]
     #[test]
     fn test_parsed_sampling_rules_into_vec() {
         let json = r#"[{"sample_rate": 0.5}, {"sample_rate": 1.0}]"#;
@@ -358,6 +375,7 @@ mod tests {
         assert_eq!(vec.len(), 2);
     }
 
+    #[cfg_attr(miri, ignore = "pure serde config parsing; no unsafe in crate")]
     #[test]
     fn test_parsed_sampling_rules_display() {
         let json = r#"[{"sample_rate":0.5}]"#;
@@ -367,6 +385,7 @@ mod tests {
         assert!(s.contains("0.5"));
     }
 
+    #[cfg_attr(miri, ignore = "pure serde config parsing; no unsafe in crate")]
     #[test]
     fn test_parsed_sampling_rules_default_is_empty() {
         let parsed = ParsedSamplingRules::default();

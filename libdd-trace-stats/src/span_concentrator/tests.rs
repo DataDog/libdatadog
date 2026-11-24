@@ -109,6 +109,7 @@ fn assert_counts_equal(expected: Vec<pb::ClientGroupedStats>, actual: Vec<pb::Cl
 }
 
 /// Test that the SpanConcentrator does not create buckets older than the exporter initialization
+#[cfg_attr(miri, ignore = "pure stats aggregation logic; no unsafe in path")]
 #[test]
 fn test_concentrator_oldest_timestamp_cold() {
     let now = SystemTime::now();
@@ -167,6 +168,7 @@ fn test_concentrator_oldest_timestamp_cold() {
 
 /// Test that the SpanConcentrator does not create buckets older than the exporter initialization
 /// with multiple active buckets
+#[cfg_attr(miri, ignore = "pure stats aggregation logic; no unsafe in path")]
 #[test]
 fn test_concentrator_oldest_timestamp_hot() {
     let now = SystemTime::now();
@@ -248,6 +250,7 @@ fn test_concentrator_oldest_timestamp_hot() {
 
 /// Tests that the total stats are correct, independently of the
 /// time bucket they end up.
+#[cfg_attr(miri, ignore = "pure stats aggregation logic; no unsafe in path")]
 #[test]
 fn test_concentrator_stats_totals() {
     let now = SystemTime::now();
@@ -314,6 +317,7 @@ fn test_concentrator_stats_totals() {
     assert_eq!(total_errors, 0);
 }
 
+#[cfg_attr(miri, ignore = "pure stats aggregation logic; no unsafe in path")]
 #[test]
 /// Tests exhaustively each stats bucket, over multiple time
 /// buckets.
@@ -580,6 +584,7 @@ fn test_concentrator_stats_counts() {
 }
 
 /// Test the criteria to include a span in stats computation
+#[cfg_attr(miri, ignore = "pure stats aggregation logic; no unsafe in path")]
 #[test]
 fn test_span_should_be_included_in_stats() {
     let now = SystemTime::now();
@@ -692,6 +697,7 @@ fn test_span_should_be_included_in_stats() {
 }
 
 /// Test that partial spans are ignored for stats
+#[cfg_attr(miri, ignore = "pure stats aggregation logic; no unsafe in path")]
 #[test]
 fn test_ignore_partial_spans() {
     let now = SystemTime::now();
@@ -726,6 +732,7 @@ fn test_ignore_partial_spans() {
 }
 
 /// Test the force flush parameter
+#[cfg_attr(miri, ignore = "pure stats aggregation logic; no unsafe in path")]
 #[test]
 fn test_force_flush() {
     let now = SystemTime::now();
@@ -758,6 +765,7 @@ fn test_force_flush() {
 }
 
 /// Test the peer tags aggregation
+#[cfg_attr(miri, ignore = "pure stats aggregation logic; no unsafe in path")]
 #[test]
 fn test_peer_tags_aggregation() {
     let now = SystemTime::now();
@@ -951,6 +959,7 @@ fn test_peer_tags_aggregation() {
 }
 
 /// Test that spans differing only by peer-tag IPs aggregate after IP quantization
+#[cfg_attr(miri, ignore = "pure stats aggregation logic; no unsafe in path")]
 #[test]
 fn test_peer_tags_quantization_aggregation() {
     let now = SystemTime::now();
@@ -1067,6 +1076,7 @@ fn test_peer_tags_quantization_aggregation() {
 }
 
 /// Test that internal spans with _dd.base_service use it as their sole peer tag
+#[cfg_attr(miri, ignore = "pure stats aggregation logic; no unsafe in path")]
 #[test]
 fn test_base_service_peer_tag() {
     let now = SystemTime::now();
@@ -1240,6 +1250,7 @@ fn test_base_service_peer_tag() {
 /// Test peer-tag selection by span kind, mirroring the Go trace-agent:
 /// the base-service fallback applies only to absent/empty/internal kinds, server and unknown
 /// kinds never get peer tags, and the original kind casing is preserved in the aggregation key.
+#[cfg_attr(miri, ignore = "pure stats aggregation logic; no unsafe in path")]
 #[test]
 fn test_base_service_peer_tag_kind_selection() {
     let now = SystemTime::now();
@@ -1577,6 +1588,7 @@ fn test_base_service_peer_tag_kind_selection() {
 
 /// Test that an empty configured peer-key list suppresses every peer tag, including the
 /// _dd.base_service fallback and the configured-key extraction for client spans.
+#[cfg_attr(miri, ignore = "pure stats aggregation logic; no unsafe in path")]
 #[test]
 fn test_base_service_peer_tag_empty_key_list() {
     let now = SystemTime::now();
@@ -1691,6 +1703,7 @@ fn test_base_service_peer_tag_empty_key_list() {
     );
 }
 
+#[cfg_attr(miri, ignore = "pure stats aggregation logic; no unsafe in path")]
 #[test]
 fn test_compute_stats_for_span_kind() {
     let test_cases: Vec<(SpanSlice, bool)> = vec![
@@ -1825,6 +1838,7 @@ fn test_compute_stats_for_span_kind() {
 /// (which the agent /v0.6/stats path uses).
 /// v0.4 spans carry the origin as a tag, which only the root is guaranteed to have: a child span
 /// of a synthetics trace must be counted as synthetics too, from its trace's root.
+#[cfg_attr(miri, ignore = "pure stats aggregation logic; no unsafe in path")]
 #[test]
 fn test_v04_trace_synthetics_from_root() {
     let now = SystemTime::now();
@@ -1875,6 +1889,7 @@ fn test_v04_trace_synthetics_from_root() {
     assert_eq!(synthetics, [("A", true), ("B", true)]);
 }
 
+#[cfg_attr(miri, ignore = "pure stats aggregation logic; no unsafe in path")]
 #[test]
 fn test_pb_span() {
     let now = SystemTime::now();
@@ -2165,6 +2180,7 @@ fn test_pb_span() {
     assert_counts_equal(expected_stats, bucket.stats.clone());
 }
 
+#[cfg_attr(miri, ignore = "pure stats aggregation logic; no unsafe in path")]
 #[test]
 fn test_flush_with_otlp_exact_per_cell_scalars() {
     let now = SystemTime::now();
@@ -2234,6 +2250,7 @@ fn make_cardinality_concentrator(cardinality_limits: CardinalityLimitConfig) -> 
 
 /// When the limit is 3 and we insert 5 distinct-resource spans, only 3 normal keys plus one
 /// overflow key must appear in the flushed stats. Total hits must equal 5.
+#[cfg_attr(miri, ignore = "pure stats aggregation logic; no unsafe in path")]
 #[test]
 fn test_whole_key_cardinality_limit_collapse() {
     let now = SystemTime::now();
@@ -2300,6 +2317,7 @@ fn test_whole_key_cardinality_limit_collapse() {
 ///
 /// But then inserting spans differing on another field, it should not be collapsed.
 /// So total hits must equal 6.
+#[cfg_attr(miri, ignore = "pure stats aggregation logic; no unsafe in path")]
 #[test]
 fn test_per_key_cardinality_limit_collapse_http_endpoint() {
     let now = SystemTime::now();
@@ -2389,6 +2407,7 @@ fn test_per_key_cardinality_limit_collapse_http_endpoint() {
 
 /// When whole-key cardinality limit is reached, check that per-key fields are collapsed before
 /// falling back to whole-key
+#[cfg_attr(miri, ignore = "pure stats aggregation logic; no unsafe in path")]
 #[test]
 fn test_per_key_cardinality_limit_collapse_before_whole_key() {
     let now = SystemTime::now();
@@ -2465,6 +2484,7 @@ fn test_per_key_cardinality_limit_collapse_before_whole_key() {
 }
 
 /// The overflow bucket must correctly aggregate the hits from overflow spans.
+#[cfg_attr(miri, ignore = "pure stats aggregation logic; no unsafe in path")]
 #[test]
 fn test_overflow_bucket_counts() {
     let now = SystemTime::now();
@@ -2517,6 +2537,7 @@ fn test_overflow_bucket_counts() {
 }
 
 /// When the number of distinct spans is within the limit, no overflow bucket should appear.
+#[cfg_attr(miri, ignore = "pure stats aggregation logic; no unsafe in path")]
 #[test]
 fn test_no_collapse_within_limit() {
     let now = SystemTime::now();
@@ -2561,6 +2582,7 @@ fn test_no_collapse_within_limit() {
 
 /// The overflow `ClientGroupedStats` row must carry `tracer_blocked_value` on all sentinel
 /// string fields as specified by the RFC.
+#[cfg_attr(miri, ignore = "pure stats aggregation logic; no unsafe in path")]
 #[test]
 fn test_overflow_bucket_key_sentinel_values() {
     let now = SystemTime::now();
@@ -2661,6 +2683,7 @@ fn test_overflow_bucket_key_sentinel_values() {
     assert_eq!(normal.resource, "my-resource");
 }
 
+#[cfg_attr(miri, ignore = "pure stats aggregation logic; no unsafe in path")]
 #[test]
 fn test_additional_metric_tags_aggregation() {
     let now = SystemTime::now();
@@ -2787,6 +2810,7 @@ fn test_additional_metric_tags_aggregation() {
     );
 }
 
+#[cfg_attr(miri, ignore = "pure stats aggregation logic; no unsafe in path")]
 #[test]
 fn test_additional_metric_tag_value_length_cap_substitutes_blocked_value() {
     let now = SystemTime::now();
@@ -2825,6 +2849,7 @@ fn test_additional_metric_tag_value_length_cap_substitutes_blocked_value() {
     assert_eq!(tags, &["region:tracer_blocked_value"]);
 }
 
+#[cfg_attr(miri, ignore = "pure stats aggregation logic; no unsafe in path")]
 #[test]
 fn test_additional_metric_tag_value_at_length_cap_passes_through() {
     let now = SystemTime::now();
@@ -2863,6 +2888,7 @@ fn test_additional_metric_tag_value_at_length_cap_passes_through() {
     assert_eq!(tags, &[format!("region:{ok_value}")]);
 }
 
+#[cfg_attr(miri, ignore = "pure stats aggregation logic; no unsafe in path")]
 #[test]
 fn test_additional_metric_tag_value_multibyte_at_length_cap_passes_through() {
     // 101 two byte characters: 202 bytes but only 101 chars, well under the 200 character cap.
@@ -2902,6 +2928,7 @@ fn test_additional_metric_tag_value_multibyte_at_length_cap_passes_through() {
     assert_eq!(tags, &[format!("region:{ok_value}")]);
 }
 
+#[cfg_attr(miri, ignore = "pure stats aggregation logic; no unsafe in path")]
 #[test]
 fn test_additional_metric_tag_value_multibyte_over_length_cap_substitutes_blocked_value() {
     let now = SystemTime::now();
@@ -2940,6 +2967,7 @@ fn test_additional_metric_tag_value_multibyte_over_length_cap_substitutes_blocke
     assert_eq!(tags, &["region:tracer_blocked_value"]);
 }
 
+#[cfg_attr(miri, ignore = "pure stats aggregation logic; no unsafe in path")]
 #[test]
 fn test_normalize_additional_metric_tag_keys_sort() {
     let keys = vec![
@@ -2951,6 +2979,7 @@ fn test_normalize_additional_metric_tag_keys_sort() {
     assert_eq!(result, vec!["env", "region", "tenant"]);
 }
 
+#[cfg_attr(miri, ignore = "pure stats aggregation logic; no unsafe in path")]
 #[test]
 fn test_normalize_additional_metric_tag_keys_dedup() {
     let keys = vec![
@@ -2962,6 +2991,7 @@ fn test_normalize_additional_metric_tag_keys_dedup() {
     assert_eq!(result, vec!["region", "tenant"]);
 }
 
+#[cfg_attr(miri, ignore = "pure stats aggregation logic; no unsafe in path")]
 #[test]
 fn test_normalize_additional_metric_tag_keys_limit() {
     let keys = vec![
@@ -2976,6 +3006,7 @@ fn test_normalize_additional_metric_tag_keys_limit() {
     assert_eq!(result.len(), 4);
 }
 
+#[cfg_attr(miri, ignore = "pure stats aggregation logic; no unsafe in path")]
 #[test]
 fn test_additional_metric_tags_max_entries_masks_overflow_entries() {
     // With a cap of 1, the first distinct tag value is admitted; the second gets masked.
@@ -3037,6 +3068,7 @@ fn test_additional_metric_tags_max_entries_masks_overflow_entries() {
     assert_eq!(tags, vec!["region:us-east-1", "tracer_blocked_value:"]);
 }
 
+#[cfg_attr(miri, ignore = "pure stats aggregation logic; no unsafe in path")]
 #[test]
 fn test_additional_metric_tags_max_entries_existing_keys_merge_after_limit() {
     // A key admitted before the cap is hit continues merging after the cap is exceeded.
@@ -3111,6 +3143,7 @@ fn test_additional_metric_tags_max_entries_existing_keys_merge_after_limit() {
     assert_eq!(admitted.hits, 2);
 }
 
+#[cfg_attr(miri, ignore = "pure stats aggregation logic; no unsafe in path")]
 #[test]
 fn test_additional_metric_tags_max_entries_resets_on_flush() {
     // After flushing, a new bucket starts with a fresh cap budget.
@@ -3197,6 +3230,7 @@ fn test_additional_metric_tags_max_entries_resets_on_flush() {
     );
 }
 
+#[cfg_attr(miri, ignore = "pure stats aggregation logic; no unsafe in path")]
 #[test]
 fn test_additional_metric_tags_new_key_collapses_into_overflow_before_masking() {
     // An untagged span already fills the bucket's max_entries. A new tagged span, even though
@@ -3267,6 +3301,7 @@ fn test_additional_metric_tags_new_key_collapses_into_overflow_before_masking() 
     assert_eq!(overflow.additional_metric_tags, ["tracer_blocked_value:"]);
 }
 
+#[cfg_attr(miri, ignore = "pure stats aggregation logic; no unsafe in path")]
 #[test]
 fn test_additional_metric_tags_masked_entry_collapses_into_overflow() {
     // A span exceeds the additional_metric_tags_max_entries budget, so its tag values get
@@ -3337,6 +3372,7 @@ fn test_additional_metric_tags_masked_entry_collapses_into_overflow() {
     assert_eq!(overflow.additional_metric_tags, ["tracer_blocked_value:"]);
 }
 
+#[cfg_attr(miri, ignore = "pure stats aggregation logic; no unsafe in path")]
 #[test]
 fn test_additional_metric_tags_multiple_masked_entries_merge() {
     // Two distinct source keys that both get masked to the same resource/tag combination must

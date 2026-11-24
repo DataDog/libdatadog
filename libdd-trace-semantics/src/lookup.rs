@@ -162,6 +162,7 @@ mod tests {
         }
     }
 
+    #[cfg_attr(miri, ignore = "no unsafe in crate; pure registry lookup logic")]
     #[test]
     fn conditions() {
         // The embedded registry has no `Present` condition, so test them on made-up entries.

@@ -78,6 +78,7 @@ impl Attributes for V04 {
     }
 }
 
+#[cfg_attr(miri, ignore = "no unsafe in crate; pure registry lookup logic")]
 #[test]
 fn string_lookup_follows_precedence() {
     let both = Typed::new([
@@ -98,6 +99,7 @@ fn string_lookup_follows_precedence() {
     assert_eq!(lookup_str(&Typed::default(), Concept::HttpMethod), None);
 }
 
+#[cfg_attr(miri, ignore = "no unsafe in crate; pure registry lookup logic")]
 #[test]
 fn string_lookup_skips_empty_strings() {
     let attrs = Typed::new([("http.request.method", s("")), ("http.method", s("GET"))]);
@@ -107,6 +109,7 @@ fn string_lookup_skips_empty_strings() {
     );
 }
 
+#[cfg_attr(miri, ignore = "no unsafe in crate; pure registry lookup logic")]
 #[test]
 fn string_lookup_borrows_strings() {
     let attrs = Typed::new([("http.method", s("GET"))]);
@@ -116,6 +119,7 @@ fn string_lookup_borrows_strings() {
     ));
 }
 
+#[cfg_attr(miri, ignore = "no unsafe in crate; pure registry lookup logic")]
 #[test]
 fn string_lookup_formats_numbers() {
     // http.status_code: int64 first, then string.
@@ -147,6 +151,7 @@ fn string_lookup_formats_numbers() {
     }
 }
 
+#[cfg_attr(miri, ignore = "no unsafe in crate; pure registry lookup logic")]
 #[test]
 fn string_lookup_ignores_values_of_another_type() {
     // http.method only has string entries.
@@ -160,6 +165,7 @@ fn string_lookup_ignores_values_of_another_type() {
     );
 }
 
+#[cfg_attr(miri, ignore = "no unsafe in crate; pure registry lookup logic")]
 #[test]
 fn int_lookup_reads_typed_values_and_strings() {
     let int = Typed::new([("http.status_code", V::Int(200))]);
@@ -182,6 +188,7 @@ fn int_lookup_reads_typed_values_and_strings() {
     assert_eq!(lookup_i64(&big, Concept::HttpStatusCode), Some(i64::MAX));
 }
 
+#[cfg_attr(miri, ignore = "no unsafe in crate; pure registry lookup logic")]
 #[test]
 fn int_lookup_falls_through_invalid_values() {
     // Each invalid http.status_code value is skipped in favor of http.response.status_code.
@@ -216,6 +223,7 @@ fn int_lookup_falls_through_invalid_values() {
     }
 }
 
+#[cfg_attr(miri, ignore = "no unsafe in crate; pure registry lookup logic")]
 #[test]
 fn int_lookup_parses_decimal_strings() {
     // Each string wins over the http.response.status_code fallback.
@@ -240,6 +248,7 @@ fn int_lookup_parses_decimal_strings() {
     }
 }
 
+#[cfg_attr(miri, ignore = "no unsafe in crate; pure registry lookup logic")]
 #[test]
 fn float_lookup() {
     let int = Typed::new([("http.status_code", V::Int(200))]);
@@ -258,6 +267,7 @@ fn float_lookup() {
     assert_eq!(lookup_f64(&fractional, Concept::HttpStatusCode), Some(1.5));
 }
 
+#[cfg_attr(miri, ignore = "no unsafe in crate; pure registry lookup logic")]
 #[test]
 fn float_lookup_falls_through_invalid_strings() {
     // Each invalid http.status_code string is skipped in favor of http.response.status_code.
@@ -288,6 +298,7 @@ fn float_lookup_falls_through_invalid_strings() {
     }
 }
 
+#[cfg_attr(miri, ignore = "no unsafe in crate; pure registry lookup logic")]
 #[test]
 fn float_lookup_parses_decimal_strings() {
     // Each string wins over the http.response.status_code fallback.
@@ -313,6 +324,7 @@ fn float_lookup_parses_decimal_strings() {
     }
 }
 
+#[cfg_attr(miri, ignore = "no unsafe in crate; pure registry lookup logic")]
 #[test]
 fn float_entries_return_stored_values() {
     // Only strings are checked for finiteness: a stored NaN is returned as is, like the Agent.
@@ -320,6 +332,7 @@ fn float_entries_return_stored_values() {
     assert!(lookup_f64(&attrs, Concept::DdTopLevel).is_some_and(f64::is_nan));
 }
 
+#[cfg_attr(miri, ignore = "no unsafe in crate; pure registry lookup logic")]
 #[test]
 fn float_entries_read_large_integers_exactly() {
     // _dd.top_level is a float64 entry. Above 2^53, going through f64 would round.
@@ -330,6 +343,7 @@ fn float_entries_read_large_integers_exactly() {
     );
 }
 
+#[cfg_attr(miri, ignore = "no unsafe in crate; pure registry lookup logic")]
 #[test]
 fn float_entries_also_match_integers() {
     // Known difference with the Agent's V1 accessor, which only matches doubles for float64
@@ -338,6 +352,7 @@ fn float_entries_also_match_integers() {
     assert_eq!(lookup_i64(&attrs, Concept::DdTopLevel), Some(1));
 }
 
+#[cfg_attr(miri, ignore = "no unsafe in crate; pure registry lookup logic")]
 #[test]
 fn grpc_status_code_conditional_fallback() {
     // Same cases as the Agent's TestGRPCStatusCodeConditionalFallback.
@@ -417,6 +432,7 @@ fn grpc_status_code_conditional_fallback() {
     assert_eq!(lookup_i64(&typed, Concept::RpcGrpcStatusCode), Some(7));
 }
 
+#[cfg_attr(miri, ignore = "no unsafe in crate; pure registry lookup logic")]
 #[test]
 fn conditions_treat_empty_strings_as_absent() {
     // rpc.system.name is empty, so the legacy rpc.system=grpc branch applies.

@@ -183,6 +183,7 @@ mod tests {
         }
     }
 
+    #[cfg_attr(miri, ignore = "safe trait reads over pb maps; no unsafe in path")]
     #[test]
     fn span_reads_meta_and_metrics() {
         let span = pb::Span {
@@ -209,6 +210,7 @@ mod tests {
         assert!(!span.has_top_level());
     }
 
+    #[cfg_attr(miri, ignore = "safe trait reads over pb maps; no unsafe in path")]
     #[test]
     fn links_and_events_read_attributes() {
         let link = pb::SpanLink {

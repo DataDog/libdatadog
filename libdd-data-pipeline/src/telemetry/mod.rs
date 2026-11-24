@@ -461,6 +461,7 @@ mod tests {
             .expect("Failed to spawn worker");
         (client, handle)
     }
+    #[cfg_attr(miri, ignore = "pure error-to-metric mapping; no unsafe in path")]
     #[test]
     fn builder_test() {
         let builder = TelemetryClientBuilder::default()
@@ -800,6 +801,7 @@ mod tests {
             .expect("Failed to get runtime");
     }
 
+    #[cfg_attr(miri, ignore = "pure error-to-metric mapping; no unsafe in path")]
     #[test]
     fn telemetry_from_ok_response_test() {
         let result = Ok((
@@ -822,6 +824,7 @@ mod tests {
         )
     }
 
+    #[cfg_attr(miri, ignore = "pure error-to-metric mapping; no unsafe in path")]
     #[test]
     fn telemetry_from_request_error_test() {
         let error_response = http::Response::builder()
@@ -844,6 +847,7 @@ mod tests {
         )
     }
 
+    #[cfg_attr(miri, ignore = "pure error-to-metric mapping; no unsafe in path")]
     #[test]
     fn telemetry_from_network_error_test() {
         let result = Err(SendWithRetryError::Network(
@@ -862,6 +866,7 @@ mod tests {
         )
     }
 
+    #[cfg_attr(miri, ignore = "pure error-to-metric mapping; no unsafe in path")]
     #[test]
     fn telemetry_from_timeout_error_test() {
         let result = Err(SendWithRetryError::Timeout(5));
@@ -892,6 +897,7 @@ mod tests {
         )
     }
 
+    #[cfg_attr(miri, ignore = "pure error-to-metric mapping; no unsafe in path")]
     #[test]
     fn telemetry_from_send_data_result_test() {
         let result = SendDataResult {
@@ -1042,6 +1048,7 @@ mod tests {
             .expect("Failed to get runtime");
     }
 
+    #[cfg_attr(miri, ignore = "pure error-to-metric mapping; no unsafe in path")]
     #[test]
     fn failures_preserve_attempts_and_distinguish_drop_reasons() {
         for (error, expected) in [

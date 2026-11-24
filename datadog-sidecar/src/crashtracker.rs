@@ -360,6 +360,7 @@ mod tests {
 
     /// The collector's first-message bytes must decode, via the normal IPC codec, back to the
     /// `EnterCrashtrackerReceiver` request — i.e. a real protocol message, not a magic marker.
+    #[cfg_attr(miri, ignore = "bincode decode of request bytes; no unsafe in path")]
     #[test]
     fn receiver_request_bytes_decode_to_variant() {
         use crate::service::sidecar_interface::SidecarInterfaceRequest;
