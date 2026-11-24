@@ -39,6 +39,9 @@ pub enum EmitterError {
     AtomicSetError(#[from] crate::collector::atomic_set::AtomicSetError),
     #[error("Serialization error: {0}")]
     SerializationError(#[from] serde_json::Error),
+    #[cfg(all(target_os = "linux", feature = "otel-thread-ctx"))]
+    #[error(transparent)]
+    Ptrace(#[from] crate::ptrace_collector::PtraceError),
 }
 
 /// Crash-kind-specific data passed to `emit_crashreport`.
@@ -163,13 +166,13 @@ pub(crate) fn emit_crashreport(
     // When collector_threads is false, the receiver will handle otel collection.
     #[cfg(all(target_os = "linux", feature = "otel-thread-ctx"))]
     if collector_threads && config.collect_otel_thread_contexts() {
-        let _ = emit_otel_thread_contexts(
+        emit_otel_thread_contexts(
             pipe,
             ppid,
             crashing_tid,
             config.max_threads(),
             threads_deadline,
-        );
+        )?;
     }
 
     writeln!(pipe, "{DD_CRASHTRACK_DONE}")?;
@@ -480,8 +483,7 @@ fn emit_threads<W: Write + Send>(
         crash_site_registers, parse_hex_address, stream_thread_contexts, thread_data_from_capture,
     };
 
-    let budget = deadline.saturating_duration_since(Instant::now());
-    if budget.is_zero() {
+    if Instant::now() >= deadline {
         return Ok(());
     }
 
@@ -546,7 +548,7 @@ fn emit_threads<W: Write + Send>(
                     ppid,
                     crashing_tid,
                     config.max_threads(),
-                    budget,
+                    deadline,
                     crashing_context
                         .as_ref()
                         .filter(|_| config.unwind_from_ucontext()),
@@ -1043,6 +1045,10 @@ fn emit_otel_thread_contexts(
     use crate::ptrace_collector::{
         attach_thread, detach_thread, enumerate_threads, read_thread_pointer,
     };
+
+    if Instant::now() >= deadline {
+        return Ok(());
+    }
 
     let slot_addr = libdd_otel_thread_ctx::linux::tls_slot_address();
     if slot_addr == 0 {
