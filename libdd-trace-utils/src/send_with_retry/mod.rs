@@ -15,6 +15,7 @@ use futures::future::{Either, select};
 use http::HeaderMap;
 use libdd_capabilities::{HttpClientCapability, HttpError, SleepCapability};
 use libdd_common::Endpoint;
+use libdd_host_identity::entity_id::EntityHeadersExt;
 use libdd_networking::endpoint::EndpointExt;
 use std::time::Duration;
 use tracing::{debug, error};
@@ -62,9 +63,10 @@ impl std::error::Error for SendWithRetryError {}
 /// HTTP 4xx/5xx responses are retried; other non-2xx responses are terminal
 /// errors. Redirects are not followed by this helper.
 ///
-/// Standard endpoint headers (user-agent, api-key, test-token, entity headers) are set
-/// automatically via [`Endpoint::set_standard_headers`]. Additional `headers` are appended to the
-/// request. The request is executed with a timeout of [`Endpoint::timeout_ms`].
+/// Standard endpoint headers (user-agent, api-key, test-token) are set via
+/// [`Endpoint::set_standard_headers`], entity headers via
+/// [`EntityHeadersExt::with_entity_headers`]. Additional `headers` are appended to the request. The
+/// request is executed with a timeout of [`Endpoint::timeout_ms`].
 ///
 /// # Returns
 ///
@@ -162,7 +164,9 @@ pub async fn send_with_retry_and_size<C: HttpClientCapability + SleepCapability>
         let mut builder = http::Request::builder()
             .method(http::Method::POST)
             .uri(target.url.clone());
-        builder = target.set_standard_headers(builder, TRACE_EXPORTER_USER_AGENT);
+        builder = target
+            .set_standard_headers(builder, TRACE_EXPORTER_USER_AGENT)
+            .with_entity_headers();
         for (key, value) in headers {
             builder = builder.header(key, value);
         }

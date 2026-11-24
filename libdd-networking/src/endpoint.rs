@@ -10,18 +10,23 @@ use libdd_common::Endpoint;
 /// Extension trait holding the request-handling logic for an [`Endpoint`]: standard headers,
 /// request builders and (with the `reqwest` feature) a configured reqwest client builder.
 pub trait EndpointExt {
-    /// Apply standard headers (user-agent, api-key, test-token, entity headers) to an
+    /// Apply standard headers (user-agent, api-key, test-token) to an
     /// [`http::request::Builder`].
+    ///
+    /// Entity headers (`datadog-container-id`, `datadog-entity-id`, `datadog-external-env`) are
+    /// not added. Requests that need them chain
+    /// `libdd_host_identity::entity_id::EntityHeadersExt::with_entity_headers()`.
     fn set_standard_headers(
         &self,
         builder: http::request::Builder,
         user_agent: &str,
     ) -> http::request::Builder;
 
-    /// Return a request builder with the following headers:
+    /// Return a request builder for this endpoint's URL with the following headers:
     /// - User agent
-    /// - Api key
-    /// - Container Id/Entity Id
+    /// - Api key and test token, when set
+    ///
+    /// Entity headers are not added; see [`EndpointExt::set_standard_headers`].
     fn to_request_builder(&self, user_agent: &str) -> anyhow::Result<http::request::Builder>;
 
     /// Creates a reqwest ClientBuilder configured for this endpoint.
@@ -62,9 +67,6 @@ impl EndpointExt for Endpoint {
         for (name, value) in self.get_optional_headers() {
             builder = builder.header(name, value);
         }
-        for (name, value) in libdd_host_identity::entity_id::get_entity_headers() {
-            builder = builder.header(name, value);
-        }
         builder
     }
 
@@ -75,11 +77,6 @@ impl EndpointExt for Endpoint {
 
         // Add optional endpoint headers (api-key, test-token)
         for (name, value) in self.get_optional_headers() {
-            builder = builder.header(name, value);
-        }
-
-        // Add entity-related headers (container-id, entity-id, external-env)
-        for (name, value) in libdd_host_identity::entity_id::get_entity_headers() {
             builder = builder.header(name, value);
         }
 
