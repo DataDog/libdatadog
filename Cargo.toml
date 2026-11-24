@@ -71,6 +71,7 @@ members = [
   "libdd-log-ffi",
   "libdd-sampling",
   "libdd-trace-model",
+  "libdd-trace-semantics",
   "libdd-networking",
 ]
 
@@ -116,7 +117,7 @@ ignored = [
 [workspace.package]
 rust-version = "1.91.1"
 edition = "2024"
-version = "50.0.0"
+version = "51.0.0"
 license = "Apache-2.0"
 authors = ["Datadog Inc. <info@datadoghq.com>"]
 
@@ -348,7 +349,7 @@ windows-sys = { version = "0.52", default-features = false }
 winresource = { version = "0.1", default-features = false }
 winver = { version = "1.0.0", default-features = false }
 zip = { version = "4.0.0", default-features = false }
-zrip = { version = "=0.6.0", default-features = false }
+zrip = { version = "=0.8.21", default-features = false }
 zstd = { version = "0.14.3", default-features = false }
 zwohash = { version = "0.1.2", default-features = false }
 

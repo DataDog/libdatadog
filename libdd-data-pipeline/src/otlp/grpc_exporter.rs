@@ -3,7 +3,7 @@
 
 //! OTLP gRPC trace exporter.
 //!
-//! Each send opens a fresh plaintext HTTP/2 connection driven by ephemeral per-request tasks and
+//! Each send opens a fresh plaintext TCP or Unix HTTP/2 connection driven by per-request tasks and
 //! dropped when the send completes, so no background task persists to be orphaned across `fork(2)`.
 //! TLS (`https://`) is not supported.
 
@@ -181,12 +181,12 @@ pub(crate) mod prost_codec {
     }
 }
 
-/// Custom gRPC transport: a `tonic::client::GrpcService` that dials a fresh h2c connection per
-/// request.
-#[derive(Clone, Debug)]
-pub(crate) struct H2Service {
-    /// `host:port` dialed per request (plaintext h2c, prior knowledge).
-    authority: Arc<str>,
+/// Dials a fresh plaintext HTTP/2 connection for each gRPC request.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) enum H2Service {
+    Tcp(Arc<str>),
+    #[cfg(unix)]
+    Unix(Arc<str>),
 }
 
 impl GrpcService<TonicBody> for H2Service {
@@ -201,38 +201,55 @@ impl GrpcService<TonicBody> for H2Service {
     }
 
     fn call(&mut self, req: http::Request<TonicBody>) -> Self::Future {
-        let authority = self.authority.clone();
+        let endpoint = self.clone();
         Box::pin(async move {
-            let tcp = TcpStream::connect(authority.as_ref()).await?;
-            tcp.set_nodelay(true)?;
-            let io = TokioIo::new(tcp);
-            // handshake() spawns the socket-driver task (ephemeral) via TokioExecutor.
-            let (mut sender, conn) = http2::Builder::new(TokioExecutor::new())
-                .adaptive_window(true)
-                .handshake::<_, TonicBody>(io)
-                .await?;
-            let request = async move {
-                let resp = sender.send_request(req).await?;
-                let (parts, incoming) = resp.into_parts();
-                let collected = Limited::new(incoming, MAX_GRPC_RESPONSE_SIZE)
-                    .collect()
-                    .await?;
-                Ok::<_, BoxError>(http::Response::from_parts(parts, collected))
-            };
-            tokio::pin!(conn);
-            tokio::pin!(request);
-
-            let response = tokio::select! {
-                biased;
-                response = &mut request => response?,
-                connection = &mut conn => {
-                    let _ = connection;
-                    request.await?
+            match endpoint {
+                H2Service::Tcp(authority) => {
+                    let tcp = TcpStream::connect(authority.as_ref()).await?;
+                    tcp.set_nodelay(true)?;
+                    send_h2_request(tcp, req).await
                 }
-            };
-            Ok(response)
+                #[cfg(unix)]
+                H2Service::Unix(path) => {
+                    let socket = tokio::net::UnixStream::connect(path.as_ref()).await?;
+                    send_h2_request(socket, req).await
+                }
+            }
         })
     }
+}
+
+async fn send_h2_request<S>(
+    socket: S,
+    req: http::Request<TonicBody>,
+) -> Result<http::Response<Collected<Bytes>>, BoxError>
+where
+    S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send + 'static,
+{
+    let (mut sender, conn) = http2::Builder::new(TokioExecutor::new())
+        .adaptive_window(true)
+        .handshake::<_, TonicBody>(TokioIo::new(socket))
+        .await?;
+    let request = async move {
+        let resp = sender.send_request(req).await?;
+        let (parts, incoming) = resp.into_parts();
+        let collected = Limited::new(incoming, MAX_GRPC_RESPONSE_SIZE)
+            .collect()
+            .await?;
+        Ok::<_, BoxError>(http::Response::from_parts(parts, collected))
+    };
+    tokio::pin!(conn);
+    tokio::pin!(request);
+
+    let response = tokio::select! {
+        biased;
+        response = &mut request => response?,
+        connection = &mut conn => {
+            let _ = connection;
+            request.await?
+        }
+    };
+    Ok(response)
 }
 
 /// A gRPC transport for OTLP trace export: per-request config, request origin, and the dial
@@ -247,16 +264,32 @@ pub(crate) struct OtlpGrpcTransport {
     metadata_headers: Vec<(AsciiMetadataKey, AsciiMetadataValue)>,
 }
 
-/// Validate a gRPC endpoint (plaintext `http://` only) and build the transport.
-pub(crate) fn build_grpc_transport(
-    endpoint_url: &str,
-    config: OtlpGrpcTraceConfig,
-) -> Result<OtlpGrpcTransport, TraceExporterError> {
-    let OtlpGrpcTraceConfig {
-        headers,
-        timeout,
-        otel_trace_semantics_enabled,
-    } = config;
+fn parse_grpc_endpoint(endpoint_url: &str) -> Result<(H2Service, http::Uri), TraceExporterError> {
+    if let Some(path) = endpoint_url.strip_prefix("unix://") {
+        #[cfg(unix)]
+        {
+            if !path.starts_with('/') || path.len() == 1 || path.contains(['?', '#', '\0']) {
+                return Err(TraceExporterError::Builder(BuilderErrorKind::InvalidUri(
+                    "gRPC Unix endpoint must contain an absolute socket path without a query or fragment"
+                        .to_string(),
+                )));
+            }
+            // The filesystem path selects the socket, not an HTTP authority or RPC prefix.
+            return Ok((
+                H2Service::Unix(Arc::from(path)),
+                http::Uri::from_static("http://localhost/"),
+            ));
+        }
+        #[cfg(not(unix))]
+        {
+            let _ = path;
+            return Err(TraceExporterError::Builder(
+                BuilderErrorKind::InvalidConfiguration(
+                    "gRPC Unix socket endpoints are not supported on this platform".to_string(),
+                ),
+            ));
+        }
+    }
     let uri = endpoint_url.parse::<http::Uri>()?;
 
     let scheme = uri.scheme().ok_or_else(|| {
@@ -305,9 +338,7 @@ pub(crate) fn build_grpc_transport(
             )));
         }
     };
-    let service = H2Service {
-        authority: Arc::from(dial_authority),
-    };
+    let endpoint = H2Service::Tcp(Arc::from(dial_authority));
 
     // Origin = scheme+authority + normalized path prefix; tonic appends the RPC method path.
     let prefix = uri.path().trim_end_matches('/').to_string();
@@ -319,6 +350,21 @@ pub(crate) fn build_grpc_transport(
     };
     let origin = http::Uri::from_parts(origin_parts)
         .map_err(|e| TraceExporterError::Builder(BuilderErrorKind::InvalidUri(e.to_string())))?;
+
+    Ok((endpoint, origin))
+}
+
+/// Validate a plaintext HTTP or Unix socket gRPC endpoint and build the transport.
+pub(crate) fn build_grpc_transport(
+    endpoint_url: &str,
+    config: OtlpGrpcTraceConfig,
+) -> Result<OtlpGrpcTransport, TraceExporterError> {
+    let OtlpGrpcTraceConfig {
+        headers,
+        timeout,
+        otel_trace_semantics_enabled,
+    } = config;
+    let (service, origin) = parse_grpc_endpoint(endpoint_url)?;
 
     // Parse custom headers to gRPC metadata once here rather than on every send. Invalid entries
     // are skipped with a single warning (logging only the key: a value may carry a secret).
@@ -565,11 +611,50 @@ mod build_tests {
         assert!(build_grpc_transport("http://localhost:4317", cfg()).is_ok());
     }
 
+    #[cfg(unix)]
+    #[test]
+    fn accepts_unix_without_a_runtime_or_socket() {
+        let transport = build_grpc_transport("unix:///dev/otel-grpc.sock", cfg()).unwrap();
+        assert_eq!(
+            transport.origin,
+            "http://localhost/".parse::<http::Uri>().unwrap()
+        );
+        assert_eq!(
+            transport.service,
+            H2Service::Unix(Arc::from("/dev/otel-grpc.sock"))
+        );
+    }
+
+    #[test]
+    fn rejects_invalid_unix_endpoints() {
+        for endpoint in [
+            "unix://",
+            "unix:///",
+            "unix://relative",
+            "unix://host/tmp/otel.sock",
+            "unix:///tmp/otel.sock?query",
+            "unix:///tmp/otel.sock#fragment",
+            "unix:///tmp/otel\0.sock",
+        ] {
+            assert!(
+                build_grpc_transport(endpoint, cfg()).is_err(),
+                "accepted invalid endpoint {endpoint}"
+            );
+        }
+    }
+
+    #[cfg(not(unix))]
+    #[test]
+    fn rejects_unix_on_unsupported_platforms() {
+        let error = build_grpc_transport("unix:///dev/otel-grpc.sock", cfg()).unwrap_err();
+        assert!(error.to_string().contains("not supported on this platform"));
+    }
+
     #[test]
     fn supplies_http_default_port_for_dialing() {
         let transport = build_grpc_transport("http://collector", cfg()).unwrap();
 
-        assert_eq!(transport.service.authority.as_ref(), "collector:80");
+        assert_eq!(transport.service, H2Service::Tcp("collector:80".into()));
         assert_eq!(
             transport
                 .origin
@@ -579,16 +664,16 @@ mod build_tests {
         );
 
         let ipv6_transport = build_grpc_transport("http://[::1]", cfg()).unwrap();
-        assert_eq!(ipv6_transport.service.authority.as_ref(), "[::1]:80");
+        assert_eq!(ipv6_transport.service, H2Service::Tcp("[::1]:80".into()));
     }
 
     #[test]
     fn preserves_explicit_port_for_dialing() {
         let transport = build_grpc_transport("http://collector:4317", cfg()).unwrap();
-        assert_eq!(transport.service.authority.as_ref(), "collector:4317");
+        assert_eq!(transport.service, H2Service::Tcp("collector:4317".into()));
 
         let ipv6_transport = build_grpc_transport("http://[::1]:4317", cfg()).unwrap();
-        assert_eq!(ipv6_transport.service.authority.as_ref(), "[::1]:4317");
+        assert_eq!(ipv6_transport.service, H2Service::Tcp("[::1]:4317".into()));
     }
 
     #[test]
@@ -707,9 +792,7 @@ mod integration_tests {
             sender.await.unwrap();
         });
 
-        let mut service = H2Service {
-            authority: Arc::from(addr.to_string()),
-        };
+        let mut service = H2Service::Tcp(Arc::from(addr.to_string()));
         let request = http::Request::builder()
             .uri("http://localhost/")
             .body(TonicBody::empty())
@@ -734,6 +817,13 @@ mod integration_tests {
 
     async fn run_one_shot_grpc_server(listener: TcpListener) -> ExportTraceServiceRequest {
         let (socket, _) = listener.accept().await.unwrap();
+        serve_grpc_request(socket).await
+    }
+
+    async fn serve_grpc_request<S>(socket: S) -> ExportTraceServiceRequest
+    where
+        S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send + 'static,
+    {
         let mut conn = server::handshake(socket).await.unwrap();
         let (req, mut respond) = conn.accept().await.unwrap().unwrap();
         // `respond`/`body` only touch h2's in-memory state: the connection itself has to keep
@@ -767,10 +857,65 @@ mod integration_tests {
             decoded
         });
         let _ = tokio::time::timeout(Duration::from_secs(2), async {
-            while conn.accept().await.is_some() {}
+            while let Some(Ok(_)) = conn.accept().await {}
         })
         .await;
         handler.await.unwrap()
+    }
+
+    #[cfg(unix)]
+    #[cfg_attr(miri, ignore)]
+    #[tokio::test]
+    async fn sends_over_unix_socket_with_a_fresh_connection_per_request() {
+        let directory = tempfile::tempdir_in("/tmp").unwrap();
+        let path = directory.path().join("otel.sock");
+        let listener = tokio::net::UnixListener::bind(&path).unwrap();
+        let server = tokio::spawn(async move {
+            let mut requests = Vec::new();
+            for _ in 0..2 {
+                let (socket, _) = listener.accept().await.unwrap();
+                requests.push(serve_grpc_request(socket).await);
+            }
+            requests
+        });
+
+        let transport = build_grpc_transport(&format!("unix://{}", path.display()), cfg()).unwrap();
+        let mut request = ExportTraceServiceRequest::default();
+        request.resource_spans.push(Default::default());
+        for _ in 0..2 {
+            send_otlp_traces_grpc(&transport, None, false, Arc::new(request.clone()))
+                .await
+                .expect("Unix socket export should succeed");
+        }
+        let requests = tokio::time::timeout(Duration::from_secs(5), server)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(requests, vec![request.clone(), request]);
+    }
+
+    #[cfg(unix)]
+    #[cfg_attr(miri, ignore)]
+    #[tokio::test]
+    async fn missing_unix_socket_is_a_retryable_send_error() {
+        let directory = tempfile::tempdir_in("/tmp").unwrap();
+        let path = directory.path().join("missing.sock");
+        let transport = build_grpc_transport(&format!("unix://{}", path.display()), cfg()).unwrap();
+        let error = send_otlp_traces_grpc(
+            &transport,
+            None,
+            false,
+            Arc::new(ExportTraceServiceRequest::default()),
+        )
+        .await
+        .unwrap_err();
+        assert!(matches!(
+            error,
+            GrpcExportError::Retryable {
+                error: TraceExporterError::Io(_),
+                retry_after: None
+            }
+        ));
     }
 
     #[cfg_attr(miri, ignore)]

@@ -73,30 +73,34 @@ impl Connector {
     /// Make sure this function is not called frequently. Fetching the root certificates is an
     /// expensive operation. Access the globally cached connector via Connector::default().
     fn new() -> Self {
+        // Load the root certificates once for both the direct connector and the proxy.
+        #[cfg(feature = "tls-core")]
+        let tls_config = https::build_tls_config().ok();
+
+        let direct = Self::direct(
+            #[cfg(feature = "tls-core")]
+            tls_config.clone(),
+        );
+
         #[cfg(feature = "hyper-proxy")]
-        {
-            Connector::Proxy(Box::new(proxy::HttpProxyConnector::new(
-                Self::new_no_proxy(),
-            )))
-        }
-        #[cfg(not(feature = "hyper-proxy"))]
-        {
-            Self::new_no_proxy()
-        }
+        let direct = Connector::Proxy(Box::new(proxy::HttpProxyConnector::new(
+            direct,
+            #[cfg(feature = "tls-core")]
+            tls_config,
+        )));
+
+        direct
     }
 
-    pub(super) fn new_no_proxy() -> Self {
+    /// A direct connector using `tls_config`, or plain HTTP if no TLS configuration could be
+    /// built.
+    fn direct(#[cfg(feature = "tls-core")] tls_config: Option<rustls::ClientConfig>) -> Self {
         #[cfg(feature = "tls-core")]
-        {
-            match https::build_https_connector() {
-                Ok(connector) => Connector::Https(connector),
-                Err(_) => Connector::Http(connect::HttpConnector::new()),
-            }
+        if let Some(tls_config) = tls_config {
+            return Connector::Https(https::build_https_connector(tls_config));
         }
-        #[cfg(not(feature = "tls-core"))]
-        {
-            Connector::Http(connect::HttpConnector::new())
-        }
+
+        Connector::Http(connect::HttpConnector::new())
     }
 
     fn build_conn_stream(
@@ -163,12 +167,22 @@ pub(crate) mod https {
         Ok(())
     }
 
+    #[cfg(test)]
+    thread_local! {
+        /// TLS configurations built by this thread, so tests can check how often the root
+        /// certificates are loaded.
+        pub(crate) static TLS_CONFIGS_BUILT: core::cell::Cell<usize> =
+            const { core::cell::Cell::new(0) };
+    }
+
     /// Builds the TLS configuration shared by every libdd-networking HTTPS client:
     /// the hyper connector, the hyper-proxy tunnel and dialer, and the reqwest
     /// client builder (see `EndpointExt::to_reqwest_client_builder`).
     #[cfg(feature = "use_webpki_roots")]
     pub(crate) fn build_tls_config() -> anyhow::Result<ClientConfig> {
         ensure_crypto_provider_initialized(); // One-time initialization of a crypto provider if needed
+        #[cfg(test)]
+        TLS_CONFIGS_BUILT.with(|built| built.set(built.get() + 1));
         require_crypto_provider()?;
 
         Ok(ClientConfig::builder()
@@ -190,6 +204,8 @@ pub(crate) mod https {
         use super::certificate_distrust::DistrustServerCertVerifier;
 
         ensure_crypto_provider_initialized(); // One-time initialization of a crypto provider if needed
+        #[cfg(test)]
+        TLS_CONFIGS_BUILT.with(|built| built.set(built.get() + 1));
         require_crypto_provider()?;
 
         let builder = ClientConfig::builder();
@@ -201,14 +217,14 @@ pub(crate) mod https {
             .with_no_client_auth())
     }
 
-    pub(super) fn build_https_connector() -> anyhow::Result<
-        hyper_rustls::HttpsConnector<hyper_util::client::legacy::connect::HttpConnector>,
-    > {
-        Ok(hyper_rustls::HttpsConnectorBuilder::new()
-            .with_tls_config(build_tls_config()?)
+    pub(super) fn build_https_connector(
+        tls_config: ClientConfig,
+    ) -> hyper_rustls::HttpsConnector<hyper_util::client::legacy::connect::HttpConnector> {
+        hyper_rustls::HttpsConnectorBuilder::new()
+            .with_tls_config(tls_config)
             .https_or_http()
             .enable_http1()
-            .build())
+            .build()
     }
 }
 
@@ -282,12 +298,27 @@ mod tests {
 
         unsafe { env::set_var(ENV_SSL_CERT_FILE, "this/folder/does/not/exist") };
         unsafe { env::set_var(ENV_SSL_CERT_DIR, "this/folder/does/not/exist") };
-        let connector = Connector::new_no_proxy();
+        let connector = Connector::direct(
+            #[cfg(feature = "tls-core")]
+            https::build_tls_config().ok(),
+        );
 
         assert!(matches!(connector, Connector::Http(_)));
 
         unsafe { env::set_var(ENV_SSL_CERT_FILE, old_value) };
         unsafe { env::set_var(ENV_SSL_CERT_DIR, old_dir_value) };
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    #[cfg(feature = "tls-core")]
+    /// Verify that building the connector loads the root certificates only once, also when the
+    /// direct connector is wrapped in the proxy connector.
+    fn test_new_builds_tls_config_once() {
+        let built = || super::https::TLS_CONFIGS_BUILT.with(|built| built.get());
+        let before = built();
+        let _connector = super::Connector::new();
+        assert_eq!(built() - before, 1);
     }
 
     #[test]
@@ -301,7 +332,7 @@ mod tests {
         let old_value = env::var(ENV_SSL_CERT_FILE).unwrap_or_default();
 
         unsafe { env::set_var(ENV_SSL_CERT_FILE, "this/folder/does/not/exist") };
-        let connector = Connector::new_no_proxy();
+        let connector = Connector::direct(https::build_tls_config().ok());
         assert!(matches!(connector, Connector::Https(_)));
 
         unsafe { env::set_var(ENV_SSL_CERT_FILE, old_value) };

@@ -6,6 +6,7 @@ name = "libdd-library-config-ffi"
 version = "0.0.2"
 edition.workspace = true
 rust-version.workspace = true
+license.workspace = true
 publish = false
 
 [lib]

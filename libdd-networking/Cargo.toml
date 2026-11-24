@@ -3,7 +3,7 @@
 
 [package]
 name = "libdd-networking"
-version = "1.0.0"
+version = "0.1.0"
 edition.workspace = true
 rust-version.workspace = true
 description = "Shared networking utilities for Datadog libraries"
@@ -19,8 +19,7 @@ pin-project = { workspace = true, optional = true }
 http.workspace = true
 httparse = { workspace = true, optional = true }
 hyper-rustls = { workspace = true, features = ["http1", "tls12"], optional = true }
-libdd-common = { path = "../libdd-common", version = "9.0.0" }
-libdd-host-identity = { version = "1.0.0", path = "../libdd-host-identity" }
+libdd-common = { path = "../libdd-common", version = "10.0.0" }
 rand = { workspace = true, default-features = true, optional = true }
 # Use hickory-dns instead of the default system DNS resolver to avoid fork safety issues.
 # The default resolver can hold locks or other global state that can cause deadlocks
@@ -51,7 +50,7 @@ tower-service = { workspace = true, optional = true }
 
 [target.'cfg(unix)'.dependencies]
 # Used by conn_stream.rs and dump_server.rs (both gated by `http-client`).
-libdd-process-utils = { version = "1.0.0", path = "../libdd-process-utils", optional = true }
+libdd-process-utils = { version = "0.1.0", path = "../libdd-process-utils", optional = true }
 
 [dev-dependencies]
 rand = { workspace = true, default-features = true }

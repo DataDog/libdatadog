@@ -41,9 +41,9 @@ hashbrown.workspace = true
 http = { workspace = true, features = ["std"] }
 indexmap = { workspace = true, default-features = true }
 libdd-alloc = { version = "1.0.0", path = "../libdd-alloc" }
-libdd-common = { version = "9.0.0", path = "../libdd-common", default-features = false }
-libdd-host-identity = { version = "1.0.0", path = "../libdd-host-identity" }
-libdd-networking = { path = "../libdd-networking", version = "1.0.0", default-features = false, features = ["reqwest", "tls-distrust"] }
+libdd-common = { version = "10.0.0", path = "../libdd-common", default-features = false }
+libdd-host-identity = { version = "0.1.0", path = "../libdd-host-identity" }
+libdd-networking = { path = "../libdd-networking", version = "0.1.0", default-features = false, features = ["reqwest", "tls-distrust"] }
 libdd-profiling-protobuf = { version = "2.0.0", path = "../libdd-profiling-protobuf", features = ["prost_impls"] }
 opentelemetry-proto = { workspace = true, optional = true, features = ["profiles", "gen-tonic-messages"] }
 parking_lot.workspace = true
@@ -78,7 +78,7 @@ zrip = { workspace = true, features = ["frame"] }
 [dev-dependencies]
 bolero = { workspace = true, features = ["std"] }
 criterion.workspace = true
-libdd-process-utils = { version = "1.0.0", path = "../libdd-process-utils" }
+libdd-process-utils = { version = "0.1.0", path = "../libdd-process-utils" }
 tools = { path = "../tools", default-features = false, features = ["test-utils"] }
 # rand is only used by tests/exporter_e2e.rs (rand::random), never by the
 # library itself, so it lives in dev-dependencies. `rand::random` needs the

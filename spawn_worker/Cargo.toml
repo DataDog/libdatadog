@@ -4,6 +4,7 @@
 [package]
 edition.workspace = true
 rust-version.workspace = true
+license.workspace = true
 name = "spawn_worker"
 version = "0.0.1"
 publish = false

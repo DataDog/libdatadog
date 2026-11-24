@@ -720,7 +720,7 @@ dependencies = [
 
 [[package]]
 name = "build_common"
-version = "50.0.0"
+version = "51.0.0"
 dependencies = [
  "cbindgen",
  "serde_json",
@@ -729,7 +729,7 @@ dependencies = [
 
 [[package]]
 name = "builder"
-version = "50.0.0"
+version = "51.0.0"
 dependencies = [
  "anyhow",
  "build_common",
@@ -1367,7 +1367,7 @@ checksum = "d7a1e2f27636f116493b8b860f5546edb47c8d8f8ea73e1d2a20be88e28d1fea"
 
 [[package]]
 name = "datadog-profiling-replayer"
-version = "50.0.0"
+version = "51.0.0"
 dependencies = [
  "anyhow",
  "clap",
@@ -1403,6 +1403,7 @@ dependencies = [
  "libdd-data-pipeline",
  "libdd-dogstatsd-client",
  "libdd-ffe",
+ "libdd-host-identity",
  "libdd-ipc",
  "libdd-ipc-macros",
  "libdd-live-debugger",
@@ -2776,7 +2777,7 @@ checksum = "7581282928bc99698341d1de7590964c28db747c164eaac9409432a3eaed098a"
 
 [[package]]
 name = "libdd-agent-client"
-version = "50.0.0"
+version = "51.0.0"
 dependencies = [
  "bytes",
  "flate2",
@@ -2793,7 +2794,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-ai-usage"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "hashbrown 0.17.1",
  "libdd-ddsketch",
@@ -2806,7 +2807,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-ai-usage-ffi"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "cbindgen",
  "libdd-ai-usage",
@@ -2837,7 +2838,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-capabilities-impl"
-version = "8.0.0"
+version = "9.0.0"
 dependencies = [
  "anyhow",
  "bytes",
@@ -2853,7 +2854,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-common"
-version = "9.0.0"
+version = "10.0.0"
 dependencies = [
  "anyhow",
  "arc-swap",
@@ -2867,7 +2868,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-common-ffi"
-version = "50.0.0"
+version = "51.0.0"
 dependencies = [
  "anyhow",
  "assert_no_alloc",
@@ -2902,11 +2903,14 @@ dependencies = [
  "libdd-common",
  "libdd-env",
  "libdd-gotter",
+ "libdd-host-identity",
  "libdd-libunwind-sys",
  "libdd-networking",
  "libdd-otel-thread-ctx",
  "libdd-process-utils",
  "libdd-telemetry",
+ "libdd-trace-model",
+ "libdd-trace-utils",
  "nix 0.29.0",
  "num-derive",
  "num-traits",
@@ -2928,7 +2932,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-crashtracker-ffi"
-version = "50.0.0"
+version = "51.0.0"
 dependencies = [
  "anyhow",
  "build_common",
@@ -2947,7 +2951,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-data-pipeline"
-version = "13.0.0"
+version = "14.0.0"
 dependencies = [
  "anyhow",
  "arc-swap",
@@ -3002,7 +3006,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-data-pipeline-core"
-version = "4.0.0"
+version = "5.0.0"
 dependencies = [
  "anyhow",
  "bytes",
@@ -3023,7 +3027,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-data-pipeline-ffi"
-version = "50.0.0"
+version = "51.0.0"
 dependencies = [
  "build_common",
  "httpmock",
@@ -3045,7 +3049,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-ddsketch"
-version = "1.1.4"
+version = "1.2.0"
 dependencies = [
  "criterion",
  "prost",
@@ -3057,7 +3061,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-ddsketch-ffi"
-version = "50.0.0"
+version = "51.0.0"
 dependencies = [
  "build_common",
  "libdd-common-ffi",
@@ -3067,7 +3071,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-dogstatsd-client"
-version = "9.0.0"
+version = "10.0.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -3106,6 +3110,7 @@ dependencies = [
  "libdd-capabilities",
  "libdd-capabilities-impl",
  "libdd-common",
+ "libdd-host-identity",
  "libdd-networking",
  "libdd-regex",
  "libdd-remote-config",
@@ -3142,7 +3147,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-ffe-test-suite"
-version = "50.0.0"
+version = "51.0.0"
 dependencies = [
  "chrono",
  "criterion",
@@ -3162,8 +3167,9 @@ dependencies = [
 
 [[package]]
 name = "libdd-host-identity"
-version = "1.0.0"
+version = "0.1.0"
 dependencies = [
+ "http 1.1.0",
  "indexmap 2.12.1",
  "libc",
  "libdd-env",
@@ -3254,7 +3260,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-library-config"
-version = "5.0.0"
+version = "5.0.1"
 dependencies = [
  "anyhow",
  "libc",
@@ -3307,6 +3313,7 @@ dependencies = [
  "libdd-capabilities-impl",
  "libdd-common",
  "libdd-data-pipeline",
+ "libdd-host-identity",
  "libdd-networking",
  "libdd-regex",
  "libdd-remote-config",
@@ -3350,7 +3357,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-log-ffi"
-version = "50.0.0"
+version = "51.0.0"
 dependencies = [
  "build_common",
  "libdd-common-ffi",
@@ -3360,7 +3367,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-networking"
-version = "1.0.0"
+version = "0.1.0"
 dependencies = [
  "anyhow",
  "bytes",
@@ -3374,7 +3381,6 @@ dependencies = [
  "hyper-rustls",
  "hyper-util",
  "libdd-common",
- "libdd-host-identity",
  "libdd-process-utils",
  "pin-project",
  "rand 0.8.8",
@@ -3395,7 +3401,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-otel-thread-ctx"
-version = "2.0.0"
+version = "2.0.1"
 dependencies = [
  "anyhow",
  "elf",
@@ -3414,7 +3420,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-process-utils"
-version = "1.0.0"
+version = "0.1.0"
 dependencies = [
  "libc",
  "nix 0.29.0",
@@ -3520,7 +3526,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-profiling-heap-gotter-ffi"
-version = "50.0.0"
+version = "51.0.0"
 dependencies = [
  "anyhow",
  "build_common",
@@ -3533,7 +3539,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-profiling-heap-sampler"
-version = "1.1.2"
+version = "1.1.3"
 dependencies = [
  "anyhow",
  "bindgen 0.71.1",
@@ -3560,7 +3566,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-remote-config"
-version = "8.0.0"
+version = "9.0.0"
 dependencies = [
  "anyhow",
  "base64 0.22.1",
@@ -3602,7 +3608,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-sampling"
-version = "9.0.0"
+version = "10.0.0"
 dependencies = [
  "criterion",
  "libdd-common",
@@ -3615,7 +3621,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-shared-runtime"
-version = "7.0.0"
+version = "8.0.0"
 dependencies = [
  "async-trait",
  "futures",
@@ -3631,7 +3637,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-shared-runtime-ffi"
-version = "50.0.0"
+version = "51.0.0"
 dependencies = [
  "async-trait",
  "build_common",
@@ -3642,7 +3648,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-telemetry"
-version = "11.0.0"
+version = "12.0.0"
 dependencies = [
  "anyhow",
  "assert_no_alloc",
@@ -3684,7 +3690,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-telemetry-ffi"
-version = "50.0.0"
+version = "51.0.0"
 dependencies = [
  "build_common",
  "function_name",
@@ -3719,7 +3725,7 @@ version = "1.0.0"
 
 [[package]]
 name = "libdd-trace-normalization"
-version = "4.3.0"
+version = "4.3.1"
 dependencies = [
  "anyhow",
  "arbitrary",
@@ -3732,7 +3738,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-trace-obfuscation"
-version = "11.0.0"
+version = "12.0.0"
 dependencies = [
  "anyhow",
  "criterion",
@@ -3768,8 +3774,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "libdd-trace-semantics"
+version = "0.1.0"
+dependencies = [
+ "libdd-trace-model",
+ "proc-macro2",
+ "quote",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "libdd-trace-stats"
-version = "12.0.0"
+version = "13.0.0"
 dependencies = [
  "anyhow",
  "arc-swap",
@@ -3801,7 +3818,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-trace-utils"
-version = "15.0.0"
+version = "16.0.0"
 dependencies = [
  "allocator-api2",
  "anyhow",
@@ -3865,6 +3882,7 @@ dependencies = [
  "httpmock",
  "libdd-capabilities-impl",
  "libdd-common",
+ "libdd-host-identity",
  "libdd-networking",
  "libdd-remote-config",
  "libdd-trace-utils",
@@ -6080,7 +6098,7 @@ dependencies = [
 
 [[package]]
 name = "symbolizer-ffi"
-version = "50.0.0"
+version = "51.0.0"
 dependencies = [
  "blazesym-c",
  "build_common",
@@ -6536,7 +6554,7 @@ dependencies = [
 
 [[package]]
 name = "tools"
-version = "50.0.0"
+version = "51.0.0"
 dependencies = [
  "anyhow",
  "bytes",
@@ -7725,9 +7743,9 @@ dependencies = [
 
 [[package]]
 name = "zrip"
-version = "0.6.0"
+version = "0.8.21"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "964fe9f1ea10a0d183fc143a7525266cbe16978883dbe304725da34b314c04cf"
+checksum = "304e9e995447808b8ba1f681ea74baca5e191bf0dfd9dbaea5b43c9a63f20331"
 dependencies = [
  "zrip-core",
  "zrip-decode",
@@ -7736,24 +7754,24 @@ dependencies = [
 
 [[package]]
 name = "zrip-core"
-version = "0.6.0"
+version = "0.12.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "cbc201ba56175f86e67cc88bdaf1a7af9c061815c7dde719c7a6a1ed5aaa186b"
+checksum = "d6f789c9240e5a64ff37eed92fa5c0e32082b20f99d10ea9cb5b29ab58be9184"
 
 [[package]]
 name = "zrip-decode"
-version = "0.6.0"
+version = "0.8.16"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "038f795e49887bdeaab197fff84c8165644484a98dc3f2354e5df3d2e5f4f978"
+checksum = "8df46ccb3081f507acd3a594f287a17ca64b1e0f39b5dcb34eb8620d1ed3c421"
 dependencies = [
  "zrip-core",
 ]
 
 [[package]]
 name = "zrip-encode"
-version = "0.6.0"
+version = "0.9.10"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f3dfdcbb503db2045716492d5ab31cd82f2852d0d93d8edf6a9235653d9da685"
+checksum = "9760a87786b6c32271cc3a21e4fe247649ed2217d1f6f1666c9f3003729ada5f"
 dependencies = [
  "zrip-core",
 ]

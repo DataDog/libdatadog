@@ -490,6 +490,9 @@ impl<R: SharedRuntime> TraceExporterBuilder<R> {
     /// [`Self::set_url`] alongside OTLP is allowed; the agent URL is still used for
     /// auxiliary endpoints (e.g. agent info / stats).
     ///
+    /// On Unix, all protocols also support `unix:///absolute/path/to/socket`.
+    /// HTTP sends to `/v1/traces` on that socket; the socket path is not a request path.
+    ///
     /// Example: `set_otlp_endpoint("http://localhost:4318/v1/traces")`
     pub fn set_otlp_endpoint(&mut self, url: &str) -> &mut Self {
         self.otlp_endpoint = Some(url.to_owned());
@@ -500,7 +503,8 @@ impl<R: SharedRuntime> TraceExporterBuilder<R> {
     /// [`OtlpProtocol::HttpProtobuf`], or [`OtlpProtocol::Grpc`]. The host language resolves this
     /// from `OTEL_EXPORTER_OTLP_TRACES_PROTOCOL` / `OTEL_EXPORTER_OTLP_PROTOCOL`; all three OTel
     /// protocol strings (`http/json`, `http/protobuf`, `grpc`) parse into [`OtlpProtocol`]. gRPC
-    /// export requires a plaintext `http://` endpoint: an `https://` gRPC endpoint is rejected at
+    /// export accepts plaintext `http://` endpoints and `unix:///absolute/socket/path` on Unix.
+    /// An `https://` gRPC endpoint is rejected at
     /// [`build`](Self::build) time, and gRPC is not supported on wasm32 targets (also rejected at
     /// build time).
     pub fn set_otlp_protocol(&mut self, protocol: OtlpProtocol) -> &mut Self {

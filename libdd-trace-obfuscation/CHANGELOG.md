@@ -2,6 +2,14 @@
 
 
 
+## [12.0.0](https://github.com/datadog/libdatadog/compare/libdd-trace-obfuscation-v11.0.0..libdd-trace-obfuscation-v12.0.0) - 2026-10-28
+
+### Fixed
+
+- Admit URLs the rewrite replaces with "?" ([#2528](https://github.com/datadog/libdatadog/issues/2528)) - ([0cd24c2](https://github.com/datadog/libdatadog/commit/0cd24c22d593fa39b3b107592bca186ad2256304))
+
+
+
 ## [11.0.0](https://github.com/datadog/libdatadog/compare/libdd-trace-obfuscation-v10.0.0..libdd-trace-obfuscation-v11.0.0) - 2026-10-23
 
 ### Added
