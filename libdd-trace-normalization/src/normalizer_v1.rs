@@ -4,6 +4,10 @@
 //! Normalization of spans and trace chunks through the [`libdd_trace_model`] traits, mirroring the
 //! agent's `normalizeV1` and `normalizeTraceChunkV1` (`pkg/trace/agent/normalizer.go`). Senders
 //! that bypass the agent (agentless) apply it in the agent's place.
+//!
+//! The V1 protocol encodes the start and the duration of a span as `u64`, and the trait gives
+//! them as `i64`. The rules here give the agent's result for values up to `i64::MAX`, see
+//! [`libdd_trace_model::Span::start`] for the values above it.
 
 use crate::normalize_utils;
 use crate::normalizer::is_valid_http_status_code;
@@ -58,6 +62,14 @@ pub fn normalize_span<S: SpanMut>(span: &mut S, lang: &str) -> anyhow::Result<()
         span.set_parent_id(0);
     }
 
+    // The agent's `validateAndFixDurationV1` and `validateAndFixStartTimeV1` work on `u64`
+    // values, and the trait gives `i64` values. For a start and a duration up to `i64::MAX`, the
+    // `i64` rules give the same result: a duration that makes `start + duration` overflow
+    // `i64::MAX` becomes 0, and a start before the year 2000 becomes `now - duration`, or `now` if
+    // that is negative. A V1 duration above `i64::MAX` is a negative `i64` once bit-cast, which
+    // also becomes 0, as in the agent. A V1 start above `i64::MAX` doesn't fit (see
+    // `Span::start`): saturated to `i64::MAX`, its non-zero duration becomes 0, where the agent
+    // keeps it.
     let (mut start, mut duration) = (span.start(), span.duration());
     normalize_utils::normalize_span_start_duration(&mut start, &mut duration);
     span.set_start(start);
@@ -524,6 +536,47 @@ mod tests {
         });
         assert!(span.start > VALID_START);
         assert_eq!(span.duration, 10);
+    }
+
+    #[test]
+    fn start_and_duration_match_agent_u64_rules() {
+        // The agent's `validateAndFixDurationV1`, on `u64` values.
+        fn agent_duration(start: u64, duration: u64) -> u64 {
+            if duration > (i64::MAX as u64).wrapping_sub(start) {
+                0
+            } else {
+                duration
+            }
+        }
+        let max = i64::MAX as u64;
+        let valid = VALID_START as u64;
+        let starts = [946_684_800_000_000_000, valid, max - 1, max];
+        let durations = [
+            0,
+            1,
+            10,
+            max - valid,
+            max - valid + 1,
+            max,
+            // Bit-cast to a negative `i64`.
+            max + 1,
+            u64::MAX,
+        ];
+        for start in starts {
+            for duration in durations {
+                let span = normalize(TestSpan {
+                    start: start as i64,
+                    duration: duration as i64,
+                    ..valid_span()
+                });
+                let expected = agent_duration(start, duration);
+                assert_eq!(
+                    (span.start as u64, span.duration as u64),
+                    (start, expected),
+                    "start {start}, duration {duration}"
+                );
+            }
+        }
     }
 
     #[test]

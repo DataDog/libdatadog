@@ -215,8 +215,21 @@ pub trait Span: Attributes {
     /// The span id of this span's parent, 0 for a trace root
     fn parent_id(&self) -> u64;
     /// The start timestamp, in nanoseconds since the unix epoch
+    ///
+    /// # V1 spans
+    ///
+    /// The V1 protocol encodes the start and the duration as `u64`, and the agent's V1 path works
+    /// on `u64` values. A V1 value up to `i64::MAX` (until the year 2262) converts exactly, and
+    /// the rules of `libdd-trace-normalization`'s `normalizer_v1` give the agent's result for it.
+    /// A V1 start above `i64::MAX` doesn't fit: an implementation that saturates it to `i64::MAX`
+    /// gets a non-zero duration set to 0 by the normalizer, where the agent keeps it, and one that
+    /// bit-casts it gets a negative start, which the normalizer replaces.
     fn start(&self) -> i64;
     /// The duration, in nanoseconds
+    ///
+    /// For V1 spans, see [`Span::start`]. A V1 duration above `i64::MAX` is invalid: the agent
+    /// sets it to 0, and the normalizer does the same with a negative duration, so an
+    /// implementation can bit-cast it or saturate it.
     fn duration(&self) -> i64;
     /// Returns true if the span is an error
     fn is_error(&self) -> bool;
