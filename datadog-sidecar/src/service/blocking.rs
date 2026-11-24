@@ -694,11 +694,10 @@ mod tests {
         EvpTransportConfigWithIdentity::new(
             EvpTransportConfig::prefer_local_then_direct(
                 Endpoint::default(),
-                Some(Endpoint {
-                    url: format!("https://{target}.datadoghq.com").parse().unwrap(),
-                    api_key: Some("test-api-key".into()),
-                    ..Endpoint::default()
-                }),
+                Some(
+                    Endpoint::from_url(format!("https://{target}.datadoghq.com").parse().unwrap())
+                        .with_api_key("test-api-key"),
+                ),
                 target,
             ),
             EvpProducerIdentity::new("dd-trace-rb", version).unwrap(),

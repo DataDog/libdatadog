@@ -85,11 +85,8 @@ pub(crate) async fn send_otlp_http_with_observer<
             )))
         })?;
 
-    let target = Endpoint {
-        url,
-        timeout_ms: timeout.as_millis() as u64,
-        ..Endpoint::default()
-    };
+    let mut target = Endpoint::from_url(url);
+    target.set_timeout_ms(timeout.as_millis() as u64);
 
     let mut headers = config_headers.clone();
     headers.insert(http::header::CONTENT_TYPE, content_type);

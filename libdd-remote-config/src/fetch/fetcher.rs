@@ -481,10 +481,10 @@ impl<S: FileStorage, C: HttpClientCapability + SleepCapability> ConfigFetcher<S,
             biased;
             result = self.state.http_client.request(req) => result
                 .map_err(|e| anyhow::Error::msg(e).context(format!("Url: {:?}", self.state.endpoint)))?,
-            _ = sleeper.sleep(Duration::from_millis(self.state.endpoint.timeout_ms)) => {
+            _ = sleeper.sleep(Duration::from_millis(self.state.endpoint.timeout_ms())) => {
                 anyhow::bail!(
                     "Remote config request timed out after {}ms. Url: {:?}",
-                    self.state.endpoint.timeout_ms,
+                    self.state.endpoint.timeout_ms(),
                     self.state.endpoint
                 )
             }
@@ -819,16 +819,15 @@ impl<S: FileStorage, C: HttpClientCapability + SleepCapability> ConfigFetcher<S,
 }
 
 fn make_agent_configs_endpoint(endpoint: &Endpoint) -> Endpoint {
-    let mut parts = endpoint.url.clone().into_parts();
+    let mut parts = endpoint.url().clone().into_parts();
     parts.path_and_query = Some(PathAndQuery::from_static("/v0.7/config"));
     #[allow(clippy::unwrap_used)]
-    Endpoint {
-        url: http::Uri::from_parts(parts).unwrap(),
-        // Nullify the api key since we talk only to the agent
-        api_key: None,
-        test_token: endpoint.test_token.clone(),
-        ..*endpoint
-    }
+    let url = http::Uri::from_parts(parts).unwrap();
+    let mut endpoint = endpoint.clone();
+    endpoint.set_url(url);
+    // Nullify the api key since we talk only to the agent
+    endpoint.set_api_key(None);
+    endpoint
 }
 
 #[cfg(test)]

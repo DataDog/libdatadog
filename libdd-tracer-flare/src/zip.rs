@@ -415,10 +415,7 @@ impl TracerFlareManager {
             }
         };
 
-        let target = Endpoint {
-            url: agent_url,
-            ..Default::default()
-        };
+        let target = Endpoint::from_url(agent_url);
 
         let payload = Bytes::from(payload);
         let mut req = target
@@ -437,7 +434,7 @@ impl TracerFlareManager {
 
         let req = http_common::new_default_client().request(req);
 
-        match tokio::time::timeout(Duration::from_millis(target.timeout_ms), req).await {
+        match tokio::time::timeout(Duration::from_millis(target.timeout_ms()), req).await {
             Ok(resp) => match resp {
                 Ok(body) => {
                     let response = http_common::into_response(body);

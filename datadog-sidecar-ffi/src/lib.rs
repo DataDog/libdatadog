@@ -77,9 +77,13 @@ fn otlp_metrics_endpoint_with_agent_test_token(
     agent_endpoint: &Endpoint,
 ) -> Option<Endpoint> {
     if let Some(endpoint) = &mut otlp_metrics_endpoint
-        && endpoint.test_token.is_none()
+        && endpoint.test_token().is_none()
     {
-        endpoint.test_token = agent_endpoint.test_token.clone();
+        endpoint.set_test_token(
+            agent_endpoint
+                .test_token()
+                .map(|token| token.to_string().into()),
+        );
     }
 
     otlp_metrics_endpoint
@@ -2110,7 +2114,6 @@ pub extern "C" fn ddog_sidecar_appsec_response_drop(response: AppsecCResponse) {
 mod tests {
     use super::*;
     use datadog_sidecar::service::{MAX_CONTEXT_FIELDS, MAX_FIELD_LENGTH};
-    use std::borrow::Cow;
 
     fn ffi_producer_identity<'a>(origin: &'a str, version: &'a str) -> EvpProducerIdentity<'a> {
         EvpProducerIdentity {
@@ -2232,28 +2235,19 @@ mod tests {
 
     #[test]
     fn otlp_metrics_endpoint_inherits_agent_test_token_when_missing() {
-        let agent_endpoint = Endpoint {
-            test_token: Some(Cow::Borrowed("agent-token")),
-            ..Endpoint::default()
-        };
+        let agent_endpoint = Endpoint::default().with_test_token("agent-token");
 
         let endpoint =
             otlp_metrics_endpoint_with_agent_test_token(Some(Endpoint::default()), &agent_endpoint)
                 .expect("expected OTLP metrics endpoint");
 
-        assert_eq!(endpoint.test_token.as_deref(), Some("agent-token"));
+        assert_eq!(endpoint.test_token(), Some("agent-token"));
     }
 
     #[test]
     fn otlp_metrics_endpoint_keeps_explicit_test_token() {
-        let agent_endpoint = Endpoint {
-            test_token: Some(Cow::Borrowed("agent-token")),
-            ..Endpoint::default()
-        };
-        let otlp_metrics_endpoint = Endpoint {
-            test_token: Some(Cow::Borrowed("metrics-token")),
-            ..Endpoint::default()
-        };
+        let agent_endpoint = Endpoint::default().with_test_token("agent-token");
+        let otlp_metrics_endpoint = Endpoint::default().with_test_token("metrics-token");
 
         let endpoint = otlp_metrics_endpoint_with_agent_test_token(
             Some(otlp_metrics_endpoint),
@@ -2261,7 +2255,7 @@ mod tests {
         )
         .expect("expected OTLP metrics endpoint");
 
-        assert_eq!(endpoint.test_token.as_deref(), Some("metrics-token"));
+        assert_eq!(endpoint.test_token(), Some("metrics-token"));
     }
 
     fn ffi_exposure<'a>(serial_id: i32, has_serial_id: bool) -> FfeExposure<'a> {

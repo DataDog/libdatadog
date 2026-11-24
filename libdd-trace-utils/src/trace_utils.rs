@@ -346,14 +346,14 @@ pub fn coalesce_send_data(mut data: Vec<SendData>) -> Vec<SendData> {
     let hashers = [RandomState::new(), RandomState::new()];
     data.sort_by_cached_key(|data| {
         (
-            data.get_target().url.to_string(),
-            data.get_target().test_token.clone(),
+            data.get_target().url().to_string(),
+            data.get_target().test_token().map(str::to_string),
             data.tracer_payloads.v1_group_key(&hashers),
         )
     });
     data.dedup_by(|a, b| {
-        if a.get_target().url == b.get_target().url
-            && a.get_target().test_token == b.get_target().test_token
+        if a.get_target().url() == b.get_target().url()
+            && a.get_target().test_token() == b.get_target().test_token()
         {
             // Size is only an approximation. In practice it won't vary much, but be safe here.
             // We also don't care about the exact maximum size, like two 25 MB or one 50 MB request

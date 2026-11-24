@@ -57,7 +57,7 @@ pub async fn push_telemetry(telemetry: &Telemetry<'_>) -> anyhow::Result<()> {
     let timeout = Duration::from_millis(
         config
             .endpoint()
-            .map(|e| e.timeout_ms)
+            .map(|e| e.timeout_ms())
             .unwrap_or(libdd_types::Endpoint::DEFAULT_TIMEOUT),
     );
     let client = NativeCapabilities::new_client();

@@ -34,17 +34,16 @@ use tracing::{debug, error, info, warn};
 /// Build the stats endpoint by appending `/v0.6/stats` to the agent base URL.
 /// Returns `None` for agentless mode (API key present) — stats are not supported agentless.
 pub(crate) fn stats_endpoint(endpoint: &Endpoint) -> Option<Endpoint> {
-    if endpoint.api_key.is_some() {
+    if endpoint.api_key().is_some() {
         return None;
     }
-    let mut parts = endpoint.url.clone().into_parts();
+    let mut parts = endpoint.url().clone().into_parts();
     parts.path_and_query = Some(PathAndQuery::from_static(
         libdd_trace_stats::stats_exporter::STATS_ENDPOINT_PATH,
     ));
-    Some(Endpoint {
-        url: http::Uri::from_parts(parts).ok()?,
-        ..endpoint.clone()
-    })
+    let mut stats_endpoint = endpoint.clone();
+    stats_endpoint.set_url(http::Uri::from_parts(parts).ok()?);
+    Some(stats_endpoint)
 }
 
 /// The subset of session configuration needed to create and flush a span stats concentrator.
@@ -207,7 +206,7 @@ pub(crate) fn get_or_create_concentrator(
 ) -> Option<Arc<SpanConcentratorState>> {
     let config = session.stats_config.clone()?;
 
-    if config.endpoint.api_key.is_some() {
+    if config.endpoint.api_key().is_some() {
         return None; // agentless — no stats
     }
 

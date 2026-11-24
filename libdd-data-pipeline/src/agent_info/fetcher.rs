@@ -117,7 +117,7 @@ async fn fetch_and_hash_response<C: HttpClientCapability + SleepCapability>(
         .body(Bytes::new())
         .map_err(|e| anyhow!("Failed to build request: {}", e))?;
 
-    let timeout = Duration::from_millis(info_endpoint.timeout_ms);
+    let timeout = Duration::from_millis(info_endpoint.timeout_ms());
     let client = C::new_client();
     let sleeper = <C as SleepCapability>::new();
     // Runtime-agnostic timeout: race the request against a capability-driven

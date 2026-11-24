@@ -12,15 +12,15 @@ use std::path::PathBuf;
 #[derive(Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct Endpoint {
     #[serde(serialize_with = "serialize_uri", deserialize_with = "deserialize_uri")]
-    pub url: http::Uri,
-    pub api_key: Option<Cow<'static, str>>,
-    pub timeout_ms: u64,
+    url: http::Uri,
+    api_key: Option<Cow<'static, str>>,
+    timeout_ms: u64,
     /// Sets X-Datadog-Test-Session-Token header on any request
-    pub test_token: Option<Cow<'static, str>>,
+    test_token: Option<Cow<'static, str>>,
     /// Use the system DNS resolver when building the HTTP client. If false, the default
     /// in-process resolver is used.
     #[serde(default)]
-    pub use_system_resolver: bool,
+    use_system_resolver: bool,
 }
 
 impl core::fmt::Debug for Endpoint {

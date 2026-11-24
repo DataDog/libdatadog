@@ -53,8 +53,8 @@ impl TryFrom<SerializedEndpoint> for CdnEndpoint {
 impl From<CdnEndpoint> for SerializedEndpoint {
     fn from(value: CdnEndpoint) -> Self {
         Self {
-            url: value.endpoint.url.to_string(),
-            api_key: value.endpoint.api_key.map(|key| key.into_owned()),
+            url: value.endpoint.url().to_string(),
+            api_key: value.endpoint.api_key().map(str::to_owned),
         }
     }
 }
@@ -78,13 +78,9 @@ impl CdnEndpoint {
             }
             http::HeaderValue::from_str(key).map_err(|_| EndpointError::InvalidApiKey)?;
         }
-        Ok(Self {
-            endpoint: Endpoint {
-                url: Self::parse_uri(url)?,
-                api_key: api_key.map(Into::into),
-                ..Endpoint::default()
-            },
-        })
+        let mut endpoint = Endpoint::from_url(Self::parse_uri(url)?);
+        endpoint.set_api_key(api_key.map(std::borrow::Cow::Owned));
+        Ok(Self { endpoint })
     }
 
     fn parse_uri(raw: &str) -> Result<http::Uri, EndpointError> {
@@ -132,19 +128,19 @@ impl CdnEndpoint {
     }
 
     pub fn uri(&self) -> &http::Uri {
-        &self.endpoint.url
+        self.endpoint.url()
     }
 
     pub fn is_managed(&self) -> bool {
-        self.endpoint.api_key.is_some()
+        self.endpoint.api_key().is_some()
     }
 
     pub fn api_key(&self) -> Option<&str> {
-        self.endpoint.api_key.as_deref()
+        self.endpoint.api_key()
     }
 
     pub(super) fn is_valid(&self) -> bool {
-        let endpoint_url = self.endpoint.url.to_string();
+        let endpoint_url = self.endpoint.url().to_string();
         let Ok(url) = Url::parse(&endpoint_url) else {
             return false;
         };

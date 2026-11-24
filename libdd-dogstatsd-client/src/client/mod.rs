@@ -162,7 +162,7 @@ impl DogStatsDClient {
     }
 
     fn create_client(endpoint: &Endpoint) -> anyhow::Result<StatsdClient> {
-        match endpoint.url.scheme_str() {
+        match endpoint.url().scheme_str() {
             #[cfg(unix)]
             Some("unix") => Ok(StatsdClient::from_sink(
                 "",

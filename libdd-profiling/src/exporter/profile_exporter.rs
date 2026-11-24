@@ -86,7 +86,7 @@ impl ProfileExporter {
         // config with an empty root store so reqwest doesn't attempt to load
         // system CA certificates itself — which fails in minimal container
         // environments. TLS will never be negotiated on those transports anyway.
-        let tls_config = if endpoint.url.scheme_str() == Some("https") {
+        let tls_config = if endpoint.url().scheme_str() == Some("https") {
             super::tls::cached_tls_config()?
         } else {
             super::tls::empty_tls_config()?

@@ -1114,13 +1114,12 @@ impl<R: SharedRuntime> TraceExporterBuilder<R> {
         Ok(TraceExporter {
             #[cfg(feature = "external-observations")]
             observations: self.observations,
-            endpoint: Endpoint {
-                url: agent_url,
-                test_token: self.test_session_token.map(|token| token.into()),
-                timeout_ms: self
-                    .connection_timeout
-                    .unwrap_or(Endpoint::default().timeout_ms),
-                ..Default::default()
+            endpoint: {
+                let mut endpoint = Endpoint::from_url(agent_url);
+                endpoint.set_test_token(self.test_session_token.map(|token| token.into()));
+                endpoint
+                    .set_timeout_ms(self.connection_timeout.unwrap_or(Endpoint::DEFAULT_TIMEOUT));
+                endpoint
             },
             metadata,
             input_format: self.input_format,
@@ -1352,7 +1351,7 @@ mod tests {
         assert_eq!(
             exporter
                 .output_format
-                .add_path(&exporter.endpoint.url)
+                .add_path(exporter.endpoint.url())
                 .to_string(),
             "http://192.168.1.1:8127/v0.4/traces"
         );
@@ -1427,7 +1426,7 @@ mod tests {
         assert_eq!(
             exporter
                 .output_format
-                .add_path(&exporter.endpoint.url)
+                .add_path(exporter.endpoint.url())
                 .to_string(),
             "http://127.0.0.1:8126/v0.4/traces"
         );
@@ -1791,7 +1790,7 @@ mod tests {
         assert_eq!(
             exporter
                 .effective_output_format()
-                .add_path(&exporter.endpoint.url)
+                .add_path(exporter.endpoint.url())
                 .to_string(),
             "http://127.0.0.1:8126/v0.4/traces"
         );

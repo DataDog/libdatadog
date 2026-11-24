@@ -998,7 +998,7 @@ impl<C: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static> Tel
         req: http::Request<Bytes>,
     ) -> Result<http::Response<Bytes>, HttpError> {
         let timeout_ms = if let Some(endpoint) = self.config.endpoint.as_ref() {
-            endpoint.timeout_ms
+            endpoint.timeout_ms()
         } else {
             libdd_types::Endpoint::DEFAULT_TIMEOUT
         };

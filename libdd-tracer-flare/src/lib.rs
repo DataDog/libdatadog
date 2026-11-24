@@ -173,10 +173,7 @@ impl TracerFlareManager {
                 )));
             }
         };
-        let remote_config_endpoint = Endpoint {
-            url: agent_url,
-            ..Default::default()
-        };
+        let remote_config_endpoint = Endpoint::from_url(agent_url);
         let config_to_fetch = ConfigOptions {
             invariants: ConfigInvariants {
                 language,

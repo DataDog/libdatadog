@@ -232,15 +232,10 @@ fn test_ddog_sidecar_register_app() {
 
     unsafe {
         let process_tags = libdd_types_ffi::Vec::default();
-        let agent_endpoint = Endpoint {
-            url: http::Uri::from_static("http://localhost:8082/"),
-            test_token: Some("agent-token".into()),
-            ..Default::default()
-        };
-        let otlp_metrics_endpoint = Endpoint {
-            url: http::Uri::from_static("http://localhost:4318/v1/metrics"),
-            ..Default::default()
-        };
+        let agent_endpoint = Endpoint::from_url(http::Uri::from_static("http://localhost:8082/"))
+            .with_test_token("agent-token");
+        let otlp_metrics_endpoint =
+            Endpoint::from_url(http::Uri::from_static("http://localhost:4318/v1/metrics"));
         let instance_id = ddog_sidecar_instanceId_build("session_id".into(), "runtime_id".into());
 
         ddog_sidecar_set_connection_config(
@@ -277,11 +272,10 @@ fn test_ddog_sidecar_register_app() {
         )
         .unwrap_none();
 
-        let direct_endpoint = Endpoint {
-            url: http::Uri::from_static("https://event-platform-intake.datadoghq.com/"),
-            api_key: Some("test-api-key".into()),
-            ..Endpoint::default()
-        };
+        let direct_endpoint = Endpoint::from_url(http::Uri::from_static(
+            "https://event-platform-intake.datadoghq.com/",
+        ))
+        .with_api_key("test-api-key");
 
         let producer = EvpProducerIdentity {
             origin: "dd-trace-rb".into(),
@@ -356,10 +350,7 @@ fn test_ddog_sidecar_register_app() {
         ddog_sidecar_set_connection_config(
             &mut transport,
             &instance_id,
-            &Endpoint {
-                url: http::Uri::from_static("http://localhost:8083/"),
-                ..Default::default()
-            },
+            &Endpoint::from_url(http::Uri::from_static("http://localhost:8083/")),
             &Endpoint::default(),
             null(),
             "".into(),
@@ -429,10 +420,7 @@ impl FfeSidecar {
             .set_write_timeout(Some(Duration::from_secs(5)))
             .unwrap();
 
-        let agent_endpoint = Endpoint {
-            url: http.url("/").parse().unwrap(),
-            ..Default::default()
-        };
+        let agent_endpoint = Endpoint::from_url(http.url("/").parse().unwrap());
         let process_tags = libdd_types_ffi::Vec::default();
         let instance_id =
             unsafe { ddog_sidecar_instanceId_build(session.into(), "runtime_id".into()) };
@@ -621,10 +609,7 @@ fn test_ddog_sidecar_ffe_large_batches_reach_the_intake() {
         origin: "dd-trace-php".into(),
         version: "1.0.0".into(),
     };
-    let agent_endpoint = Endpoint {
-        url: http.url("/").parse().unwrap(),
-        ..Default::default()
-    };
+    let agent_endpoint = Endpoint::from_url(http.url("/").parse().unwrap());
     assert_maybe_no_error!(unsafe {
         ddog_sidecar_session_set_evp_transport(
             sidecar.transport(),

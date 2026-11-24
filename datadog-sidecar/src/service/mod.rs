@@ -112,11 +112,8 @@ pub struct SessionConfig {
 impl SessionConfig {
     /// An agentless configuration (so no agent info is fetched) with remote config disabled.
     pub(crate) fn for_test() -> Self {
-        let endpoint = Endpoint {
-            url: "datadoghq.com".parse().unwrap(),
-            api_key: Some("test-api-key".into()),
-            ..Endpoint::default()
-        };
+        let endpoint =
+            Endpoint::from_url("datadoghq.com".parse().unwrap()).with_api_key("test-api-key");
         SessionConfig {
             endpoint,
             dogstatsd_endpoint: Endpoint::default(),

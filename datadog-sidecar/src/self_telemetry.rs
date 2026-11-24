@@ -495,13 +495,11 @@ mod tests {
         };
         server.ffe_flagevaluation_coalescer.enqueue(
             NativeCapabilities::new(),
-            Endpoint {
-                url: http
-                    .url("/evp_proxy/v2/api/v2/flagevaluation")
+            Endpoint::from_url(
+                http.url("/evp_proxy/v2/api/v2/flagevaluation")
                     .parse()
                     .unwrap(),
-                ..Default::default()
-            },
+            ),
             FfeFlagEvaluationBatch {
                 context: FfeTelemetryContext {
                     service: "svc".into(),

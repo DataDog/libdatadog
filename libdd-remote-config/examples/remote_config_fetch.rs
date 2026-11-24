@@ -55,13 +55,8 @@ async fn main() {
                 let _ = (api_key, site);
                 println!("DD_API_KEY and DD_SITE are set but agentless feature not enabled");
                 (
-                    Endpoint {
-                        url: http::Uri::from_static("http://localhost:8126"),
-                        api_key: None,
-                        timeout_ms: 5000, // custom timeout, defaults to 3 seconds
-                        test_token: None,
-                        ..Default::default()
-                    },
+                    Endpoint::from_url(http::Uri::from_static("http://localhost:8126"))
+                        .with_timeout(5000), // custom timeout, defaults to 3 seconds
                     None,
                 )
             }
@@ -69,13 +64,8 @@ async fn main() {
         _ => {
             println!("DD_API_KEY / DD_SITE not set — connecting to local agent");
             (
-                Endpoint {
-                    url: http::Uri::from_static("http://localhost:8126"),
-                    api_key: None,
-                    timeout_ms: 5000, // custom timeout, defaults to 3 seconds
-                    test_token: None,
-                    ..Default::default()
-                },
+                Endpoint::from_url(http::Uri::from_static("http://localhost:8126"))
+                    .with_timeout(5000), // custom timeout, defaults to 3 seconds
                 None,
             )
         }

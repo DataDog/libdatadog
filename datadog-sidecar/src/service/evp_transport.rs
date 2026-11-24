@@ -293,21 +293,20 @@ fn validate_direct_endpoint(
     endpoint: &Endpoint,
     intake_subdomain: &str,
 ) -> Result<(), EvpTransportConfigError> {
-    if endpoint.api_key.as_deref().is_none_or(str::is_empty) {
+    if endpoint.api_key().is_none_or(str::is_empty) {
         return Err(EvpTransportConfigError::MissingApiKey);
     }
     if endpoint
-        .api_key
-        .as_deref()
+        .api_key()
         .is_some_and(|key| http::HeaderValue::try_from(key).is_err())
     {
         return Err(EvpTransportConfigError::InvalidApiKey);
     }
-    if endpoint.url.scheme_str() != Some("https") {
+    if endpoint.url().scheme_str() != Some("https") {
         return Err(EvpTransportConfigError::HttpsRequired);
     }
     let authority = endpoint
-        .url
+        .url()
         .authority()
         .ok_or(EvpTransportConfigError::MissingAuthority)?;
     if authority.as_str().contains('@') || authority.port().is_some() {
@@ -323,7 +322,7 @@ fn validate_direct_endpoint(
     if host.len() > MAX_DNS_HOST_LENGTH || !is_valid_dns_site(site) {
         return Err(EvpTransportConfigError::InvalidSite);
     }
-    let path_and_query = endpoint.url.path_and_query().map(|value| value.as_str());
+    let path_and_query = endpoint.url().path_and_query().map(|value| value.as_str());
     if !matches!(path_and_query, None | Some("") | Some("/")) {
         return Err(EvpTransportConfigError::UnexpectedPathOrQuery);
     }
@@ -430,15 +429,15 @@ fn exposure_deduplication_scope(
     ] {
         hasher.update([u8::from(endpoint.is_some())]);
         if let Some(endpoint) = endpoint {
-            field(&mut hasher, endpoint.url.to_string().as_bytes());
-            for value in [&endpoint.api_key, &endpoint.test_token] {
+            field(&mut hasher, endpoint.url().to_string().as_bytes());
+            for value in [endpoint.api_key(), endpoint.test_token()] {
                 hasher.update([u8::from(value.is_some())]);
                 if let Some(value) = value {
                     field(&mut hasher, value.as_bytes());
                 }
             }
-            hasher.update(endpoint.timeout_ms.to_le_bytes());
-            hasher.update([u8::from(endpoint.use_system_resolver)]);
+            hasher.update(endpoint.timeout_ms().to_le_bytes());
+            hasher.update([u8::from(endpoint.use_system_resolver())]);
         }
     }
     field(&mut hasher, config.intake_subdomain.as_bytes());
@@ -495,7 +494,7 @@ impl EvpTransport {
 
         // A local receiver must never receive direct-intake credentials, even
         // if a caller accidentally copied them onto the Agent endpoint.
-        config.agent_endpoint.api_key = None;
+        config.agent_endpoint.set_api_key(None);
 
         // Agent-only consumers never retain direct credentials.
         if config.mode == EvpTransportMode::AgentOnly {
@@ -677,7 +676,7 @@ impl EvpTransport {
             .extension(ResponseBodyLimit(MAX_INFO_RESPONSE_BYTES))
             .body(Bytes::new())
             .ok()?;
-        let timeout = Duration::from_millis(endpoint.timeout_ms);
+        let timeout = Duration::from_millis(endpoint.timeout_ms());
         let response = tokio::select! {
             biased;
             result = client.request(request) => result.ok()?,
@@ -757,7 +756,7 @@ impl EvpTransport {
             .body(event.payload.clone())
             .map_err(|error| DeliveryFailure::DefinitivePreSend(error.into()))?;
 
-        let timeout = Duration::from_millis(endpoint.timeout_ms);
+        let timeout = Duration::from_millis(endpoint.timeout_ms());
         let response = tokio::select! {
             biased;
             result = client.request(request) => result.map_err(classify_http_error)?,
@@ -781,17 +780,15 @@ impl EvpTransport {
 
 fn endpoint_with_path(base: &Endpoint, path: &str) -> anyhow::Result<Endpoint> {
     let path = PathAndQuery::try_from(path)?;
-    let mut parts = base.url.clone().into_parts();
+    let mut parts = base.url().clone().into_parts();
     parts.path_and_query = Some(path);
-    let url = http::Uri::from_parts(parts)?;
-    Ok(Endpoint {
-        url,
-        ..base.clone()
-    })
+    let mut endpoint = base.clone();
+    endpoint.set_url(http::Uri::from_parts(parts)?);
+    Ok(endpoint)
 }
 
 fn agent_endpoint_with_path(base: &Endpoint, path: &str) -> anyhow::Result<Endpoint> {
-    let base_path = base.url.path().trim_end_matches('/');
+    let base_path = base.url().path().trim_end_matches('/');
     let prefix = TRACE_ENDPOINT_PATHS
         .iter()
         .find_map(|trace_path| base_path.strip_suffix(trace_path))
@@ -986,11 +983,9 @@ mod tests {
     }
 
     fn endpoint(url: &str, api_key: Option<&'static str>) -> Endpoint {
-        Endpoint {
-            url: url.parse().unwrap(),
-            api_key: api_key.map(Into::into),
-            ..Endpoint::default()
-        }
+        let mut endpoint = Endpoint::from_url(url.parse().unwrap());
+        endpoint.set_api_key(api_key.map(Into::into));
+        endpoint
     }
 
     fn agentless(direct_key: Option<&'static str>) -> EvpTransport {
@@ -1546,7 +1541,7 @@ mod tests {
         )
         .unwrap();
 
-        assert!(transport.config.agent_endpoint.api_key.is_none());
+        assert!(transport.config.agent_endpoint.api_key().is_none());
         assert!(transport.config.direct_endpoint.is_none());
     }
 
@@ -1624,22 +1619,35 @@ mod tests {
         let mut cases = Vec::new();
 
         let mut changed = config.clone();
-        changed.agent_endpoint.url = "http://other-agent:8126/v0.4/traces".parse().unwrap();
+        changed
+            .agent_endpoint
+            .set_url("http://other-agent:8126/v0.4/traces".parse().unwrap());
         cases.push(("agent destination", changed, producer.clone()));
         let mut changed = config.clone();
-        changed.agent_endpoint.test_token = Some("other-test".into());
+        changed
+            .agent_endpoint
+            .set_test_token(Some("other-test".into()));
         cases.push(("agent test token", changed, producer.clone()));
         let mut changed = config.clone();
-        changed.direct_endpoint.as_mut().unwrap().api_key = Some("other-key".into());
+        changed
+            .direct_endpoint
+            .as_mut()
+            .unwrap()
+            .set_api_key(Some("other-key".into()));
         cases.push(("direct credentials", changed, producer.clone()));
         let mut changed = config.clone();
-        changed.direct_endpoint.as_mut().unwrap().url =
+        changed.direct_endpoint.as_mut().unwrap().set_url(
             "https://event-platform-intake.datadoghq.eu/"
                 .parse()
-                .unwrap();
+                .unwrap(),
+        );
         cases.push(("direct destination", changed, producer.clone()));
         let mut changed = config.clone();
-        changed.direct_endpoint.as_mut().unwrap().test_token = Some("other-test".into());
+        changed
+            .direct_endpoint
+            .as_mut()
+            .unwrap()
+            .set_test_token(Some("other-test".into()));
         cases.push(("direct test token", changed, producer.clone()));
         let mut changed = config.clone();
         changed.direct_endpoint = None;
@@ -1649,8 +1657,11 @@ mod tests {
         cases.push(("routing policy", changed, producer.clone()));
         let mut changed = config.clone();
         changed.intake_subdomain = "errors-intake".to_owned();
-        changed.direct_endpoint.as_mut().unwrap().url =
-            "https://errors-intake.datadoghq.com/".parse().unwrap();
+        changed
+            .direct_endpoint
+            .as_mut()
+            .unwrap()
+            .set_url("https://errors-intake.datadoghq.com/".parse().unwrap());
         cases.push(("intake target", changed, producer.clone()));
         cases.push((
             "SDK origin",
@@ -1812,7 +1823,7 @@ mod tests {
                 let _ = released.await;
             });
             let mut agent = endpoint(&format!("http://{address}"), None);
-            agent.timeout_ms = 30_000;
+            agent.set_timeout_ms(30_000);
             let transport = EvpTransport::new_with_identity(
                 EvpTransportConfig::prefer_local_then_direct(agent, None, EVP_SUBDOMAIN_VALUE),
                 EvpProducerIdentity::new("dd-trace-rb", "3.0.0").unwrap(),

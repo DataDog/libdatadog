@@ -1125,10 +1125,8 @@ mod tests {
             .await;
 
         let target = AgentlessStatsTarget {
-            endpoint: Endpoint {
-                api_key: Some("test-api-key".into()),
-                ..Endpoint::from_slice(&server.url("/api/v0.2/stats"))
-            },
+            endpoint: Endpoint::from_slice(&server.url("/api/v0.2/stats"))
+                .with_api_key("test-api-key"),
             version: "1.2.3-libdatadog".to_string(),
         };
 
@@ -1174,10 +1172,8 @@ mod tests {
             .await;
 
         let target = AgentlessStatsTarget {
-            endpoint: Endpoint {
-                api_key: Some("test-api-key".into()),
-                ..Endpoint::from_slice(&server.url("/api/v0.2/stats"))
-            },
+            endpoint: Endpoint::from_slice(&server.url("/api/v0.2/stats"))
+                .with_api_key("test-api-key"),
             version: "1.2.3-libdatadog".to_string(),
         };
 

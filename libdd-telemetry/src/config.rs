@@ -86,14 +86,14 @@ fn endpoint_with_telemetry_path(
     mut endpoint: Endpoint,
     direct_submission_enabled: bool,
 ) -> anyhow::Result<Endpoint> {
-    let mut uri_parts = endpoint.url.into_parts();
+    let mut uri_parts = endpoint.url().clone().into_parts();
     if uri_parts
         .scheme
         .as_ref()
         .is_some_and(|scheme| scheme.as_str() != "file")
     {
         uri_parts.path_and_query = Some(PathAndQuery::from_static(
-            if endpoint.api_key.is_some() && direct_submission_enabled {
+            if endpoint.api_key().is_some() && direct_submission_enabled {
                 DIRECT_TELEMETRY_URL_PATH
             } else {
                 AGENT_TELEMETRY_URL_PATH
@@ -101,7 +101,7 @@ fn endpoint_with_telemetry_path(
         ));
     }
 
-    endpoint.url = Uri::from_parts(uri_parts)?;
+    endpoint.set_url(Uri::from_parts(uri_parts)?);
     Ok(endpoint)
 }
 
@@ -308,22 +308,22 @@ impl Config {
 
         let inner = self.endpoint.get_or_insert_with(Endpoint::default);
         if let Some(url) = url {
-            inner.url = url;
+            inner.set_url(url);
         }
 
         if let Some(api_key) = endpoint.api_key {
-            inner.api_key = Some(Cow::from(api_key));
+            inner.set_api_key(Some(Cow::from(api_key)));
         }
 
         if let Some(test_token) = endpoint.test_token {
-            inner.test_token = Some(Cow::from(test_token));
+            inner.set_test_token(Some(Cow::from(test_token)));
         }
 
         if endpoint.timeout_ms != 0 {
-            inner.timeout_ms = endpoint.timeout_ms;
+            inner.set_timeout_ms(endpoint.timeout_ms);
         }
 
-        inner.use_system_resolver = endpoint.use_system_resolver;
+        inner.set_use_system_resolver(endpoint.use_system_resolver);
 
         self.apply_telemetry_path()
     }
@@ -335,7 +335,9 @@ impl Config {
     /// a parsed URI and therefore must not pass its string representation back
     /// through [`parse_uri`]. Other endpoint properties remain unchanged.
     pub fn set_endpoint_uri(&mut self, uri: Uri) -> anyhow::Result<()> {
-        self.endpoint.get_or_insert_with(Endpoint::default).url = uri;
+        self.endpoint
+            .get_or_insert_with(Endpoint::default)
+            .set_url(uri);
         self.apply_telemetry_path()
     }
 
@@ -345,7 +347,7 @@ impl Config {
     /// absent (no default is inserted).
     pub fn set_endpoint_test_token<T: Into<Cow<'static, str>>>(&mut self, test_token: Option<T>) {
         if let Some(endpoint) = &mut self.endpoint {
-            endpoint.test_token = test_token.map(|token| token.into());
+            endpoint.set_test_token(test_token.map(|token| token.into()));
         }
     }
 
@@ -435,7 +437,7 @@ mod tests {
                 ..Default::default()
             };
             let cfg = Config::from_settings(&settings);
-            assert_eq!(cfg.endpoint.unwrap().url.to_string(), expected);
+            assert_eq!(cfg.endpoint.unwrap().url().to_string(), expected);
         }
     }
 
@@ -468,7 +470,7 @@ mod tests {
                 ..Default::default()
             };
             let cfg = Config::from_settings(&settings);
-            assert_eq!(cfg.endpoint.unwrap().url.to_string(), expected);
+            assert_eq!(cfg.endpoint.unwrap().url().to_string(), expected);
         }
     }
 
@@ -485,7 +487,7 @@ mod tests {
         };
         let cfg = Config::from_settings(&settings);
         assert_eq!(
-            cfg.endpoint.unwrap().url.to_string(),
+            cfg.endpoint.unwrap().url().to_string(),
             "unix://2f7661722f72756e2f64617461646f672f61706d2e736f636b6574/telemetry/proxy/api/v2/apmtelemetry"
         );
     }
@@ -503,7 +505,7 @@ mod tests {
 
         let cfg = Config::from_settings(&settings);
         assert_eq!(
-            cfg.endpoint.unwrap().url.to_string(),
+            cfg.endpoint.unwrap().url().to_string(),
             "http://localhost:8126/telemetry/proxy/api/v2/apmtelemetry"
         );
     }
@@ -516,7 +518,7 @@ mod tests {
 
         assert_eq!(
             "http://example.com/telemetry/proxy/api/v2/apmtelemetry",
-            cfg.clone().endpoint.unwrap().url
+            cfg.clone().endpoint.unwrap().url().to_string()
         );
     }
 
@@ -541,14 +543,14 @@ mod tests {
                 cfg.clone()
                     .endpoint
                     .unwrap()
-                    .url
+                    .url()
                     .scheme()
                     .unwrap()
                     .to_string()
             );
             assert_eq!(
                 Path::new(expected),
-                libdd_types::decode_uri_path_in_authority(&cfg.endpoint.unwrap().url).unwrap(),
+                libdd_types::decode_uri_path_in_authority(cfg.endpoint.unwrap().url()).unwrap(),
             );
         }
     }
@@ -563,7 +565,7 @@ mod tests {
         let endpoint = cfg.endpoint().unwrap();
         assert_eq!(
             Path::new("/absolute/path"),
-            libdd_types::decode_uri_path_in_authority(&endpoint.url).unwrap()
+            libdd_types::decode_uri_path_in_authority(endpoint.url()).unwrap()
         );
     }
 
@@ -575,11 +577,11 @@ mod tests {
         set_host_from_url(&mut cfg, "unix:///compatiliby/path").unwrap();
         assert_eq!(
             "unix://2f636f6d706174696c6962792f70617468/telemetry/proxy/api/v2/apmtelemetry",
-            cfg.clone().endpoint.unwrap().url.to_string()
+            cfg.clone().endpoint.unwrap().url().to_string()
         );
         assert_eq!(
             "/compatiliby/path",
-            uds::socket_path_from_uri(&cfg.clone().endpoint.unwrap().url)
+            uds::socket_path_from_uri(cfg.clone().endpoint.unwrap().url())
                 .unwrap()
                 .to_string_lossy()
         );
@@ -592,11 +594,11 @@ mod tests {
         set_host_from_url(&mut cfg, "windows:C:\\system32\\foo").unwrap();
         assert_eq!(
             "windows://433a5c73797374656d33325c666f6f/telemetry/proxy/api/v2/apmtelemetry",
-            cfg.clone().endpoint.unwrap().url.to_string()
+            cfg.clone().endpoint.unwrap().url().to_string()
         );
         assert_eq!(
             "C:\\system32\\foo",
-            named_pipe::named_pipe_path_from_uri(&cfg.clone().endpoint.unwrap().url)
+            named_pipe::named_pipe_path_from_uri(cfg.clone().endpoint.unwrap().url())
                 .unwrap()
                 .to_string_lossy()
         );

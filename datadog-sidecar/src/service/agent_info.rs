@@ -202,9 +202,9 @@ impl AgentInfoFetcher {
             let mut writer = None;
             let mut completer = Some(completer);
             let mut fetch_endpoint = endpoint.clone();
-            let mut parts = fetch_endpoint.url.into_parts();
+            let mut parts = fetch_endpoint.url().clone().into_parts();
             parts.path_and_query = Some(PathAndQuery::from_static("/info"));
-            fetch_endpoint.url = http::Uri::from_parts(parts).unwrap();
+            fetch_endpoint.set_url(http::Uri::from_parts(parts).unwrap());
             loop {
                 let fetched =
                     fetch_info_with_state::<NativeCapabilities>(&fetch_endpoint, state.as_deref())
@@ -256,7 +256,8 @@ impl AgentInfoFetcher {
                         // unreachable.
                         warn!(
                             "The agent info for {} could not be fetched: {}",
-                            fetch_endpoint.url, e
+                            fetch_endpoint.url(),
+                            e
                         );
                     }
                 }

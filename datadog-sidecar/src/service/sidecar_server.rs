@@ -713,7 +713,7 @@ impl SidecarServer {
                 let container_id = tracer_payload.container_id.clone();
 
                 // Agentless payloads skip the agent, so normalize them as it would have.
-                if supports_v1 && v1_target.api_key.is_some() {
+                if supports_v1 && v1_target.api_key().is_some() {
                     tracer_payload.chunks.retain_mut(|chunk| {
                         normalizer_v1::normalize_chunk(chunk, lang.borrow())
                             .inspect_err(|e| warn!("Dropping agentless V1 trace chunk: {e}"))
@@ -808,7 +808,7 @@ impl SidecarServer {
     /// it until `/info` changes. Agents before 7.79 get v0.4 too (see
     /// [`AgentInfoGuard::v1_active`]). Agentless is always V1.
     fn agent_supports_v1(session: &ConnectionSession, v04_target: &Endpoint) -> bool {
-        if v04_target.api_key.is_some() {
+        if v04_target.api_key().is_some() {
             return true;
         }
         // The session's `/info` is fetched since `set_connection_config`. A fetcher keyed by the
@@ -1817,10 +1817,7 @@ mod tests {
     }
 
     fn set_trace_endpoint(session: &mut ConnectionSession, url: String) {
-        let endpoint = Endpoint {
-            url: url.parse().unwrap(),
-            ..Endpoint::default()
-        };
+        let endpoint = Endpoint::from_url(url.parse().unwrap());
         session
             .tracer_config
             .set_endpoint(endpoint.clone())
@@ -2212,17 +2209,13 @@ mod tests {
             serve_sidecar_interface_connection(&mut handler).await;
         });
 
-        let agent_endpoint = Endpoint {
-            url: "http://localhost:8126/".parse().unwrap(),
-            ..Endpoint::default()
-        };
-        let direct_endpoint = Endpoint {
-            url: "https://event-platform-intake.datadoghq.com/"
+        let agent_endpoint = Endpoint::from_url("http://localhost:8126/".parse().unwrap());
+        let direct_endpoint = Endpoint::from_url(
+            "https://event-platform-intake.datadoghq.com/"
                 .parse()
                 .unwrap(),
-            api_key: Some("test-api-key".into()),
-            ..Endpoint::default()
-        };
+        )
+        .with_api_key("test-api-key");
         let mut sender = SidecarSender::new(SidecarInterfaceChannel::new(client));
 
         let producer = EvpProducerIdentity::new("dd-trace-rb", "3.0.0").unwrap();
@@ -2778,10 +2771,7 @@ mod tests {
             previous.set_session_evp_transport(
                 EvpTransportConfigWithIdentity::new(
                     EvpTransportConfig::agent_only(
-                        Endpoint {
-                            url: http.url("/").parse().unwrap(),
-                            ..Endpoint::default()
-                        },
+                        Endpoint::from_url(http.url("/").parse().unwrap()),
                         evp_proxy::EVENT_PLATFORM_INTAKE_SUBDOMAIN,
                     ),
                     EvpProducerIdentity::new("dd-trace-php", "1.0").unwrap(),
@@ -2893,11 +2883,10 @@ mod tests {
 
         let mut handler = test_handler(SidecarServer::default());
         configure_session(&handler, InstanceId::new("session", "runtime"), |session| {
-            session.otlp_metrics_endpoint = Some(Endpoint {
-                url: http_server.url("/v1/metrics").parse().unwrap(),
-                test_token: Some(test_session_token.into()),
-                ..Endpoint::default()
-            });
+            let mut otlp_endpoint =
+                Endpoint::from_url(http_server.url("/v1/metrics").parse().unwrap());
+            otlp_endpoint.set_test_token(Some(test_session_token.into()));
+            session.otlp_metrics_endpoint = Some(otlp_endpoint);
         });
 
         assert!(handler.application.app.is_none());
@@ -3036,10 +3025,7 @@ mod tests {
             .await;
 
         let mut handler = test_handler(SidecarServer::default());
-        let endpoint = Endpoint {
-            url: http_server.url("/").parse().unwrap(),
-            ..Endpoint::default()
-        };
+        let endpoint = Endpoint::from_url(http_server.url("/").parse().unwrap());
         configure_session(&handler, InstanceId::new("session", "runtime"), |session| {
             session
                 .tracer_config
@@ -3276,10 +3262,7 @@ mod tests {
                     .body(body);
             })
             .await;
-        let endpoint = Endpoint {
-            url: http_server.url("/").parse().unwrap(),
-            ..Endpoint::default()
-        };
+        let endpoint = Endpoint::from_url(http_server.url("/").parse().unwrap());
         let guard = server.agent_infos.query_for(endpoint);
         // Await the initial fetch so the cached future is resolved by the time we send.
         guard.get().await;
@@ -3386,11 +3369,8 @@ mod tests {
             )
             .await;
             configure_session(&handler, InstanceId::new("session", "runtime"), |session| {
-                let endpoint = Endpoint {
-                    url: http_server.url("/").parse().unwrap(),
-                    api_key: agentless.then(|| "api-key".into()),
-                    ..Endpoint::default()
-                };
+                let mut endpoint = Endpoint::from_url(http_server.url("/").parse().unwrap());
+                endpoint.set_api_key(agentless.then(|| "api-key".into()));
                 session.tracer_config.set_endpoint(endpoint).unwrap();
                 session.set_agent_info(agent_info);
             });
@@ -3547,10 +3527,7 @@ mod tests {
             .await;
 
         let mut handler = test_handler(SidecarServer::default());
-        let endpoint = Endpoint {
-            url: http_server.url("/").parse().unwrap(),
-            ..Endpoint::default()
-        };
+        let endpoint = Endpoint::from_url(http_server.url("/").parse().unwrap());
         handler
             .set_connection_config(
                 InstanceId::new("session", "runtime"),
@@ -3701,10 +3678,7 @@ mod tests {
             .await;
 
         let mut handler = test_handler(SidecarServer::default());
-        let endpoint = Endpoint {
-            url: http_server.url("/").parse().unwrap(),
-            ..Endpoint::default()
-        };
+        let endpoint = Endpoint::from_url(http_server.url("/").parse().unwrap());
         let agent_info = handler.server.agent_infos.query_for(endpoint.clone());
         agent_info.get().await;
         // A second guard on the same fetcher, to observe it.

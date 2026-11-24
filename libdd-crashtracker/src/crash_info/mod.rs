@@ -228,9 +228,9 @@ impl CrashInfo {
     ) -> anyhow::Result<()> {
         // If we're debugging to a file, dump the actual crashinfo into a json
         if let Some(endpoint) = endpoint
-            && Some("file") == endpoint.url.scheme_str()
+            && Some("file") == endpoint.url().scheme_str()
         {
-            let path = libdd_types::decode_uri_path_in_authority(&endpoint.url)
+            let path = libdd_types::decode_uri_path_in_authority(endpoint.url())
                 .context("crash output file path was not correctly formatted")?;
             self.to_file(&path)?;
         }

@@ -437,7 +437,7 @@ async fn test_agentless_with_transport(transport: Transport) -> anyhow::Result<(
     let endpoint = if let Some(port) = server.port {
         let endpoint_url = format!("http://127.0.0.1:{}/api/v2/profile", port).parse()?;
         let mut endpoint = libdd_types::Endpoint::from_url(endpoint_url);
-        endpoint.api_key = Some("test-api-key-12345".into());
+        endpoint.set_api_key(Some("test-api-key-12345".into()));
         endpoint
     } else {
         #[cfg(unix)]
@@ -449,7 +449,7 @@ async fn test_agentless_with_transport(transport: Transport) -> anyhow::Result<(
             parts.path_and_query = Some("/api/v2/profile".parse()?);
             let url = http::Uri::from_parts(parts)?;
             let mut endpoint = libdd_types::Endpoint::from_url(url);
-            endpoint.api_key = Some("test-api-key-12345".into());
+            endpoint.set_api_key(Some("test-api-key-12345".into()));
             endpoint
         }
         #[cfg(windows)]
@@ -462,7 +462,7 @@ async fn test_agentless_with_transport(transport: Transport) -> anyhow::Result<(
             parts.path_and_query = Some("/api/v2/profile".parse()?);
             let url = http::Uri::from_parts(parts)?;
             let mut endpoint = libdd_types::Endpoint::from_url(url);
-            endpoint.api_key = Some("test-api-key-12345".into());
+            endpoint.set_api_key(Some("test-api-key-12345".into()));
             endpoint
         }
         #[cfg(not(any(unix, windows)))]

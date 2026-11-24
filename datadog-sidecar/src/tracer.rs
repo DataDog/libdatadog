@@ -88,25 +88,26 @@ pub struct Config {
 
 impl Config {
     pub fn set_endpoint(&mut self, endpoint: Endpoint) -> anyhow::Result<()> {
-        let (url, url_v1) = if endpoint.api_key.is_some() {
-            let url = http::Uri::from_str(&trace_intake_url_prefixed(&endpoint.url.to_string()))?;
+        let (url, url_v1) = if endpoint.api_key().is_some() {
+            let url = http::Uri::from_str(&trace_intake_url_prefixed(&endpoint.url().to_string()))?;
             (url.clone(), url)
         } else {
-            let mut parts = endpoint.url.clone().into_parts();
+            let mut parts = endpoint.url().clone().into_parts();
             parts.path_and_query = Some(PathAndQuery::from_static("/v0.4/traces"));
             let url = http::Uri::from_parts(parts)?;
 
-            let mut parts_v1 = endpoint.url.clone().into_parts();
+            let mut parts_v1 = endpoint.url().clone().into_parts();
             parts_v1.path_and_query = Some(PathAndQuery::from_static("/v1.0/traces"));
             let url_v1 = http::Uri::from_parts(parts_v1)?;
 
             (url, url_v1)
         };
-        self.endpoint_v1 = Some(Endpoint {
-            url: url_v1,
-            ..endpoint.clone()
-        });
-        self.endpoint = Some(Endpoint { url, ..endpoint });
+        let mut endpoint_v1 = endpoint.clone();
+        endpoint_v1.set_url(url_v1);
+        self.endpoint_v1 = Some(endpoint_v1);
+        let mut endpoint = endpoint;
+        endpoint.set_url(url);
+        self.endpoint = Some(endpoint);
         Ok(())
     }
 
@@ -115,10 +116,10 @@ impl Config {
         test_token: Option<T>,
     ) {
         if let Some(endpoint) = &mut self.endpoint {
-            endpoint.test_token = test_token.clone().map(Into::into);
+            endpoint.set_test_token(test_token.clone().map(Into::into));
         }
         if let Some(endpoint) = &mut self.endpoint_v1 {
-            endpoint.test_token = test_token.map(Into::into);
+            endpoint.set_test_token(test_token.map(Into::into));
         }
     }
 }
@@ -141,19 +142,16 @@ mod tests {
             // Built like `ddog_endpoint_from_api_key_and_site`.
             let mut parts = Parts::default();
             parts.authority = Some(Authority::from_static(site));
-            let endpoint = Endpoint {
-                url: http::Uri::from_parts(parts).unwrap(),
-                api_key: Some("api-key".into()),
-                ..Default::default()
-            };
+            let endpoint =
+                Endpoint::from_url(http::Uri::from_parts(parts).unwrap()).with_api_key("api-key");
             let mut config = Config::default();
             config
                 .set_endpoint(get_product_endpoint(PROD_INTAKE_SUBDOMAIN, &endpoint))
                 .unwrap();
 
             let expected = format!("https://trace.agent.{site}/api/v0.2/traces");
-            assert_eq!(config.endpoint.unwrap().url.to_string(), expected);
-            assert_eq!(config.endpoint_v1.unwrap().url.to_string(), expected);
+            assert_eq!(config.endpoint.unwrap().url().to_string(), expected);
+            assert_eq!(config.endpoint_v1.unwrap().url().to_string(), expected);
         }
     }
 }

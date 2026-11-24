@@ -130,7 +130,8 @@ pub fn create_shared_runtime_sink(
 ) -> anyhow::Result<(SharedRuntimeMetricSink, WorkerHandle)> {
     let (tx, rx) = mpsc::channel(QUEUE_SIZE);
 
-    let sink: Arc<dyn MetricSink + Send + Sync + RefUnwindSafe> = match endpoint.url.scheme_str() {
+    let sink: Arc<dyn MetricSink + Send + Sync + RefUnwindSafe> = match endpoint.url().scheme_str()
+    {
         #[cfg(unix)]
         Some("unix") => Arc::new(sink::create_unix_sink(endpoint)?),
         _ => Arc::new(sink::create_udp_sink(endpoint)?),

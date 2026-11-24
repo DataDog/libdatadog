@@ -203,11 +203,8 @@ where
 
     let url = libdd_types::parse_uri(&config.endpoint_url)
         .map_err(|error| AgentlessError::InvalidEndpoint(error.to_string()))?;
-    let target = Endpoint {
-        url,
-        timeout_ms: u64::try_from(config.timeout.as_millis()).unwrap_or(u64::MAX),
-        ..Endpoint::default()
-    };
+    let mut target = Endpoint::from_url(url);
+    target.set_timeout_ms(u64::try_from(config.timeout.as_millis()).unwrap_or(u64::MAX));
     let retry_strategy = RetryStrategy::new(
         AGENTLESS_MAX_RETRIES,
         AGENTLESS_RETRY_DELAY_MS,

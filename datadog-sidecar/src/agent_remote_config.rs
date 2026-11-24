@@ -18,8 +18,8 @@ fn path_for_endpoint(endpoint: &Endpoint) -> CString {
     let mut hasher = ZwoHasher::default();
 
     #[allow(clippy::unwrap_used)]
-    endpoint.url.authority().unwrap().hash(&mut hasher);
-    endpoint.test_token.hash(&mut hasher);
+    endpoint.url().authority().unwrap().hash(&mut hasher);
+    endpoint.test_token().hash(&mut hasher);
 
     let mut path = format!("/ddcfg-{}-{}", crate::shm_namespace(), hasher.finish());
     if cfg!(unix) {

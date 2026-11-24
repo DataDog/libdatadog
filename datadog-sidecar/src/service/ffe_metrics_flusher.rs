@@ -56,7 +56,7 @@ async fn send_payload<C: HttpClientCapability + SleepCapability>(
         }
     };
 
-    let timeout = Duration::from_millis(endpoint.timeout_ms);
+    let timeout = Duration::from_millis(endpoint.timeout_ms());
     let response = tokio::select! {
         biased;
         result = client.request(req) => result,
@@ -127,10 +127,7 @@ mod tests {
             })
             .await;
 
-        let ep = Endpoint {
-            url: server.url("/v1/metrics").parse().unwrap(),
-            ..Endpoint::default()
-        };
+        let ep = Endpoint::from_url(server.url("/v1/metrics").parse().unwrap());
         let client = NativeCapabilities::new_client();
 
         send_metrics(
@@ -157,10 +154,7 @@ mod tests {
             })
             .await;
 
-        let ep = Endpoint {
-            url: server.url("/v1/metrics").parse().unwrap(),
-            ..Endpoint::default()
-        };
+        let ep = Endpoint::from_url(server.url("/v1/metrics").parse().unwrap());
         let client = NativeCapabilities::new_client();
         send_metrics(
             &client,
@@ -174,11 +168,8 @@ mod tests {
     #[cfg_attr(miri, ignore)] // tokio executor park/wake overhead is prohibitively slow under Miri
     #[tokio::test]
     async fn timeout_returns_without_waiting_for_http_response() {
-        let ep = Endpoint {
-            url: "http://localhost:4318/v1/metrics".parse().unwrap(),
-            timeout_ms: 1,
-            ..Endpoint::default()
-        };
+        let ep =
+            Endpoint::from_url("http://localhost:4318/v1/metrics".parse().unwrap()).with_timeout(1);
 
         send_metrics(
             &HangingCapabilities,

@@ -246,10 +246,7 @@ mod tests {
     }
 
     fn endpoint_for(server: &MockServer) -> Endpoint {
-        Endpoint {
-            url: server.url("/").parse().unwrap(),
-            ..Endpoint::default()
-        }
+        Endpoint::from_url(server.url("/").parse().unwrap())
     }
 
     fn context() -> FfeTelemetryContext {

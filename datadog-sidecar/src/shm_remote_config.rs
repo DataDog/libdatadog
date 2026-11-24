@@ -437,7 +437,7 @@ impl<N: NotifyTarget + 'static> Drop for ShmRemoteConfigsGuard<N> {
     fn drop(&mut self) {
         let fetcher = &self.remote_configs.0;
         fetcher.delete_runtime(&self.runtime_id, &self.session_id, &self.target);
-        if fetcher.invariants().endpoint.test_token.is_some() && fetcher.active_runtimes() == 0 {
+        if fetcher.invariants().endpoint.test_token().is_some() && fetcher.active_runtimes() == 0 {
             self.remote_configs.shutdown()
         }
 

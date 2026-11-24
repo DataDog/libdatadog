@@ -517,7 +517,7 @@ where
                     .storage
                     .invariants()
                     .endpoint
-                    .url
+                    .url()
                     .scheme()
                     .map(|s| s.as_str() != "file")
                     == Some(true)

@@ -22,7 +22,7 @@ fn create_file_exporter(
 
     let mut endpoint = config::file(file_path.to_string_lossy().as_ref())?;
     if let Some(key) = api_key {
-        endpoint.api_key = Some(key.to_string().into());
+        endpoint.set_api_key(Some(key.to_string().into()));
     }
 
     let exporter = ProfileExporter::new(

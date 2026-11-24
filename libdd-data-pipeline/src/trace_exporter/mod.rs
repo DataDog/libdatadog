@@ -947,7 +947,7 @@ impl<
             "/v1/traces",
             &config_to_use.headers,
             config_to_use.timeout,
-            self.endpoint.test_token.as_deref(),
+            self.endpoint.test_token(),
             config_to_use.protocol.content_type().ok_or_else(|| {
                 TraceExporterError::Internal(InternalErrorKind::InvalidWorkerState(
                     "OTLP gRPC protocol cannot be sent over the HTTP export path".to_string(),
@@ -979,7 +979,7 @@ impl<
         ));
         #[cfg(feature = "telemetry")]
         let payload_len = request.encoded_len() + 5;
-        let test_token = self.endpoint.test_token.as_deref();
+        let test_token = self.endpoint.test_token();
         let mut attempt: u32 = 1;
         let result = loop {
             match send_otlp_traces_grpc(
@@ -1062,7 +1062,7 @@ impl<
             "/v1/traces",
             &config_to_use.headers,
             config_to_use.timeout,
-            self.endpoint.test_token.as_deref(),
+            self.endpoint.test_token(),
             config_to_use.protocol.content_type().ok_or_else(|| {
                 TraceExporterError::Internal(InternalErrorKind::InvalidWorkerState(
                     "OTLP gRPC protocol cannot be sent over the HTTP export path".to_string(),
@@ -1094,7 +1094,7 @@ impl<
         ));
         #[cfg(feature = "telemetry")]
         let payload_len = request.encoded_len() + 5;
-        let test_token = self.endpoint.test_token.as_deref();
+        let test_token = self.endpoint.test_token();
         let mut attempt: u32 = 1;
         let result = loop {
             match send_otlp_traces_grpc(
@@ -1276,10 +1276,8 @@ impl<
             ..counts
         };
 
-        let endpoint = Endpoint {
-            url: effective_format.add_path(&self.endpoint.url),
-            ..self.endpoint.clone()
-        };
+        let mut endpoint = self.endpoint.clone();
+        endpoint.set_url(effective_format.add_path(self.endpoint.url()));
 
         let result = self
             .send_traces_with_telemetry(&endpoint, prepared.data, prepared.headers, counts)
@@ -1508,10 +1506,8 @@ impl<
             ..counts
         };
 
-        let endpoint = Endpoint {
-            url: effective_format.add_path(&self.endpoint.url),
-            ..self.endpoint.clone()
-        };
+        let mut endpoint = self.endpoint.clone();
+        endpoint.set_url(effective_format.add_path(self.endpoint.url()));
 
         let result = self
             .send_traces_with_telemetry(&endpoint, mp_payload, headers, counts)
@@ -1924,7 +1920,7 @@ mod tests {
         assert_eq!(
             exporter
                 .effective_output_format()
-                .add_path(&exporter.endpoint.url)
+                .add_path(exporter.endpoint.url())
                 .to_string(),
             "http://127.0.0.1:8126/v1.0/traces"
         );
@@ -2975,7 +2971,7 @@ mod tests {
             .build::<NativeCapabilities>()
             .unwrap();
 
-        assert_eq!(exporter.endpoint.timeout_ms, Endpoint::default().timeout_ms);
+        assert_eq!(exporter.endpoint.timeout_ms(), Endpoint::DEFAULT_TIMEOUT);
 
         let timeout = Some(42);
         let mut builder = TraceExporter::<NativeCapabilities, ForkSafeRuntime>::builder();
@@ -2983,7 +2979,7 @@ mod tests {
 
         let exporter = builder.build::<NativeCapabilities>().unwrap();
 
-        assert_eq!(exporter.endpoint.timeout_ms, 42);
+        assert_eq!(exporter.endpoint.timeout_ms(), 42);
     }
 
     #[test]

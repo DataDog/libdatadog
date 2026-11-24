@@ -402,17 +402,13 @@ mod tests {
 
     #[test]
     fn evp_transport_config_decodes_across_the_ipc_boundary() {
-        let agent_endpoint = Endpoint {
-            url: "http://localhost:8126/".parse().unwrap(),
-            ..Endpoint::default()
-        };
-        let direct_endpoint = Endpoint {
-            url: "https://event-platform-intake.datadoghq.com/"
+        let agent_endpoint = Endpoint::from_url("http://localhost:8126/".parse().unwrap());
+        let direct_endpoint = Endpoint::from_url(
+            "https://event-platform-intake.datadoghq.com/"
                 .parse()
                 .unwrap(),
-            api_key: Some("test-api-key".into()),
-            ..Endpoint::default()
-        };
+        )
+        .with_api_key("test-api-key");
 
         let agentless_config = EvpTransportConfigWithIdentity::new(
             EvpTransportConfig {
