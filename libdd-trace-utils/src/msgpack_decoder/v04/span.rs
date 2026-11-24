@@ -1,7 +1,7 @@
 // Copyright 2024-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-use crate::msgpack_decoder::decode::buffer::Buffer;
+use crate::msgpack_decoder::decode::buffer::{Buffer, read_str_bytes_raw};
 use crate::msgpack_decoder::decode::error::DecodeError;
 use crate::msgpack_decoder::decode::number::read_nullable_number;
 use crate::msgpack_decoder::decode::span_event::read_span_events;
@@ -10,36 +10,42 @@ use crate::msgpack_decoder::decode::string::{
     read_nullable_str_map_to_strings, read_nullable_string,
 };
 use crate::msgpack_decoder::decode::{meta_struct::read_meta_struct, metrics::read_metrics};
-use crate::span::{DeserializableTraceData, v04::Span, v04::SpanKey};
-use std::borrow::Borrow;
+#[cfg(test)]
+use crate::span::v04::SpanKey;
+use crate::span::{DeserializableTraceData, v04::Span};
 
-/// Decodes a slice of bytes into a `Span` object.
+#[cfg(test)]
+pub fn decode_span<T: DeserializableTraceData>(
+    buffer: &mut Buffer<T>,
+) -> Result<Span<T>, DecodeError> {
+    let mut span = Span::<T>::default();
+    decode_span_into(buffer, &mut span)?;
+    Ok(span)
+}
+
+/// Decodes a msgpack span from `buffer` directly into `span`.
 ///
 /// # Arguments
 ///
-/// * `buf` - A mutable reference to a slice of bytes containing the encoded data.
-///
-/// # Returns
-///
-/// * `Ok(Span)` - A decoded `Span` object if successful.
-/// * `Err(DecodeError)` - An error if the decoding process fails.
+/// * `buffer` - A mutable reference to a buffer containing the encoded data.
+/// * `span` - Destination `Span` (expected to be default-initialized).
 ///
 /// # Errors
 ///
 /// This function will return an error if:
 /// - The map length cannot be read.
 /// - Any key or value cannot be decoded.
-pub fn decode_span<T: DeserializableTraceData>(
+#[inline]
+pub(crate) fn decode_span_into<T: DeserializableTraceData>(
     buffer: &mut Buffer<T>,
-) -> Result<Span<T>, DecodeError> {
-    let mut span = Span::<T>::default();
-
-    let span_size = rmp::decode::read_map_len(buffer.as_mut_slice()).map_err(|_| {
+    span: &mut Span<T>,
+) -> Result<(), DecodeError> {
+    let span_size = crate::msgpack_decoder::decode::map::read_map_len(buffer).map_err(|_| {
         DecodeError::InvalidFormat("Unable to get map len for span size".to_owned())
     })?;
 
     for _ in 0..span_size {
-        fill_span(&mut span, buffer)?;
+        fill_span(span, buffer)?;
     }
 
     // Decoded from msgpack maps (unique keys) or empty defaults: no duplicates, so mark deduped to
@@ -48,37 +54,44 @@ pub fn decode_span<T: DeserializableTraceData>(
     span.metrics.mark_deduped();
     span.meta_struct.mark_deduped();
 
-    Ok(span)
+    Ok(())
 }
 
-// Safety: read_string_ref checks utf8 validity, so we don't do it again when creating the
-// BytesStrings
+#[cold]
+#[inline(never)]
+fn invalid_span_key_error(key_bytes: &[u8]) -> DecodeError {
+    match std::str::from_utf8(key_bytes) {
+        Ok(s) => DecodeError::InvalidFormat(format!("Invalid span key: {s}")),
+        Err(e) => DecodeError::Utf8Error(e.to_string()),
+    }
+}
+
+#[inline(always)]
 fn fill_span<T: DeserializableTraceData>(
     span: &mut Span<T>,
     buf: &mut Buffer<T>,
 ) -> Result<(), DecodeError> {
-    let key = buf
-        .read_string()?
-        .borrow()
-        .parse::<SpanKey>()
-        .map_err(|e| DecodeError::InvalidFormat(e.message))?;
+    let slice = buf.as_mut_slice();
+    let (key_bytes, remaining) = read_str_bytes_raw(slice)?;
+    *slice = remaining;
 
-    match key {
-        SpanKey::Service => span.service = read_nullable_string(buf)?,
-        SpanKey::Name => span.name = read_nullable_string(buf)?,
-        SpanKey::Resource => span.resource = read_nullable_string(buf)?,
-        SpanKey::TraceId => span.trace_id = read_nullable_number::<_, u64>(buf)? as u128,
-        SpanKey::SpanId => span.span_id = read_nullable_number(buf)?,
-        SpanKey::ParentId => span.parent_id = read_nullable_number(buf)?,
-        SpanKey::Start => span.start = read_nullable_number(buf)?,
-        SpanKey::Duration => span.duration = read_nullable_number(buf)?,
-        SpanKey::Error => span.error = read_nullable_number(buf)?,
-        SpanKey::Type => span.r#type = read_nullable_string(buf)?,
-        SpanKey::Meta => span.meta = read_nullable_str_map_to_strings(buf)?,
-        SpanKey::Metrics => span.metrics = read_metrics(buf)?,
-        SpanKey::MetaStruct => span.meta_struct = read_meta_struct(buf)?,
-        SpanKey::SpanLinks => span.span_links = read_span_links(buf)?,
-        SpanKey::SpanEvents => span.span_events = read_span_events(buf)?,
+    match key_bytes {
+        b"service" => span.service = read_nullable_string(buf)?,
+        b"name" => span.name = read_nullable_string(buf)?,
+        b"resource" => span.resource = read_nullable_string(buf)?,
+        b"trace_id" => span.trace_id = read_nullable_number::<_, u64>(buf)? as u128,
+        b"span_id" => span.span_id = read_nullable_number(buf)?,
+        b"parent_id" => span.parent_id = read_nullable_number(buf)?,
+        b"start" => span.start = read_nullable_number(buf)?,
+        b"duration" => span.duration = read_nullable_number(buf)?,
+        b"error" => span.error = read_nullable_number(buf)?,
+        b"type" => span.r#type = read_nullable_string(buf)?,
+        b"meta" => span.meta = read_nullable_str_map_to_strings(buf)?,
+        b"metrics" => span.metrics = read_metrics(buf)?,
+        b"meta_struct" => span.meta_struct = read_meta_struct(buf)?,
+        b"span_links" => span.span_links = read_span_links(buf)?,
+        b"span_events" => span.span_events = read_span_events(buf)?,
+        _ => return Err(invalid_span_key_error(key_bytes)),
     }
     Ok(())
 }

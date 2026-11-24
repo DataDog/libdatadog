@@ -4,7 +4,7 @@
 mod aggregation;
 pub mod cardinality_limit_telemetry;
 
-use std::collections::HashMap;
+use hashbrown::HashMap;
 use std::time::Duration;
 use tracing::{debug, warn};
 // std::time::SystemTime panics on wasm32.
@@ -118,8 +118,12 @@ fn align_timestamp(t: u64, bucket_size: u64) -> u64 {
 /// Return true if the span is eligible for stats computation
 pub fn is_span_eligible<T: Span>(span: &T, span_kinds_stats_computed: &[String]) -> bool {
     (span.has_top_level() || span.is_measured() || {
-        span.span_kind()
-            .is_some_and(|span_kind| span_kinds_stats_computed.contains(&span_kind.to_lowercase()))
+        !span_kinds_stats_computed.is_empty()
+            && span.span_kind().is_some_and(|span_kind| {
+                span_kinds_stats_computed
+                    .iter()
+                    .any(|k| k.eq_ignore_ascii_case(span_kind))
+            })
     }) && !span.is_partial_snapshot()
 }
 

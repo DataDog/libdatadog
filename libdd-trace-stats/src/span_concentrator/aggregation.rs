@@ -10,7 +10,7 @@ use libdd_trace_obfuscation::ip_address::quantize_peer_ip_addresses;
 use libdd_trace_protobuf::pb;
 use std::{
     borrow::{Borrow, Cow},
-    hash::{DefaultHasher, Hash, Hasher as _},
+    hash::{BuildHasher as _, Hash, Hasher},
 };
 use tracing::warn;
 
@@ -72,6 +72,27 @@ pub struct FixedAggregationKey<T> {
     pub is_trace_root: pb::Trilean,
 }
 
+impl<T: Hash> FixedAggregationKey<T> {
+    /// Fast hash used by `BorrowedAggregationKey` and `OwnedAggregationKey`, packing all four
+    /// scalar fields into a single `u64` write to cut per-field `Hasher::write` calls.
+    #[inline]
+    fn hash_fast<H: Hasher>(&self, state: &mut H) {
+        self.resource_name.hash(state);
+        self.service_name.hash(state);
+        self.operation_name.hash(state);
+        self.span_type.hash(state);
+        self.span_kind.hash(state);
+        self.http_method.hash(state);
+        self.http_endpoint.hash(state);
+        self.service_source.hash(state);
+        let packed_scalars: u64 = (u64::from(self.http_status_code) << 32)
+            | (u64::from(self.grpc_status_code.map_or(0x100u16, u16::from)) << 16)
+            | (u64::from(self.is_synthetics_request) << 8)
+            | ((self.is_trace_root as i32 as u8) as u64);
+        state.write_u64(packed_scalars);
+    }
+}
+
 impl<T> FixedAggregationKey<T> {
     /// Map all string fields through `f`, preserving scalar fields.
     pub fn convert<'a, V: 'a, I: ?Sized + 'a, F: Fn(&'a I) -> V>(
@@ -98,7 +119,7 @@ impl<T> FixedAggregationKey<T> {
     }
 }
 
-#[derive(Clone, Hash, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq)]
 /// Represent a stats aggregation key borrowed from span data
 pub(super) struct BorrowedAggregationKey<'a> {
     fixed: FixedAggregationKey<&'a str>,
@@ -106,10 +127,38 @@ pub(super) struct BorrowedAggregationKey<'a> {
     additional_metric_tags: Vec<(&'a str, &'a str)>,
 }
 
+impl Hash for BorrowedAggregationKey<'_> {
+    #[inline]
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.fixed.hash_fast(state);
+        state.write_usize(self.peer_tags.len());
+        for (k, v) in &self.peer_tags {
+            k.hash(state);
+            v.as_ref().hash(state);
+        }
+        state.write_usize(self.additional_metric_tags.len());
+        for (k, v) in &self.additional_metric_tags {
+            k.hash(state);
+            v.hash(state);
+        }
+    }
+}
+
 impl hashbrown::Equivalent<OwnedAggregationKey> for BorrowedAggregationKey<'_> {
     #[inline]
     fn equivalent(&self, other: &OwnedAggregationKey) -> bool {
-        self.fixed == other.fixed.convert(|s| s)
+        self.fixed.http_status_code == other.fixed.http_status_code
+            && self.fixed.is_trace_root == other.fixed.is_trace_root
+            && self.fixed.is_synthetics_request == other.fixed.is_synthetics_request
+            && self.fixed.grpc_status_code == other.fixed.grpc_status_code
+            && self.fixed.resource_name == other.fixed.resource_name
+            && self.fixed.service_name == other.fixed.service_name
+            && self.fixed.operation_name == other.fixed.operation_name
+            && self.fixed.span_type == other.fixed.span_type
+            && self.fixed.span_kind == other.fixed.span_kind
+            && self.fixed.http_method == other.fixed.http_method
+            && self.fixed.http_endpoint == other.fixed.http_endpoint
+            && self.fixed.service_source == other.fixed.service_source
             && self.peer_tags.len() == other.peer_tags.len()
             && self
                 .peer_tags
@@ -125,7 +174,7 @@ impl hashbrown::Equivalent<OwnedAggregationKey> for BorrowedAggregationKey<'_> {
     }
 }
 
-#[derive(Debug, Clone, Hash, PartialEq, Eq, PartialOrd, Default)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Default)]
 /// Represents a span aggregation key with owned data
 ///
 /// To be able to use BorrowedAggregationKey to index into a stats bucket hashmap two
@@ -137,6 +186,23 @@ pub(super) struct OwnedAggregationKey {
     fixed: FixedAggregationKey<String>,
     peer_tags: Vec<(String, String)>,
     additional_metric_tags: Vec<(String, String)>,
+}
+
+impl Hash for OwnedAggregationKey {
+    #[inline]
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.fixed.hash_fast(state);
+        state.write_usize(self.peer_tags.len());
+        for (k, v) in &self.peer_tags {
+            k.as_str().hash(state);
+            v.as_str().hash(state);
+        }
+        state.write_usize(self.additional_metric_tags.len());
+        for (k, v) in &self.additional_metric_tags {
+            k.as_str().hash(state);
+            v.as_str().hash(state);
+        }
+    }
 }
 
 impl From<&BorrowedAggregationKey<'_>> for OwnedAggregationKey {
@@ -517,11 +583,11 @@ impl From<pb::ClientGroupedStats> for OwnedAggregationKey {
 }
 
 /// Return true if we care about peer tags on the span
+#[inline]
 fn should_track_peer_tags(span_kind: &str) -> bool {
-    matches!(
-        span_kind.to_lowercase().as_str(),
-        "client" | "producer" | "consumer"
-    )
+    span_kind.eq_ignore_ascii_case("client")
+        || span_kind.eq_ignore_ascii_case("producer")
+        || span_kind.eq_ignore_ascii_case("consumer")
 }
 
 /// The stats computed from a group of span with the same AggregationKey
@@ -619,6 +685,11 @@ pub(super) struct StatsBucket {
     /// Number of spans collapsed into the overflow bucket due to whole-key cardinality limiting.
     collapsed_count: u64,
     collapsed_fields_metrics: CollapsedFieldsMetrics,
+    /// Tracks whether any per-field cardinality limit has caused a collapse in this bucket.
+    /// While `false`, any key already present in `self.data` is guaranteed to have all four of its
+    /// cardinality-tracked fields already admitted in `distinct_*`, so cache hits can bypass
+    /// per-field hashing and set lookups completely.
+    any_field_collapsed: bool,
     /// Indicates if stats obfuscated in this bucket. This is set once at creation and stays
     /// constant per bucket
     #[cfg(feature = "stats-obfuscation")]
@@ -639,6 +710,7 @@ impl StatsBucket {
             start: start_timestamp,
             cardinality_limits,
             collapsed_count: 0,
+            any_field_collapsed: false,
             #[cfg(feature = "stats-obfuscation")]
             obfuscated: obfuscation_enabled,
             distinct_resources: HashSet::new(),
@@ -671,6 +743,18 @@ impl StatsBucket {
         is_error: bool,
         is_top_level: bool,
     ) {
+        // Fast path: while no field has been collapsed in this bucket, every key already in
+        // `self.data` had all four of its tracked fields admitted when first inserted. A hit here
+        // therefore needs neither per-field hashing nor `distinct_*` lookups.
+        if !self.any_field_collapsed
+            && let Some(group) = self.data.get_mut(&key)
+        {
+            self.collapsed_fields_metrics
+                .increment(CollapsedFieldSet::empty());
+            group.insert(duration, is_error, is_top_level);
+            return;
+        }
+
         // Per field cardinality limiting
         self.collapse_key_fields_cardinality(&mut key);
 
@@ -704,53 +788,52 @@ impl StatsBucket {
     /// Collapse an aggregation key fields following the bucket's `CardinalityLimitConfig`
     fn collapse_key_fields_cardinality(&mut self, key: &mut BorrowedAggregationKey<'_>) {
         use hashbrown::hash_set::Entry;
-        fn hash(input: &impl Hash) -> u64 {
-            let mut hasher = DefaultHasher::new();
-            input.hash(&mut hasher);
-            hasher.finish()
-        }
-
+        let hasher = self.data.hasher();
         let mut collapsed_fields = CollapsedFieldSet::empty();
 
-        let resource_hash = hash(&key.fixed.resource_name);
+        let resource_hash = hasher.hash_one(key.fixed.resource_name);
         let resources_count = self.distinct_resources.len();
         if let Entry::Vacant(slot) = self.distinct_resources.entry(resource_hash) {
             if resources_count >= self.cardinality_limits.resource_limit {
                 key.fixed.resource_name = TRACER_BLOCKED_VALUE;
                 collapsed_fields.add(CollapsedFieldSet::RESOURCE_NAME);
+                self.any_field_collapsed = true;
             } else {
                 slot.insert();
             }
         }
 
-        let http_endpoint_hash = hash(&key.fixed.http_endpoint);
+        let http_endpoint_hash = hasher.hash_one(key.fixed.http_endpoint);
         let http_endpoints_count = self.distinct_http_endpoints.len();
         if let Entry::Vacant(slot) = self.distinct_http_endpoints.entry(http_endpoint_hash) {
             if http_endpoints_count >= self.cardinality_limits.http_endpoint_limit {
                 key.fixed.http_endpoint = TRACER_BLOCKED_VALUE;
                 collapsed_fields.add(CollapsedFieldSet::HTTP_ENDPOINT);
+                self.any_field_collapsed = true;
             } else {
                 slot.insert();
             }
         }
 
-        let peer_tags_hash = hash(&key.peer_tags);
+        let peer_tags_hash = hasher.hash_one(&key.peer_tags);
         let peer_tags_count = self.distinct_peer_tags.len();
         if let Entry::Vacant(slot) = self.distinct_peer_tags.entry(peer_tags_hash) {
             if peer_tags_count >= self.cardinality_limits.peer_tags_limit {
                 key.peer_tags = vec![(TRACER_BLOCKED_VALUE, Cow::Borrowed(""))];
                 collapsed_fields.add(CollapsedFieldSet::PEER_TAGS);
+                self.any_field_collapsed = true;
             } else {
                 slot.insert();
             }
         }
 
-        let additional_tags_hash = hash(&key.additional_metric_tags);
+        let additional_tags_hash = hasher.hash_one(&key.additional_metric_tags);
         let additional_tags_count = self.distinct_additional_tags.len();
         if let Entry::Vacant(slot) = self.distinct_additional_tags.entry(additional_tags_hash) {
             if additional_tags_count >= self.cardinality_limits.additional_tags_limit {
                 key.additional_metric_tags = vec![(TRACER_BLOCKED_VALUE, "")];
                 collapsed_fields.add(CollapsedFieldSet::ADDITIONAL_TAGS);
+                self.any_field_collapsed = true;
             } else {
                 slot.insert();
             }

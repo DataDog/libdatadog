@@ -166,7 +166,7 @@ impl DeserializableTraceData for BytesData {
         Some(data)
     }
 
-    #[inline]
+    #[inline(always)]
     fn read_string(buf: &mut Bytes) -> Result<BytesString, DecodeError> {
         // Note: we need to pass a &'static lifetime here, otherwise it'll complain
         let (str, newbuf) = read_string_ref_nomut(buf.as_ref())?;
@@ -216,7 +216,7 @@ impl<'a> DeserializableTraceData for SliceData<'a> {
         Some(slice)
     }
 
-    #[inline]
+    #[inline(always)]
     fn read_string(buf: &mut &'a [u8]) -> Result<Cow<'a, str>, DecodeError> {
         read_string_ref_nomut(buf).map(|(str, newbuf)| {
             *buf = newbuf;
