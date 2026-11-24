@@ -1056,21 +1056,25 @@ fn emit_otel_thread_contexts(
         cached.and_then(|r| r.dtv.as_ref().map(|d| (d.modid, d.offset, d.dtv_offset)));
 
     // Fallback: single TP-relative offset.  Use cached value if available;
-    // otherwise compute from the crashing thread's TP (requires ptrace).
+    // otherwise compute from the collector's own TP (which equals the crashing
+    // thread's TP since the collector is a fork).  No ptrace needed.
     let tp_offset = if dtv_resolution.is_none() {
         if let Some(off) = cached.and_then(|r| r.tp_offset) {
             Some(off)
         } else {
-            let stop_deadline = (Instant::now() + stop_timeout).min(deadline);
-            let Ok(()) = attach_thread(crashing_tid, stop_deadline) else {
-                return Ok(());
+            #[cfg(target_arch = "x86_64")]
+            let own_tp: u64 = unsafe {
+                let tp: u64;
+                core::arch::asm!("movq %fs:0, {}", out(reg) tp, options(att_syntax, nomem, nostack));
+                tp
             };
-            let crashing_tp = read_thread_pointer(crashing_tid);
-            let _ = detach_thread(crashing_tid);
-            let Ok(crashing_tp) = crashing_tp else {
-                return Ok(());
+            #[cfg(target_arch = "aarch64")]
+            let own_tp: u64 = unsafe {
+                let tp: u64;
+                core::arch::asm!("mrs {}, tpidr_el0", out(reg) tp, options(nomem, nostack));
+                tp
             };
-            Some(slot_addr as i64 - crashing_tp as i64)
+            Some(slot_addr as i64 - own_tp as i64)
         }
     } else {
         None
@@ -1081,6 +1085,25 @@ fn emit_otel_thread_contexts(
     };
 
     let pid = ppid as u32;
+
+    // Read the crashing thread's OTel record directly from the collector's own
+    // TLS instead of ptracing it
+    if crashing_tid != 0 && tids.contains(&crashing_tid) {
+        let record_ptr = unsafe { *(slot_addr as *const u64) };
+        if record_ptr != 0 {
+            let mut local_buf = [0u8; 640];
+            if let Some(len) = read_local_record(record_ptr as *const u8, &mut local_buf) {
+                writeln!(w, "{DD_CRASHTRACK_BEGIN_OTEL_THREAD_CTX} {crashing_tid}")?;
+                for byte in &local_buf[..len] {
+                    write!(w, "{byte:02x}")?;
+                }
+                writeln!(w)?;
+                writeln!(w, "{DD_CRASHTRACK_END_OTEL_THREAD_CTX}")?;
+                w.flush()?;
+            }
+        }
+    }
+
     // Stack workspace reused across threads; only the first `record_len` bytes
     // are valid after each read.
     let mut record_buf = [0u8; 640];
@@ -1147,11 +1170,6 @@ fn emit_otel_thread_contexts(
         emitted
     };
 
-    // Process the crashing thread first so it is never dropped by the cap.
-    if crashing_tid != 0 && tids.contains(&crashing_tid) {
-        let _ = try_emit_otel(crashing_tid);
-    }
-
     for tid in tids {
         if tid == crashing_tid {
             continue;
@@ -1165,6 +1183,41 @@ fn emit_otel_thread_contexts(
     }
 
     Ok(())
+}
+
+/// Read an OTel record from the collector's own address space (no ptrace).
+/// Returns the number of valid bytes, or `None` if the record is invalid.
+///
+/// # Safety
+///
+/// `ptr` must point to a readable OTel record header (at least
+/// `RECORD_HEADER_SIZE` bytes).  In the collector child this is guaranteed
+/// because the pointer was read from the fork'd TLS, which is a copy-on-write
+/// view of the crashing process's memory.
+#[cfg(all(target_os = "linux", feature = "otel-thread-ctx"))]
+fn read_local_record(ptr: *const u8, buf: &mut [u8; 640]) -> Option<usize> {
+    use crate::otel_tls_reader::RECORD_HEADER_SIZE;
+
+    if ptr.is_null() {
+        return None;
+    }
+    // SAFETY: the pointer came from fork'd TLS — the memory is mapped and readable.
+    let header = unsafe { core::slice::from_raw_parts(ptr, RECORD_HEADER_SIZE) };
+    buf[..RECORD_HEADER_SIZE].copy_from_slice(header);
+
+    if buf[24] != 1 {
+        return None; // valid flag must be 1
+    }
+
+    let attrs_size = u16::from_le_bytes([buf[26], buf[27]]) as usize;
+    let total = RECORD_HEADER_SIZE + attrs_size.min(buf.len() - RECORD_HEADER_SIZE);
+    if total > RECORD_HEADER_SIZE {
+        let attrs = unsafe {
+            core::slice::from_raw_parts(ptr.add(RECORD_HEADER_SIZE), total - RECORD_HEADER_SIZE)
+        };
+        buf[RECORD_HEADER_SIZE..total].copy_from_slice(attrs);
+    }
+    Some(total)
 }
 
 #[cfg(test)]
