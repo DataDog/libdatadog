@@ -32,9 +32,6 @@ pub struct CapturedThreadContext {
     pub stack_trace: StackTrace,
     /// Whether the unwind started from the saved crash registers.
     pub used_saved_context: bool,
-    /// The thread pointer register read while the thread was ptrace-stopped.
-    /// Set only when the `otel-thread-ctx` feature is enabled.
-    pub thread_pointer: Option<u64>,
 }
 
 #[derive(Debug)]
@@ -488,20 +485,16 @@ fn unwind_remote_thread(tid: libc::pid_t, addr_space: &UnwAddrSpace) -> StackTra
 /// cache inside the address space remains valid).
 ///
 /// `stop_deadline` bounds how long we poll for the thread to enter ptrace-stop.
+/// `while_stopped` is called after the unwind but before detach, while the
+/// thread is still in ptrace-stop.
 pub fn capture_thread_context(
     tid: libc::pid_t,
     addr_space: &UnwAddrSpace,
     stop_deadline: Instant,
     initial_context: Option<&Ucontext>,
+    while_stopped: &mut dyn FnMut(libc::pid_t),
 ) -> Result<CapturedThreadContext, PtraceError> {
     attach_thread(tid, stop_deadline)?;
-
-    // Read the thread pointer while the thread is still ptrace-stopped.
-    // The receiver uses it to resolve OTel TLS addresses without a second ptrace pass.
-    #[cfg(feature = "otel-thread-ctx")]
-    let thread_pointer = read_thread_pointer(tid).ok();
-    #[cfg(not(feature = "otel-thread-ctx"))]
-    let thread_pointer = None;
 
     // A failed seed leaves the thread's registers untouched, so fall back to
     // unwinding from where the thread is stopped rather than losing its stack.
@@ -509,6 +502,8 @@ pub fn capture_thread_context(
         initial_context.and_then(|context| replace_registers_from_ucontext(tid, context).ok());
     let used_saved_context = original_registers.is_some();
     let stack_trace = unwind_remote_thread(tid, addr_space);
+
+    while_stopped(tid);
 
     if let Some(registers) = original_registers.as_mut() {
         // A detach would resume the tracee at the temporary crash registers.
@@ -523,7 +518,6 @@ pub fn capture_thread_context(
     Ok(CapturedThreadContext {
         stack_trace,
         used_saved_context,
-        thread_pointer,
     })
 }
 
@@ -562,11 +556,18 @@ pub(crate) fn capture_with_retry(
     addr_space: &UnwAddrSpace,
     overall_deadline: Instant,
     initial_context: Option<&Ucontext>,
+    while_stopped: &mut dyn FnMut(libc::pid_t),
 ) -> Option<CapturedThreadContext> {
     for attempt in 0..=MAX_RETRIES {
         let thread_deadline = (Instant::now() + STOP_TIMEOUT_PER_THREAD).min(overall_deadline);
 
-        match capture_thread_context(tid, addr_space, thread_deadline, initial_context) {
+        match capture_thread_context(
+            tid,
+            addr_space,
+            thread_deadline,
+            initial_context,
+            while_stopped,
+        ) {
             Ok(ctx) if !ctx.stack_trace.frames.is_empty() => return Some(ctx),
             Ok(_) => {}                                      // 0 frames -- retry
             Err(ref e) if is_transient_ptrace_error(e) => {} // ETIMEDOUT -- retry
@@ -599,6 +600,10 @@ pub(crate) fn capture_with_retry(
 /// capture instead of being ptraced. This is used in the collector child where the
 /// crashing thread is the parent process's signal handler thread -- ptracing it
 /// would deadlock because it is waiting for the collector to finish.
+/// `while_stopped` is called for each thread while it is ptrace-stopped,
+/// after the stack unwind but before detach.  Use it to read additional
+/// per-thread state with consistency guarantees.
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn stream_thread_contexts<F>(
     parent_pid: libc::pid_t,
     crashing_tid: libc::pid_t,
@@ -606,6 +611,7 @@ pub(crate) fn stream_thread_contexts<F>(
     timeout: Duration,
     crashing_context: Option<&Ucontext>,
     skip_crashing_ptrace: bool,
+    while_stopped: &mut dyn FnMut(libc::pid_t),
     mut callback: F,
 ) -> Result<bool, PtraceError>
 where
@@ -634,6 +640,7 @@ where
                 &addr_space,
                 overall_deadline,
                 crashing_context,
+                while_stopped,
             );
             callback(crashing_tid, context);
         }
@@ -648,7 +655,7 @@ where
             break;
         }
 
-        let context = capture_with_retry(tid, &addr_space, overall_deadline, None);
+        let context = capture_with_retry(tid, &addr_space, overall_deadline, None, while_stopped);
         callback(tid, context);
         processed += 1;
     }
@@ -821,6 +828,7 @@ mod tests {
             &addr_space,
             Instant::now() + Duration::from_secs(5),
             None,
+            &mut |_| {},
         ) {
             Err(e) => eprintln!("skipping ptrace test (ptrace unavailable): {e}"),
             Ok(ctx) => assert!(
@@ -855,6 +863,7 @@ mod tests {
             Duration::from_secs(5),
             None,
             false,
+            &mut |_| {},
             |_tid, _ctx| collected += 1,
         );
 
@@ -889,6 +898,7 @@ mod tests {
             Duration::from_secs(5),
             None,
             false,
+            &mut |_| {},
             |tid, _ctx| {
                 if tid == worker_tid {
                     seen_worker = true;

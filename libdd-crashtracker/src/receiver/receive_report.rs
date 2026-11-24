@@ -722,15 +722,16 @@ fn attach_additional_files(
 /// Try to read a single thread's OTel context using the saved thread pointer and
 /// resolution data, via `/proc/<pid>/mem`. Returns `None` on any failure.
 #[cfg(all(target_os = "linux", feature = "otel-thread-ctx"))]
+/// Read an OTel TLS record while the thread is ptrace-stopped.
+/// Reads the thread pointer register directly (requires ptrace-stop).
 fn try_read_otel_context(
     tid: libc::pid_t,
-    thread_pointer: Option<u64>,
     resolution: Option<&crate::otel_tls_reader::OtelTlsResolution>,
     mem: &mut Option<crate::otel_tls_reader::ProcMemReader>,
     pid: u32,
     record_buf: &mut [u8; 640],
 ) -> Option<crate::crash_info::OtelThreadContext> {
-    let tp = thread_pointer?;
+    let tp = crate::ptrace_collector::read_thread_pointer(tid).ok()?;
     let resolution = resolution?;
     let mem = match mem.as_mut() {
         Some(m) => m,
@@ -773,11 +774,9 @@ fn collect_and_add_thread_contexts(
     let mut crashing_stack = None;
     let collector_stack = builder.error.stack.as_ref();
 
-    // Set up OTel TLS resolution data and ProcMemReader for single-pass collection.
-    // The resolution data was sent by the collector and parsed from the protocol.
-    // We read the OTel record from /proc/<pid>/mem using the saved thread pointer
-    // (captured during the same ptrace attachment as the stack), so no second
-    // ptrace pass is needed.
+    // OTel TLS collection: read each thread's OTel record while it is ptrace-
+    // stopped, via the `while_stopped` callback.  This guarantees the thread
+    // can't update or free its record between reads.
     #[cfg(feature = "otel-thread-ctx")]
     let otel_resolution = builder.otel_tls_resolution.as_ref();
     #[cfg(feature = "otel-thread-ctx")]
@@ -789,6 +788,26 @@ fn collect_and_add_thread_contexts(
     #[cfg(feature = "otel-thread-ctx")]
     let collect_otel = config.collect_otel_thread_contexts() && otel_resolution.is_some();
 
+    // Called while each thread is ptrace-stopped: read OTel TLS record.
+    let mut while_stopped = |tid: libc::pid_t| {
+        #[cfg(feature = "otel-thread-ctx")]
+        if collect_otel {
+            let ctx = try_read_otel_context(
+                tid,
+                otel_resolution,
+                &mut otel_mem,
+                parent_pid as u32,
+                &mut otel_record_buf,
+            );
+            if let Some(mut ctx) = ctx {
+                ctx.thread_name = crate::otel_tls_reader::read_thread_name(parent_pid as u32, tid);
+                otel_contexts.push(ctx);
+            }
+        }
+        #[cfg(not(feature = "otel-thread-ctx"))]
+        let _ = tid;
+    };
+
     let incomplete = stream_thread_contexts(
         parent_pid,
         crashing_tid,
@@ -796,28 +815,8 @@ fn collect_and_add_thread_contexts(
         budget,
         crashing_context.as_ref(),
         false, // skip_crashing_ptrace: receiver ptraces all threads including crashing
+        &mut while_stopped,
         |tid, captured| {
-            // Single-pass OTel: use the saved thread pointer to read the OTel TLS
-            // record via /proc/<pid>/mem (no ptrace needed -- the thread is already
-            // detached by the time the callback runs, but /proc/<pid>/mem is
-            // readable for same-uid processes).
-            #[cfg(feature = "otel-thread-ctx")]
-            if collect_otel {
-                let ctx = try_read_otel_context(
-                    tid,
-                    captured.as_ref().and_then(|ctx| ctx.thread_pointer),
-                    otel_resolution,
-                    &mut otel_mem,
-                    parent_pid as u32,
-                    &mut otel_record_buf,
-                );
-                if let Some(mut ctx) = ctx {
-                    ctx.thread_name =
-                        crate::otel_tls_reader::read_thread_name(parent_pid as u32, tid);
-                    otel_contexts.push(ctx);
-                }
-            }
-
             let used_saved_context = captured.as_ref().is_some_and(|ctx| ctx.used_saved_context);
             let mut thread =
                 thread_data_from_capture(parent_pid, crashing_tid, crash_site, tid, captured);

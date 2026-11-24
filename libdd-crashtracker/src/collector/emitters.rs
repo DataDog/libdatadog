@@ -551,6 +551,7 @@ fn emit_threads<W: Write + Send>(
                         .as_ref()
                         .filter(|_| config.unwind_from_ucontext()),
                     true, // skip_crashing_ptrace: the crashing thread is in the signal handler
+                    &mut |_| {},
                     |tid, captured| {
                         if write_result.is_ok() {
                             write_result = emit(tid, captured);
