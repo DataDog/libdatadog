@@ -297,8 +297,12 @@ pub fn normalize_span_with<S: SpanMut>(
             .component()
             .filter(|c| !c.is_empty() && *c != span.name())
     {
-        let component = component.to_owned();
-        span.set_name(component.into());
+        // Clone the stored text if the implementation gives it, which can be cheaper than a copy.
+        let component = match span.component_text() {
+            Some(text) => text.clone(),
+            None => component.to_owned().into(),
+        };
+        span.set_name(component);
     }
 
     let (name, reason) = repaired(
@@ -317,8 +321,11 @@ pub fn normalize_span_with<S: SpanMut>(
     }
     if span.resource().is_empty() {
         obs.malformed(MalformedReason::ResourceEmpty);
-        let name = span.name().to_owned();
-        span.set_resource(name.into());
+        let name = match span.name_text() {
+            Some(text) => text.clone(),
+            None => span.name().to_owned().into(),
+        };
+        span.set_resource(name);
     }
     if span.parent_id() == span.span_id() {
         span.set_parent_id(0);
@@ -869,7 +876,7 @@ mod tests {
 
         chunk.trace_id = 0;
         assert!(normalize_chunk(&mut chunk, "php").is_err());
-        let mut empty = TestChunk {
+        let mut empty: TestChunk = TestChunk {
             trace_id: 1,
             ..Default::default()
         };

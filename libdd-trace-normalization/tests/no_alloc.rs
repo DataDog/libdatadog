@@ -6,6 +6,7 @@
 use libdd_trace_normalization::normalizer_v1;
 use std::alloc::{GlobalAlloc, Layout, System};
 use std::cell::Cell;
+use std::sync::Arc;
 
 #[path = "../src/test_types.rs"]
 mod test_types;
@@ -49,7 +50,7 @@ fn allocations(f: impl FnOnce()) -> usize {
 #[test]
 #[cfg_attr(miri, ignore)]
 fn normalized_span_does_not_allocate() {
-    let mut span = test_types::normalized_span();
+    let mut span: test_types::TestSpan = test_types::normalized_span();
     let n = allocations(|| normalizer_v1::normalize_span(&mut span, "python").unwrap());
     assert_eq!(n, 0);
 
@@ -63,7 +64,7 @@ fn normalized_span_does_not_allocate() {
 #[test]
 #[cfg_attr(miri, ignore)]
 fn normalized_chunk_does_not_allocate() {
-    let mut chunk = test_types::TestChunk {
+    let mut chunk: test_types::TestChunk = test_types::TestChunk {
         trace_id: 1,
         spans: vec![test_types::normalized_span(), test_types::normalized_span()],
         ..Default::default()
@@ -81,4 +82,22 @@ fn normalized_chunk_does_not_allocate() {
         normalizer_v1::count_duplicate_span_ids(&chunk, &mut seen, &mut ());
     });
     assert_eq!(n, 0);
+}
+
+#[test]
+#[cfg_attr(miri, ignore)]
+fn copies_clone_the_stored_text() {
+    // With a text that is cheap to clone, the empty-resource fallback and `component2name` clone
+    // the stored name and component (`Span::name_text`, `Span::component_text`).
+    let mut span: test_types::TestSpan<Arc<str>> = test_types::normalized_span();
+    span.resource = Arc::from("");
+    let opts = normalizer_v1::NormalizeOptions {
+        lang: "python",
+        component2name: true,
+    };
+    let n = allocations(|| normalizer_v1::normalize_span_with(&mut span, &opts, &mut ()).unwrap());
+    assert_eq!(n, 0);
+    assert_eq!((&*span.name, &*span.resource), ("django", "django"));
+    assert!(Arc::ptr_eq(&span.name, span.component.as_ref().unwrap()));
+    assert!(Arc::ptr_eq(&span.name, &span.resource));
 }

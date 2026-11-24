@@ -7,40 +7,51 @@
 #![allow(dead_code)]
 
 use libdd_trace_model::{
-    AttributeRef, AttributeValue, Attributes, AttributesMut, Span, SpanMut, StringData, TraceChunk,
-    TraceChunkMut,
+    AttributeRef, AttributeValue, Attributes, AttributesMut, Span, SpanMut, TraceChunk,
+    TraceChunkMut, TraceText, ValueTypes,
 };
 use std::cell::Cell;
 use std::collections::HashMap;
+use std::marker::PhantomData;
 
-pub type Value = AttributeValue<StringData>;
+/// The [`ValueTypes`] of the test types, with `X` as text, e.g. `String` or `Arc<str>`.
+pub struct TestValues<X>(PhantomData<X>);
+
+impl<X: TraceText> ValueTypes for TestValues<X> {
+    type Text = X;
+    type Bytes = Vec<u8>;
+    type Array = Vec<AttributeValue<Self>>;
+    type Map = HashMap<X, AttributeValue<Self>>;
+}
+
+pub type Value<X = String> = AttributeValue<TestValues<X>>;
 
 #[derive(Clone, Default)]
-pub struct TestLink {
-    pub attrs: HashMap<String, Value>,
+pub struct TestLink<X: TraceText = String> {
+    pub attrs: HashMap<X, Value<X>>,
 }
 
 #[derive(Clone, Default)]
-pub struct TestSpan {
-    pub service: String,
-    pub name: String,
-    pub resource: String,
-    pub typ: String,
+pub struct TestSpan<X: TraceText = String> {
+    pub service: X,
+    pub name: X,
+    pub resource: X,
+    pub typ: X,
     pub span_id: u64,
     pub parent_id: u64,
     pub start: i64,
     pub duration: i64,
-    pub env: Option<String>,
-    pub component: Option<String>,
-    pub attrs: HashMap<String, Value>,
-    pub links: Vec<TestLink>,
+    pub env: Option<X>,
+    pub component: Option<X>,
+    pub attrs: HashMap<X, Value<X>>,
+    pub links: Vec<TestLink<X>>,
 }
 
 #[derive(Clone, Default)]
-pub struct TestChunk {
+pub struct TestChunk<X: TraceText = String> {
     pub trace_id: u128,
-    pub spans: Vec<TestSpan>,
-    pub attrs: HashMap<String, Value>,
+    pub spans: Vec<TestSpan<X>>,
+    pub attrs: HashMap<X, Value<X>>,
 }
 
 thread_local! {
@@ -53,11 +64,11 @@ pub fn attribute_mut_calls() -> usize {
 }
 
 macro_rules! impl_attributes {
-    ($($ty:ty),*) => {$(
-        impl Attributes for $ty {
-            type Text = String;
+    ($($ty:ident),*) => {$(
+        impl<X: TraceText> Attributes for $ty<X> {
+            type Text = X;
             type Bytes = Vec<u8>;
-            type Values = StringData;
+            type Values = TestValues<X>;
             fn attribute_str(&self, key: &str) -> Option<&str> {
                 self.attrs.get(key).and_then(Value::as_str)
             }
@@ -71,22 +82,22 @@ macro_rules! impl_attributes {
             fn has_attribute(&self, key: &str) -> bool {
                 self.attrs.contains_key(key)
             }
-            fn attribute(&self, key: &str) -> Option<AttributeRef<'_, StringData>> {
+            fn attribute(&self, key: &str) -> Option<AttributeRef<'_, TestValues<X>>> {
                 self.attrs.get(key).map(Into::into)
             }
         }
-        impl AttributesMut for $ty {
-            fn retain_attributes(&mut self, mut f: impl FnMut(&str, &mut Value) -> bool) {
-                self.attrs.retain(|k, v| f(k, v));
+        impl<X: TraceText> AttributesMut for $ty<X> {
+            fn retain_attributes(&mut self, mut f: impl FnMut(&str, &mut Value<X>) -> bool) {
+                self.attrs.retain(|k, v| f(k.as_str(), v));
             }
-            fn attribute_mut(&mut self, key: &str) -> Option<&mut Value> {
+            fn attribute_mut(&mut self, key: &str) -> Option<&mut Value<X>> {
                 ATTRIBUTE_MUT_CALLS.with(|n| n.set(n.get() + 1));
                 self.attrs.get_mut(key)
             }
-            fn set_attribute(&mut self, key: String, value: Value) {
+            fn set_attribute(&mut self, key: X, value: Value<X>) {
                 self.attrs.insert(key, value);
             }
-            fn remove_attribute(&mut self, key: &str) -> Option<Value> {
+            fn remove_attribute(&mut self, key: &str) -> Option<Value<X>> {
                 self.attrs.remove(key)
             }
         }
@@ -94,7 +105,7 @@ macro_rules! impl_attributes {
 }
 impl_attributes!(TestLink, TestSpan, TestChunk);
 
-impl libdd_trace_model::SpanEvent for TestLink {
+impl<X: TraceText> libdd_trace_model::SpanEvent for TestLink<X> {
     fn name(&self) -> &str {
         ""
     }
@@ -103,7 +114,7 @@ impl libdd_trace_model::SpanEvent for TestLink {
     }
 }
 
-impl libdd_trace_model::SpanLink for TestLink {
+impl<X: TraceText> libdd_trace_model::SpanLink for TestLink<X> {
     fn trace_id(&self) -> u128 {
         0
     }
@@ -118,20 +129,20 @@ impl libdd_trace_model::SpanLink for TestLink {
     }
 }
 
-impl Span for TestSpan {
-    type SpanEvent = TestLink;
-    type SpanLink = TestLink;
+impl<X: TraceText> Span for TestSpan<X> {
+    type SpanEvent = TestLink<X>;
+    type SpanLink = TestLink<X>;
     fn service(&self) -> &str {
-        &self.service
+        self.service.as_str()
     }
     fn resource(&self) -> &str {
-        &self.resource
+        self.resource.as_str()
     }
     fn name(&self) -> &str {
-        &self.name
+        self.name.as_str()
     }
     fn typ(&self) -> &str {
-        &self.typ
+        self.typ.as_str()
     }
     fn span_id(&self) -> u64 {
         self.span_id
@@ -152,33 +163,39 @@ impl Span for TestSpan {
         None
     }
     fn env(&self) -> Option<&str> {
-        self.env.as_deref()
+        self.env.as_ref().map(X::as_str)
     }
     fn version(&self) -> Option<&str> {
         None
     }
     fn component(&self) -> Option<&str> {
-        self.component.as_deref()
+        self.component.as_ref().map(X::as_str)
     }
-    fn span_events(&self) -> impl Iterator<Item = &TestLink> {
+    fn name_text(&self) -> Option<&X> {
+        Some(&self.name)
+    }
+    fn component_text(&self) -> Option<&X> {
+        self.component.as_ref()
+    }
+    fn span_events(&self) -> impl Iterator<Item = &TestLink<X>> {
         std::iter::empty()
     }
-    fn span_links(&self) -> impl Iterator<Item = &TestLink> {
+    fn span_links(&self) -> impl Iterator<Item = &TestLink<X>> {
         self.links.iter()
     }
 }
 
-impl SpanMut for TestSpan {
-    fn set_service(&mut self, value: String) {
+impl<X: TraceText> SpanMut for TestSpan<X> {
+    fn set_service(&mut self, value: X) {
         self.service = value;
     }
-    fn set_resource(&mut self, value: String) {
+    fn set_resource(&mut self, value: X) {
         self.resource = value;
     }
-    fn set_name(&mut self, value: String) {
+    fn set_name(&mut self, value: X) {
         self.name = value;
     }
-    fn set_type(&mut self, value: String) {
+    fn set_type(&mut self, value: X) {
         self.typ = value;
     }
     fn set_parent_id(&mut self, value: u64) {
@@ -192,30 +209,30 @@ impl SpanMut for TestSpan {
     }
     fn set_error(&mut self, _: bool) {}
     fn set_span_kind(&mut self, _: &str) {}
-    fn set_env(&mut self, value: String) {
+    fn set_env(&mut self, value: X) {
         self.env = Some(value);
     }
-    fn set_version(&mut self, _: String) {}
-    fn set_component(&mut self, value: String) {
-        self.component = (!value.is_empty()).then_some(value);
+    fn set_version(&mut self, _: X) {}
+    fn set_component(&mut self, value: X) {
+        self.component = (!value.as_str().is_empty()).then_some(value);
     }
-    fn span_events_mut(&mut self) -> impl Iterator<Item = &mut TestLink> {
+    fn span_events_mut(&mut self) -> impl Iterator<Item = &mut TestLink<X>> {
         std::iter::empty()
     }
-    fn span_links_mut(&mut self) -> impl Iterator<Item = &mut TestLink> {
+    fn span_links_mut(&mut self) -> impl Iterator<Item = &mut TestLink<X>> {
         self.links.iter_mut()
     }
 }
 
-impl TraceChunk for TestChunk {
-    type Span = TestSpan;
+impl<X: TraceText> TraceChunk for TestChunk<X> {
+    type Span = TestSpan<X>;
     fn trace_id(&self) -> u128 {
         self.trace_id
     }
     fn origin(&self) -> &str {
         ""
     }
-    fn spans(&self) -> impl Iterator<Item = &TestSpan> {
+    fn spans(&self) -> impl Iterator<Item = &TestSpan<X>> {
         self.spans.iter()
     }
     fn priority(&self) -> Option<i32> {
@@ -229,42 +246,43 @@ impl TraceChunk for TestChunk {
     }
 }
 
-impl TraceChunkMut for TestChunk {
-    fn set_origin(&mut self, _: String) {}
+impl<X: TraceText> TraceChunkMut for TestChunk<X> {
+    fn set_origin(&mut self, _: X) {}
     fn set_priority(&mut self, _: i32) {}
     fn set_sampling_mechanism(&mut self, _: u32) {}
     fn set_dropped_trace(&mut self, _: bool) {}
-    fn spans_mut(&mut self) -> impl Iterator<Item = &mut TestSpan> {
+    fn spans_mut(&mut self) -> impl Iterator<Item = &mut TestSpan<X>> {
         self.spans.iter_mut()
     }
-    fn retain_spans(&mut self, f: impl FnMut(&mut TestSpan) -> bool) {
+    fn retain_spans(&mut self, f: impl FnMut(&mut TestSpan<X>) -> bool) {
         self.spans.retain_mut(f);
     }
 }
 
 /// A span that is already normalized, with the fields and attributes that `normalizer_v1` reads.
-pub fn normalized_span() -> TestSpan {
-    let string = |s: &str| Value::String(s.to_owned());
+pub fn normalized_span<X: TraceText>() -> TestSpan<X> {
+    let text = |s: &str| X::from(s.to_owned());
+    let string = |s: &str| Value::String(text(s));
     TestSpan {
-        service: "django".to_owned(),
-        name: "django.controller".to_owned(),
-        resource: "GET /some/raclette".to_owned(),
-        typ: "http".to_owned(),
+        service: text("django"),
+        name: text("django.controller"),
+        resource: text("GET /some/raclette"),
+        typ: text("http"),
         span_id: 1388,
         parent_id: 1111,
         start: 1_448_466_874_000_000_000,
         duration: 10_000_000,
-        env: Some("prod".to_owned()),
-        component: Some("django".to_owned()),
+        env: Some(text("prod")),
+        component: Some(text("django")),
         attrs: HashMap::from([
-            ("peer.service".to_owned(), string("postgres")),
-            ("_dd.base_service".to_owned(), string("django-app")),
-            ("http.status_code".to_owned(), string("200")),
-            ("user".to_owned(), string("leo")),
-            ("cheese_weight".to_owned(), Value::Float(100000.0)),
+            (text("peer.service"), string("postgres")),
+            (text("_dd.base_service"), string("django-app")),
+            (text("http.status_code"), string("200")),
+            (text("user"), string("leo")),
+            (text("cheese_weight"), Value::Float(100000.0)),
         ]),
         links: vec![TestLink {
-            attrs: HashMap::from([("link.name".to_owned(), string("next_request"))]),
+            attrs: HashMap::from([(text("link.name"), string("next_request"))]),
         }],
     }
 }

@@ -147,7 +147,7 @@ fn normalize_span_bench(c: &mut Criterion) {
 }
 
 fn normalize_v1_span_bench(c: &mut Criterion) {
-    let span = test_types::normalized_span();
+    let span: test_types::TestSpan = test_types::normalized_span();
     c.bench_with_input(
         BenchmarkId::new("normalization/normalize_v1_span", "already_normalized"),
         &span,
