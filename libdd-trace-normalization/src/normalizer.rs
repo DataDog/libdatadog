@@ -31,7 +31,7 @@ pub(crate) fn normalize_span(s: &mut pb::Span) -> anyhow::Result<()> {
     normalize_utils::normalize_span_type(&mut s.r#type);
 
     if let Some(env_tag) = s.meta.get_mut("env") {
-        normalize_utils::normalize_tag(env_tag);
+        normalize_utils::normalize_tag_value(env_tag);
     }
 
     if let Some(code) = s.meta.get("http.status_code")
@@ -408,6 +408,19 @@ mod tests {
 
         assert!(normalizer::normalize_span(&mut test_span).is_ok());
         assert_eq!("development", test_span.meta.get("env").unwrap());
+    }
+
+    #[test]
+    fn test_normalize_env_keeps_leading_digits() {
+        let mut test_span = new_test_span();
+        test_span
+            .meta
+            .insert("env".to_string(), "123DEVELOPMENT".to_string());
+        test_span.service = "1password".to_string();
+
+        assert!(normalizer::normalize_span(&mut test_span).is_ok());
+        assert_eq!("123development", test_span.meta.get("env").unwrap());
+        assert_eq!("1password", test_span.service);
     }
 
     #[test]

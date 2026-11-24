@@ -38,12 +38,7 @@ pub fn normalize_span<S: SpanMut>(span: &mut S, lang: &str) -> anyhow::Result<()
         if let Some(v) = span
             .attribute_str(key)
             .filter(|v| !v.is_empty())
-            .and_then(|v| {
-                normalized(v, |s| {
-                    normalize_utils::truncate_utf8(s, normalize_utils::MAX_SERVICE_LEN);
-                    normalize_utils::normalize_tag(s);
-                })
-            })
+            .and_then(|v| normalized(v, normalize_utils::normalize_peer_service))
         {
             span.set_attribute(
                 TraceText::from_static(key),
@@ -74,7 +69,7 @@ pub fn normalize_span<S: SpanMut>(span: &mut S, lang: &str) -> anyhow::Result<()
     if let Some(v) = span
         .env()
         .filter(|v| !v.is_empty())
-        .and_then(|v| normalized(v, normalize_utils::normalize_tag))
+        .and_then(|v| normalized(v, normalize_utils::normalize_tag_value))
     {
         span.set_env(v.into());
     }
@@ -423,6 +418,49 @@ mod tests {
     }
 
     #[test]
+    fn services_are_normalized_as_tag_values() {
+        // TestNormalizeServiceTagV1 in the agent's normalizer_test.go.
+        let mut span = TestSpan {
+            service: "retargeting(api-Staging ".to_owned(),
+            ..valid_span()
+        };
+        span.attrs.insert(
+            PEER_SERVICE_KEY.to_owned(),
+            Value::String("retargeting(api-Peer ".to_owned()),
+        );
+        span.attrs.insert(
+            BASE_SERVICE_KEY.to_owned(),
+            Value::String("retargeting(api-Base ".to_owned()),
+        );
+        let span = normalize(span);
+        assert_eq!(span.service, "retargeting_api-staging");
+        assert_eq!(
+            span.attribute_str(PEER_SERVICE_KEY),
+            Some("retargeting_api-peer")
+        );
+        assert_eq!(
+            span.attribute_str(BASE_SERVICE_KEY),
+            Some("retargeting_api-base")
+        );
+
+        // Leading digits are kept, and an invalid peer service becomes empty.
+        let mut span = TestSpan {
+            service: "1password".to_owned(),
+            ..valid_span()
+        };
+        span.attrs.insert(
+            PEER_SERVICE_KEY.to_owned(),
+            Value::String("127.0.0.1".to_owned()),
+        );
+        span.attrs
+            .insert(BASE_SERVICE_KEY.to_owned(), Value::String("!!!".to_owned()));
+        let span = normalize(span);
+        assert_eq!(span.service, "1password");
+        assert_eq!(span.attribute_str(PEER_SERVICE_KEY), Some("127.0.0.1"));
+        assert_eq!(span.attribute_str(BASE_SERVICE_KEY), Some(""));
+    }
+
+    #[test]
     fn name_and_resource() {
         let span = normalize(TestSpan {
             name: String::new(),
@@ -489,6 +527,12 @@ mod tests {
             ..valid_span()
         });
         assert_eq!(span.env.as_deref(), Some("prod_env"));
+        // TestNormalizeEnvV1 in the agent's normalizer_test.go: leading digits are kept.
+        let span = normalize(TestSpan {
+            env: Some("123DEVELOPMENT".to_owned()),
+            ..valid_span()
+        });
+        assert_eq!(span.env.as_deref(), Some("123development"));
         let span = normalize(TestSpan {
             env: None,
             ..valid_span()

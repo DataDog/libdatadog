@@ -18,7 +18,7 @@ pub(crate) const DEFAULT_SERVICE_NAME: &str = "unnamed-service";
 pub(crate) const MAX_NAME_LEN: usize = 100;
 /// MAX_SERVICE_LEN the maximum length a service can have
 pub(crate) const MAX_SERVICE_LEN: usize = 100;
-/// MAX_SERVICE_LEN the maximum length a tag can have
+/// MAX_TAG_LEN the maximum length a tag can have
 const MAX_TAG_LEN: usize = 200;
 
 // normalize_service normalizes a span service
@@ -28,9 +28,11 @@ pub fn normalize_service(svc: &mut String) {
 
 /// Like [`normalize_service`], but falls back to `unnamed-<lang>-service` as the agent does when
 /// `lang` is not empty.
+///
+/// The service is normalized as a tag value (see [`normalize_tag_value`]), as the agent's
+/// `NormalizeService` does.
 pub fn normalize_service_with_lang(svc: &mut String, lang: &str) {
-    truncate_utf8(svc, MAX_SERVICE_LEN);
-    normalize_tag(svc);
+    normalize_peer_service(svc);
     if svc.is_empty() {
         if lang.is_empty() {
             DEFAULT_SERVICE_NAME.clone_into(svc);
@@ -38,6 +40,13 @@ pub fn normalize_service_with_lang(svc: &mut String, lang: &str) {
             *svc = format!("unnamed-{lang}-service");
         }
     }
+}
+
+/// Normalizes a `peer.service` or `_dd.base_service` value, as the agent's `NormalizePeerService`
+/// does: like [`normalize_service`], but a value that normalizes to nothing stays empty.
+pub fn normalize_peer_service(svc: &mut String) {
+    truncate_utf8(svc, MAX_SERVICE_LEN);
+    normalize_tag_value(svc);
 }
 
 // normalize_name normalizes a span name or an error describing why normalization failed.
@@ -99,137 +108,102 @@ pub fn normalize_tag_cloned(tag: &str) -> String {
     tag
 }
 
+/// Normalizes a full `key:value` tag, as the agent's `NormalizeTag` does.
+///
+/// Characters that can't start a tag, such as digits, `.`, `/` and `-`, are removed from the start.
+/// Use [`normalize_tag_value`] for a value without its key.
 pub fn normalize_tag(tag: &mut String) {
-    // Since we know that we're only going to write valid utf8 we can work with the Vec directly
-    let bytes = unsafe { tag.as_mut_vec() };
-    if bytes.is_empty() {
-        return;
-    }
-    let mut read_cursor = 0;
-    let mut write_cursor = 0;
-    let mut is_in_illegal_span = true;
-    let mut codepoints_written = 0;
+    normalize(tag, true);
+}
 
-    loop {
-        if read_cursor >= bytes.len()
-            || write_cursor >= 2 * MAX_TAG_LEN
-            || codepoints_written >= MAX_TAG_LEN
-        {
+/// Normalizes a tag value, as the agent's `NormalizeTagValue` does.
+///
+/// Unlike [`normalize_tag`], it keeps leading digits, `.`, `/` and `-`: `1password` stays
+/// `1password`. The agent uses it for the service, `peer.service`, `_dd.base_service` and `env`.
+pub fn normalize_tag_value(value: &mut String) {
+    normalize(value, false);
+}
+
+/// Normalizes `tag` in place, as the agent's `normalize` (`pkg/trace/traceutil/normalize`) does.
+///
+/// - ASCII letters are lowercased. Other uppercase characters are lowercased too.
+/// - Letters, `:`, digits, `.`, `/` and `-` are kept.
+/// - If `remove_digit_start_char` is set, characters up to the first letter or `:` are removed.
+/// - Each run of other characters, `_` included, becomes one `_`. A run at the end is removed.
+/// - Processing stops after [`MAX_TAG_LEN`] characters, or once it reaches `2 * MAX_TAG_LEN` bytes
+///   of the input. Removed leading characters don't count toward the first limit.
+fn normalize(tag: &mut String, remove_digit_start_char: bool) {
+    // SAFETY: the loop below only writes complete UTF-8 encoded characters and `_` bytes, at a
+    // write position that is never ahead of the read position, so the buffer stays valid UTF-8.
+    let bytes = unsafe { tag.as_mut_vec() };
+    let mut read = 0;
+    let mut write = 0;
+    // Number of characters processed, removed leading characters excluded.
+    let mut chars = 0;
+    // Whether the characters since the last written one were illegal.
+    let mut pending_underscore = false;
+
+    while read < bytes.len() {
+        let b = bytes[read];
+        let (c, len) = if b.is_ascii() {
+            (char::from(b), 1)
+        } else {
+            let mut it = bytes[read..].iter();
+            // The input is valid UTF-8 from `read` on, as nothing was written there yet.
+            #[allow(clippy::unwrap_used)]
+            let c = char::from_u32(crate::utf8_helpers::next_code_point(&mut it).unwrap()).unwrap();
+            (c, c.len_utf8())
+        };
+        read += len;
+
+        let keep = match c {
+            'a'..='z' | ':' => {
+                chars += 1;
+                Some(c)
+            }
+            'A'..='Z' => {
+                chars += 1;
+                Some(c.to_ascii_lowercase())
+            }
+            _ => {
+                let mut c = c;
+                if c.is_uppercase()
+                    && let Some(lower) = c.to_lowercase().next()
+                    && lower.len_utf8() <= len
+                {
+                    c = lower;
+                }
+                if c.is_alphabetic() {
+                    chars += 1;
+                    Some(c)
+                } else if remove_digit_start_char && chars == 0 {
+                    None
+                } else if c.is_numeric() || matches!(c, '.' | '/' | '-') {
+                    chars += 1;
+                    Some(c)
+                } else {
+                    chars += 1;
+                    pending_underscore = true;
+                    None
+                }
+            }
+        };
+
+        if let Some(c) = keep {
+            if pending_underscore {
+                bytes[write] = b'_';
+                write += 1;
+                pending_underscore = false;
+            }
+            write += c.encode_utf8(&mut bytes[write..]).len();
+        }
+
+        if read >= 2 * MAX_TAG_LEN || chars >= MAX_TAG_LEN {
             break;
         }
-
-        let b = bytes[read_cursor];
-        // ascii fast-path
-        match b {
-            b'a'..=b'z' | b':' => {
-                bytes[write_cursor] = b;
-                is_in_illegal_span = false;
-                write_cursor += 1;
-                codepoints_written += 1;
-                read_cursor += 1;
-                continue;
-            }
-            b'A'..=b'Z' => {
-                bytes[write_cursor] = b - b'A' + b'a';
-                is_in_illegal_span = false;
-                write_cursor += 1;
-                codepoints_written += 1;
-                read_cursor += 1;
-                continue;
-            }
-            b'0'..=b'9' | b'.' | b'/' | b'-' => {
-                if write_cursor != 0 {
-                    bytes[write_cursor] = b;
-                    is_in_illegal_span = false;
-                    write_cursor += 1;
-                    codepoints_written += 1;
-                }
-                read_cursor += 1;
-                continue;
-            }
-            b'_' if !is_in_illegal_span => {
-                if write_cursor != 0 {
-                    bytes[write_cursor] = b;
-                    is_in_illegal_span = true;
-                    write_cursor += 1;
-                    codepoints_written += 1;
-                }
-                read_cursor += 1;
-                continue;
-            }
-            // ASCII range
-            0x00..=0x7F if !is_in_illegal_span => {
-                bytes[write_cursor] = b'_';
-                is_in_illegal_span = true;
-                write_cursor += 1;
-                codepoints_written += 1;
-                read_cursor += 1;
-                continue;
-            }
-            0x00..=0x7F if is_in_illegal_span => {
-                read_cursor += 1;
-                continue;
-            }
-            _ => {}
-        }
-
-        // Grab current unicode codepoint
-        let mut c = {
-            let mut it = bytes[read_cursor..].iter();
-            // This won't panic because we now bytes is a valid utf8 array, and next_code_point
-            // returns and actual utf8 codepoint
-            #[allow(clippy::unwrap_used)]
-            std::char::from_u32(crate::utf8_helpers::next_code_point(&mut it).unwrap()).unwrap()
-        };
-        let mut len_utf8 = c.len_utf8();
-        read_cursor += len_utf8;
-
-        if c.is_lowercase() {
-            c.encode_utf8(&mut bytes[write_cursor..write_cursor + len_utf8]);
-            is_in_illegal_span = false;
-            write_cursor += len_utf8;
-            codepoints_written += 1;
-            continue;
-        }
-        if c.is_uppercase() {
-            // Take only first codepoint of the lowercase conversion
-            // Lowercase the current character if it has the same width as it's lower
-            if let Some(lower) = c.to_lowercase().next()
-                && lower.len_utf8() <= len_utf8
-            {
-                c = lower;
-                len_utf8 = c.len_utf8();
-            }
-        }
-
-        // The method in the agent checks if the character is of a Letter unicode class,
-        // which is not exactly the same. Alphabetics also contains Nl and Other_aplhabetics
-        // unicode character classes https://www.unicode.org/reports/tr44/#Alphabetic , but
-        // close enough
-        if c.is_alphabetic() {
-            c.encode_utf8(&mut bytes[write_cursor..write_cursor + len_utf8]);
-            is_in_illegal_span = false;
-            write_cursor += len_utf8;
-            codepoints_written += 1;
-        } else if c.is_numeric() {
-            if write_cursor != 0 {
-                c.encode_utf8(&mut bytes[write_cursor..write_cursor + len_utf8]);
-                is_in_illegal_span = false;
-                write_cursor += len_utf8;
-                codepoints_written += 1;
-            }
-        } else if !is_in_illegal_span {
-            bytes[write_cursor] = b'_';
-            is_in_illegal_span = true;
-            write_cursor += 1;
-            codepoints_written += 1;
-        }
     }
-    // If we end up in an illegal span, remove the last written _
-    if is_in_illegal_span && write_cursor > 0 {
-        write_cursor -= 1;
-    }
-    bytes.truncate(write_cursor);
+    // A pending `_` at the end is dropped, as the agent removes trailing illegal characters.
+    bytes.truncate(write);
 }
 
 fn normalize_metric_name(name: &mut String) {
@@ -397,6 +371,83 @@ mod tests {
     fn test_name() {
         let mut v = input.to_owned();
         normalize_tag(&mut v);
+        assert_eq!(v, expected)
+    }
+
+    #[test]
+    fn test_normalize_tag_counts_illegal_characters() {
+        // As in the agent, each illegal character counts toward the limit of 200 characters, even
+        // though a run of them only writes one `_`.
+        let mut v = format!("a{}b", "!".repeat(250));
+        normalize_tag(&mut v);
+        assert_eq!(v, "a");
+        // Removed leading characters don't count toward the character limit, but do count toward
+        // the byte limit of 400.
+        let mut v = format!("{}{}", "1".repeat(150), "a".repeat(300));
+        normalize_tag(&mut v);
+        assert_eq!(v, "a".repeat(200));
+        let mut v = format!("{}{}", "1".repeat(350), "a".repeat(300));
+        normalize_tag(&mut v);
+        assert_eq!(v, "a".repeat(50));
+    }
+
+    // `svcNormCases` of the agent's `normalize_test.go`.
+    const SERVICE_CASES: &[(&str, &str)] = &[
+        ("good", "good"),
+        ("127.0.0.1", "127.0.0.1"),
+        (
+            "127.site.platform-db-replica1",
+            "127.site.platform-db-replica1",
+        ),
+        ("hyphenated-service-name", "hyphenated-service-name"),
+        ("🐨animal-db🐶", "_animal-db"),
+        ("🐨1animal-db🐶", "_1animal-db"),
+        ("1🐨1animal-db🐶", "1_1animal-db"),
+        (
+            "Too$Long$.Too$Long$.Too$Long$.Too$Long$.Too$Long$.Too$Long$.Too$Long$.Too$Long$.Too$Long$.Too$Long$.Too$Long$.",
+            "too_long_.too_long_.too_long_.too_long_.too_long_.too_long_.too_long_.too_long_.too_long_.too_long_.",
+        ),
+        ("bad$service", "bad_service"),
+    ];
+
+    #[test]
+    fn test_normalize_service_as_tag_value() {
+        for (input, expected) in SERVICE_CASES {
+            let mut v = (*input).to_owned();
+            normalize_service(&mut v);
+            assert_eq!(v, *expected, "{input}");
+        }
+        let mut v = "!!!".to_owned();
+        normalize_service_with_lang(&mut v, "go");
+        assert_eq!(v, "unnamed-go-service");
+    }
+
+    #[test]
+    fn test_normalize_peer_service() {
+        for (input, expected) in SERVICE_CASES.iter().chain(&[("", ""), ("!!!", "")]) {
+            let mut v = (*input).to_owned();
+            normalize_peer_service(&mut v);
+            assert_eq!(v, *expected, "{input}");
+        }
+    }
+
+    #[duplicate_item(
+        test_name                     input                expected;
+        [test_normalize_tag_value_1]  ["1love"]            ["1love"];
+        [test_normalize_tag_value_2]  ["12.:trim@"]        ["12.:trim"];
+        [test_normalize_tag_value_3]  ["---fun:k####y"]    ["---fun:k_y"];
+        [test_normalize_tag_value_4]  ["_foo"]             ["_foo"];
+        [test_normalize_tag_value_5]  ["___trim"]          ["_trim"];
+        [test_normalize_tag_value_6]  ["#test"]            ["_test"];
+        [test_normalize_tag_value_7]  ["123DEVELOPMENT"]   ["123development"];
+        [test_normalize_tag_value_8]  [" spaces   "]       ["_spaces"];
+        [test_normalize_tag_value_9]  [""]                 [""];
+        [test_normalize_tag_value_10] ["/"]                ["/"];
+    )]
+    #[test]
+    fn test_name() {
+        let mut v = input.to_owned();
+        normalize_tag_value(&mut v);
         assert_eq!(v, expected)
     }
 }

@@ -637,7 +637,7 @@ pub fn collect_pb_trace_chunks<T: tracer_payload::TraceChunkProcessor>(
             {
                 // Normalize env tag in case the span it was pulled from was skipped during
                 // normalization
-                libdd_trace_normalization::normalize_utils::normalize_tag(&mut v);
+                libdd_trace_normalization::normalize_utils::normalize_tag_value(&mut v);
                 if !v.is_empty() {
                     tracer_payload_tags.env = v;
                 }
