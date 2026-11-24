@@ -293,6 +293,7 @@ pub struct ConfigFetcher<S: FileStorage, C: HttpClientCapability + SleepCapabili
     pub file_storage: S,
     state: Arc<ConfigFetcherState<S::StoredFile, C>>,
     mode: FetcherMode<C>,
+    pub(super) preverified_agent_files: bool,
 }
 
 pub struct ConfigClientState {
@@ -343,6 +344,7 @@ impl<S: FileStorage, C: HttpClientCapability + SleepCapability> ConfigFetcher<S,
             file_storage,
             state,
             mode: FetcherMode::Agent(PhantomData),
+            preverified_agent_files: false,
         }
     }
 
@@ -370,6 +372,7 @@ impl<S: FileStorage, C: HttpClientCapability + SleepCapability> ConfigFetcher<S,
             file_storage,
             state,
             mode,
+            preverified_agent_files: false,
         })
     }
 
@@ -659,14 +662,19 @@ impl<S: FileStorage, C: HttpClientCapability + SleepCapability> ConfigFetcher<S,
                 fail(format!("Failed base64 decoding config for path {path}"));
                 continue;
             };
-            let computed_hash = hasher(decoded.as_slice());
-            if hash != computed_hash {
-                fail(format!(
-                    "Computed hash of file {computed_hash} did not match remote config targets \
-                    file hash {hash} for path {path}"
-                ));
-                continue;
-            }
+            let cached_hash = if self.preverified_agent_files {
+                hash.to_owned()
+            } else {
+                let computed_hash = hasher(decoded.as_slice());
+                if hash != computed_hash {
+                    fail(format!(
+                        "Computed hash of file {computed_hash} did not match remote config targets \
+                        file hash {hash} for path {path}"
+                    ));
+                    continue;
+                }
+                computed_hash
+            };
             let Some(version) = target_file.try_parse_version() else {
                 fail(format!(
                     "Failed parsing version from remote config path {path}"
@@ -700,7 +708,7 @@ impl<S: FileStorage, C: HttpClientCapability + SleepCapability> ConfigFetcher<S,
             target_files.insert(
                 parsed_path.clone(),
                 StoredTargetFile {
-                    hash: computed_hash,
+                    hash: cached_hash,
                     state: ConfigState {
                         id: parsed_path.config_id().to_string(),
                         version,
