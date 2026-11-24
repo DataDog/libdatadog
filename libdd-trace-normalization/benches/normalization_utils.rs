@@ -15,7 +15,6 @@ use std::{collections::HashMap, time::Duration};
 
 #[path = "../src/test_types.rs"]
 mod test_types;
-use test_types::{TestLink, TestSpan, Value};
 
 fn normalize_service_bench(c: &mut Criterion) {
     let group = c.benchmark_group("normalization/normalize_service");
@@ -147,34 +146,8 @@ fn normalize_span_bench(c: &mut Criterion) {
     );
 }
 
-/// A span that is already normalized, with the fields and attributes that `normalizer_v1` reads.
-fn normalized_v1_span() -> TestSpan {
-    let string = |s: &str| Value::String(s.to_owned());
-    TestSpan {
-        service: "django".to_owned(),
-        name: "django.controller".to_owned(),
-        resource: "GET /some/raclette".to_owned(),
-        typ: "http".to_owned(),
-        span_id: 1388,
-        parent_id: 1111,
-        start: 1_448_466_874_000_000_000,
-        duration: 10_000_000,
-        env: Some("prod".to_owned()),
-        attrs: HashMap::from([
-            ("peer.service".to_owned(), string("postgres")),
-            ("_dd.base_service".to_owned(), string("django-app")),
-            ("http.status_code".to_owned(), string("200")),
-            ("user".to_owned(), string("leo")),
-            ("cheese_weight".to_owned(), Value::Float(100000.0)),
-        ]),
-        links: vec![TestLink {
-            attrs: HashMap::from([("link.name".to_owned(), string("next_request"))]),
-        }],
-    }
-}
-
 fn normalize_v1_span_bench(c: &mut Criterion) {
-    let span = normalized_v1_span();
+    let span = test_types::normalized_span();
     c.bench_with_input(
         BenchmarkId::new("normalization/normalize_v1_span", "already_normalized"),
         &span,
