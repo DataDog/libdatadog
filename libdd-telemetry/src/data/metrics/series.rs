@@ -4,7 +4,7 @@
 //! Owned metric series and distributions.
 
 use alloc::{string::String, vec::Vec};
-pub use libdd_common::tag::Tag;
+pub use libdd_types::tag::Tag;
 use serde::Serialize;
 
 use super::{MetricNamespace, MetricType};

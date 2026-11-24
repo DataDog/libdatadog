@@ -5,12 +5,12 @@
 //! runtime and HTTP metadata. A second case adds one span link to each root span.
 
 use criterion::{BenchmarkId, Criterion, Throughput, black_box, criterion_group};
-use libdd_common::mutable_metadata::MutableMetadataHandle;
 use libdd_tinybytes::BytesString;
 use libdd_trace_utils::agentless_encoder::encode_payload;
 use libdd_trace_utils::span::BytesData;
 use libdd_trace_utils::span::v04::{Span, SpanLink, VecMap};
 use libdd_trace_utils::tracer_metadata::TracerMetadata;
+use libdd_types::mutable_metadata::MutableMetadataHandle;
 
 const NUM_TRACES: usize = 20;
 const SPANS_PER_TRACE: usize = 5;

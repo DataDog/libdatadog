@@ -25,7 +25,7 @@ Bump rules (per crate, based on the highest-severity change):
 > **`pub` is not the reachability test.** Classify a rename or removal by whether the item is
 > *externally reachable*, never by the presence of the `pub` token:
 > - A `#[macro_export] macro_rules!` item carries no `pub` yet **is** public API — e.g.
->   `libdd-common`'s `tag!` (`src/tag.rs`). Renaming or removing one breaks every consumer:
+>   `libdd-types`'s `tag!` (`src/tag.rs`). Renaming or removing one breaks every consumer:
 >   **major**.
 > - Conversely, a rename confined to a genuinely private item — or to a `pub` item inside a
 >   non-`pub` module that nothing re-exports with `pub use` — has no public delta: **patch**, not

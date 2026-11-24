@@ -14,8 +14,6 @@ use crate::service::{
     telemetry::{TelemetryCachedClient, TelemetryCachedClientSet},
     tracing::TraceFlusher,
 };
-use libdd_common::Endpoint;
-use libdd_common::MutexExt;
 use libdd_ipc::SeqpacketConn;
 use libdd_ipc::platform::{FileBackedHandle, ShmHandle};
 use libdd_telemetry::metrics::MetricContext;
@@ -29,6 +27,8 @@ use libdd_trace_utils::trace_utils::SendData;
 use libdd_trace_utils::tracer_payload::TraceChunks;
 use libdd_trace_utils::tracer_payload::TraceEncoding;
 use libdd_trace_utils::tracer_payload::decode_to_trace_chunks;
+use libdd_types::Endpoint;
+use libdd_types::MutexExt;
 use manual_future::ManualFutureCompleter;
 use std::borrow::Borrow;
 use std::borrow::Cow;
@@ -68,7 +68,6 @@ use crate::service::tracing::trace_flusher::TraceFlusherStats;
 use crate::tracer::ShmLimiters;
 use futures::FutureExt;
 use libdd_capabilities_impl::NativeCapabilities;
-use libdd_common::tag::Tag;
 use libdd_data_pipeline::agent_info::schema::AgentInfoStruct;
 use libdd_dogstatsd_client::DogStatsDActionOwned;
 use libdd_ipc::ipc_server::OwnedServerConn;
@@ -76,6 +75,7 @@ use libdd_live_debugger::sender::DebuggerType;
 use libdd_remote_config::fetch::MultiTargetStats;
 use libdd_tinybytes as tinybytes;
 use libdd_trace_utils::tracer_header_tags::{TracerGenericTags, TracerHeaderTags};
+use libdd_types::tag::Tag;
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Serialize, Deserialize)]

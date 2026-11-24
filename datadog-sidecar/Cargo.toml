@@ -22,7 +22,7 @@ stats-obfuscation = ["libdd-trace-stats/stats-obfuscation", "libdd-data-pipeline
 anyhow = { workspace = true, default-features = true }
 arc-swap.workspace = true
 priority-queue = { workspace = true, default-features = true }
-libdd-common = { path = "../libdd-common" }
+libdd-types = { path = "../libdd-types" }
 libdd-host-identity = { path = "../libdd-host-identity" }
 libdd-networking = { path = "../libdd-networking", default-features = false }
 libdd-process-utils = { path = "../libdd-process-utils" }

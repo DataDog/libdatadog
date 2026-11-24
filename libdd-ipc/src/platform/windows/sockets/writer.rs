@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use super::{PendingHandleTransfers, append_handle_suffix, make_overlapped};
-use libdd_common::MutexExt;
+use libdd_types::MutexExt;
 use std::cell::UnsafeCell;
 use std::ffi::c_void;
 use std::io;
@@ -309,7 +309,7 @@ fn os_error(error: u32) -> io::Error {
 
 #[cfg(test)]
 mod tests {
-    use libdd_common::MutexExt;
+    use libdd_types::MutexExt;
 
     use super::*;
     use crate::platform::windows::sockets::{HANDLE_SUFFIX_SIZE, SeqpacketConn, max_message_size};

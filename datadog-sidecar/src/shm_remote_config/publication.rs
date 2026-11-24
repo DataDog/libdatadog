@@ -24,7 +24,7 @@ pub struct CdnRegistration {
     /// Validated endpoint, client identity, and polling settings.
     pub config: CdnConfig,
     /// Agent source whose non-FFE products are included in this directory.
-    pub agent_endpoint: libdd_common::Endpoint,
+    pub agent_endpoint: libdd_types::Endpoint,
     /// The same application target used by the agent RC writer and this reader.
     pub target: Arc<Target>,
 }
@@ -277,7 +277,7 @@ mod tests {
                 request_timeout: Duration::from_secs(1),
                 service: None,
             },
-            agent_endpoint: libdd_common::Endpoint::default(),
+            agent_endpoint: libdd_types::Endpoint::default(),
             target: Arc::new(Target::new(
                 format!("cdn-{}", rand::random::<u64>()),
                 "test".into(),

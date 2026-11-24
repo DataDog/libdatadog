@@ -6,8 +6,8 @@ use crate::shm_remote_config::{
     CdnRegistration,
     publication::{CdnPublisher, NotificationGuard, PublicationStore},
 };
-use libdd_common::MutexExt;
 use libdd_ffe::cdn::CdnFetcher;
+use libdd_types::MutexExt;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex, Weak};
 use std::time::Duration;

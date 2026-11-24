@@ -25,9 +25,6 @@ use arc_swap::ArcSwap;
 #[cfg(feature = "telemetry")]
 use arc_swap::ArcSwapOption;
 use libdd_capabilities::{HttpClientCapability, LogWriterCapability, MaybeSend, SleepCapability};
-use libdd_common::mutable_metadata::{MutableMetadata, MutableMetadataHandle};
-use libdd_common::tag;
-use libdd_common::{Endpoint, parse_uri};
 use libdd_dogstatsd_client::DogStatsDClient;
 use libdd_shared_runtime::SharedRuntime;
 #[cfg(not(target_arch = "wasm32"))]
@@ -37,6 +34,9 @@ use libdd_trace_stats::span_concentrator::CardinalityLimitConfig;
 #[cfg(feature = "stats-obfuscation")]
 use libdd_trace_stats::stats_exporter::AgentlessStatsTarget;
 use libdd_trace_utils::trace_filter::TraceFilterer;
+use libdd_types::mutable_metadata::{MutableMetadata, MutableMetadataHandle};
+use libdd_types::tag;
+use libdd_types::{Endpoint, parse_uri};
 use std::sync::Arc;
 use std::time::Duration;
 use tracing::debug;

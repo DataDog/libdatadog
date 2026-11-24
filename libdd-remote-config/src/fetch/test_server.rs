@@ -18,11 +18,11 @@ use base64::Engine;
 use http::Response;
 use http_body_util::BodyExt;
 use hyper::service::service_fn;
-use libdd_common::Endpoint;
 use libdd_networking::http_common;
 use libdd_trace_protobuf::remoteconfig::{
     ClientGetConfigsRequest, ClientGetConfigsResponse, ConfigStatus, File,
 };
+use libdd_types::Endpoint;
 use serde_json::value::to_raw_value;
 use sha2::{Digest, Sha256};
 use std::collections::HashMap;

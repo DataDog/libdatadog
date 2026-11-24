@@ -3,7 +3,7 @@
 
 use crate::worker::Worker;
 use futures::stream::{FuturesUnordered, StreamExt};
-use libdd_common::MutexExt;
+use libdd_types::MutexExt;
 use std::io;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};

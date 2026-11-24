@@ -8,13 +8,13 @@ use super::config::OtlpMetricsConfig;
 use super::exporter::{OTLP_MAX_RETRIES, OTLP_SHUTDOWN_MAX_RETRIES, send_otlp_http};
 use async_trait::async_trait;
 use libdd_capabilities::{HttpClientCapability, SleepCapability};
-use libdd_common::MutexExt;
 use libdd_ddsketch::DDSketch;
 use libdd_shared_runtime::Worker;
 use libdd_trace_protobuf::pb;
 use libdd_trace_stats::span_concentrator::{OtlpStatsBucket, SpanConcentrator};
 use libdd_trace_stats::stats_exporter::{FlushableStatsExport, StatsCap};
 use libdd_trace_utils::otlp_encoder::OtlpResourceInfo;
+use libdd_types::MutexExt;
 use serde_json::{Value, json};
 use std::sync::{Arc, Mutex, Weak};
 use std::time::Duration;
@@ -320,7 +320,7 @@ impl<C: HttpClientCapability + SleepCapability> OtlpStatsExporter<C> {
             &self.config.headers,
             self.config.timeout,
             self.test_token.as_deref(),
-            libdd_common::header::APPLICATION_JSON,
+            libdd_types::header::APPLICATION_JSON,
             serde_json::to_vec(&request)?,
             max_retries,
         )

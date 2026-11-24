@@ -16,7 +16,7 @@ use alloc::{
 };
 
 #[cfg(feature = "std")]
-use {libdd_common::error::FfiSafeErrorMessage, serde::Serializer, serde::ser::Error};
+use {libdd_types::error::FfiSafeErrorMessage, serde::Serializer, serde::ser::Error};
 
 #[repr(C)]
 #[derive(Clone, Copy, Debug)]

@@ -4,10 +4,10 @@
 use crate::service::{DynamicInstrumentationConfigState, InstanceId};
 use crate::shm_remote_config::{ShmRemoteConfigs, ShmRemoteConfigsGuard};
 use crate::tracer::ShmLimiters;
-use libdd_common::{MutexExt, tag::Tag};
 use libdd_remote_config::fetch::{
     ConfigInvariants, ConfigOptions, MultiTargetStats, NotifyTarget, ProductCapabilities,
 };
+use libdd_types::{MutexExt, tag::Tag};
 use std::collections::hash_map::Entry;
 use std::fmt::Debug;
 use std::sync::{Arc, Mutex, OnceLock};

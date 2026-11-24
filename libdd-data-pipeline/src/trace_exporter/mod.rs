@@ -52,8 +52,6 @@ use http::Uri;
 use http::header::HeaderMap;
 use http::uri::PathAndQuery;
 use libdd_capabilities::{HttpClientCapability, LogWriterCapability, MaybeSend, SleepCapability};
-use libdd_common::Endpoint;
-use libdd_common::tag::Tag;
 use libdd_dogstatsd_client::DogStatsDClient;
 #[cfg(not(target_arch = "wasm32"))]
 use libdd_shared_runtime::BlockingRuntime;
@@ -73,6 +71,8 @@ use libdd_trace_utils::span::v1::TraceChunk;
 use libdd_trace_utils::span::v1::span_pool::PooledTraceChunks;
 use libdd_trace_utils::span::{SpanText, TraceData, trace_utils_v1, v04::Span, v04::SpanSlice};
 use libdd_trace_utils::trace_utils::TracerHeaderTags;
+use libdd_types::Endpoint;
+use libdd_types::tag::Tag;
 #[cfg(all(feature = "telemetry", not(target_arch = "wasm32")))]
 use prost::Message;
 use std::collections::BTreeMap;

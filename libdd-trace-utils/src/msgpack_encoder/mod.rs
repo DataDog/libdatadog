@@ -35,7 +35,7 @@ use std::convert::Infallible;
 
 /// Flatten `ValueWriteError<Infallible>` (uninhabited because both variants wrap
 /// `Infallible`) into the bare `Infallible` so callers can use
-/// [`libdd_common::ResultInfallibleExt`].
+/// [`libdd_types::ResultInfallibleExt`].
 #[inline(always)]
 pub(crate) fn flatten_value_write_infallible(err: ValueWriteError<Infallible>) -> Infallible {
     match err {

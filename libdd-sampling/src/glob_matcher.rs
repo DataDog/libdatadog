@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use crate::bounded_byte_cache::{BoundedByteCache, DEFAULT_MAX_BYTES, DEFAULT_MAX_ENTRIES};
-use libdd_common::MutexExt;
+use libdd_types::MutexExt;
 use std::fmt;
 use std::sync::{Arc, Mutex};
 

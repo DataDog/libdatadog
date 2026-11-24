@@ -3,8 +3,8 @@
 
 #[cfg(feature = "reqwest")]
 mod tests {
-    use libdd_common::Endpoint;
     use libdd_networking::endpoint::EndpointExt;
+    use libdd_types::Endpoint;
     use tools::test_utils::{count_active_threads, create_temp_file_path, parse_http_request};
 
     /// With rustls-no-provider, reqwest does not auto-install a crypto provider.
@@ -32,7 +32,7 @@ mod tests {
     #[cfg_attr(miri, ignore)]
     async fn test_file_dump_captures_http_request() {
         ensure_crypto_provider();
-        let file_path = create_temp_file_path("libdd_common_test", "http");
+        let file_path = create_temp_file_path("libdd_types_test", "http");
 
         // Create endpoint with file:// scheme
         let endpoint = Endpoint::from_slice(&format!("file://{}", file_path.display()));

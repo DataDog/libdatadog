@@ -44,7 +44,7 @@ required-features = ["std"]
 
 [features]
 default = ["std", "tracing"]
-alloc = ["dep:serde-json-core", "dep:serde_json", "dep:thiserror", "libdd-common/alloc", "serde/alloc"]
+alloc = ["dep:serde-json-core", "dep:serde_json", "dep:thiserror", "libdd-types/alloc", "serde/alloc"]
 std = [
     "alloc",
     "dep:anyhow",
@@ -68,7 +68,7 @@ std = [
     "dep:web-time",
     "dep:winver",
     "dep:libdd-host-identity",
-    "libdd-common/std",
+    "libdd-types/std",
     "serde/std",
     "serde_json/std",
 ]
@@ -97,7 +97,7 @@ uuid = { workspace = true, features = ["v4", "std"], optional = true }
 hashbrown = { workspace = true, default-features = true, optional = true }
 bytes = { workspace = true, features = ["std"], optional = true }
 libdd-capabilities = { version = "4.0.1", path = "../libdd-capabilities", optional = true }
-libdd-common = { version = "10.0.0", path = "../libdd-common", default-features = false }
+libdd-types = { version = "0.1.0", path = "../libdd-types", default-features = false }
 libdd-env = { version = "0.1.0", path = "../libdd-env", optional = true }
 libdd-host-identity = { version = "0.1.0", path = "../libdd-host-identity", optional = true }
 embedded-io = { workspace = true, optional = true }

@@ -9,7 +9,7 @@ pub const DEFAULT_AGENTLESS_TIMEOUT: Duration = Duration::from_secs(15);
 
 ///Agentless trace exporter configuration.
 ///
-/// TODO(paullgdc): replace fields with libdd_common::Endpoint
+/// TODO(paullgdc): replace fields with libdd_types::Endpoint
 pub struct AgentlessTraceConfig {
     /// Full URL to POST traces to (e.g.
     /// `https://public-trace-http-intake.logs.datadoghq.com/v1/input`).

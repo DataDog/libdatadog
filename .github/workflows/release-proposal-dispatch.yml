@@ -4,7 +4,7 @@ on:
     inputs:
       crates:
         description: >
-          Crate(s) to release, comma-separated (e.g. "libdd-common" or "libdd-common, libdd-telemetry"). Trailing and repeated commas are ignored.
+          Crate(s) to release, comma-separated (e.g. "libdd-types" or "libdd-types, libdd-telemetry"). Trailing and repeated commas are ignored.
           Each selected crate is released along with its workspace dependencies (other libdd-* crates it depends on).
           Hotfix releases (main_start_ref matching hotfix/<crate>/<N>.x.x) accept a single crate only.
         required: true

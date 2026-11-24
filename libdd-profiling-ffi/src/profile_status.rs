@@ -258,9 +258,7 @@ impl ProfileStatus {
         }
     }
 
-    pub fn from_ffi_safe_error_message<E: libdd_common::error::FfiSafeErrorMessage>(
-        err: E,
-    ) -> Self {
+    pub fn from_ffi_safe_error_message<E: libdd_types::error::FfiSafeErrorMessage>(err: E) -> Self {
         ProfileStatus::from(err.as_ffi_str())
     }
 

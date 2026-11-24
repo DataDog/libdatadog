@@ -5,8 +5,8 @@ use super::encode_payload;
 use crate::span::BytesData;
 use crate::span::v04::{AttributeAnyValue, AttributeArrayValue, Span, SpanEvent, SpanLink, VecMap};
 use crate::tracer_metadata::TracerMetadata;
-use libdd_common::mutable_metadata::MutableMetadataHandle;
 use libdd_tinybytes::{Bytes, BytesString};
+use libdd_types::mutable_metadata::MutableMetadataHandle;
 use serde_json::Value;
 use std::collections::HashMap;
 

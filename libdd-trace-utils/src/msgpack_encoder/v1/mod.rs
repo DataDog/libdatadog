@@ -9,7 +9,7 @@ use crate::span::v1::TracerPayload;
 use crate::span::v04::Span;
 use crate::tracer_metadata::TracerMetadata;
 use hashbrown::{DefaultHashBuilder, HashMap};
-use libdd_common::ResultInfallibleExt;
+use libdd_types::ResultInfallibleExt;
 use rmp::encode::{
     ByteBuf, RmpWrite, ValueWriteError, write_array_len, write_bin, write_map_len, write_sint,
     write_str, write_uint, write_uint8,

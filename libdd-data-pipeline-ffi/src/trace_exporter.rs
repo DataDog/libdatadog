@@ -23,8 +23,8 @@ use libdd_data_pipeline::trace_exporter::{
 // directly.
 pub(crate) type TraceExporter = GenericTraceExporter<NativeCapabilities, ForkSafeRuntime>;
 
-use libdd_common::mutable_metadata::MutableMetadataHandle;
 use libdd_shared_runtime::ForkSafeRuntime;
+use libdd_types::mutable_metadata::MutableMetadataHandle;
 use std::{ptr::NonNull, sync::Arc, time::Duration};
 use tracing::debug;
 

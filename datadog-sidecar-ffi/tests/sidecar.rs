@@ -13,7 +13,7 @@ macro_rules! assert_maybe_no_error {
 
 use datadog_sidecar::service::blocking::SidecarTransport;
 use datadog_sidecar::service::{DynamicInstrumentationConfigState, InstanceId};
-use libdd_common::Endpoint;
+use libdd_types::Endpoint;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;

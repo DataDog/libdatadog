@@ -8,8 +8,8 @@ use crate::span::v1::{
 };
 use crate::span::vec_map::VecMap;
 use crate::tracer_metadata::TracerMetadata;
-use libdd_common::mutable_metadata::MutableMetadataHandle;
 use libdd_tinybytes::BytesString;
+use libdd_types::mutable_metadata::MutableMetadataHandle;
 use serde_json::Value;
 
 fn bs(s: &str) -> BytesString {

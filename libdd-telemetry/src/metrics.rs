@@ -9,8 +9,8 @@ use std::{
 // (the host has no `std::time` backend); `web_time` proxies to `Date.now()`.
 use web_time as time;
 
-use libdd_common::tag::Tag;
 use libdd_ddsketch::DDSketch;
+use libdd_types::tag::Tag;
 use serde::{Deserialize, Serialize};
 
 use crate::data::{self, metrics};
@@ -248,7 +248,7 @@ impl MetricContexts {
 
 #[cfg(test)]
 mod tests {
-    use libdd_common::tag;
+    use libdd_types::tag;
     use std::fmt::Debug;
 
     use super::*;

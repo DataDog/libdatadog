@@ -1,7 +1,7 @@
 // Copyright 2025-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-use libdd_common::error::FfiSafeErrorMessage;
+use libdd_types::error::FfiSafeErrorMessage;
 use std::ffi::CStr;
 use std::fmt::{Display, Formatter};
 

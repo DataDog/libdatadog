@@ -1,11 +1,11 @@
 // Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-//! Request-building extensions for [`libdd_common::Endpoint`].
+//! Request-building extensions for [`libdd_types::Endpoint`].
 
 #[cfg(feature = "reqwest")]
 use anyhow::Context;
-use libdd_common::Endpoint;
+use libdd_types::Endpoint;
 
 /// Extension trait holding the request-handling logic for an [`Endpoint`]: standard headers,
 /// request builders and (with the `reqwest` feature) a configured reqwest client builder.
@@ -40,8 +40,8 @@ pub trait EndpointExt {
     ///
     /// The default in-process resolver is used for DNS (fork-safe). To use the system DNS resolver
     /// instead (less fork-safe), set
-    /// [`Endpoint::use_system_resolver`](libdd_common::Endpoint::use_system_resolver) to true via
-    /// [`Endpoint::with_system_resolver`](libdd_common::Endpoint::with_system_resolver).
+    /// [`Endpoint::use_system_resolver`](libdd_types::Endpoint::use_system_resolver) to true via
+    /// [`Endpoint::with_system_resolver`](libdd_types::Endpoint::with_system_resolver).
     ///
     /// # Returns
     /// A tuple of (ClientBuilder, request_url) where:
@@ -116,7 +116,7 @@ impl EndpointExt for Endpoint {
 
             // File dump endpoint (debugging) - uses platform-specific local transport
             Some("file") => {
-                let output_path = libdd_common::decode_uri_path_in_authority(&self.url)
+                let output_path = libdd_types::decode_uri_path_in_authority(&self.url)
                     .context("Failed to decode file path from URI")?;
                 let socket_or_pipe_path = crate::dump_server::spawn_dump_server(output_path)?;
 

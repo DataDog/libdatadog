@@ -17,7 +17,7 @@ use crate::data::{Application, Host};
 fn encoding_matches_the_owned_serde_model() {
     let tags = ["component:signal-safe", "standalone", "escaped:\"yes\"\n"];
     let (mut owned_tags, tag_error) =
-        libdd_common::tag::parse_tags("component:signal-safe standalone");
+        libdd_types::tag::parse_tags("component:signal-safe standalone");
     assert!(tag_error.is_none());
     owned_tags.push(Tag::new("escaped", "\"yes\"\n").unwrap());
     let points = [(1_234, 1.5), (1_235, 2.0)];

@@ -4,12 +4,12 @@
 use std::time::Duration;
 
 use libdd_capabilities::{HttpClientCapability, SleepCapability};
-use libdd_common::Endpoint;
 use libdd_trace_stats::stats_exporter::{
     AgentlessStatsExporter, AgentlessStatsExporterError, AgentlessStatsTarget, StatsMetadata,
 };
 use libdd_trace_utils::span::span_pool::PooledChunks;
 use libdd_trace_utils::tracer_metadata::TracerMetadata;
+use libdd_types::Endpoint;
 use thiserror::Error;
 
 use super::{AgentlessError, AgentlessTraceConfig, send_agentless_traces};
@@ -127,7 +127,7 @@ where
     let Some(config) = stats_config else {
         return Ok(None);
     };
-    let url = libdd_common::parse_uri(&config.endpoint_url)
+    let url = libdd_types::parse_uri(&config.endpoint_url)
         .map_err(|error| AgentlessV04Error::InvalidStatsEndpoint(error.to_string()))?;
     if !matches!(url.scheme_str(), Some("http" | "https")) || url.host().is_none() {
         return Err(AgentlessV04Error::InvalidStatsEndpoint(config.endpoint_url));

@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use http::uri::{PathAndQuery, Scheme};
-use libdd_common::Endpoint;
+use libdd_types::Endpoint;
 use serde::{Deserialize, Serialize};
 use spawn_worker::LibDependency;
 use std::sync::LazyLock;

@@ -10,7 +10,6 @@ use crate::shm_path::keyed_shm_path;
 use base64::Engine;
 use base64::prelude::BASE64_URL_SAFE_NO_PAD;
 use libdd_capabilities_impl::{HttpClientCapability, NativeCapabilities};
-use libdd_common::{MutexExt, tag::Tag};
 use libdd_ipc::one_way_shared_memory::{OneWayShmReader, OneWayShmWriter, open_named_shm};
 use libdd_ipc::platform::{FileBackedHandle, NamedShmHandle};
 use libdd_ipc::rate_limiter::{ShmLimiter, ShmLimiterMemory};
@@ -24,6 +23,7 @@ use libdd_remote_config::{
     ParserRegistry, RemoteConfigPath, RemoteConfigProduct, RemoteConfigValue, Target,
     default_registry,
 };
+use libdd_types::{MutexExt, tag::Tag};
 use priority_queue::PriorityQueue;
 use sha2::{Digest, Sha224};
 use std::cmp::Reverse;
@@ -954,7 +954,7 @@ mod tests {
         let config = ConfigInvariants {
             language: "php".into(),
             tracer_version: "1.0".into(),
-            endpoint: libdd_common::Endpoint::from_slice("http://agent:8126"),
+            endpoint: libdd_types::Endpoint::from_slice("http://agent:8126"),
             agentless: None,
         };
         let mut invariants: RemoteConfigInvariants = config.clone().into();
@@ -979,7 +979,7 @@ mod tests {
         let mut invariants: RemoteConfigInvariants = ConfigInvariants {
             language: "php".into(),
             tracer_version: "1.0".into(),
-            endpoint: libdd_common::Endpoint::from_slice("http://agent-a:8126"),
+            endpoint: libdd_types::Endpoint::from_slice("http://agent-a:8126"),
             agentless: None,
         }
         .into();
@@ -992,7 +992,7 @@ mod tests {
             vec![],
         ));
         assert_ne!(path, path_for_remote_config(&invariants, &target));
-        invariants.config.endpoint = libdd_common::Endpoint::from_slice("http://agent-b:8126");
+        invariants.config.endpoint = libdd_types::Endpoint::from_slice("http://agent-b:8126");
         assert_ne!(path, path_for_remote_config(&invariants, &DUMMY_TARGET));
     }
 
@@ -1027,7 +1027,7 @@ mod tests {
             language: "php".to_string(),
             tracer_version: "test".to_string(),
             // The file scheme disables background fetching for this registration test.
-            endpoint: libdd_common::Endpoint::from_slice(&format!(
+            endpoint: libdd_types::Endpoint::from_slice(&format!(
                 "file:///rc-generation-{}",
                 std::process::id()
             )),
@@ -1535,7 +1535,7 @@ mod tests {
         let invariants: RemoteConfigInvariants = ConfigInvariants {
             language: "php".to_string(),
             tracer_version: "1.0.0".to_string(),
-            endpoint: libdd_common::Endpoint::from_slice(&format!(
+            endpoint: libdd_types::Endpoint::from_slice(&format!(
                 "http://replaced-{}.invalid",
                 std::process::id()
             )),

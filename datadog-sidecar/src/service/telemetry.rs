@@ -6,7 +6,7 @@ use crate::service::{
 };
 use crate::shm_path::keyed_shm_path;
 use anyhow::Result;
-use libdd_common::MutexExt;
+use libdd_types::MutexExt;
 use tokio::sync::mpsc;
 use tracing::{debug, info, warn};
 
@@ -21,8 +21,8 @@ use std::time::{Duration, Instant};
 use tokio::task::JoinHandle;
 
 use libdd_capabilities_impl::NativeCapabilities;
-use libdd_common::tag::Tag;
 use libdd_telemetry::worker::TelemetryWorkerBuilder;
+use libdd_types::tag::Tag;
 use serde::{Deserialize, Serialize};
 use std::ops::Sub;
 use std::time::SystemTime;
@@ -901,7 +901,7 @@ mod tests {
         let mut config = Config::default();
         config
             .set_endpoint_uri(
-                libdd_common::parse_uri(&format!("file://{}", path.display())).unwrap(),
+                libdd_types::parse_uri(&format!("file://{}", path.display())).unwrap(),
             )
             .unwrap();
         let client = TelemetryCachedClient::new(

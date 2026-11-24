@@ -24,7 +24,7 @@ use std::sync::{Mutex, MutexGuard, RwLock, RwLockReadGuard, RwLockWriteGuard};
 /// # Examples
 ///
 /// ```
-/// use libdd_common::MutexExt;
+/// use libdd_types::MutexExt;
 /// use std::sync::{Arc, Mutex};
 ///
 /// let data = Arc::new(Mutex::new(5));
@@ -61,7 +61,7 @@ impl<T> MutexExt<T> for Mutex<T> {
 /// # Examples
 ///
 /// ```
-/// use libdd_common::RwLockExt;
+/// use libdd_types::RwLockExt;
 /// use std::sync::{Arc, RwLock};
 ///
 /// let data = Arc::new(RwLock::new(5));

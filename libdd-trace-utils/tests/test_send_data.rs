@@ -7,7 +7,6 @@ mod tracing_integration_tests {
     #[cfg(target_os = "linux")]
     use hyper::Uri;
     use libdd_capabilities_impl::{HttpClientCapability, NativeCapabilities};
-    use libdd_common::Endpoint;
     #[cfg(target_os = "linux")]
     use libdd_networking::connector::uds::socket_path_to_uri;
     use libdd_networking::http_common;
@@ -18,6 +17,7 @@ mod tracing_integration_tests {
     use libdd_trace_utils::test_utils::{create_test_json_span, create_test_no_alloc_span};
     use libdd_trace_utils::trace_utils::TracerHeaderTags;
     use libdd_trace_utils::tracer_payload::{TraceEncoding, decode_to_trace_chunks};
+    use libdd_types::Endpoint;
     use serde_json::json;
     #[cfg(target_os = "linux")]
     use std::fs::Permissions;

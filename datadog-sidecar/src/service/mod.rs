@@ -3,8 +3,6 @@
 
 // imports for structs defined in this file
 use crate::config;
-use libdd_common::Endpoint;
-use libdd_common::tag::Tag;
 pub use libdd_ffe::telemetry::FfeTelemetryContext;
 pub use libdd_ffe::telemetry::evaluation_metrics::FfeEvaluationMetric;
 pub use libdd_ffe::telemetry::exposures::{FfeExposure, FfeExposureBatch};
@@ -16,6 +14,8 @@ pub use libdd_ffe::telemetry::flagevaluation::{
 };
 use libdd_remote_config::{RemoteConfigCapabilities, RemoteConfigProduct};
 use libdd_telemetry::worker::TelemetryActions;
+use libdd_types::Endpoint;
+use libdd_types::tag::Tag;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 use std::time::Duration;

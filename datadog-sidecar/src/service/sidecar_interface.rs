@@ -7,12 +7,12 @@ use crate::service::{
     ApplicationConfig, EvpTransportConfigWithIdentity, InstanceId, SerializedTracerHeaderTags,
     SessionConfig, SidecarAction,
 };
-use libdd_common::tag::Tag;
 use libdd_dogstatsd_client::DogStatsDActionOwned;
 use libdd_ipc::platform::ShmHandle;
 use libdd_live_debugger::sender::DebuggerType;
 use libdd_telemetry::metrics::MetricContext;
 use libdd_trace_utils::trace_utils::TracerGenericTags;
+use libdd_types::tag::Tag;
 use serde::{Deserialize, Serialize};
 use std::time::Duration;
 
@@ -378,7 +378,7 @@ mod tests {
     use crate::service::{
         EvpProducerIdentity, EvpTransportConfig, EvpTransportConfigWithIdentity, EvpTransportMode,
     };
-    use libdd_common::Endpoint;
+    use libdd_types::Endpoint;
 
     #[test]
     fn appsec_client_request_decodes_as_server_request() {

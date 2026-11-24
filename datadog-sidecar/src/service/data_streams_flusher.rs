@@ -21,8 +21,6 @@ use flate2::write::GzEncoder;
 use futures::future::join_all;
 use http::uri::PathAndQuery;
 use libdd_capabilities_impl::{HttpClientCapability, NativeCapabilities};
-use libdd_common::Endpoint;
-use libdd_common::MutexExt;
 use libdd_ipc::shm_dsm_backlog::{
     DEFAULT_DSM_BACKLOG_SLOT_COUNT, DEFAULT_DSM_BACKLOG_STRING_POOL_BYTES, DsmBacklog,
     DsmBacklogBucket, ShmDsmBacklogTable,
@@ -35,6 +33,8 @@ use libdd_trace_utils::send_with_retry::{
     CompressionStrategy, RetryBackoffType, RetryStrategy, send_with_retry,
 };
 use libdd_trace_utils::tracer_header_tags::TracerHeaderTags;
+use libdd_types::Endpoint;
+use libdd_types::MutexExt;
 use serde::{Serialize, Serializer};
 use std::collections::{BTreeMap, HashMap};
 use std::ffi::CString;
@@ -319,7 +319,7 @@ async fn send_buckets(
     .into();
     headers.insert(
         http::header::CONTENT_TYPE,
-        libdd_common::header::APPLICATION_MSGPACK,
+        libdd_types::header::APPLICATION_MSGPACK,
     );
     headers.insert(
         http::header::CONTENT_ENCODING,

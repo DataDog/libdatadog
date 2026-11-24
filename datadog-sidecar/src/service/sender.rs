@@ -21,8 +21,8 @@ use crate::service::{
         SidecarInterfaceClientRequest, SidecarInterfaceRequest,
     },
 };
-use libdd_common::tag::Tag;
 use libdd_telemetry::metrics::MetricContext;
+use libdd_types::tag::Tag;
 use std::collections::HashMap;
 use std::{io, time::Duration};
 use tracing::trace;
@@ -825,7 +825,7 @@ mod tests {
                 request_timeout: Duration::from_secs(1),
                 service: Some("service".into()),
             },
-            agent_endpoint: libdd_common::Endpoint::default(),
+            agent_endpoint: libdd_types::Endpoint::default(),
             target: std::sync::Arc::new(Target::new(
                 "service".into(),
                 "test".into(),

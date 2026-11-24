@@ -16,7 +16,7 @@ once_cell = { workspace = true, features = ["std"] }
 anyhow = { workspace = true, default-features = true }
 current_platform.workspace = true
 libdd-crashtracker = { path = "../libdd-crashtracker" }
-libdd-common = { path = "../libdd-common" }
+libdd-types = { path = "../libdd-types" }
 libdd-regex = { path = "../libdd-regex" }
 libdd-otel-thread-ctx = { path = "../libdd-otel-thread-ctx", default-features = false, features = ["owned-context"] }
 tempfile.workspace = true

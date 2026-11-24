@@ -26,11 +26,11 @@
 
 use super::errors::SendError;
 use anyhow::Context;
-use libdd_common::Endpoint;
-use libdd_common::tag;
-use libdd_common::tag::Tag;
 use libdd_host_identity::azure_app_services;
 use libdd_networking::endpoint::EndpointExt;
+use libdd_types::Endpoint;
+use libdd_types::tag;
+use libdd_types::tag::Tag;
 use reqwest::RequestBuilder;
 use serde_json::json;
 use std::io::Write;

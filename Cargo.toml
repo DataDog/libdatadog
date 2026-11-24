@@ -42,7 +42,7 @@ members = [
   "libdd-capabilities",
   "libdd-capabilities-impl",
   "libdd-regex",
-  "libdd-common",
+  "libdd-types",
   "libdd-common-ffi",
   "libdd-env",
   "libdd-host-identity",

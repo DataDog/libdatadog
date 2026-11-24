@@ -1,8 +1,8 @@
 // Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-use libdd_common::MutexExt;
 use libdd_ipc::rate_limiter::{ShmLimiter, ShmLimiterMemory, ShmSafe};
+use libdd_types::MutexExt;
 use std::ffi::CString;
 use std::io;
 use std::sync::atomic::{AtomicU64, Ordering};

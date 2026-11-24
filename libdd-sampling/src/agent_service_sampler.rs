@@ -6,7 +6,7 @@ use std::{
     sync::{Arc, RwLock},
 };
 
-use libdd_common::RwLockExt;
+use libdd_types::RwLockExt;
 
 use crate::rate_sampler::RateSampler;
 

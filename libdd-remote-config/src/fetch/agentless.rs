@@ -16,8 +16,8 @@ use http::{
     uri::{Authority, PathAndQuery},
 };
 use libdd_capabilities::{Bytes, HttpClientCapability, SleepCapability};
-use libdd_common::Endpoint;
 use libdd_trace_protobuf::remoteconfig;
+use libdd_types::Endpoint;
 use prost::Message;
 use serde_json::Value;
 use tracing::debug;
@@ -1619,8 +1619,8 @@ mod cache {
     };
     use hashbrown::HashMap;
     use libdd_capabilities::{HttpClientCapability, SleepCapability};
-    use libdd_common::MutexExt as _;
     use libdd_trace_protobuf::remoteconfig::{ConfigState, TargetFileHash, TargetFileMeta};
+    use libdd_types::MutexExt as _;
 
     /// Wrapper over the shared [`ConfigFetcherState::target_files_by_path`]
     /// map giving `AgentlessFetcher::apply` a set of small, self-contained
@@ -1921,7 +1921,7 @@ pub fn debug_latest_configs_response(
 
 #[cfg(test)]
 mod tests {
-    use libdd_common::Endpoint;
+    use libdd_types::Endpoint;
 
     use crate::fetch::AgentlessConfig;
     use crate::fetch::NativeAgentlessFetcher;

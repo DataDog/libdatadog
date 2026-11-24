@@ -41,8 +41,6 @@ use datadog_sidecar::shm_remote_config::{
     RemoteConfigInvariants, RemoteConfigReader, path_for_remote_config,
 };
 use libc::c_char;
-use libdd_common::Endpoint;
-use libdd_common::tag::Tag;
 use libdd_common_ffi::slice::{AsBytes, CharSlice, Slice};
 use libdd_common_ffi::{self as ffi, MaybeError};
 #[cfg(windows)]
@@ -60,6 +58,8 @@ use libdd_telemetry_ffi::try_c;
 use libdd_trace_utils::msgpack_encoder;
 use libdd_trace_utils::span::v1::TracerPayloadBytes;
 use libdd_trace_utils::trace_utils::TracerGenericTags;
+use libdd_types::Endpoint;
+use libdd_types::tag::Tag;
 use std::ffi::{CStr, CString, c_void};
 use std::fs::File;
 #[cfg(unix)]

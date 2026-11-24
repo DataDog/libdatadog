@@ -26,7 +26,6 @@ use chrono::{DateTime, Utc};
 use http::uri::PathAndQuery;
 use libdd_capabilities::HttpClientCapability;
 use libdd_capabilities_impl::NativeCapabilities;
-use libdd_common::{Endpoint, parse_uri};
 use libdd_trace_model::{AttributesMut, SpanMut, TraceChunkMut, ValueTypes};
 use libdd_trace_utils::msgpack_encoder::v1 as encode_v1;
 use libdd_trace_utils::send_data::{SendData, SendDataBuilder};
@@ -37,6 +36,7 @@ use libdd_trace_utils::span::v1::{
 };
 use libdd_trace_utils::tracer_header_tags::{TracerGenericTags, TracerHeaderTags};
 use libdd_trace_utils::tracer_payload::TracerPayloadCollection;
+use libdd_types::{Endpoint, parse_uri};
 use std::sync::Arc;
 use std::time::Duration;
 

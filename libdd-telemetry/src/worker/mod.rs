@@ -20,8 +20,8 @@ use crate::worker::metric_ring::MetricRing;
 use async_trait::async_trait;
 use bytes::Bytes;
 use libdd_capabilities::{HttpClientCapability, HttpError, MaybeSend, SleepCapability};
-use libdd_common::tag::Tag;
 use libdd_shared_runtime::Worker;
+use libdd_types::tag::Tag;
 
 use std::iter::Sum;
 use std::marker::PhantomData;
@@ -48,7 +48,7 @@ use std::sync::{Condvar, Mutex};
 use crate::metrics::MetricBucketStats;
 use futures::channel::oneshot;
 use http::{HeaderValue, header};
-use libdd_common::mutable_metadata::{MutableMetadata, MutableMetadataHandle};
+use libdd_types::mutable_metadata::{MutableMetadata, MutableMetadataHandle};
 use serde::{Deserialize, Serialize};
 use tokio::sync::mpsc;
 #[cfg(not(target_arch = "wasm32"))]
@@ -356,7 +356,7 @@ mod serialize {
     use crate::data;
     use http::HeaderValue;
     #[allow(clippy::declare_interior_mutable_const)]
-    pub const CONTENT_TYPE_VALUE: HeaderValue = libdd_common::header::APPLICATION_JSON;
+    pub const CONTENT_TYPE_VALUE: HeaderValue = libdd_types::header::APPLICATION_JSON;
     pub fn serialize(telemetry: &data::Telemetry) -> anyhow::Result<Vec<u8>> {
         Ok(serde_json::to_vec(telemetry)?)
     }
@@ -1000,7 +1000,7 @@ impl<C: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static> Tel
         let timeout_ms = if let Some(endpoint) = self.config.endpoint.as_ref() {
             endpoint.timeout_ms
         } else {
-            libdd_common::Endpoint::DEFAULT_TIMEOUT
+            libdd_types::Endpoint::DEFAULT_TIMEOUT
         };
         let timeout = time::Duration::from_millis(timeout_ms);
 
@@ -1594,7 +1594,7 @@ mod tests {
         TelemetryWorkerFlavor, TelemetryWorkerHandle,
     };
     use libdd_capabilities_impl::NativeCapabilities;
-    use libdd_common::mutable_metadata::MutableMetadataHandle;
+    use libdd_types::mutable_metadata::MutableMetadataHandle;
     use tokio::runtime::Runtime;
 
     fn is_send<T: Send>(_: T) {}
@@ -1672,7 +1672,7 @@ mod tests {
     #[cfg_attr(miri, ignore)] // reqwest in build_worker
     #[test]
     fn mutable_identity_overrides_static_headers_atomically() {
-        use libdd_common::mutable_metadata::InstrumentationSession;
+        use libdd_types::mutable_metadata::InstrumentationSession;
 
         let worker = test_worker(Some("static".into()), Some("static-root".into()), None);
         let parent = worker.build_request(&Payload::AppHeartbeat(())).unwrap();
@@ -2101,8 +2101,8 @@ mod tests {
         fn fork_child_starts_a_new_sequence_without_resetting_the_parent() {
             use crate::config::TelemetryEndpoint;
             use httpmock::prelude::*;
-            use libdd_common::mutable_metadata::InstrumentationSession;
             use libdd_shared_runtime::{BlockingRuntime, ForkSafeRuntime, SharedRuntime};
+            use libdd_types::mutable_metadata::InstrumentationSession;
 
             let server = MockServer::start();
             let runtime = ForkSafeRuntime::new().unwrap();
@@ -2627,8 +2627,8 @@ mod tests {
         use crate::data::{Configuration, ConfigurationOrigin};
         use httpmock::prelude::*;
         use libdd_capabilities_impl::NativeCapabilities;
-        use libdd_common::mutable_metadata::InstrumentationSession;
         use libdd_shared_runtime::{BlockingRuntime, ForkSafeRuntime, SharedRuntime};
+        use libdd_types::mutable_metadata::InstrumentationSession;
 
         const TELEMETRY_PATH: &str = "/telemetry/proxy/api/v2/apmtelemetry";
 

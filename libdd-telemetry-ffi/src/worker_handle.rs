@@ -6,7 +6,6 @@ use ffi::MaybeError;
 use ffi::slice::AsBytes;
 use function_name::named;
 use libdd_capabilities_impl::NativeCapabilities;
-use libdd_common::tag::Tag;
 use libdd_common_ffi as ffi;
 use libdd_telemetry::{
     data::{
@@ -16,6 +15,7 @@ use libdd_telemetry::{
     metrics::ContextKey,
     worker::{LifecycleAction, TelemetryActions},
 };
+use libdd_types::tag::Tag;
 
 /// FFI-facing alias: the C ABI surface is native-only, so the worker handle is
 /// always pinned to [`NativeCapabilities`].

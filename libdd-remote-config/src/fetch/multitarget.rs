@@ -9,7 +9,7 @@ use crate::{RemoteConfigCapabilities, RemoteConfigProduct, Target};
 use futures_util::FutureExt;
 use futures_util::future::Shared;
 use libdd_capabilities::{HttpClientCapability, SleepCapability};
-use libdd_common::MutexExt;
+use libdd_types::MutexExt;
 use manual_future::ManualFuture;
 use serde::{Deserialize, Serialize};
 use std::collections::hash_map::Entry;

@@ -4,7 +4,7 @@
 
 use crate::Error;
 use crate::slice::{AsBytes, CharSlice};
-use libdd_common::tag::{Tag, parse_tags};
+use libdd_types::tag::{Tag, parse_tags};
 
 #[must_use]
 #[unsafe(no_mangle)]

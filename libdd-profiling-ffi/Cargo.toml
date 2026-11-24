@@ -76,7 +76,7 @@ libdd-data-pipeline-ffi = { path = "../libdd-data-pipeline-ffi", default-feature
 libdd-crashtracker-ffi = { path = "../libdd-crashtracker-ffi", default-features = false, optional = true}
 libdd-library-config-ffi = {  path = "../libdd-library-config-ffi", default-features = false, optional = true }
 libdd-profiling = { path = "../libdd-profiling" }
-libdd-common = { path = "../libdd-common" }
+libdd-types = { path = "../libdd-types" }
 libdd-networking = { path = "../libdd-networking" }
 libdd-regex = { path = "../libdd-regex" }
 libdd-common-ffi = { path = "../libdd-common-ffi", default-features = false, optional = true, features = ["std"] }

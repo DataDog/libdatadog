@@ -12,7 +12,7 @@ fn create_file_exporter(
     profiling_library_name: &str,
     profiling_library_version: &str,
     family: &str,
-    tags: Vec<libdd_common::tag::Tag>,
+    tags: Vec<libdd_types::tag::Tag>,
     api_key: Option<&str>,
 ) -> anyhow::Result<(ProfileExporter, TempFileGuard)> {
     use libdd_profiling::exporter::config;
@@ -39,10 +39,10 @@ fn create_file_exporter(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use libdd_common::tag;
+    use libdd_types::tag;
     use serde_json::json;
 
-    fn default_tags() -> Vec<libdd_common::tag::Tag> {
+    fn default_tags() -> Vec<libdd_types::tag::Tag> {
         vec![tag!("service", "php"), tag!("host", "bits")]
     }
 

@@ -7,22 +7,22 @@ use super::ffi;
 use super::profile::EncodedProfile;
 use crate::exporter;
 use crate::internal;
-use libdd_common::{Endpoint, parse_uri};
+use libdd_types::{Endpoint, parse_uri};
 
 struct PreparedExportArgs<'a> {
     files: Vec<(String, &'a [u8])>,
-    additional_tags: Vec<libdd_common::tag::Tag>,
+    additional_tags: Vec<libdd_types::tag::Tag>,
     process_tags: Option<String>,
     internal_metadata: Option<serde_json::Value>,
     info: Option<serde_json::Value>,
 }
 
-fn tags_from_cxx(tags: Vec<ffi::Tag>) -> anyhow::Result<Vec<libdd_common::tag::Tag>> {
+fn tags_from_cxx(tags: Vec<ffi::Tag>) -> anyhow::Result<Vec<libdd_types::tag::Tag>> {
     tags.iter()
         .map(|tag| {
             let key = String::from_utf8_lossy(tag.key);
             let value = String::from_utf8_lossy(tag.value);
-            libdd_common::tag::Tag::new(key, value)
+            libdd_types::tag::Tag::new(key, value)
         })
         .collect()
 }

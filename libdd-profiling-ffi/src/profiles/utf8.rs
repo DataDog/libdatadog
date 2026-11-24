@@ -2,9 +2,9 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use crate::ProfileError;
-use libdd_common::error::FfiSafeErrorMessage;
 use libdd_common_ffi::slice::{AsBytes, CharSlice, SliceConversionError};
 use libdd_profiling::profiles::collections::{ParallelStringSet, StringRef};
+use libdd_types::error::FfiSafeErrorMessage;
 use std::borrow::Cow;
 use std::collections::TryReserveError;
 use std::ffi::CStr;

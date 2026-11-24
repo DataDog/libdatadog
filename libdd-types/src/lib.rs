@@ -31,7 +31,7 @@ pub mod tag;
 /// # Examples
 ///
 /// ```
-/// use libdd_common::ResultInfallibleExt;
+/// use libdd_types::ResultInfallibleExt;
 /// use std::convert::Infallible;
 ///
 /// let result: Result<i32, Infallible> = Ok(42);

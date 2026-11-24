@@ -43,7 +43,7 @@ for arg in "$@"; do
             echo "Examples:"
             echo "  $0 --format=list"
             echo "  $0 --format=simple --include-unpublishable"
-            echo "  $0 libdd-common libdd-telemetry"
+            echo "  $0 libdd-types libdd-telemetry"
             echo "  $0 --format=json datadog-sidecar"
             exit 0
             ;;

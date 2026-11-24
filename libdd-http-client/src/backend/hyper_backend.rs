@@ -76,12 +76,12 @@ fn build_body(request: &mut HttpRequest) -> Result<(Body, Option<String>), HttpC
     }
 
     if !request.multipart_parts.is_empty() {
-        let parts: Vec<libdd_common::multipart::MultipartPart> =
+        let parts: Vec<libdd_types::multipart::MultipartPart> =
             std::mem::take(&mut request.multipart_parts)
                 .into_iter()
                 .map(convert_multipart_part)
                 .collect();
-        let form = libdd_common::multipart::MultipartFormData::encode(parts);
+        let form = libdd_types::multipart::MultipartFormData::encode(parts);
         let ct = form.content_type();
         Ok((Body::from_bytes(form.into_body().into()), Some(ct)))
     } else if !request.body.is_empty() {
@@ -94,8 +94,8 @@ fn build_body(request: &mut HttpRequest) -> Result<(Body, Option<String>), HttpC
 
 fn convert_multipart_part(
     p: crate::request::MultipartPart,
-) -> libdd_common::multipart::MultipartPart {
-    let mut part = libdd_common::multipart::MultipartPart::new(p.name, p.data.to_vec());
+) -> libdd_types::multipart::MultipartPart {
+    let mut part = libdd_types::multipart::MultipartPart::new(p.name, p.data.to_vec());
     if let Some(f) = p.filename {
         part = part.filename(f);
     }

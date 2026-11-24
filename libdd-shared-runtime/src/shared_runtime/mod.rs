@@ -23,7 +23,7 @@ pub use local::LocalRuntime;
 
 use crate::worker::Worker;
 use libdd_capabilities::MaybeSend;
-use libdd_common::MutexExt;
+use libdd_types::MutexExt;
 pub use pausable_worker::FlushToken;
 use pausable_worker::{PausableWorker, PausableWorkerError};
 use std::sync::{Arc, Mutex};

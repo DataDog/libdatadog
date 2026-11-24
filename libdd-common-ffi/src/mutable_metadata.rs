@@ -7,13 +7,13 @@
 //! A `ddog_MutableMetadataHandle` is created with [`ddog_mutable_metadata_new`], updated
 //! through [`ddog_mutable_metadata_set_runtime_id`] /
 //! [`ddog_mutable_metadata_set_process_tags`], and freed with
-//! [`ddog_mutable_metadata_free`]. See the `libdd_common::mutable_metadata` module
+//! [`ddog_mutable_metadata_free`]. See the `libdd_types::mutable_metadata` module
 //! documentation for the read/write protocol.
 
 use ::function_name::named;
 use core::ptr::NonNull;
 
-use libdd_common::mutable_metadata::{InstrumentationSession, MutableMetadataHandle};
+use libdd_types::mutable_metadata::{InstrumentationSession, MutableMetadataHandle};
 
 use crate::slice::{AsBytes, CharSlice};
 use crate::{Error, VoidResult, wrap_with_void_ffi_result};
