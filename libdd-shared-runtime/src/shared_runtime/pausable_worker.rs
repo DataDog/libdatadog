@@ -4,12 +4,12 @@
 //! Defines a pausable worker to be able to stop background processes before forks
 
 use super::WorkerHandleError;
-use crate::weak_waker::WeakWakerFuture;
 use crate::worker::Worker;
 use core::pin::Pin;
 use libdd_capabilities::MaybeSend;
 use libdd_capabilities::maybe_send::MaybeSync;
 use libdd_capabilities::spawn::SpawnError;
+use libdd_weak_waker::WeakWakerFuture;
 use std::fmt::Display;
 use std::future::Future;
 use tokio::select;
