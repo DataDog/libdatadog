@@ -229,11 +229,90 @@ impl Endpoint {
         self.use_system_resolver = use_system_resolver;
         self
     }
+
+    /// The URL this endpoint points at.
+    #[inline]
+    pub fn url(&self) -> &http::Uri {
+        &self.url
+    }
+
+    /// The configured Datadog API key, if any.
+    #[inline]
+    pub fn api_key(&self) -> Option<&str> {
+        self.api_key.as_deref()
+    }
+
+    /// The request timeout in milliseconds.
+    #[inline]
+    pub fn timeout_ms(&self) -> u64 {
+        self.timeout_ms
+    }
+
+    /// The test session token, if any. Sets X-Datadog-Test-Session-Token on any request.
+    #[inline]
+    pub fn test_token(&self) -> Option<&str> {
+        self.test_token.as_deref()
+    }
+
+    /// Whether the system DNS resolver is used when building the HTTP client.
+    #[inline]
+    pub fn use_system_resolver(&self) -> bool {
+        self.use_system_resolver
+    }
+
+    /// Set the URL this endpoint points at.
+    pub fn with_url(mut self, url: http::Uri) -> Self {
+        self.url = url;
+        self
+    }
+
+    /// Set the Datadog API key.
+    pub fn with_api_key(mut self, api_key: impl Into<Cow<'static, str>>) -> Self {
+        self.api_key = Some(api_key.into());
+        self
+    }
+
+    /// Set the test session token. Sets X-Datadog-Test-Session-Token on any request.
+    pub fn with_test_token(mut self, test_token: impl Into<Cow<'static, str>>) -> Self {
+        self.test_token = Some(test_token.into());
+        self
+    }
+
+    /// Set the URL in place.
+    #[inline]
+    pub fn set_url(&mut self, url: http::Uri) {
+        self.url = url;
+    }
+
+    /// Set or clear the API key in place.
+    #[inline]
+    pub fn set_api_key(&mut self, api_key: Option<Cow<'static, str>>) {
+        self.api_key = api_key;
+    }
+
+    /// Set the timeout in place. Unlike [`Endpoint::with_timeout`], this is a raw write:
+    /// 0 does not fall back to the default timeout.
+    #[inline]
+    pub fn set_timeout_ms(&mut self, timeout_ms: u64) {
+        self.timeout_ms = timeout_ms;
+    }
+
+    /// Set or clear the test session token in place.
+    #[inline]
+    pub fn set_test_token(&mut self, test_token: Option<Cow<'static, str>>) {
+        self.test_token = test_token;
+    }
+
+    /// Set whether the system DNS resolver is used, in place.
+    #[inline]
+    pub fn set_use_system_resolver(&mut self, use_system_resolver: bool) {
+        self.use_system_resolver = use_system_resolver;
+    }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::parse_uri;
+    use super::{Endpoint, parse_uri};
 
     /// A scheme prefix with an empty path produces an empty (and therefore
     /// dropped) authority. parsing must reject these as malformed rather
@@ -247,5 +326,64 @@ mod tests {
                 "expected {input:?} to be rejected, got {result:?}"
             );
         }
+    }
+
+    #[test]
+    fn builders_set_their_fields() {
+        let url = parse_uri("http://localhost:8126").unwrap();
+        let endpoint = Endpoint::from_url(url.clone())
+            .with_api_key("key")
+            .with_test_token(alloc::string::String::from("token"))
+            .with_timeout(1234)
+            .with_system_resolver(true);
+        assert_eq!(endpoint.url(), &url);
+        assert_eq!(endpoint.api_key(), Some("key"));
+        assert_eq!(endpoint.test_token(), Some("token"));
+        assert_eq!(endpoint.timeout_ms(), 1234);
+        assert!(endpoint.use_system_resolver());
+    }
+
+    #[test]
+    fn with_url_replaces_the_url() {
+        let url = parse_uri("http://localhost:8126").unwrap();
+        let other = parse_uri("http://otherhost:8126").unwrap();
+        let endpoint = Endpoint::from_url(url.clone()).with_url(other.clone());
+        assert_eq!(endpoint.url(), &other);
+    }
+
+    #[test]
+    fn setters_mutate_in_place() {
+        let url = parse_uri("http://localhost:8126").unwrap();
+        let mut endpoint = Endpoint::default();
+        endpoint.set_url(url.clone());
+        endpoint.set_api_key(Some("key".into()));
+        endpoint.set_timeout_ms(0);
+        endpoint.set_test_token(None);
+        endpoint.set_use_system_resolver(true);
+
+        assert_eq!(endpoint.url(), &url);
+        assert_eq!(endpoint.api_key(), Some("key"));
+        // set_timeout_ms is a raw write: unlike with_timeout, 0 does not fall
+        // back to the default timeout.
+        assert_eq!(endpoint.timeout_ms(), 0);
+        assert_eq!(endpoint.test_token(), None);
+        assert!(endpoint.use_system_resolver());
+    }
+
+    #[test]
+    fn setters_clear_optional_fields() {
+        let mut endpoint = Endpoint::default()
+            .with_api_key("key")
+            .with_test_token("token");
+        endpoint.set_api_key(None);
+        endpoint.set_test_token(None);
+        assert_eq!(endpoint.api_key(), None);
+        assert_eq!(endpoint.test_token(), None);
+    }
+
+    #[test]
+    fn with_timeout_zero_falls_back_to_default() {
+        let endpoint = Endpoint::default().with_timeout(0);
+        assert_eq!(endpoint.timeout_ms(), Endpoint::DEFAULT_TIMEOUT);
     }
 }
