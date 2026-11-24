@@ -89,6 +89,14 @@ impl libdd_trace_model::Span for pb::Span {
         self.attribute_str(libdd_trace_model::COMPONENT_KEY)
     }
 
+    fn name_text(&self) -> Option<&String> {
+        Some(&self.name)
+    }
+
+    fn component_text(&self) -> Option<&String> {
+        self.meta.get(libdd_trace_model::COMPONENT_KEY)
+    }
+
     fn span_events(&self) -> impl Iterator<Item = &Self::SpanEvent> {
         self.span_events.iter()
     }
@@ -236,6 +244,8 @@ mod tests {
         assert_eq!(span.span_kind(), Some("client"));
         assert_eq!(span.env(), Some("prod"));
         assert_eq!(span.version(), None);
+        assert_eq!(span.name_text(), Some(&span.name));
+        assert_eq!(span.component_text(), None);
         assert!(span.is_measured());
         assert!(span.is_error());
         assert!(span.is_trace_root());

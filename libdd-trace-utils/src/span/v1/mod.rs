@@ -229,6 +229,14 @@ impl<T: TraceData> libdd_trace_model::Span for Span<T> {
         non_empty(&self.component)
     }
 
+    fn name_text(&self) -> Option<&T::Text> {
+        Some(&self.name)
+    }
+
+    fn component_text(&self) -> Option<&T::Text> {
+        (!self.component.as_str().is_empty()).then_some(&self.component)
+    }
+
     fn span_events(&self) -> impl Iterator<Item = &Self::SpanEvent> {
         self.span_events.iter()
     }
@@ -849,6 +857,16 @@ mod tests {
         );
         // The plain attribute getters still don't see promoted tags.
         assert_eq!(span.attribute_str("env"), None);
+        // The stored texts, also through the compat view.
+        assert_eq!(span.component_text().map(BytesString::as_str), Some("http"));
+        assert_eq!(
+            span.compat().component_text().map(BytesString::as_str),
+            Some("http")
+        );
+        assert_eq!(span.name_text(), Some(&span.name));
+        let component = std::mem::replace(&mut span.component, BytesString::from_static(""));
+        assert_eq!(span.component_text(), None);
+        span.component = component;
 
         let compat = span.compat_mut();
         assert_eq!(compat.remove_attribute("span.kind"), Some(s("server")));

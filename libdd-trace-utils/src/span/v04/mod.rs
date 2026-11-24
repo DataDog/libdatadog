@@ -216,6 +216,14 @@ impl<T: TraceData> libdd_trace_model::Span for Span<T> {
         self.meta.get("component").map(Borrow::borrow)
     }
 
+    fn name_text(&self) -> Option<&T::Text> {
+        Some(&self.name)
+    }
+
+    fn component_text(&self) -> Option<&T::Text> {
+        self.meta.get("component")
+    }
+
     fn span_events(&self) -> impl Iterator<Item = &Self::SpanEvent> {
         self.span_events.iter()
     }
@@ -592,6 +600,8 @@ mod tests {
         assert_eq!(span.attribute("shared"), Some(AttributeRef::String("str")));
         assert_eq!(span.attribute("m"), Some(AttributeRef::Float(3.0)));
         assert_eq!(span.attribute("missing"), None);
+        assert_eq!(span.name_text(), Some(&span.name));
+        assert_eq!(span.component_text(), None);
         assert_eq!(span.span_links().count(), 1);
         assert_eq!(span.span_events().count(), 1);
     }
