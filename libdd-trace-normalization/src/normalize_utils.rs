@@ -126,7 +126,7 @@ pub fn normalize_tag_value(value: &mut String) {
 
 /// Normalizes `tag` in place, as the agent's `normalize` (`pkg/trace/traceutil/normalize`) does.
 ///
-/// - ASCII letters are lowercased. Other uppercase characters are lowercased too.
+/// - Uppercase characters are lowercased, if the lowercase character has the same UTF-8 width.
 /// - Letters, `:`, digits, `.`, `/` and `-` are kept.
 /// - If `remove_digit_start_char` is set, characters up to the first letter or `:` are removed.
 /// - Each run of other characters, `_` included, becomes one `_`. A run at the end is removed.
@@ -167,9 +167,11 @@ fn normalize(tag: &mut String, remove_digit_start_char: bool) {
             }
             _ => {
                 let mut c = c;
+                // Lowercase only if the width is the same, as the agent does: some lowercase
+                // characters are narrower, such as `i` for `İ`.
                 if c.is_uppercase()
                     && let Some(lower) = c.to_lowercase().next()
-                    && lower.len_utf8() <= len
+                    && lower.len_utf8() == len
                 {
                     c = lower;
                 }
@@ -372,6 +374,22 @@ mod tests {
         let mut v = input.to_owned();
         normalize_tag(&mut v);
         assert_eq!(v, expected)
+    }
+
+    #[test]
+    fn test_normalize_tag_lowercases_only_with_the_same_width() {
+        // `İ` (2 bytes) lowercases to `i` (1 byte), the Ohm and Kelvin signs (3 bytes) to `ω`
+        // (2 bytes) and `k` (1 byte): the agent keeps them as they are.
+        for (input, expected) in [
+            ("İstanbul", "İstanbul"),
+            ("\u{2126}x", "\u{2126}x"),
+            ("a\u{212A}b", "a\u{212A}b"),
+            ("ΩMEGA ÀÉÎ", "ωmega_àéî"),
+        ] {
+            let mut v = input.to_owned();
+            normalize_tag(&mut v);
+            assert_eq!(v, expected, "{input}");
+        }
     }
 
     #[test]
