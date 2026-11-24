@@ -176,7 +176,7 @@ while read -r crate; do
     # manifest version can lag behind the tags when a release was cut elsewhere (a hotfix
     # branch, or a release already merged to main). Empty when the crate was never released.
     # The `-v` in the glob keeps sibling crates out: libdd-types-v* cannot match
-    # libdd-common-ffi-v1.0.0.
+    # libdd-types-ffi-v1.0.0.
     LATEST_TAG=$(git tag -l "${NAME}-v*" --sort=-v:refname | head -1)
     log_verbose "  Latest tag: ${LATEST_TAG:-<none>}"
 

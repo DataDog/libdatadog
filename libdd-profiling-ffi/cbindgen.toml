@@ -125,4 +125,4 @@ must_use = "DDOG_CHECK_RETURN"
 
 [parse]
 parse_deps = true
-include = ["libdd-types", "libdd-common-ffi", "libdd-profiling", "libdd-profiling-protobuf", "libdd-crashtracker"]
+include = ["libdd-types", "libdd-types-ffi", "libdd-profiling", "libdd-profiling-protobuf", "libdd-crashtracker"]

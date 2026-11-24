@@ -2,13 +2,13 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use crate::send_data::serialize_debugger_payload;
-use libdd_common_ffi::slice::AsBytes;
-use libdd_common_ffi::{CharSlice, MaybeError};
 use libdd_live_debugger::debugger_defs::DebuggerPayload;
 use libdd_live_debugger::sender;
 use libdd_live_debugger::sender::{Config, DebuggerType, debugger_intake_endpoint, generate_tags};
 use libdd_types::Endpoint;
 use libdd_types::tag::Tag;
+use libdd_types_ffi::slice::AsBytes;
+use libdd_types_ffi::{CharSlice, MaybeError};
 use log::{debug, warn};
 use percent_encoding::{CONTROLS, percent_encode};
 use std::sync::Arc;
@@ -20,7 +20,7 @@ macro_rules! try_c {
     ($failable:expr) => {
         match $failable {
             Ok(o) => o,
-            Err(e) => return MaybeError::Some(libdd_common_ffi::Error::from(format!("{:?}", e))),
+            Err(e) => return MaybeError::Some(libdd_types_ffi::Error::from(format!("{:?}", e))),
         }
     };
 }
@@ -119,7 +119,7 @@ pub extern "C" fn ddog_live_debugger_build_tags(
     env: CharSlice,
     version: CharSlice,
     runtime_id: CharSlice,
-    global_tags: libdd_common_ffi::Vec<Tag>,
+    global_tags: libdd_types_ffi::Vec<Tag>,
 ) -> Box<String> {
     Box::new(generate_tags(
         &debugger_version.to_utf8_lossy(),

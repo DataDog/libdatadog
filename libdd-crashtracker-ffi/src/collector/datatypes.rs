@@ -1,9 +1,9 @@
 // Copyright 2024-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-use libdd_common_ffi::slice::{AsBytes, CharSlice};
-use libdd_common_ffi::{Error, Slice};
 pub use libdd_crashtracker::{OpTypes, StacktraceCollection};
+use libdd_types_ffi::slice::{AsBytes, CharSlice};
+use libdd_types_ffi::{Error, Slice};
 use std::time::Duration;
 
 #[repr(C)]

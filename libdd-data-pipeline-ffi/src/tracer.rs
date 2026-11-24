@@ -14,13 +14,13 @@ use crate::response::ExporterResponse;
 use crate::structured_value::{TracerValueToken, encode_value};
 use crate::trace_exporter::TraceExporter;
 use crate::{catch_panic, gen_error};
-use libdd_common_ffi::CharSlice;
-use libdd_common_ffi::slice::{AsBytes, ByteSlice, Slice};
 use libdd_tinybytes::{Bytes, BytesString};
 use libdd_trace_utils::span::span_pool::PooledChunks;
 use libdd_trace_utils::span::v04::{
     AttributeAnyValueBytes, AttributeArrayValueBytes, SpanBytes, SpanEventBytes, SpanLinkBytes,
 };
+use libdd_types_ffi::CharSlice;
+use libdd_types_ffi::slice::{AsBytes, ByteSlice, Slice};
 use std::collections::HashMap;
 use std::ptr::NonNull;
 

@@ -1,10 +1,10 @@
-# libdd-common-ffi
+# libdd-types-ffi
 
 C FFI bindings for libdd-types shared utilities.
 
 ## Overview
 
-`libdd-common-ffi` provides C-compatible FFI bindings for `libdd-types`, exposing common utilities like tags, endpoints, and error handling to C and other languages.
+`libdd-types-ffi` provides C-compatible FFI bindings for `libdd-types`, exposing common utilities like tags, endpoints, and error handling to C and other languages.
 
 ## Features
 

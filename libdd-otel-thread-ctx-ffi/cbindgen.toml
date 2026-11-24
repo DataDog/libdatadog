@@ -15,7 +15,7 @@ sys_includes = ["stdbool.h", "stddef.h", "stdint.h"]
 
 [parse]
 parse_deps = true
-include = ["libdd-common-ffi", "libdd-otel-thread-ctx"]
+include = ["libdd-types-ffi", "libdd-otel-thread-ctx"]
 
 [defines]
 "feature = sanity-check" = "DDOG_OTEL_THREAD_CTX_SANITY_CHECK"

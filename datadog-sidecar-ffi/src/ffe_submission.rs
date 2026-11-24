@@ -8,7 +8,7 @@ use datadog_sidecar::service::blocking::{self, SidecarTransport};
 pub use datadog_sidecar::service::ffe_submission::FfeSubmissionStatus;
 use datadog_sidecar::service::sidecar_interface::SidecarInterfaceRequest;
 use datadog_sidecar::service::{self, SidecarAction};
-use libdd_common_ffi::slice::{AsBytes, CharSlice, Slice};
+use libdd_types_ffi::slice::{AsBytes, CharSlice, Slice};
 use service::{
     ContextTruncationReason as Reason, FieldOmissions, MAX_CONTEXT_FIELDS, MAX_FIELD_LENGTH,
 };

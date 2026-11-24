@@ -65,7 +65,7 @@ mod no_std_support {
 
 pub mod tracer_metadata;
 
-use libdd_common_ffi::{self as ffi, slice::AsBytes};
+use libdd_types_ffi::{self as ffi, slice::AsBytes};
 
 #[cfg(not(feature = "std"))]
 use alloc::boxed::Box;
@@ -158,7 +158,7 @@ pub extern "C" fn ddog_library_configurator_drop(_: Box<Configurator>) {}
 #[cfg(feature = "std")]
 mod std_api {
     use super::*;
-    use libdd_common_ffi::{CString, Error};
+    use libdd_types_ffi::{CString, Error};
 
     #[cfg(all(feature = "catch_panic", panic = "unwind"))]
     use core::panic::AssertUnwindSafe;
@@ -340,7 +340,7 @@ mod std_api {
         match &mut config_result {
             LibraryConfigLoggedResult::Ok(_) => {}
             LibraryConfigLoggedResult::Err(err) => {
-                libdd_common_ffi::clear_error(err);
+                libdd_types_ffi::clear_error(err);
             }
         }
     }

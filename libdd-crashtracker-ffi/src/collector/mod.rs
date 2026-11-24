@@ -10,9 +10,9 @@ pub use additional_tags::*;
 pub use counters::*;
 pub use datatypes::*;
 use function_name::named;
-use libdd_common_ffi::slice::AsBytes;
-use libdd_common_ffi::{CharSlice, Handle, Slice, ToInner, VoidResult, wrap_with_void_ffi_result};
 use libdd_crashtracker::{CrashtrackerReceiverConfig, DEFAULT_SYMBOLS, StackTrace};
+use libdd_types_ffi::slice::AsBytes;
+use libdd_types_ffi::{CharSlice, Handle, Slice, ToInner, VoidResult, wrap_with_void_ffi_result};
 pub use spans::*;
 
 #[unsafe(no_mangle)]

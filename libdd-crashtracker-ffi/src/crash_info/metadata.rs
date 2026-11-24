@@ -1,8 +1,8 @@
 // Copyright 2024-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-use libdd_common_ffi::{CharSlice, slice::AsBytes};
 use libdd_types::tag::Tag;
+use libdd_types_ffi::{CharSlice, slice::AsBytes};
 
 #[repr(C)]
 pub struct Metadata<'a> {
@@ -10,7 +10,7 @@ pub struct Metadata<'a> {
     pub library_version: CharSlice<'a>,
     pub family: CharSlice<'a>,
     /// Should include "service", "environment", etc
-    pub tags: Option<&'a libdd_common_ffi::Vec<Tag>>,
+    pub tags: Option<&'a libdd_types_ffi::Vec<Tag>>,
 }
 
 impl<'a> TryFrom<Metadata<'a>> for libdd_crashtracker::Metadata {

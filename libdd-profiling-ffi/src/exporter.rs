@@ -5,14 +5,14 @@
 #![allow(clippy::box_vec)]
 
 use function_name::named;
-use libdd_common_ffi::slice::{AsBytes, ByteSlice, CharSlice, Slice};
-use libdd_common_ffi::{
-    Handle, Result, ToInner, VoidResult, wrap_with_ffi_result, wrap_with_void_ffi_result,
-};
 use libdd_profiling::exporter;
 use libdd_profiling::exporter::{ExporterManager, ProfileExporter};
 use libdd_profiling::internal::EncodedProfile;
 use libdd_types::tag::Tag;
+use libdd_types_ffi::slice::{AsBytes, ByteSlice, CharSlice, Slice};
+use libdd_types_ffi::{
+    Handle, Result, ToInner, VoidResult, wrap_with_ffi_result, wrap_with_void_ffi_result,
+};
 use std::borrow::Cow;
 use std::str::FromStr;
 
@@ -44,7 +44,7 @@ pub extern "C" fn ddog_prof_Exporter_Slice_File_empty() -> Slice<'static, File<'
 /// cbindgen:field-names=[code]
 pub struct HttpStatus(u16);
 
-fn try_clone_optional_tags(tags: Option<&libdd_common_ffi::Vec<Tag>>) -> anyhow::Result<Vec<Tag>> {
+fn try_clone_optional_tags(tags: Option<&libdd_types_ffi::Vec<Tag>>) -> anyhow::Result<Vec<Tag>> {
     let mut cloned = Vec::new();
     if let Some(tags) = tags {
         cloned.try_reserve_exact(tags.len())?;
@@ -163,7 +163,7 @@ pub unsafe extern "C" fn ddog_prof_Exporter_new(
     profiling_library_name: CharSlice,
     profiling_library_version: CharSlice,
     family: CharSlice,
-    tags: Option<&libdd_common_ffi::Vec<Tag>>,
+    tags: Option<&libdd_types_ffi::Vec<Tag>>,
     endpoint: ProfilingEndpoint,
 ) -> Result<Handle<ProfileExporter>> {
     wrap_with_ffi_result!({
@@ -285,7 +285,7 @@ pub unsafe extern "C" fn ddog_prof_Exporter_send_blocking(
     mut exporter: *mut Handle<ProfileExporter>,
     mut profile: *mut Handle<EncodedProfile>,
     files_to_compress_and_export: Slice<File>,
-    optional_additional_tags: Option<&libdd_common_ffi::Vec<Tag>>,
+    optional_additional_tags: Option<&libdd_types_ffi::Vec<Tag>>,
     optional_process_tags: Option<&CharSlice>,
     optional_internal_metadata_json: Option<&CharSlice>,
     optional_info_json: Option<&CharSlice>,
@@ -447,7 +447,7 @@ pub unsafe extern "C" fn ddog_prof_ExporterManager_queue(
     mut manager: *mut Handle<ExporterManager>,
     mut profile: *mut Handle<EncodedProfile>,
     files_to_compress_and_export: Slice<File>,
-    optional_additional_tags: Option<&libdd_common_ffi::Vec<Tag>>,
+    optional_additional_tags: Option<&libdd_types_ffi::Vec<Tag>>,
     optional_process_tags: Option<&CharSlice>,
     optional_internal_metadata_json: Option<&CharSlice>,
     optional_info_json: Option<&CharSlice>,
@@ -561,8 +561,8 @@ pub unsafe extern "C" fn ddog_prof_ExporterManager_drop(mut manager: *mut Handle
 #[cfg(test)]
 mod tests {
     use super::*;
-    use libdd_common_ffi::Slice;
     use libdd_types::tag;
+    use libdd_types_ffi::Slice;
 
     fn profiling_library_name() -> CharSlice<'static> {
         CharSlice::from("dd-trace-foo")

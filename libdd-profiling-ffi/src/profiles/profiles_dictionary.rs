@@ -6,12 +6,12 @@ use crate::arc_handle::ArcHandle;
 use crate::profile_status::ProfileStatus;
 use crate::profiles::utf8::{self, Utf8Option};
 use crate::profiles::{ensure_non_null_insert, ensure_non_null_out_parameter};
-use libdd_common_ffi::MutSlice;
-use libdd_common_ffi::slice::{CharSlice, Slice};
 use libdd_profiling::profiles::collections::StringRef;
 use libdd_profiling::profiles::datatypes::{
     Function2, FunctionId2, Mapping2, MappingId2, ProfilesDictionary, StringId2,
 };
+use libdd_types_ffi::MutSlice;
+use libdd_types_ffi::slice::{CharSlice, Slice};
 use std::ffi::CStr;
 
 /// A StringId that represents the empty string.
@@ -299,7 +299,7 @@ pub unsafe extern "C" fn ddog_prof_ProfilesDictionary_drop(
 mod tests {
     use super::*;
     use crate::profiles::utf8::Utf8Option;
-    use libdd_common_ffi::slice::AsBytes;
+    use libdd_types_ffi::slice::AsBytes;
 
     #[test]
     fn test_insert_strs_success() {

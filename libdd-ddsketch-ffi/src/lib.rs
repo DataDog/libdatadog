@@ -7,9 +7,9 @@
 #![cfg_attr(not(test), deny(clippy::todo))]
 #![cfg_attr(not(test), deny(clippy::unimplemented))]
 
-use libdd_common_ffi as ffi;
-use libdd_common_ffi::{Error, Handle, ToInner, VoidResult};
 use libdd_ddsketch::DDSketch;
+use libdd_types_ffi as ffi;
+use libdd_types_ffi::{Error, Handle, ToInner, VoidResult};
 use std::mem::MaybeUninit;
 
 const NULL_POINTER_ERROR: &str = "null pointer provided";

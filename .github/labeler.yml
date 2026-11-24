@@ -9,7 +9,7 @@ common:
 - changed-files:
   - any-glob-to-any-file: [
       'libdd-types/**/*',
-      'libdd-common-ffi/**/*',
+      'libdd-types-ffi/**/*',
       'libdd-regex/**/*',
       'libdd-env/**/*',
       'libdd-weak-waker/**/*',

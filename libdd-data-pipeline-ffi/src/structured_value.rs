@@ -5,7 +5,7 @@ use crate::catch_panic;
 use crate::error::{ExporterError, ExporterErrorCode as ErrorCode};
 #[cfg(all(feature = "catch_panic", panic = "unwind"))]
 use crate::gen_error;
-use libdd_common_ffi::slice::{AsBytes, ByteSlice, Slice};
+use libdd_types_ffi::slice::{AsBytes, ByteSlice, Slice};
 use rmp::encode::{
     write_array_len, write_bin, write_bool, write_f64, write_map_len, write_nil, write_sint,
     write_str, write_uint,

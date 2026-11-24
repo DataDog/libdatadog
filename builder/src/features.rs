@@ -52,9 +52,9 @@ impl Selection {
     }
 }
 
-/// Needed whatever else is selected. `ddcommon-ffi` is here because it is a *default* of
+/// Needed whatever else is selected. `ddtypes-ffi` is here because it is a *default* of
 /// `libdd-profiling-ffi`, which `--no-default-features` discards.
-const ALWAYS: &[&str] = &["cbindgen", "ddcommon-ffi"];
+const ALWAYS: &[&str] = &["cbindgen", "ddtypes-ffi"];
 
 /// The complete `--features` list for `cargo rustc -p libdd-profiling-ffi`.
 ///
@@ -204,7 +204,7 @@ mod tests {
             profiling_features(&everything),
             vec![
                 "cbindgen",
-                "ddcommon-ffi",
+                "ddtypes-ffi",
                 "catch_panic",
                 "ddtelemetry-ffi",
                 "data-pipeline-ffi",
@@ -262,7 +262,7 @@ mod tests {
     #[test]
     fn no_module_selected_emits_no_module_features() {
         let features = profiling_features(&Selection::default());
-        assert_eq!(features, vec!["cbindgen", "ddcommon-ffi"]);
+        assert_eq!(features, vec!["cbindgen", "ddtypes-ffi"]);
     }
 
     #[cfg_attr(miri, ignore)] // exhaustive feature combinations are prohibitively slow under Miri

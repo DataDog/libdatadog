@@ -72,4 +72,4 @@ deprecated_with_note = "DDOG_TRACE_EXPORTER_DEPRECATED({})"
 
 [parse]
 parse_deps = true
-include = ["libdd-types", "libdd-common-ffi", "libdd-shared-runtime", "libdd-data-pipeline", "libdd-trace-utils", "libdd-trace-stats"]
+include = ["libdd-types", "libdd-types-ffi", "libdd-shared-runtime", "libdd-data-pipeline", "libdd-trace-utils", "libdd-trace-stats"]

@@ -1396,7 +1396,6 @@ dependencies = [
  "libc",
  "libdd-capabilities",
  "libdd-capabilities-impl",
- "libdd-common-ffi",
  "libdd-crashtracker",
  "libdd-crashtracker-ffi",
  "libdd-data-pipeline",
@@ -1416,6 +1415,7 @@ dependencies = [
  "libdd-trace-stats",
  "libdd-trace-utils",
  "libdd-types",
+ "libdd-types-ffi",
  "manual_future",
  "memory-stats",
  "nix 0.29.0",
@@ -1453,7 +1453,6 @@ dependencies = [
  "http 1.1.0",
  "httpmock",
  "libc",
- "libdd-common-ffi",
  "libdd-crashtracker",
  "libdd-crashtracker-ffi",
  "libdd-dogstatsd-client",
@@ -1465,6 +1464,7 @@ dependencies = [
  "libdd-tinybytes",
  "libdd-trace-utils",
  "libdd-types",
+ "libdd-types-ffi",
  "rmp-serde",
  "serde_json",
  "tempfile",
@@ -2853,23 +2853,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "libdd-common-ffi"
-version = "51.0.0"
-dependencies = [
- "anyhow",
- "assert_no_alloc",
- "bolero",
- "build_common",
- "chrono",
- "crossbeam-queue",
- "function_name",
- "hyper",
- "libdd-regex",
- "libdd-types",
- "serde",
-]
-
-[[package]]
 name = "libdd-crashtracker"
 version = "3.0.0"
 dependencies = [
@@ -2924,10 +2907,10 @@ dependencies = [
  "build_common",
  "function_name",
  "libc",
- "libdd-common-ffi",
  "libdd-crashtracker",
  "libdd-regex",
  "libdd-types",
+ "libdd-types-ffi",
  "serde_json",
  "symbolic-common",
  "symbolic-demangle",
@@ -3018,7 +3001,6 @@ dependencies = [
  "build_common",
  "httpmock",
  "libdd-capabilities-impl",
- "libdd-common-ffi",
  "libdd-data-pipeline",
  "libdd-regex",
  "libdd-shared-runtime",
@@ -3026,6 +3008,7 @@ dependencies = [
  "libdd-trace-obfuscation",
  "libdd-trace-utils",
  "libdd-types",
+ "libdd-types-ffi",
  "rmp",
  "rmp-serde",
  "serde_json",
@@ -3050,9 +3033,9 @@ name = "libdd-ddsketch-ffi"
 version = "51.0.0"
 dependencies = [
  "build_common",
- "libdd-common-ffi",
  "libdd-ddsketch",
  "libdd-regex",
+ "libdd-types-ffi",
 ]
 
 [[package]]
@@ -3127,8 +3110,8 @@ dependencies = [
  "anyhow",
  "build_common",
  "function_name",
- "libdd-common-ffi",
  "libdd-ffe",
+ "libdd-types-ffi",
 ]
 
 [[package]]
@@ -3254,9 +3237,9 @@ dependencies = [
  "constcat",
  "function_name",
  "libc_alloc",
- "libdd-common-ffi",
  "libdd-library-config",
  "libdd-regex",
+ "libdd-types-ffi",
 ]
 
 [[package]]
@@ -3303,10 +3286,10 @@ name = "libdd-live-debugger-ffi"
 version = "0.0.1"
 dependencies = [
  "build_common",
- "libdd-common-ffi",
  "libdd-live-debugger",
  "libdd-regex",
  "libdd-types",
+ "libdd-types-ffi",
  "log",
  "percent-encoding",
  "serde_json",
@@ -3330,9 +3313,9 @@ name = "libdd-log-ffi"
 version = "51.0.0"
 dependencies = [
  "build_common",
- "libdd-common-ffi",
  "libdd-log",
  "libdd-regex",
+ "libdd-types-ffi",
 ]
 
 [[package]]
@@ -3386,8 +3369,8 @@ name = "libdd-otel-thread-ctx-ffi"
 version = "1.0.0"
 dependencies = [
  "build_common",
- "libdd-common-ffi",
  "libdd-otel-thread-ctx",
+ "libdd-types-ffi",
 ]
 
 [[package]]
@@ -3456,7 +3439,6 @@ dependencies = [
  "function_name",
  "hyper",
  "libc",
- "libdd-common-ffi",
  "libdd-crashtracker-ffi",
  "libdd-data-pipeline-ffi",
  "libdd-ddsketch-ffi",
@@ -3470,6 +3452,7 @@ dependencies = [
  "libdd-shared-runtime-ffi",
  "libdd-telemetry-ffi",
  "libdd-types",
+ "libdd-types-ffi",
  "serde_json",
  "symbolizer-ffi",
  "thiserror 2.0.17",
@@ -3503,9 +3486,9 @@ dependencies = [
  "build_common",
  "function_name",
  "libc",
- "libdd-common-ffi",
  "libdd-profiling-heap-gotter",
  "libdd-profiling-heap-sampler",
+ "libdd-types-ffi",
 ]
 
 [[package]]
@@ -3667,10 +3650,10 @@ dependencies = [
  "build_common",
  "function_name",
  "libdd-capabilities-impl",
- "libdd-common-ffi",
  "libdd-regex",
  "libdd-telemetry",
  "libdd-types",
+ "libdd-types-ffi",
  "paste",
  "serde_json",
  "tempfile",
@@ -3902,6 +3885,23 @@ dependencies = [
  "proptest",
  "serde",
  "static_assertions",
+]
+
+[[package]]
+name = "libdd-types-ffi"
+version = "51.0.0"
+dependencies = [
+ "anyhow",
+ "assert_no_alloc",
+ "bolero",
+ "build_common",
+ "chrono",
+ "crossbeam-queue",
+ "function_name",
+ "hyper",
+ "libdd-regex",
+ "libdd-types",
+ "serde",
 ]
 
 [[package]]

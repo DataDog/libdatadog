@@ -3,11 +3,11 @@
 
 use ffi::slice::AsBytes;
 use libdd_capabilities_impl::NativeCapabilities;
-use libdd_common_ffi as ffi;
 use libdd_telemetry::{
     config, data,
     worker::{TelemetryWorkerBuilder, TelemetryWorkerFlavor},
 };
+use libdd_types_ffi as ffi;
 use std::ptr::NonNull;
 
 /// FFI-facing alias: the C ABI surface is native-only, so the worker handle is

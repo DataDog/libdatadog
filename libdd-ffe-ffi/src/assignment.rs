@@ -755,11 +755,11 @@ pub unsafe extern "C" fn ddog_ffe_assignment_get_error_message(
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ddog_ffe_assignment_get_serial_id(
     assignment: Handle<ResolutionDetails>,
-) -> libdd_common_ffi::Option<i32> {
+) -> libdd_types_ffi::Option<i32> {
     // SAFETY: the caller must ensure that assignment handle is valid.
     match unsafe { assignment.as_ref() }.as_ref() {
         Ok(a) => a.serial_id.into(),
-        Err(_) => libdd_common_ffi::Option::None,
+        Err(_) => libdd_types_ffi::Option::None,
     }
 }
 

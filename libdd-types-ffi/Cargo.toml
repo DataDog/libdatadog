@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 
 [package]
-name = "libdd-common-ffi"
+name = "libdd-types-ffi"
 edition.workspace = true
 version.workspace = true
 rust-version.workspace = true

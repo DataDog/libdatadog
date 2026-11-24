@@ -5,10 +5,6 @@ use std::num::NonZeroI64;
 
 use super::datatypes::{Profile, profile_ptr_to_inner};
 use function_name::named;
-use libdd_common_ffi::{
-    CharSlice, MutSlice, Result, Slice, VoidResult, slice::AsBytes, wrap_with_ffi_result,
-    wrap_with_void_ffi_result,
-};
 use libdd_profiling::{
     api::ManagedStringId,
     collections::identifiable::StringId,
@@ -16,6 +12,10 @@ use libdd_profiling::{
         self, FunctionId, LabelId, LabelSetId, LocationId, MappingId, StackTraceId,
         interning_api::{Generation, GenerationalId},
     },
+};
+use libdd_types_ffi::{
+    CharSlice, MutSlice, Result, Slice, VoidResult, slice::AsBytes, wrap_with_ffi_result,
+    wrap_with_void_ffi_result,
 };
 
 // Cbindgen was putting invalid C types on the static, this workaround seems to fix it.

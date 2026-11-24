@@ -60,7 +60,7 @@ impl TlsConfig {
 
     /// Returns the default crypto provider (ring for non-FIPS builds).
     ///
-    /// Matches the convention used by `libdd-common`: ring on all platforms
+    /// Matches the convention used by `libdd-types`: ring on all platforms
     /// for non-FIPS. FIPS builds install the aws-lc-rs FIPS provider externally.
     fn default_crypto_provider() -> rustls::crypto::CryptoProvider {
         rustls::crypto::ring::default_provider()

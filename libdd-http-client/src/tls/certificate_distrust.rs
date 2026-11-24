@@ -21,9 +21,9 @@
 //! server to be used, so checking the presented chain closes the practical
 //! attack paths.
 //!
-//! This module duplicates `libdd-common`'s
+//! This module duplicates `libdd-types`'s
 //! `connector::certificate_distrust`: `libdd-http-client` must not depend on
-//! `libdd-common` for the reqwest backend, so the mitigation is mirrored here.
+//! `libdd-types` for the reqwest backend, so the mitigation is mirrored here.
 //! Keep both copies in sync until the upstream fix removes them.
 
 use std::{collections::HashSet, sync::Arc, sync::LazyLock};

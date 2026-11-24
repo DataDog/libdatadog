@@ -15,7 +15,7 @@ bench = false
 
 [features]
 default = ["cbindgen", "expanded_builder_macros"]
-cbindgen = ["build_common/cbindgen", "libdd-common-ffi/cbindgen", "expanded_builder_macros"]
+cbindgen = ["build_common/cbindgen", "libdd-types-ffi/cbindgen", "expanded_builder_macros"]
 expanded_builder_macros = []
 regex-lite = ["libdd-regex/regex-lite"]
 
@@ -26,7 +26,7 @@ build_common = { path = "../build-common" }
 libdd-capabilities-impl = { path = "../libdd-capabilities-impl" }
 libdd-telemetry = { path = "../libdd-telemetry" }
 libdd-types = { path = "../libdd-types" }
-libdd-common-ffi = { path = "../libdd-common-ffi", default-features = false, features = ["std"] }
+libdd-types-ffi = { path = "../libdd-types-ffi", default-features = false, features = ["std"] }
 libdd-regex = { path = "../libdd-regex" }
 function_name.workspace = true
 paste.workspace = true

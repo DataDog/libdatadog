@@ -7,15 +7,15 @@ use crate::error::{ExporterError, ExporterErrorCode as ErrorCode};
 use crate::response::ExporterResponse;
 use crate::{catch_panic, gen_error};
 use libdd_capabilities_impl::NativeCapabilities;
-use libdd_common_ffi::{
-    CharSlice,
-    {slice::AsBytes, slice::ByteSlice},
-};
 use libdd_data_pipeline::OtlpProtocol;
 use libdd_data_pipeline::trace_exporter::stats::CardinalityLimitConfig;
 use libdd_data_pipeline::trace_exporter::{
     TelemetryConfig, TelemetryInstrumentationSessions, TraceExporter as GenericTraceExporter,
     TraceExporterInputFormat, TraceExporterOutputFormat,
+};
+use libdd_types_ffi::{
+    CharSlice,
+    {slice::AsBytes, slice::ByteSlice},
 };
 
 // FFI pins the runtime parameter to `ForkSafeRuntime` for ABI stability. Rust callers that
@@ -1354,7 +1354,7 @@ mod tests {
 
     #[test]
     fn config_mutable_metadata_test() {
-        use libdd_common_ffi::mutable_metadata::{
+        use libdd_types_ffi::mutable_metadata::{
             ddog_mutable_metadata_free, ddog_mutable_metadata_new,
             ddog_mutable_metadata_set_runtime_id,
         };
@@ -1380,7 +1380,7 @@ mod tests {
                     Some(metadata.as_ref()),
                     CharSlice::from("rt-3"),
                 ),
-                libdd_common_ffi::VoidResult::Ok
+                libdd_types_ffi::VoidResult::Ok
             ));
             let cfg = config.unwrap();
             let handle = cfg.mutable_metadata.as_ref().unwrap();

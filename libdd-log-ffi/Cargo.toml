@@ -12,7 +12,7 @@ bench = false
 
 [features]
 default = ["cbindgen", "expanded_builder_macros"]
-cbindgen = ["build_common/cbindgen", "libdd-common-ffi/cbindgen", "expanded_builder_macros"]
+cbindgen = ["build_common/cbindgen", "libdd-types-ffi/cbindgen", "expanded_builder_macros"]
 expanded_builder_macros = []
 regex-lite = ["libdd-regex/regex-lite"]
 
@@ -21,7 +21,7 @@ build_common = { path = "../build-common" }
 
 [dependencies]
 libdd-log = { path = "../libdd-log" }
-libdd-common-ffi = { path = "../libdd-common-ffi" }
+libdd-types-ffi = { path = "../libdd-types-ffi" }
 libdd-regex = { path = "../libdd-regex" }
 
 [package.metadata.cargo-machete]

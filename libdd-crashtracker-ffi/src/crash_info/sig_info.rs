@@ -1,8 +1,8 @@
 // Copyright 2024-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-use libdd_common_ffi::{CharSlice, slice::AsBytes};
 use libdd_crashtracker::{SiCodes, SignalNames};
+use libdd_types_ffi::{CharSlice, slice::AsBytes};
 
 #[repr(C)]
 pub struct SigInfo<'a> {

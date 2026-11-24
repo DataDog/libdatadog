@@ -6,7 +6,6 @@
 use super::{TraceExporter, sanitize_string};
 use crate::error::{ExporterError, ExporterErrorCode as ErrorCode};
 use crate::{catch_panic, gen_error};
-use libdd_common_ffi::{CharSlice, slice::AsBytes};
 use libdd_data_pipeline::OtlpProtocol;
 use libdd_data_pipeline::trace_exporter::stats::CardinalityLimitConfig;
 use libdd_data_pipeline::trace_exporter::{
@@ -15,6 +14,7 @@ use libdd_data_pipeline::trace_exporter::{
 };
 use libdd_shared_runtime::ForkSafeRuntime;
 use libdd_types::mutable_metadata::MutableMetadataHandle;
+use libdd_types_ffi::{CharSlice, slice::AsBytes};
 use std::{ptr::NonNull, sync::Arc, time::Duration};
 use tracing::debug;
 

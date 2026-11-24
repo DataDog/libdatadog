@@ -56,8 +56,8 @@ pub use libdd_ffe_ffi;
 pub use libdd_shared_runtime_ffi::*;
 
 // re-export tracer metadata functions
-#[cfg(feature = "ddcommon-ffi")]
-pub use libdd_common_ffi::*;
+#[cfg(feature = "ddtypes-ffi")]
+pub use libdd_types_ffi::*;
 
 // re-export otel-thread-ctx ffi
 #[cfg(feature = "otel-thread-ctx-ffi")]
