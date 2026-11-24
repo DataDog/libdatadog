@@ -1435,7 +1435,9 @@ impl<
             //
             // For otlp we don't tag, for the V1 DD exporter this added as a tracer level attribute
             // lower in this function. This is done here before dedup.
-            if self.agentless_config.is_some() && let Some(span) = chunk.spans.first_mut() {
+            if self.agentless_config.is_some()
+                && let Some(span) = chunk.spans.first_mut()
+            {
                 add_native_export_marker_v1(&mut span.attributes);
             }
             chunk.dedup();
