@@ -9,11 +9,17 @@
 /// during collection, including chunked bodies with no declared length. Requests
 /// without this extension retain their existing behavior. This is local client
 /// policy, never an HTTP header sent to the receiver.
+/// If the request also carries [`libdd_capabilities::http::ResponseBodyLimit`],
+/// the smaller limit applies.
 #[derive(Clone, Copy, Debug)]
 pub struct ResponseBodyLimit(pub usize);
 
 mod native {
     use super::ResponseBodyLimit;
+    use libdd_capabilities::http::{
+        ObservedResponseStatus, PreserveResponseStatus, RejectOversizedPayload,
+        ResponseBodyLimit as CapabilityResponseBodyLimit,
+    };
     use std::fs::OpenOptions;
     use std::future::Future;
     use std::io::Write;
@@ -31,6 +37,44 @@ mod native {
     };
 
     use http_body_util::{BodyExt, Limited};
+
+    fn response_limit(extensions: &http::Extensions) -> Option<usize> {
+        let native = extensions.get::<ResponseBodyLimit>().map(|limit| limit.0);
+        let capability = extensions
+            .get::<CapabilityResponseBodyLimit>()
+            .map(|limit| limit.0);
+        native.into_iter().chain(capability).min()
+    }
+
+    async fn collect_response(
+        response: http::Response<Body>,
+        limit: Option<usize>,
+        preserve_status: bool,
+        reject_413: bool,
+    ) -> Result<http::Response<bytes::Bytes>, HttpError> {
+        let (parts, body) = response.into_parts();
+        if reject_413 && parts.status == http::StatusCode::PAYLOAD_TOO_LARGE {
+            return Ok(http::Response::from_parts(parts, bytes::Bytes::new()));
+        }
+        let collected = match limit {
+            Some(limit) => Limited::new(body, limit)
+                .collect()
+                .await
+                .map(|body| body.to_bytes())
+                .map_err(|error| HttpError::ResponseBody(anyhow::Error::from_boxed(error))),
+            None => body
+                .collect()
+                .await
+                .map(|body| body.to_bytes())
+                .map_err(|error| HttpError::ResponseBody(error.into())),
+        };
+        let bytes = match collected {
+            Ok(bytes) => bytes,
+            Err(_) if preserve_status => bytes::Bytes::new(),
+            Err(error) => return Err(error),
+        };
+        Ok(http::Response::from_parts(parts, bytes))
+    }
 
     #[derive(Clone)]
     pub struct NativeHttpClient {
@@ -169,7 +213,10 @@ mod native {
         {
             let periodic = self.periodic;
             let client_lock = self.client.clone();
-            let response_limit = req.extensions().get::<ResponseBodyLimit>().copied();
+            let response_limit = response_limit(req.extensions());
+            let preserve_status = req.extensions().get::<PreserveResponseStatus>().is_some();
+            let reject_413 = req.extensions().get::<RejectOversizedPayload>().is_some();
+            let observed_status = req.extensions().get::<ObservedResponseStatus>().cloned();
             async move {
                 // file:// URIs short-circuit to the on-disk recorder used by tests.
                 if req.uri().scheme_str() == Some("file") {
@@ -192,28 +239,26 @@ mod native {
                     .request(hyper_req)
                     .await
                     .map_err(|e| HttpError::Network(e.into()))?;
+                if let Some(status) = observed_status {
+                    status.record(response.status());
+                }
 
-                let (parts, body) = response.into_parts();
-                let collected = match response_limit {
-                    Some(ResponseBodyLimit(limit)) => Limited::new(body, limit)
-                        .collect()
-                        .await
-                        .map_err(|e| HttpError::ResponseBody(anyhow::Error::from_boxed(e)))?
-                        .to_bytes(),
-                    None => body
-                        .collect()
-                        .await
-                        .map_err(|e| HttpError::ResponseBody(e.into()))?
-                        .to_bytes(),
-                };
-
-                Ok(http::Response::from_parts(parts, collected))
+                collect_response(
+                    response.map(Body::incoming),
+                    response_limit,
+                    preserve_status,
+                    reject_413,
+                )
+                .await
             }
         }
 
         fn request_streamed(&self, req: http::Request<()>) -> (BodySender, ResponseFuture) {
             let client = self.client.get_or_init(new_default_client).clone();
-            let response_limit = req.extensions().get::<ResponseBodyLimit>().copied();
+            let response_limit = response_limit(req.extensions());
+            let preserve_status = req.extensions().get::<PreserveResponseStatus>().is_some();
+            let reject_413 = req.extensions().get::<RejectOversizedPayload>().is_some();
+            let observed_status = req.extensions().get::<ObservedResponseStatus>().cloned();
             let (sender, body) = Body::channel();
             let hyper_req = req.map(|()| body);
             let fut = async move {
@@ -221,22 +266,17 @@ mod native {
                     .request(hyper_req)
                     .await
                     .map_err(|e| HttpError::Network(e.into()))?;
+                if let Some(status) = observed_status {
+                    status.record(response.status());
+                }
 
-                let (parts, body) = response.into_parts();
-                let collected = match response_limit {
-                    Some(ResponseBodyLimit(limit)) => Limited::new(body, limit)
-                        .collect()
-                        .await
-                        .map_err(|e| HttpError::ResponseBody(anyhow::Error::from_boxed(e)))?
-                        .to_bytes(),
-                    None => body
-                        .collect()
-                        .await
-                        .map_err(|e| HttpError::ResponseBody(e.into()))?
-                        .to_bytes(),
-                };
-
-                Ok(http::Response::from_parts(parts, collected))
+                collect_response(
+                    response.map(Body::incoming),
+                    response_limit,
+                    preserve_status,
+                    reject_413,
+                )
+                .await
             };
             (Box::new(NativeBodySender(sender)), Box::pin(fut))
         }
