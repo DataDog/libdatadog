@@ -19,6 +19,7 @@ fn build_runtime() -> tokio::runtime::Runtime {
         .unwrap()
 }
 
+#[cfg_attr(miri, ignore)]
 #[test]
 fn pooled_connection_is_reused() {
     let server = start_server();
@@ -35,6 +36,7 @@ fn pooled_connection_is_reused() {
     assert_eq!(connector.connects(), 1);
 }
 
+#[cfg_attr(miri, ignore)]
 #[test]
 fn client_works_on_a_new_runtime_after_the_old_one_drops() {
     let server = start_server();

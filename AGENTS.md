@@ -74,6 +74,15 @@ Iterate fastest with `cargo check -p <crate>` while editing; validate each affec
   # regex-lite engine
   cargo nextest run -p libdd-regex --no-default-features --features regex-lite
   ```
+- **libdd-networking**: the `weak-waker` feature (off by default) switches the `http_common`
+  client builders from `TokioExecutor` to `WeakWakerExecutor`. Its executor tests and most of the
+  Linux fd tests in `tests/pool_runtime_drop_fds.rs` only build with it, so run it separately:
+  ```bash
+  # Default (TokioExecutor) — covered by the workspace test run
+  cargo nextest run -p libdd-networking --features http-client
+  # WeakWakerExecutor
+  cargo nextest run -p libdd-networking --features weak-waker
+  ```
 - **test_spawn_from_lib**: `cargo nextest run --package test_spawn_from_lib --features prefer-dynamic`.
 
 ### Code exploration

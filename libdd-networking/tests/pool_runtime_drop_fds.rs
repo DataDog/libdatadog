@@ -16,7 +16,7 @@
 //! The cases for the `http_common` constructors need the `weak-waker` feature. The leaking case
 //! is `#[ignore]`d; run it with `--run-ignored all`.
 
-#![cfg(all(target_os = "linux", feature = "http-client"))]
+#![cfg(all(target_os = "linux", feature = "http-client", not(miri)))]
 
 mod common;
 

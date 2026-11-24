@@ -389,6 +389,7 @@ mod weak_waker_executor_tests {
             .unwrap()
     }
 
+    #[cfg_attr(miri, ignore)]
     #[test]
     fn runtime_drop_releases_handle() {
         let sentinel = Arc::new(());
@@ -412,6 +413,7 @@ mod weak_waker_executor_tests {
         drop(tx);
     }
 
+    #[cfg_attr(miri, ignore)]
     #[test]
     fn spawned_task_runs_to_completion() {
         let rt = tokio::runtime::Builder::new_current_thread()
