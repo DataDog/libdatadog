@@ -1,8 +1,8 @@
 // Copyright 2026-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-//! Clients from `http_common` keep pooling connections and keep working across runtimes, with or
-//! without the `weak-waker` feature.
+//! Clients from `http_common`, which use `WeakWakerExecutor`, keep pooling connections and keep
+//! working across runtimes.
 
 #![cfg(feature = "http-client")]
 

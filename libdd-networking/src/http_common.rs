@@ -103,12 +103,10 @@ mod native {
     /// runtime. It drops the task instead. Hyper then reports the connection as closed, or
     /// skips pool cleanup for the idle task.
     ///
-    /// The client builders of this module use it when the `weak-waker` feature is enabled.
-    #[cfg(feature = "weak-waker")]
+    /// The client builders of this module use it.
     #[derive(Clone, Copy, Debug, Default)]
     pub struct WeakWakerExecutor;
 
-    #[cfg(feature = "weak-waker")]
     impl<F> hyper::rt::Executor<F> for WeakWakerExecutor
     where
         F: Future + Send + 'static,
@@ -351,25 +349,16 @@ mod native {
 
     pub type GenericHttpClient<C> = hyper_util::client::legacy::Client<C, Body>;
 
-    /// Executor used by the client builders of this module.
-    #[cfg(feature = "weak-waker")]
-    type ClientExecutor = WeakWakerExecutor;
-    #[cfg(not(feature = "weak-waker"))]
-    type ClientExecutor = hyper_util::rt::TokioExecutor;
-
-    /// Create a hyper client builder.
-    ///
-    /// The builder spawns its tasks with `WeakWakerExecutor` when the `weak-waker` feature is
-    /// enabled, and with [`hyper_util::rt::TokioExecutor`] otherwise.
+    /// Create a hyper client builder that spawns its tasks with [`WeakWakerExecutor`].
     pub fn client_builder() -> hyper_util::client::legacy::Builder {
-        hyper_util::client::legacy::Client::builder(ClientExecutor::default())
+        hyper_util::client::legacy::Client::builder(WeakWakerExecutor)
     }
 }
 
 #[cfg(not(target_arch = "wasm32"))]
 pub use native::*;
 
-#[cfg(all(test, feature = "weak-waker", not(target_arch = "wasm32")))]
+#[cfg(all(test, not(target_arch = "wasm32")))]
 mod weak_waker_executor_tests {
     use super::WeakWakerExecutor;
     use alloc::sync::Arc;
