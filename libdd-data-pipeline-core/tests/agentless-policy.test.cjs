@@ -75,7 +75,14 @@ test("packages the exact Wasm bytes for Node bundles without a sidecar", { skip:
 function configure (exports, topLevel = 0) {
   write(exports, Buffer.from("{}"))
   assert.equal(exports.configure(), 1)
-  write(exports, Buffer.from('{"hostname":"probe","runtimeID":"synthetic"}'))
+  write(exports, Buffer.from(JSON.stringify({
+    hostname: "probe",
+    runtimeID: "synthetic",
+    env: "test",
+    language: "nodejs",
+    languageVersion: "v22",
+    tracerVersion: "1.2.3",
+  })))
   assert.equal(exports.configure_metadata(topLevel), 1)
 }
 
@@ -97,6 +104,10 @@ test("prepares each v0.4 trace through the shared policy", () => {
   assert.equal(traces.length, 3)
   assert.equal(traces[0].hostname, "probe")
   assert.equal(traces[0].runtimeID, "synthetic")
+  assert.equal(traces[0].env, "test")
+  assert.equal(traces[0].languageName, "nodejs")
+  assert.equal(traces[0].languageVersion, "v22")
+  assert.equal(traces[0].tracerVersion, "1.2.3")
   const [sql, redis, custom] = traces.map(trace => trace.spans[0])
   assert.equal(sql.resource, "SELECT ?")
   assert.equal(sql.meta["sql.query"], "SELECT ?")

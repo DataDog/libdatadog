@@ -31,7 +31,7 @@ zstd.workspace = true
 
 [[example]]
 name = "agentless_policy"
-crate-type = ["cdylib"]
+crate-type = ["rlib"]
 
 [features]
 default = []

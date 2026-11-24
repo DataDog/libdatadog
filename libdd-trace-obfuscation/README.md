@@ -40,7 +40,8 @@ RUSTC=$(rustup which rustc)
 export RUSTC PATH="${RUSTC%/*}:$PATH"
 rustup target add wasm32-wasip1
 CARGO_PROFILE_RELEASE_OPT_LEVEL=3 CARGO_PROFILE_RELEASE_STRIP=symbols \
-  cargo build --release --locked --target wasm32-wasip1 -p libdd-data-pipeline-core --example agentless_policy
+  cargo rustc --release --locked --target wasm32-wasip1 --crate-type cdylib \
+    -p libdd-data-pipeline-core --example agentless_policy
 output=target/generated-trace-obfuscation
 node libdd-data-pipeline-core/examples/package-agentless-policy.cjs \
   target/wasm32-wasip1/release/examples/agentless_policy.wasm "$output"
