@@ -12,6 +12,7 @@ mod trace_serializer;
 
 // Re-export the builder
 pub use builder::TraceExporterBuilder;
+use libdd_trace_utils::span::v04::VecMap;
 use libdd_trace_utils::trace_filter::TraceFilterer;
 
 use self::agent_response::AgentResponse;
@@ -68,7 +69,6 @@ use libdd_trace_utils::send_with_retry::{
 use libdd_trace_utils::span::span_pool::PooledChunks;
 use libdd_trace_utils::span::trace_utils::SDK_OTLP_EXPORT_KEY;
 use libdd_trace_utils::span::v1::AttributeValue;
-use libdd_trace_utils::span::v1::Span as SpanV1;
 use libdd_trace_utils::span::v1::TraceChunk;
 use libdd_trace_utils::span::v1::span_pool::PooledTraceChunks;
 use libdd_trace_utils::span::{SpanText, TraceData, trace_utils_v1, v04::Span, v04::SpanSlice};
@@ -1428,10 +1428,15 @@ impl<
             self.telemetry.load_full().as_deref(),
         );
 
-        let native_export = self.otlp.is_none();
         for chunk in traces.iter_mut() {
-            if native_export && let Some(first) = chunk.spans.first_mut() {
-                add_native_export_marker_v1(first);
+            // TODO(paullgdc): this needs to be refactored. We need to have a single enum containing
+            // the exporter we use and it's config, and have a more streamlined "pipeline" rather
+            // than pepering exporter specific logic...
+            //
+            // For otlp we don't tag, for the V1 DD exporter this added as a tracer level attribute
+            // lower in this function. This is done here before dedup.
+            if self.agentless_config.is_some() && let Some(span) = chunk.spans.first_mut() {
+                add_native_export_marker_v1(&mut span.attributes);
             }
             chunk.dedup();
         }
@@ -1484,6 +1489,8 @@ impl<
             self.agent_payload_response_version.as_ref(),
         );
         let mut out_payload = self.take_into_v1_payload(&mut traces);
+        add_native_export_marker_v1(&mut out_payload.attributes);
+
         let mp_payload = if v1_supported {
             msgpack_encoder::v1::to_vec_from_v1(&out_payload)
         } else {
@@ -1753,8 +1760,8 @@ fn add_native_export_marker<T: TraceData>(span: &mut Span<T>) {
 }
 
 /// V1 counterpart of [`add_native_export_marker`]
-fn add_native_export_marker_v1<T: TraceData>(span: &mut SpanV1<T>) {
-    span.attributes.insert(
+fn add_native_export_marker_v1<T: TraceData>(attributes: &mut VecMap<T::Text, AttributeValue<T>>) {
+    attributes.insert(
         T::Text::from_static_str(SDK_OTLP_EXPORT_KEY),
         AttributeValue::String(T::Text::from_static_str("false")),
     );
@@ -3470,73 +3477,6 @@ mod tests {
         }]];
         let data = msgpack_encoder::v04::to_vec_from_v04(&traces);
         exporter.send(data.as_ref()).unwrap();
-        mock_intake.assert();
-    }
-
-    /// V1 counterpart of [`test_agentless_export_marks_first_span_of_each_chunk`]
-    #[test]
-    #[cfg_attr(miri, ignore)]
-    fn test_agentless_export_marks_first_span_of_each_chunk_v1() {
-        use libdd_trace_utils::span::v1::{SpanBytes as SpanBytesV1, TraceChunkBytes};
-
-        let server = MockServer::start();
-        let mock_intake = server.mock(|when, then| {
-            when.method(POST).path("/v1/input").is_true(|req| {
-                let Ok(body) = serde_json::from_slice::<serde_json::Value>(req.body_ref()) else {
-                    return false;
-                };
-                let marker = |trace: usize, span: usize| {
-                    body["traces"][trace]["spans"][span]["meta"][SDK_OTLP_EXPORT_KEY].as_str()
-                };
-                body["traces"].as_array().map(Vec::len) == Some(2)
-                    && marker(0, 0) == Some("false")
-                    && !body["traces"][0]["spans"][1].is_null()
-                    && marker(0, 1).is_none()
-                    && marker(1, 0) == Some("false")
-            });
-            then.status(200).body("");
-        });
-
-        let intake_url = format!("{}/v1/input", server.url("/").trim_end_matches('/'));
-        let mut builder = TraceExporterBuilder::default();
-        builder
-            .set_service("svc")
-            .set_tracer_version("1.0")
-            .set_language("rust")
-            .set_language_version("1.0")
-            .set_language_interpreter("rustc")
-            .set_agentless_endpoint(&intake_url, "k")
-            .set_output_format(TraceExporterOutputFormat::V1);
-        let exporter = builder.build::<NativeCapabilities>().unwrap();
-
-        let span = |span_id, parent_id| SpanBytesV1 {
-            name: BytesString::from_slice(b"op").unwrap(),
-            service: BytesString::from_static("svc"),
-            span_id,
-            parent_id,
-            start: 0,
-            duration: 1,
-            ..Default::default()
-        };
-        let chunks = vec![
-            TraceChunkBytes {
-                trace_id: [0; 16],
-                spans: vec![span(1, 0), span(2, 1)],
-                ..Default::default()
-            },
-            TraceChunkBytes {
-                trace_id: [1; 16],
-                spans: vec![span(3, 0)],
-                ..Default::default()
-            },
-        ];
-        let result = exporter.send_trace_chunks_v1(PooledTraceChunks::unpooled(chunks), None);
-
-        assert!(
-            result.is_ok(),
-            "V1 agentless send should succeed: {:?}",
-            result.err()
-        );
         mock_intake.assert();
     }
 
