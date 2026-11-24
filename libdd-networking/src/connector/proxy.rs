@@ -1,8 +1,8 @@
 // Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
+use alloc::sync::Arc;
 use core::task::{Context, Poll};
-use std::sync::LazyLock;
 
 use futures::FutureExt;
 use futures::future::BoxFuture;
@@ -14,14 +14,11 @@ use super::conn_stream::{ConnStream, ConnStreamError};
 #[cfg(feature = "tls-core")]
 use super::https;
 
-// Read getenv only once at init to avoid concurrency issues with the environment.
-static PROXY_MATCHER: LazyLock<Matcher> = LazyLock::new(Matcher::from_env);
-
-/// Wraps a direct `Connector` to additionally honor the `HTTP(S)_PROXY`/`http(s)_proxy`
-/// and `NO_PROXY`/`no_proxy` environment variables.
+/// Wraps a direct `Connector` to route its connections through the proxies
+/// selected by an explicitly provided `Matcher`.
 #[derive(Clone)]
 pub(super) struct HttpProxyConnector {
-    matcher: &'static Matcher,
+    matcher: Arc<Matcher>,
     #[cfg(feature = "tls-core")]
     tls_config: Option<rustls::ClientConfig>,
     #[cfg(feature = "tls-core")]
@@ -33,12 +30,13 @@ impl HttpProxyConnector {
     /// Reuses the direct connector's TLS configuration to avoid loading root certificates again.
     pub(super) fn new(
         direct: Connector,
+        matcher: Matcher,
         #[cfg(feature = "tls-core")] tls_config: Option<rustls::ClientConfig>,
     ) -> Self {
         #[cfg(feature = "tls-core")]
         let proxy_dialer = tls_config.clone().map(https::build_https_connector);
         Self {
-            matcher: &PROXY_MATCHER,
+            matcher: Arc::new(matcher),
             #[cfg(feature = "tls-core")]
             tls_config,
             #[cfg(feature = "tls-core")]
@@ -112,27 +110,21 @@ fn tunnel_destination(uri: hyper::Uri) -> Result<hyper::Uri, http::Error> {
 mod tests {
     use super::*;
     use alloc::sync::Arc;
-    use std::sync::OnceLock;
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
     #[tokio::test]
     async fn proxy_connect_preserves_scheme_ports_and_authentication() {
         let listener = Arc::new(tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap());
-        // The connector borrows a process-lifetime matcher, just like production.
-        // Keep it in a static owner rather than leaking an allocation per case.
-        static MATCHER: OnceLock<Matcher> = OnceLock::new();
-        let matcher = MATCHER.get_or_init(|| {
+        let Connector::Proxy(mut connector) = Connector::with_proxy(
             Matcher::builder()
                 .all(format!(
                     "http://user:password@{}",
                     listener.local_addr().unwrap()
                 ))
-                .build()
-        });
-        let Connector::Proxy(mut connector) = Connector::new() else {
-            panic!("hyper-proxy should construct a proxy connector");
+                .build(),
+        ) else {
+            panic!("with_proxy should construct a proxy connector");
         };
-        connector.matcher = matcher;
         #[cfg(feature = "tls-core")]
         let tls_available = connector.tls_config.is_some() && connector.proxy_dialer.is_some();
         #[cfg(not(feature = "tls-core"))]
@@ -203,16 +195,14 @@ mod tests {
     #[tokio::test]
     async fn no_proxy_connects_directly() {
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-        static MATCHER: LazyLock<Matcher> = LazyLock::new(|| {
+        let Connector::Proxy(mut connector) = Connector::with_proxy(
             Matcher::builder()
                 .all("http://127.0.0.1:1")
                 .no("127.0.0.1")
-                .build()
-        });
-        let Connector::Proxy(mut connector) = Connector::new() else {
-            panic!("hyper-proxy should construct a proxy connector");
+                .build(),
+        ) else {
+            panic!("with_proxy should construct a proxy connector");
         };
-        connector.matcher = &MATCHER;
         let uri = format!("http://{}/config", listener.local_addr().unwrap())
             .parse()
             .unwrap();

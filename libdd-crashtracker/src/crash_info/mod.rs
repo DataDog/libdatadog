@@ -19,6 +19,7 @@ mod telemetry;
 pub(crate) mod test_utils;
 mod ucontext;
 mod unknown_value;
+pub(crate) mod upload_http;
 
 // This is set compile time
 pub(crate) const TARGET_TRIPLE: &str = env!("TARGET");

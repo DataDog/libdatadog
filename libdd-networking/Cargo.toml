@@ -79,7 +79,8 @@ http-client = [
 ]
 # Default HTTPS: ring as crypto provider
 https = ["hyper-rustls/ring", "rustls/ring", "tls-core"]
-# Honor HTTP(S)_PROXY/NO_PROXY environment variables for the hyper connector,
+# Compile proxy support for the hyper connector. Proxying is opt-in per connector
+# (`Connector::with_proxy`); this feature never changes the default connector's behavior.
 hyper-proxy = ["http-client", "hyper-util/client-proxy"]
 reqwest = ["http-client", "dep:reqwest", "dep:httparse", "dep:rand"]
 # TLS plumbing without a crypto provider. Use `https` or `fips` to select one.

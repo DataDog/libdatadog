@@ -138,21 +138,37 @@ mod native {
     /// because of the keep alive in the agent or the backend.
     ///
     /// This is in general not a problem if we use the client once every tens of seconds.
-    pub fn new_client_periodic() -> GenericHttpClient<Connector> {
+    pub fn new_client_periodic_with(connector: Connector) -> GenericHttpClient<Connector> {
         hyper_util::client::legacy::Client::builder(hyper_util::rt::TokioExecutor::default())
             .pool_timer(TokioTimer::new())
             .pool_idle_timeout(PERIODIC_POOL_IDLE_TIMEOUT)
             .pool_max_idle_per_host(POOL_MAX_IDLE)
-            .build(Connector::default())
+            .build(connector)
+    }
+
+    /// Create a new default configuration hyper client for fixed interval sending.
+    ///
+    /// This client pools connections with a small timeout (smaller than any potential keep-alive on
+    /// the receiver side), because otherwise we would get a pipe closed every second connection
+    /// because of the keep alive in the agent or the backend.
+    ///
+    /// This is in general not a problem if we use the client once every tens of seconds.
+    pub fn new_client_periodic() -> GenericHttpClient<Connector> {
+        new_client_periodic_with(Connector::default())
+    }
+
+    /// Create a new default configuration hyper client over the given connector.
+    pub fn new_default_client_with(connector: Connector) -> GenericHttpClient<Connector> {
+        hyper_util::client::legacy::Client::builder(hyper_util::rt::TokioExecutor::default())
+            .pool_max_idle_per_host(POOL_MAX_IDLE)
+            .build(connector)
     }
 
     /// Create a new default configuration hyper client.
     ///
     /// It will keep connections open for a longer time and reuse them.
     pub fn new_default_client() -> GenericHttpClient<Connector> {
-        hyper_util::client::legacy::Client::builder(hyper_util::rt::TokioExecutor::default())
-            .pool_max_idle_per_host(POOL_MAX_IDLE)
-            .build(Connector::default())
+        new_default_client_with(Connector::default())
     }
 
     pub fn into_response(response: hyper::Response<Incoming>) -> HttpResponse {

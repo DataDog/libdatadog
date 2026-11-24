@@ -27,7 +27,8 @@ mod native {
     use libdd_common::MutexExt;
     use libdd_networking::connector::Connector;
     use libdd_networking::http_common::{
-        Body, GenericHttpClient, new_client_periodic, new_default_client,
+        Body, GenericHttpClient, new_client_periodic, new_client_periodic_with, new_default_client,
+        new_default_client_with,
     };
 
     use http_body_util::{BodyExt, Limited};
@@ -38,6 +39,10 @@ mod native {
         /// If this client is setup for periodic flushes. This mostly affects connection pooling,
         /// see [`HttpClientCapability::new_periodic`].
         periodic: bool,
+        /// Connector overriding the process-wide default, for callers that
+        /// configure their transport explicitly (e.g. the crash receiver's
+        /// proxy-aware uploads).
+        connector: Option<Connector>,
     }
 
     pub struct NativeBodySender(libdd_networking::http_common::Sender);
@@ -53,6 +58,7 @@ mod native {
             f.debug_struct("NativeHttpClient")
                 .field("initialized", &self.client.get().is_some())
                 .field("periodic", &self.periodic)
+                .field("custom_connector", &self.connector.is_some())
                 .finish()
         }
     }
@@ -64,6 +70,31 @@ mod native {
             Self {
                 client: Arc::new(OnceLock::new()),
                 periodic: true,
+                connector: None,
+            }
+        }
+
+        /// A client whose connections use `connector` instead of the
+        /// process-wide default connector, so callers can install an
+        /// explicitly configured transport (e.g. a proxy-aware connector).
+        /// `periodic` mirrors [`NativeHttpClient::new_periodic`].
+        pub fn with_connector(connector: Connector, periodic: bool) -> Self {
+            Self {
+                client: Arc::new(OnceLock::new()),
+                periodic,
+                connector: Some(connector),
+            }
+        }
+
+        fn build_client(
+            periodic: bool,
+            connector: Option<&Connector>,
+        ) -> GenericHttpClient<Connector> {
+            match connector {
+                Some(connector) if periodic => new_client_periodic_with(connector.clone()),
+                Some(connector) => new_default_client_with(connector.clone()),
+                None if periodic => new_client_periodic(),
+                None => new_default_client(),
             }
         }
     }
@@ -154,6 +185,7 @@ mod native {
             Self {
                 client: Arc::new(OnceLock::new()),
                 periodic: false,
+                connector: None,
             }
         }
 
@@ -168,6 +200,7 @@ mod native {
         ) -> impl Future<Output = Result<http::Response<bytes::Bytes>, HttpError>> + MaybeSend
         {
             let periodic = self.periodic;
+            let connector = self.connector.clone();
             let client_lock = self.client.clone();
             let response_limit = req.extensions().get::<ResponseBodyLimit>().copied();
             async move {
@@ -178,13 +211,7 @@ mod native {
                 }
 
                 let client = client_lock
-                    .get_or_init(|| {
-                        if periodic {
-                            new_client_periodic()
-                        } else {
-                            new_default_client()
-                        }
-                    })
+                    .get_or_init(|| NativeHttpClient::build_client(periodic, connector.as_ref()))
                     .clone();
                 let hyper_req = req.map(Body::from_bytes);
 
@@ -212,7 +239,10 @@ mod native {
         }
 
         fn request_streamed(&self, req: http::Request<()>) -> (BodySender, ResponseFuture) {
-            let client = self.client.get_or_init(new_default_client).clone();
+            let client = self
+                .client
+                .get_or_init(|| NativeHttpClient::build_client(false, self.connector.as_ref()))
+                .clone();
             let response_limit = req.extensions().get::<ResponseBodyLimit>().copied();
             let (sender, body) = Body::channel();
             let hyper_req = req.map(|()| body);

@@ -7,6 +7,90 @@ use std::time::Duration;
 
 use crate::retry::RetryConfig;
 
+/// Explicit proxy configuration for an [`crate::HttpClient`].
+///
+/// Proxies are never derived from the environment: callers that want
+/// environment-derived configuration must read it themselves and populate this
+/// type. Proxy URLs use the `http://` or `https://` scheme and may embed basic
+/// auth credentials (`http://user:pass@proxy:8080`).
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct ProxyConfig {
+    /// Proxy URL applied to every destination.
+    all: Option<String>,
+    /// Proxy URL applied to `http` destinations only.
+    http: Option<String>,
+    /// Proxy URL applied to `https` destinations only.
+    https: Option<String>,
+    /// Entries (domains, IPs, CIDRs, `*`) that bypass the proxy, mirroring the
+    /// `NO_PROXY` syntax.
+    no_proxy: Vec<String>,
+}
+
+impl ProxyConfig {
+    /// Route every destination through the proxy at `url`.
+    pub fn all(url: impl Into<String>) -> Self {
+        Self {
+            all: Some(url.into()),
+            ..Self::default()
+        }
+    }
+
+    /// Route `http` destinations through the proxy at `url`.
+    pub fn http(url: impl Into<String>) -> Self {
+        Self {
+            http: Some(url.into()),
+            ..Self::default()
+        }
+    }
+
+    /// Route `https` destinations through the proxy at `url`.
+    pub fn https(url: impl Into<String>) -> Self {
+        Self {
+            https: Some(url.into()),
+            ..Self::default()
+        }
+    }
+
+    /// Add entries that bypass the proxy (same syntax as `NO_PROXY`).
+    pub fn with_no_proxy(mut self, entries: impl IntoIterator<Item = String>) -> Self {
+        self.no_proxy.extend(entries);
+        self
+    }
+
+    /// Whether any proxy destination is configured (a lone `no_proxy` list
+    /// with no proxy URL has nothing to bypass and counts as empty).
+    pub fn is_empty(&self) -> bool {
+        self.all.is_none() && self.http.is_none() && self.https.is_none()
+    }
+
+    /// The proxy URL for every destination, if set.
+    pub fn all_proxy(&self) -> Option<&str> {
+        self.all.as_deref()
+    }
+
+    /// The proxy URL for `http` destinations, if set.
+    pub fn http_proxy(&self) -> Option<&str> {
+        self.http.as_deref()
+    }
+
+    /// The proxy URL for `https` destinations, if set.
+    pub fn https_proxy(&self) -> Option<&str> {
+        self.https.as_deref()
+    }
+
+    /// The entries bypassing the proxy.
+    pub fn no_proxy(&self) -> &[String] {
+        &self.no_proxy
+    }
+
+    /// The `no_proxy` entries joined as a comma-separated list, the format
+    /// both backends consume natively.
+    #[cfg(any(feature = "reqwest-backend", feature = "hyper-proxy"))]
+    pub(crate) fn no_proxy_joined(&self) -> String {
+        self.no_proxy.join(",")
+    }
+}
+
 /// Transport configuration for the HTTP backend.
 ///
 /// This is a construction-time concern — once the `reqwest::Client` is built,
@@ -47,6 +131,8 @@ pub struct HttpClientConfig {
     /// If this client is setup for periodic flushes. This mostly affects connection pooling, see
     /// [`HttpClientBuilder::periodic`].
     periodic: bool,
+    /// Explicit proxy configuration. Empty by default; never env-derived.
+    proxy: ProxyConfig,
 }
 
 impl HttpClientConfig {
@@ -59,6 +145,7 @@ impl HttpClientConfig {
             treat_http_errors_as_errors: true,
             retry: None,
             periodic: false,
+            proxy: ProxyConfig::default(),
         }
     }
 
@@ -86,6 +173,11 @@ impl HttpClientConfig {
     pub fn periodic(&self) -> bool {
         self.periodic
     }
+
+    /// The explicit proxy configuration for this client.
+    pub fn proxy(&self) -> &ProxyConfig {
+        &self.proxy
+    }
 }
 
 /// Builder for [`crate::HttpClient`].
@@ -99,6 +191,7 @@ pub struct HttpClientBuilder {
     retry: Option<RetryConfig>,
     transport: TransportConfig,
     periodic: bool,
+    proxy: ProxyConfig,
 }
 
 impl Default for HttpClientBuilder {
@@ -110,6 +203,7 @@ impl Default for HttpClientBuilder {
             retry: Default::default(),
             transport: Default::default(),
             periodic: false,
+            proxy: ProxyConfig::default(),
         }
     }
 }
@@ -189,6 +283,17 @@ impl HttpClientBuilder {
         self
     }
 
+    /// Route connections through the given explicit proxy configuration.
+    ///
+    /// The default is no proxy at all: proxy environment variables are never
+    /// honored implicitly. Building a client with a non-empty
+    /// [`ProxyConfig`] on the hyper backend requires the `hyper-proxy`
+    /// feature.
+    pub fn proxy(mut self, config: ProxyConfig) -> Self {
+        self.proxy = config;
+        self
+    }
+
     /// Build the [`crate::HttpClient`].
     ///
     /// Returns [`crate::HttpClientError::InvalidConfig`] if required fields
@@ -206,6 +311,7 @@ impl HttpClientBuilder {
             treat_http_errors_as_errors: self.treat_http_errors_as_errors,
             retry: self.retry,
             periodic: self.periodic,
+            proxy: self.proxy,
         };
         crate::HttpClient::from_config_and_transport(config, self.transport)
     }

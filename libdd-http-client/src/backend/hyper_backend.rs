@@ -9,6 +9,65 @@ use http_body_util::BodyExt;
 use libdd_networking::connector::Connector;
 use libdd_networking::http_common::{self, Body};
 
+/// Build the connector for a client: direct unless an explicit proxy is
+/// configured. Proxy configuration is never derived from the environment.
+fn build_connector(config: &HttpClientConfig) -> Result<Connector, HttpClientError> {
+    let proxy = config.proxy();
+    if proxy.is_empty() {
+        return Ok(Connector::default());
+    }
+
+    #[cfg(not(feature = "hyper-proxy"))]
+    {
+        let _ = proxy;
+        return Err(HttpClientError::InvalidConfig(
+            "proxy configuration requires the `hyper-proxy` feature on libdd-http-client"
+                .to_owned(),
+        ));
+    }
+
+    #[cfg(feature = "hyper-proxy")]
+    {
+        use libdd_networking::connector::Matcher;
+
+        // hyper-util's matcher builder silently drops unparseable proxy URLs;
+        // reject them here so misconfiguration surfaces as an error instead of
+        // a silently direct connection.
+        let validate = |url: Option<&str>| -> Result<(), HttpClientError> {
+            let Some(url) = url else { return Ok(()) };
+            let uri: hyper::Uri = url.parse().map_err(|e: hyper::http::uri::InvalidUri| {
+                HttpClientError::InvalidConfig(format!("invalid proxy URL '{url}': {e}"))
+            })?;
+            let scheme = uri.scheme_str();
+            if !matches!(scheme, Some("http") | Some("https")) || uri.host().is_none() {
+                return Err(HttpClientError::InvalidConfig(format!(
+                    "invalid proxy URL '{url}': expected http:// or https:// with a host"
+                )));
+            }
+            Ok(())
+        };
+        validate(proxy.all_proxy())?;
+        validate(proxy.http_proxy())?;
+        validate(proxy.https_proxy())?;
+
+        let mut matcher = Matcher::builder();
+        if let Some(url) = proxy.all_proxy() {
+            matcher = matcher.all(url.to_owned());
+        }
+        if let Some(url) = proxy.http_proxy() {
+            matcher = matcher.http(url.to_owned());
+        }
+        if let Some(url) = proxy.https_proxy() {
+            matcher = matcher.https(url.to_owned());
+        }
+        let no_proxy = proxy.no_proxy_joined();
+        if !no_proxy.is_empty() {
+            matcher = matcher.no(no_proxy);
+        }
+        Ok(Connector::with_proxy(matcher.build()))
+    }
+}
+
 pub(crate) struct HyperBackend {
     client: http_common::GenericHttpClient<Connector>,
     transport: TransportConfig,
@@ -164,7 +223,7 @@ impl super::Backend for HyperBackend {
         }
 
         Ok(Self {
-            client: builder.build(Connector::default()),
+            client: builder.build(build_connector(client_config)?),
             transport,
         })
     }

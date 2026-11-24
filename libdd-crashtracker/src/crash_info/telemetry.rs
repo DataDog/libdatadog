@@ -9,7 +9,6 @@ use super::{CrashInfo, Metadata, TARGET_TRIPLE};
 use anyhow::Context;
 use chrono::{DateTime, Utc};
 use libdd_capabilities::HttpClientCapability;
-use libdd_capabilities_impl::NativeCapabilities;
 use libdd_common::Endpoint;
 use libdd_telemetry::{
     build_host,
@@ -343,7 +342,7 @@ impl TelemetryCrashUploader {
 
     /// Helper to perform actual HTTP submission via the native HTTP capability.
     async fn send_telemetry_payload(&self, payload: &data::Telemetry<'_>) -> anyhow::Result<()> {
-        let client = NativeCapabilities::new_client();
+        let client = crate::crash_info::upload_http::capabilities();
         let req = request_builder(&self.cfg)?
             .method(http::Method::POST)
             .header(
