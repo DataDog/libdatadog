@@ -153,20 +153,14 @@ pub(crate) fn emit_crashreport(
     }
 
     #[cfg(all(target_os = "linux", feature = "otel-thread-ctx"))]
-    if config.collect_otel_thread_contexts() {
-        let _ = std::thread::scope(|scope| {
-            std::thread::Builder::new()
-                .spawn_scoped(scope, || {
-                    emit_otel_thread_contexts(
-                        pipe,
-                        ppid,
-                        crashing_tid,
-                        config.max_threads(),
-                        threads_deadline,
-                    )
-                })
-                .map(|tracer| tracer.join())
-        });
+    if config.collect_otel_thread_contexts() && Instant::now() < threads_deadline {
+        emit_otel_thread_contexts(
+            pipe,
+            ppid,
+            crashing_tid,
+            config.max_threads(),
+            threads_deadline,
+        )?;
     }
 
     writeln!(pipe, "{DD_CRASHTRACK_DONE}")?;

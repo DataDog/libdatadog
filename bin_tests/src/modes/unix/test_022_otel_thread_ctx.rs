@@ -12,6 +12,8 @@ pub const MAIN_SPAN_ID: &str = "aabbccdd11223344";
 pub const WORKER_HTTP_TRACE_ID: &str = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
 pub const WORKER_DB_TRACE_ID: &str = "cccccccccccccccccccccccccccccccccc";
 
+pub const OTEL_THREADS_ONLY_ENV: &str = "DD_TEST_OTEL_THREADS_ONLY";
+
 pub struct Test;
 
 impl Behavior for Test {
@@ -20,7 +22,9 @@ impl Behavior for Test {
         _output_dir: &Path,
         config: &mut CrashtrackerConfiguration,
     ) -> anyhow::Result<()> {
-        config.set_collect_all_threads(true);
+        config.set_collect_all_threads(
+            std::env::var_os(OTEL_THREADS_ONLY_ENV).is_none_or(|mode| mode != "true"),
+        );
         config.set_collect_otel_thread_contexts(true);
         Ok(())
     }
@@ -50,6 +54,9 @@ impl Behavior for Test {
                     );
                     let _prev = ctx.attach();
                     b.wait();
+                    loop {
+                        std::thread::park();
+                    }
                 })?;
 
             let b = barrier.clone();
@@ -65,6 +72,9 @@ impl Behavior for Test {
                     );
                     let _prev = ctx.attach();
                     b.wait();
+                    loop {
+                        std::thread::park();
+                    }
                 })?;
 
             // Attach context on the main (crashing) thread.
@@ -79,6 +89,7 @@ impl Behavior for Test {
                 &[],
             );
             ctx.attach();
+            barrier.wait();
         }
         Ok(())
     }
