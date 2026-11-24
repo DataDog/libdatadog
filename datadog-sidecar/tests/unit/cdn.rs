@@ -5,7 +5,7 @@ use super::*;
 use crate::service::DynamicInstrumentationConfigState;
 use crate::service::blocking::{SidecarTransport, ping, set_cdn_configuration};
 use crate::shm_remote_config::{CdnRegistration, RemoteConfigManager, RemoteConfigUpdate};
-use libdd_ffe::cdn::{CdnConfig, CdnEndpoint};
+use libdd_ffe::cdn::{CdnConfig, CdnEndpoint, CdnProxy};
 use libdd_ffe::rules_based::UniversalFlagConfig;
 use libdd_remote_config::{Target, default_registry};
 use std::sync::Arc;
@@ -20,6 +20,7 @@ fn registration(url: &str) -> CdnRegistration {
             poll_interval: Duration::from_millis(50),
             request_timeout: Duration::from_secs(1),
             service: None,
+            proxy: CdnProxy::default(),
         },
         agent_endpoint: libdd_common::Endpoint::default(),
         target: Arc::new(Target::new(

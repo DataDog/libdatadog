@@ -40,6 +40,7 @@ pub enum CdnSubscriptionError {
     InvalidRequestTimeout,
     InvalidLanguage,
     InvalidVersion,
+    InvalidProxy,
     PublicationUnavailable,
 }
 
@@ -52,6 +53,7 @@ impl From<libdd_ffe::cdn::InvalidConfig> for CdnSubscriptionError {
             InvalidConfig::RequestTimeout => Self::InvalidRequestTimeout,
             InvalidConfig::Language => Self::InvalidLanguage,
             InvalidConfig::Version => Self::InvalidVersion,
+            InvalidConfig::Proxy => Self::InvalidProxy,
         }
     }
 }
@@ -64,6 +66,7 @@ impl std::fmt::Display for CdnSubscriptionError {
             Self::InvalidRequestTimeout => "invalid CDN request timeout",
             Self::InvalidLanguage => "invalid CDN client language",
             Self::InvalidVersion => "invalid CDN client version",
+            Self::InvalidProxy => "invalid CDN proxy",
             Self::PublicationUnavailable => "CDN configuration publication unavailable",
         })
     }
