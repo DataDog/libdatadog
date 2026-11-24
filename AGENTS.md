@@ -90,6 +90,32 @@ Keep tool output concise to preserve conversation context:
 - Avoid inspecting generated artifacts under `target/` unless validating generated output specifically.
 - During iteration, prefer narrow checks such as `cargo check -p <crate>`; batch slower tests, examples, and linting once the intended API/code shape has settled.
 
+### Community pull requests
+
+Fork PRs run CI with a restricted token. To run a fork PR with maintainer
+permissions, mirror it with:
+
+```bash
+./scripts/mirror-community-pull-request.sh --sha <reviewed-head-sha> <pr-number> [<target-branch>]
+```
+
+The script fetches the fork commits over HTTPS, cherry-picks them signed
+(`-S`) onto `external/community-pr-<N>`, pushes with a consent-pinned lease,
+and opens a mirror PR titled `<original title> 🪩 #<N>`. Both PRs get the
+`external` label. The mirror branch is disposable: re-running the script
+deletes and rebuilds it from scratch.
+
+* `--sha` is required for a real run and must match the PR head at run time.
+  Commits pushed after your review abort the run instead of being mirrored.
+* `--dry-run` prints the plan, including the current head SHA and warnings
+  for commits that change CI files. It needs no `--sha`.
+* `--no-push` builds the branch locally and skips the push and PR creation.
+* The run aborts before pushing when the PR changes CI files, CI-invoked
+  scripts, or benchmark/fuzz harnesses (`.github/`, `.gitlab-ci.yml`,
+  `.gitlab/`, `.sg/`, `sgconfig.yml`, `scripts/`, `benchmark/`, `fuzz/`),
+  since those would run with the repository's credentials.
+* Requires `gh`, `jq`, and git commit signing configured.
+
 ## Key Conventions
 
 ### Reliability & integrability

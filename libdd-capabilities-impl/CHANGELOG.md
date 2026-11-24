@@ -2,6 +2,12 @@
 
 
 
+## [9.0.0](https://github.com/datadog/libdatadog/compare/libdd-capabilities-impl-v8.0.0..libdd-capabilities-impl-v9.0.0) - 2026-10-28
+
+### Changed
+
+- Bump `libdd-common` to a new major version (`^9.0.0` → `^10.0.0`)
+
 ## [8.0.0](https://github.com/datadog/libdatadog/compare/libdd-capabilities-impl-v7.0.0..libdd-capabilities-impl-v8.0.0) - 2026-10-23
 
 ### Added

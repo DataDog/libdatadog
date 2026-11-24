@@ -1,0 +1,26 @@
+{
+  "description": "Thoughts are billed output, outside candidatesTokenCount when the counts add up only with them.",
+  "format": "gemini",
+  "operation_name": "chat",
+  "payload": {
+    "usageMetadata": {
+      "promptTokenCount": 10,
+      "candidatesTokenCount": 5,
+      "thoughtsTokenCount": 3,
+      "cachedContentTokenCount": 4,
+      "totalTokenCount": 18
+    }
+  },
+  "expected": {
+    "usage": {
+      "input_tokens": 10,
+      "input_basis": "includes_cache",
+      "output_tokens": 8,
+      "output_basis": "includes_reasoning",
+      "cache_read_input_tokens": 4,
+      "reasoning_output_tokens": 3
+    },
+    "response_model": null,
+    "service_tier": null
+  }
+}

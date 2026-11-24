@@ -237,6 +237,9 @@ impl<C: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static> Wor
     /// workers preserve the final requested lifecycle state from staged and queued control actions.
     /// The child's sequence starts at one; the host must install its new identity before restarting
     /// the worker.
+    ///
+    /// If a producer thread did not survive the fork, the child cannot drain past a metric slot
+    /// that thread reserved but did not publish. Pausing the worker alone does not pause producers.
     fn reset(&mut self) {
         self.seq_id.store(1, Ordering::Relaxed);
         let mut started = self.data.started;
@@ -262,6 +265,10 @@ impl<C: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static> Wor
                 let _ = self.deadlines.schedule_event(LifecycleAction::FlushData);
             }
         }
+
+        // Forked children must not send app-started, and app-closing only ends the lifecycle
+        // app-started opened, so a worker kept across fork emits neither in the child.
+        self.config.emit_app_lifecycle = false;
 
         // Clear all unbuffered telemetry data; the child must not send pre-fork data.
         self.data.logs = store::QueueHashMap::default();
@@ -360,7 +367,7 @@ impl<C: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static> Tel
         telemetry_worker_log!(self, ERROR, "{}", err);
     }
 
-    /// Drain all metric points published to the ring buffer into the aggregation buckets.
+    /// Fold one batch of published metric points into the aggregation buckets.
     fn drain_metric_ring(&mut self) {
         // Clone the Arc so the drain closure can mutably borrow `data.metric_buckets` without also
         // borrowing `self.metric_ring`.
@@ -376,11 +383,11 @@ impl<C: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static> Tel
     }
 
     async fn recv_next_action(&mut self) -> TelemetryActions {
-        loop {
+        let action = loop {
             // Fold any points published to the ring buffer into the aggregates before we wait.
             self.drain_metric_ring();
 
-            let action = if let Some((deadline, deadline_action)) = self.deadlines.next_deadline() {
+            if let Some((deadline, deadline_action)) = self.deadlines.next_deadline() {
                 let deadline_action = *deadline_action;
                 // If deadline passed, service any already-queued mailbox action first, then
                 // return the associated action.
@@ -394,31 +401,31 @@ impl<C: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static> Tel
                 };
 
                 let sleeper = <C as SleepCapability>::new();
-                let ring = self.metric_ring.clone();
                 tokio::select! {
                     biased;
-                    mailbox_action = self.mailbox.recv() => mailbox_action,
-                    _ = sleeper.sleep(remaining) => Some(TelemetryActions::Lifecycle(deadline_action)),
-                    // The ring buffer has points to drain: loop back to fold them in.
-                    _ = ring.notified() => continue,
+                    mailbox_action = self.mailbox.recv() => break mailbox_action,
+                    _ = sleeper.sleep(remaining) => return TelemetryActions::Lifecycle(deadline_action),
+                    _ = self.metric_ring.notified() => (),
                 }
             } else {
-                let ring = self.metric_ring.clone();
                 tokio::select! {
                     biased;
-                    mailbox_action = self.mailbox.recv() => mailbox_action,
-                    _ = ring.notified() => continue,
+                    mailbox_action = self.mailbox.recv() => break mailbox_action,
+                    _ = self.metric_ring.notified() => (),
                 }
-            };
+            }
+            // `Notify::notified()` resolves immediately without consuming tokio coop budget when a
+            // permit is already stored. Yield here so the outer `PausableWorker` select can poll
+            // for pause or flush commands and other tasks on the shared runtime can run.
+            tokio::task::yield_now().await;
+        };
 
-            // if no action is received, then it means the channel is stopped
-            return action.unwrap_or_else(|| {
-                // the worker handle no longer lives - remove restartable here to avoid leaks
-                self.config.restartable = false;
-                self.stopped = true;
-                TelemetryActions::Lifecycle(LifecycleAction::Stop)
-            });
-        }
+        action.unwrap_or_else(|| {
+            // the worker handle no longer lives - remove restartable here to avoid leaks
+            self.config.restartable = false;
+            self.stopped = true;
+            TelemetryActions::Lifecycle(LifecycleAction::Stop)
+        })
     }
 
     async fn dispatch_metrics_logs_action(&mut self, action: TelemetryActions) -> ControlFlow<()> {
@@ -1338,16 +1345,27 @@ impl<C: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static>
         Ok(())
     }
 
+    /// Enqueue a metric point without waiting for space.
+    ///
+    /// The point is dropped when the buffer appears full. This method returns `Ok(())` even when
+    /// the point is dropped. Use [`Self::try_add_point`] to detect drops.
     pub fn add_point(
         &self,
         value: f64,
         context: &ContextKey,
         extra_tags: Vec<Tag>,
     ) -> anyhow::Result<()> {
-        // Points are the highest-frequency action; publish to the lock-free ring buffer rather
-        // than boxing a message + waking the receiver per point. The worker batch-drains it.
-        self.metric_ring.push(value, *context, extra_tags);
+        let _ = self.try_add_point(value, context, extra_tags);
         Ok(())
+    }
+
+    /// Attempt to enqueue a metric point without waiting for space.
+    ///
+    /// Returns `false` if the point was dropped.
+    #[must_use = "a `false` result means that the point was dropped"]
+    pub fn try_add_point(&self, value: f64, context: &ContextKey, extra_tags: Vec<Tag>) -> bool {
+        // The worker does not drain the ring while it waits for a telemetry response.
+        self.metric_ring.try_push(value, *context, extra_tags)
     }
 
     #[cfg(not(target_arch = "wasm32"))]
@@ -2601,5 +2619,322 @@ mod tests {
         <TelemetryWorker<_> as libdd_shared_runtime::Worker>::shutdown(&mut worker).await;
 
         metric_mock.assert_calls(1);
+    }
+
+    mod fork_lifecycle {
+        use super::super::*;
+        use crate::config::TelemetryEndpoint;
+        use crate::data::{Configuration, ConfigurationOrigin};
+        use httpmock::prelude::*;
+        use libdd_capabilities_impl::NativeCapabilities;
+        use libdd_common::mutable_metadata::InstrumentationSession;
+        use libdd_shared_runtime::{BlockingRuntime, ForkSafeRuntime, SharedRuntime};
+
+        const TELEMETRY_PATH: &str = "/telemetry/proxy/api/v2/apmtelemetry";
+
+        fn by_type<'a>(
+            server: &'a MockServer,
+            runtime_id: &str,
+            request_type: &str,
+        ) -> httpmock::Mock<'a> {
+            let rid = format!(r#""runtime_id":"{runtime_id}""#);
+            let rt = format!(r#""request_type":"{request_type}""#);
+            server.mock(move |when, then| {
+                when.method(POST)
+                    .path(TELEMETRY_PATH)
+                    .body_includes(rid)
+                    .body_includes(rt);
+                then.status(202).body("");
+            })
+        }
+
+        fn config_change(name: &str) -> TelemetryActions {
+            TelemetryActions::AddConfig(Configuration {
+                name: name.into(),
+                value: Some("1".into()),
+                origin: ConfigurationOrigin::Default,
+                config_id: None,
+                seq_id: None,
+            })
+        }
+
+        struct Fixture {
+            server: MockServer,
+            runtime: ForkSafeRuntime,
+            metadata: MutableMetadataHandle,
+            handle: TelemetryWorkerHandle<NativeCapabilities>,
+            _worker: libdd_shared_runtime::WorkerHandle,
+        }
+
+        impl Fixture {
+            fn new(emit_app_lifecycle: bool) -> Self {
+                let server = MockServer::start();
+                let runtime = ForkSafeRuntime::new().unwrap();
+                let metadata = MutableMetadataHandle::default();
+                metadata.set_identity(
+                    "parent".into(),
+                    InstrumentationSession {
+                        id: "parent".into(),
+                        ..Default::default()
+                    },
+                );
+                let mut builder = TelemetryWorkerBuilder::new(
+                    "host".into(),
+                    "svc".into(),
+                    "lang".into(),
+                    "1".into(),
+                    "tv".into(),
+                );
+                builder.flavor = TelemetryWorkerFlavor::Full;
+                builder.mutable_metadata = Some(metadata.clone());
+                builder.config.emit_app_lifecycle = emit_app_lifecycle;
+                builder.config.telemetry_heartbeat_interval = Duration::from_secs(3600);
+                builder
+                    .config
+                    .set_endpoint(TelemetryEndpoint {
+                        url: Some(server.url("/")),
+                        ..Default::default()
+                    })
+                    .unwrap();
+                let (handle, worker) = builder.build_worker::<NativeCapabilities>(None);
+                let _worker = runtime.spawn_worker(worker, true).unwrap();
+                Fixture {
+                    server,
+                    runtime,
+                    metadata,
+                    handle,
+                    _worker,
+                }
+            }
+
+            fn sync(&self) {
+                self.runtime
+                    .block_on(self.handle.stats().unwrap())
+                    .unwrap()
+                    .unwrap();
+            }
+
+            fn fork_child(&self) {
+                self.runtime.before_fork();
+                self.metadata.set_identity(
+                    "child".into(),
+                    InstrumentationSession {
+                        id: "child".into(),
+                        root_id: "parent".into(),
+                        parent_id: "parent".into(),
+                    },
+                );
+                self.runtime.after_fork_child().unwrap();
+            }
+
+            fn flush(&self) {
+                self.handle
+                    .try_send_msg(TelemetryActions::Lifecycle(LifecycleAction::FlushData))
+                    .unwrap();
+                self.sync();
+            }
+        }
+
+        /// A started worker kept across fork sends neither lifecycle event in the child, but
+        /// still heartbeats and flushes its data on shutdown.
+        #[cfg_attr(miri, ignore)]
+        #[test]
+        fn kept_root_worker_child_skips_lifecycle_events() {
+            let f = Fixture::new(true);
+            let parent_started = by_type(&f.server, "parent", "app-started");
+            let child_started = by_type(&f.server, "child", "app-started");
+            let child_closing = by_type(&f.server, "child", "app-closing");
+            let child_heartbeat = by_type(&f.server, "child", "app-heartbeat");
+            let child_config = f.server.mock(|when, then| {
+                when.method(POST)
+                    .path(TELEMETRY_PATH)
+                    .body_includes(r#""runtime_id":"child""#)
+                    .body_includes(r#""name":"fork.child.config""#);
+                then.status(202).body("");
+            });
+            let _any = f.server.mock(|when, then| {
+                when.method(POST).path(TELEMETRY_PATH);
+                then.status(202).body("");
+            });
+
+            f.handle.send_start().unwrap();
+            f.sync();
+            parent_started.assert_calls(1);
+
+            f.fork_child();
+            f.flush();
+            child_heartbeat.assert_calls(1);
+            f.handle
+                .try_send_msg(config_change("fork.child.config"))
+                .unwrap();
+            f.runtime.shutdown(None).unwrap();
+
+            child_started.assert_calls(0);
+            child_closing.assert_calls(0);
+            child_config.assert_calls(1);
+        }
+
+        /// If the parent never started its worker, the child's later start sends no
+        /// app-started but schedules heartbeats.
+        #[cfg_attr(miri, ignore)]
+        #[test]
+        fn unstarted_parent_child_start_skips_app_started() {
+            let f = Fixture::new(true);
+            let started = f.server.mock(|when, then| {
+                when.method(POST)
+                    .path(TELEMETRY_PATH)
+                    .body_includes(r#""request_type":"app-started""#);
+                then.status(202).body("");
+            });
+            let child_closing = by_type(&f.server, "child", "app-closing");
+            let child_heartbeat = by_type(&f.server, "child", "app-heartbeat");
+            let _any = f.server.mock(|when, then| {
+                when.method(POST).path(TELEMETRY_PATH);
+                then.status(202).body("");
+            });
+
+            f.fork_child();
+            f.handle.send_start().unwrap();
+            f.flush();
+            f.runtime.shutdown(None).unwrap();
+
+            started.assert_calls(0);
+            child_closing.assert_calls(0);
+            child_heartbeat.assert_calls(1);
+        }
+
+        /// Fork preparation followed by parent resume does not reset the worker, so the parent
+        /// still sends app-closing.
+        #[cfg_attr(miri, ignore)]
+        #[test]
+        fn parent_after_fork_keeps_app_closing() {
+            let f = Fixture::new(true);
+            let closing = by_type(&f.server, "parent", "app-closing");
+            let _any = f.server.mock(|when, then| {
+                when.method(POST).path(TELEMETRY_PATH);
+                then.status(202).body("");
+            });
+
+            f.handle.send_start().unwrap();
+            f.sync();
+            f.runtime.before_fork();
+            f.runtime.after_fork_parent().unwrap();
+            f.flush();
+            f.runtime.shutdown(None).unwrap();
+
+            closing.assert_calls(1);
+        }
+
+        /// A worker built with lifecycle events off (e.g. in an exec'd child) is unchanged: it
+        /// heartbeats without app-started or app-closing.
+        #[cfg_attr(miri, ignore)]
+        #[test]
+        fn lifecycle_disabled_at_build_sends_neither_event() {
+            let f = Fixture::new(false);
+            let started = by_type(&f.server, "parent", "app-started");
+            let closing = by_type(&f.server, "parent", "app-closing");
+            let heartbeat = by_type(&f.server, "parent", "app-heartbeat");
+            let _any = f.server.mock(|when, then| {
+                when.method(POST).path(TELEMETRY_PATH);
+                then.status(202).body("");
+            });
+
+            f.handle.send_start().unwrap();
+            f.flush();
+            f.runtime.shutdown(None).unwrap();
+
+            started.assert_calls(0);
+            closing.assert_calls(0);
+            heartbeat.assert_calls(1);
+        }
+    }
+
+    #[cfg_attr(miri, ignore)]
+    #[tokio::test]
+    async fn add_point_finishes_before_the_agent_replies() {
+        use crate::data::metrics::{MetricNamespace, MetricType};
+        use crate::worker::metric_ring::RING_SIZE;
+        use std::time::Duration;
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        use tokio::time::timeout;
+
+        const DEADLINE: Duration = Duration::from_secs(10);
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let mut builder = TelemetryWorkerBuilder::new(
+            "host".into(),
+            "svc".into(),
+            "lang".into(),
+            "1".into(),
+            "tv".into(),
+        );
+        builder
+            .config
+            .set_endpoint(TelemetryEndpoint {
+                url: Some(format!("http://{}", listener.local_addr().unwrap())),
+                timeout_ms: 60_000,
+                ..Default::default()
+            })
+            .unwrap();
+        let (handle, mut worker) = builder.build_worker::<NativeCapabilities>(None);
+        let context = handle.register_metric_context(
+            "regression.full_metric_buffer".into(),
+            Vec::new(),
+            MetricType::Count,
+            false,
+            MetricNamespace::Tracers,
+        );
+
+        let start = tokio::spawn(async move {
+            let _ = worker
+                .dispatch_action(TelemetryActions::Lifecycle(LifecycleAction::Start))
+                .await;
+            worker
+        });
+        let mut agent = timeout(DEADLINE, async {
+            let (mut socket, _) = listener.accept().await.unwrap();
+            let mut method = [0; 5];
+            socket.read_exact(&mut method).await.unwrap();
+            assert_eq!(&method, b"POST ");
+            socket
+        })
+        .await
+        .expect("the worker did not send its startup request");
+
+        let (finished, burst) = tokio::sync::oneshot::channel();
+        let producer = std::thread::spawn({
+            let handle = handle.clone();
+            move || {
+                let result =
+                    (0..=RING_SIZE).try_for_each(|_| handle.add_point(1.0, &context, Vec::new()));
+                let _ = finished.send(result);
+            }
+        });
+        let before_reply = timeout(DEADLINE, burst).await;
+        assert!(
+            !start.is_finished(),
+            "the HTTP request ended before the agent replied"
+        );
+        agent
+            .write_all(b"HTTP/1.1 202 Accepted\r\nContent-Length: 0\r\n\r\n")
+            .await
+            .unwrap();
+        let mut worker = timeout(DEADLINE, start).await.unwrap().unwrap();
+
+        worker.flush_metric_aggregates();
+        before_reply
+            .expect("add_point waited for the agent")
+            .unwrap()
+            .unwrap();
+        producer.join().unwrap();
+        let series: Vec<_> = worker.data.metric_buckets.flush_series().collect();
+        assert_eq!(series.len(), 1);
+        assert_eq!(series[0].0, context);
+        assert_eq!(series[0].2[0].1, RING_SIZE as f64);
+        let tag = crate::Tag::new("phase", "after_burst").unwrap();
+        handle.add_point(2.0, &context, vec![tag.clone()]).unwrap();
+        worker.flush_metric_aggregates();
+        let (_, tags, points) = worker.data.metric_buckets.flush_series().next().unwrap();
+        assert_eq!(tags, vec![tag]);
+        assert_eq!(points[0].1, 2.0);
     }
 }

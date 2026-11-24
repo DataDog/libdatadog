@@ -11,7 +11,8 @@ pub use libdd_ffe::telemetry::exposures::{FfeExposure, FfeExposureBatch};
 pub use libdd_ffe::telemetry::flagevaluation::{
     AllocationKey, ContextDD, ContextTruncationReason, EvalError, FfeFlagEvaluationBatch,
     FfeFlagEvaluationEvent, FieldOmissions, FlagEvalEventContext, FlagKey, MAX_CONTEXT_DEPTH,
-    MAX_CONTEXT_FIELDS, MAX_FIELD_LENGTH, TargetingRuleKey, VariantKey, prune_context_json,
+    MAX_CONTEXT_FIELDS, MAX_FIELD_LENGTH, TargetingRuleKey, VariantKey, canonical_features_json,
+    prune_context_json,
 };
 use libdd_remote_config::{RemoteConfigCapabilities, RemoteConfigProduct};
 use libdd_telemetry::worker::TelemetryActions;
@@ -35,6 +36,7 @@ pub(crate) use sidecar_server::SidecarServer;
 pub(crate) use sidecar_interface::SidecarInterface;
 
 pub mod agent_info;
+mod agent_version;
 mod application;
 pub mod blocking;
 mod connection_session;
@@ -44,6 +46,7 @@ mod dogstatsd_pool;
 pub(crate) mod evp_proxy;
 pub(crate) mod evp_transport;
 pub mod exception_hash_rate_limiter;
+pub(crate) mod ffe_config;
 pub(crate) mod ffe_exposures_flusher;
 pub(crate) mod ffe_flagevaluation_flusher;
 pub(crate) mod ffe_metrics_flusher;
@@ -101,6 +104,8 @@ pub struct SessionConfig {
     pub parent_session_id: Option<String>,
     /// Optional OTLP metrics intake endpoint.
     pub otlp_metrics_endpoint: Option<Endpoint>,
+    /// `DD_TRACE_AGENT_PROTOCOL_VERSION=0.4`: send v0.4 even when the agent advertises V1.
+    pub force_v04_traces: bool,
 }
 
 #[cfg(test)]
@@ -139,6 +144,7 @@ impl SessionConfig {
             root_session_id: None,
             parent_session_id: None,
             otlp_metrics_endpoint: None,
+            force_v04_traces: false,
         }
     }
 }

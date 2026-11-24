@@ -3,7 +3,7 @@
 
 [package]
 name = "libdd-telemetry"
-version= "11.0.0"
+version= "12.0.0"
 description = "Telemetry client allowing to send data as described in https://docs.datadoghq.com/tracing/configure_data_security/?tab=net#telemetry-collection"
 homepage = "https://github.com/DataDog/libdatadog/tree/main/libdd-telemetry"
 repository = "https://github.com/DataDog/libdatadog/tree/main/libdd-telemetry"
@@ -21,6 +21,10 @@ required-features = ["signal-safe"]
 [[test]]
 name = "signal_safe_no_alloc"
 required-features = ["signal-safe"]
+
+[[test]]
+name = "entity_headers"
+required-features = ["std"]
 
 [[example]]
 name = "tm-metrics-worker-test"
@@ -53,6 +57,8 @@ std = [
     "dep:libc",
     "dep:libdd-capabilities",
     "dep:libdd-ddsketch",
+    "dep:libdd-env",
+    "dep:libdd-networking",
     "dep:libdd-shared-runtime",
     "dep:sys-info",
     "dep:tokio",
@@ -61,13 +67,14 @@ std = [
     "dep:uuid",
     "dep:web-time",
     "dep:winver",
+    "dep:libdd-host-identity",
     "libdd-common/std",
     "serde/std",
     "serde_json/std",
 ]
 tracing = ["std", "tracing/std"]
-https = ["std", "libdd-common/https", "libdd-shared-runtime/https"]
-fips = ["std", "libdd-common/fips", "libdd-shared-runtime/fips"]
+https = ["std", "libdd-shared-runtime/https"]
+fips = ["std", "libdd-shared-runtime/fips"]
 signal-safe = ["alloc", "dep:embedded-io", "dep:embedded-io-async", "dep:reqwless"]
 
 [dependencies]
@@ -90,13 +97,16 @@ uuid = { workspace = true, features = ["v4", "std"], optional = true }
 hashbrown = { workspace = true, default-features = true, optional = true }
 bytes = { workspace = true, features = ["std"], optional = true }
 libdd-capabilities = { version = "4.0.1", path = "../libdd-capabilities", optional = true }
-libdd-common = { version = "9.0.0", path = "../libdd-common", default-features = false }
+libdd-common = { version = "10.0.0", path = "../libdd-common", default-features = false }
+libdd-env = { version = "0.1.0", path = "../libdd-env", optional = true }
+libdd-host-identity = { version = "0.1.0", path = "../libdd-host-identity", optional = true }
 embedded-io = { workspace = true, optional = true }
 embedded-io-async = { workspace = true, optional = true }
 reqwless = { workspace = true, optional = true }
-libdd-shared-runtime = { version = "7.0.0", path = "../libdd-shared-runtime", default-features = false, optional = true }
-libdd-ddsketch = { version = "1.1.4", path = "../libdd-ddsketch", optional = true }
+libdd-shared-runtime = { version = "8.0.0", path = "../libdd-shared-runtime", default-features = false, optional = true }
+libdd-ddsketch = { version = "1.2.0", path = "../libdd-ddsketch", optional = true }
 web-time = { workspace = true, optional = true }
+libdd-networking = { path = "../libdd-networking", version = "0.1.0", default-features = false, optional = true }
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 sys-info = { workspace = true, optional = true }

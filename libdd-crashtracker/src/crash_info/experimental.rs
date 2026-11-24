@@ -1,5 +1,6 @@
 // Copyright 2025-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
+use crate::crash_info::OtelThreadContext;
 use crate::runtime_callback::RuntimeStack;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -10,6 +11,8 @@ use super::unknown_value::UnknownValue;
 pub struct Experimental {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub additional_tags: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub otel_thread_contexts: Vec<OtelThreadContext>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub runtime_stack: Option<RuntimeStack>,
 }
@@ -34,6 +37,7 @@ impl UnknownValue for Experimental {
     fn unknown_value() -> Self {
         Self {
             additional_tags: vec![],
+            otel_thread_contexts: vec![],
             runtime_stack: None,
         }
     }

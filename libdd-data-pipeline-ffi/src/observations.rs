@@ -11,7 +11,9 @@ use crate::response::ExporterResponse;
 use crate::trace_exporter::{TraceExporter, TraceExporterConfig};
 use crate::tracer::TracerTraceChunks;
 use crate::{catch_panic, gen_error};
+use libdd_data_pipeline::trace_exporter::TraceExporterBuilder;
 use libdd_data_pipeline::trace_exporter::observations::TraceExporterObservations;
+use libdd_shared_runtime::ForkSafeRuntime;
 use libdd_trace_utils::span::span_pool::PooledChunks;
 use std::ptr::NonNull;
 use tokio_util::sync::CancellationToken as TokioCancellationToken;
@@ -20,6 +22,7 @@ use tokio_util::sync::CancellationToken as TokioCancellationToken;
 ///
 /// # Safety
 /// `config`, when non-null, must be a live, exclusively borrowed configuration.
+#[deprecated(note = "Use ddog_trace_exporter_builder_enable_observations instead")]
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ddog_trace_exporter_config_enable_observations(
     config: Option<&mut TraceExporterConfig>,
@@ -27,6 +30,26 @@ pub unsafe extern "C" fn ddog_trace_exporter_config_enable_observations(
     catch_panic!(
         if let Some(config) = config {
             config.observations = true;
+            None
+        } else {
+            gen_error!(ErrorCode::InvalidArgument)
+        },
+        gen_error!(ErrorCode::Panic)
+    )
+}
+
+/// Select external observation delivery and disable native telemetry delivery on a
+/// builder. Builder counterpart of `ddog_trace_exporter_config_enable_observations`.
+///
+/// # Safety
+/// `builder`, when non-null, must be a live, exclusively borrowed builder.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn ddog_trace_exporter_builder_enable_observations(
+    builder: Option<&mut TraceExporterBuilder<ForkSafeRuntime>>,
+) -> Option<Box<ExporterError>> {
+    catch_panic!(
+        if let Some(builder) = builder {
+            builder.enable_observations();
             None
         } else {
             gen_error!(ErrorCode::InvalidArgument)
@@ -95,6 +118,7 @@ pub unsafe extern "C" fn ddog_trace_exporter_send_trace_chunks_observed(
 }
 
 #[cfg(test)]
+#[allow(deprecated)]
 mod tests {
     use super::*;
     use crate::trace_exporter::{
@@ -146,6 +170,75 @@ mod tests {
             assert!(!config.observations);
             assert!(ddog_trace_exporter_config_enable_observations(Some(&mut config)).is_none());
             assert!(config.observations);
+        }
+    }
+
+    #[test]
+    fn builder_enable_observations_requires_a_builder_and_sets_the_flag() {
+        unsafe {
+            let error = ddog_trace_exporter_builder_enable_observations(None);
+            assert_eq!(error.unwrap().code, ErrorCode::InvalidArgument);
+
+            let mut builder = TraceExporterBuilder::<ForkSafeRuntime>::default();
+            let before = format!("{builder:?}");
+            assert!(ddog_trace_exporter_builder_enable_observations(Some(&mut builder)).is_none());
+            let mut expected = TraceExporterBuilder::<ForkSafeRuntime>::default();
+            expected.enable_observations();
+            assert_eq!(format!("{builder:?}"), format!("{expected:?}"));
+            assert_ne!(format!("{builder:?}"), before);
+        }
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn builder_built_exporter_supports_observed_sends() {
+        use crate::trace_exporter::builder::{
+            ddog_trace_exporter_builder_build, ddog_trace_exporter_builder_new,
+            ddog_trace_exporter_builder_set_url,
+        };
+        unsafe {
+            let server = MockServer::start();
+            let traces = server.mock(|when, then| {
+                when.method(POST).path("/v0.4/traces");
+                then.status(200).body("{}");
+            });
+            let mut builder: MaybeUninit<Box<TraceExporterBuilder<ForkSafeRuntime>>> =
+                MaybeUninit::uninit();
+            ddog_trace_exporter_builder_new(NonNull::new_unchecked(&mut builder).cast());
+            let mut builder = builder.assume_init();
+            let url = server.base_url();
+            assert!(
+                ddog_trace_exporter_builder_set_url(
+                    Some(builder.as_mut()),
+                    CharSlice::from(url.as_str())
+                )
+                .is_none()
+            );
+            assert!(
+                ddog_trace_exporter_builder_enable_observations(Some(builder.as_mut())).is_none()
+            );
+            let mut exporter: MaybeUninit<Box<TraceExporter>> = MaybeUninit::uninit();
+            assert!(
+                ddog_trace_exporter_builder_build(
+                    Some(builder),
+                    NonNull::new_unchecked(&mut exporter).cast()
+                )
+                .is_none()
+            );
+            let exporter = exporter.assume_init();
+
+            let mut report = MaybeUninit::<TraceExporterObservations>::uninit();
+            let error = ddog_trace_exporter_send_trace_chunks_observed(
+                Some(exporter.as_ref()),
+                one_span_chunks(),
+                None,
+                NonNull::new(report.as_mut_ptr()),
+                None,
+            );
+            assert!(error.is_none());
+            traces.assert_calls(1);
+            assert_eq!(report.assume_init().status_code, 200);
+            ddog_trace_exporter_free(exporter);
         }
     }
 

@@ -3,7 +3,7 @@
 
 [package]
 name = "libdd-process-utils"
-version = "1.0.0"
+version = "0.1.0"
 description = "Process management, thread identification, and timeout utilities for Datadog libraries"
 homepage = "https://github.com/DataDog/libdatadog/tree/main/libdd-process-utils"
 repository = "https://github.com/DataDog/libdatadog/tree/main/libdd-process-utils"

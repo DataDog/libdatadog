@@ -7,6 +7,7 @@ use super::{
 };
 use crate::service::ffe_submission::FfeSubmissionStatus;
 use crate::service::sender::SidecarSender;
+pub use crate::service::sidecar_interface::CdnSubscriptionError;
 use crate::service::sidecar_interface::{
     SidecarInterfaceChannel, SidecarInterfaceClientRequest, SidecarInterfaceRequest,
 };
@@ -603,6 +604,17 @@ pub fn ensure_appsec_started(
     })
 }
 
+/// Enqueue CDN registration without waiting for a sidecar response.
+pub fn set_cdn_configuration(
+    transport: &mut SidecarTransport,
+    config: Option<crate::shm_remote_config::CdnRegistration>,
+) -> io::Result<()> {
+    transport.with_retry(|s| {
+        s.set_cdn_configuration(config.clone());
+        Ok(())
+    })
+}
+
 /// Dumps the current state of the service.
 pub fn dump(transport: &mut SidecarTransport) -> io::Result<String> {
     transport.with_retry(|s| s.dump().map_err(decode_error_to_io))
@@ -698,6 +710,29 @@ mod tests {
         let mut buf = [0; 8192];
         let (len, _) = peer.try_recv_raw(&mut buf).unwrap();
         buf[..len].to_vec()
+    }
+
+    #[test]
+    #[cfg(target_os = "linux")]
+    #[cfg_attr(miri, ignore)]
+    fn process_death_notification_recovers_before_socket_eof() {
+        let (conn, _still_open_peer) = SeqpacketConn::socketpair().unwrap();
+        let mut transport = SidecarTransport::from(conn);
+        assert!(!transport.is_closed());
+
+        // During exit, the kernel may close the watch writer before the IPC socket.
+        transport.inner.channel.0.mark_closed();
+        let (replacement, peer) = SeqpacketConn::socketpair().unwrap();
+        assert!(transport.reconnect(|| Some(Box::new(SidecarTransport::from(replacement)))));
+        assert!(!transport.is_closed());
+        transport
+            .inner
+            .channel
+            .0
+            .conn
+            .try_send_raw(vec![42], &[])
+            .unwrap();
+        assert_eq!(receive_packet(&peer), [42]);
     }
 
     fn assert_evp_configs(peer: &SeqpacketConn, expected: &[EvpTransportConfigWithIdentity]) {

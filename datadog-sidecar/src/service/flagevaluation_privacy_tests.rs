@@ -38,6 +38,7 @@ fn event() -> FfeFlagEvaluationEvent {
             message: "private-error-canary".into(),
         }),
         runtime_default_used: false,
+        features: None,
         observe_full_evaluation_data: false,
         is_degraded: false,
         field_omissions: Default::default(),
@@ -356,6 +357,7 @@ async fn bounded_ffe_submission_preserves_http_privacy_and_survives_rejection() 
                                 && row["evaluation_count"] == 2
                                 && row.get("targeting_key").is_none()
                                 && row.get("context").is_none()
+                                && row["features"] == serde_json::json!({"holdout.key": "h1"})
                         })
                 });
             then.status(202);
@@ -410,6 +412,7 @@ async fn bounded_ffe_submission_preserves_http_privacy_and_survives_rejection() 
     );
     let mut oversized = event();
     oversized.flag.key = "ipc-degraded".into();
+    oversized.features = Some(r#"{"holdout.key":"h1"}"#.into());
     oversized.targeting_key =
         Some("oversize-canary".repeat(libdd_ipc::max_message_size() / 14 + 1));
     for consent in [false, true] {
@@ -506,6 +509,7 @@ fn oversized_ipc_warning_does_not_log_exposure_data() {
                 allocation_key: "allocation".into(),
                 variant: "on".into(),
                 serial_id: None,
+                features_json: String::new(),
             }],
         })],
     };

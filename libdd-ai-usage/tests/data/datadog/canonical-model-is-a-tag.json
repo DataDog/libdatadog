@@ -1,7 +1,7 @@
 {
   "binding": "0.1.0",
   "case": "canonical-model-is-a-tag",
-  "description": "The canonical provider, model and family are tags like any other attribute, under the attribute's name, beside the names as received. Two increments with the same names are one Count of their sum: 10,500,000 and 21,000,000 nano-USD are 0.0315 USD. A second spelling of the same model is its own series, because the name as received differs, and shares the canonical tags, so a query that groups by trajectory.canonical.model adds the two. A cost that states no canonical name has none of the three tags, and nothing is filled in from the name as received.",
+  "description": "The canonical provider, model and family are tags like any other attribute, under the attribute's name, beside the names as received. Two increments with the same names are one Rate of their sum: 10,500,000 and 21,000,000 nano-USD are 0.0315 USD, submitted as 0.00315 over 10 s. A second spelling of the same model is its own series, because the name as received differs, and shares the canonical tags, so a query that groups by trajectory.canonical.model adds the two. A cost that states no canonical name has none of the three tags, and nothing is filled in from the name as received.",
   "profile": "gen_ai.client.provider_attempt@0.1.0",
   "historical": false,
   "points": [
@@ -74,8 +74,9 @@
   "expected_series": [
     {
       "name": "trajectory.gen_ai.client.inference.usage.cost",
-      "type": "count",
-      "value": 0.0042,
+      "type": "rate",
+      "interval": 10,
+      "value": 0.00042,
       "tags": [
         "gen_ai.operation.name:chat",
         "gen_ai.provider.name:exampleai",
@@ -88,8 +89,9 @@
     },
     {
       "name": "trajectory.gen_ai.client.inference.usage.cost",
-      "type": "count",
-      "value": 0.0315,
+      "type": "rate",
+      "interval": 10,
+      "value": 0.00315,
       "tags": [
         "gen_ai.operation.name:chat",
         "gen_ai.provider.name:exampleai",
@@ -105,8 +107,9 @@
     },
     {
       "name": "trajectory.gen_ai.client.inference.usage.cost",
-      "type": "count",
-      "value": 0.0105,
+      "type": "rate",
+      "interval": 10,
+      "value": 0.00105,
       "tags": [
         "gen_ai.operation.name:chat",
         "gen_ai.provider.name:examplegateway",

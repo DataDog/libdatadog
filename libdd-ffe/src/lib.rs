@@ -17,3 +17,13 @@ pub use flag_type::{ExpectedFlagType, FlagType};
 
 #[cfg(feature = "cdn")]
 pub mod cdn;
+
+#[cfg(all(
+    test,
+    any(
+        feature = "cdn",
+        feature = "exposure-events",
+        feature = "flagevaluation-evp"
+    )
+))]
+mod test_logging;

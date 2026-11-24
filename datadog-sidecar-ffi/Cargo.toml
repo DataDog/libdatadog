@@ -6,6 +6,7 @@ name = "datadog-sidecar-ffi"
 version = "0.0.1"
 edition.workspace = true
 rust-version.workspace = true
+license.workspace = true
 publish = false
 
 [lib]
@@ -33,13 +34,14 @@ serde_json.workspace = true
 libdd-crashtracker = { path = "../libdd-crashtracker", default-features = false, features = ["collector"] }
 
 [target.'cfg(windows)'.dependencies]
-libdd-crashtracker-ffi = { path = "../libdd-crashtracker-ffi", features = ["collector", "collector_windows"] }
+libdd-crashtracker-ffi = { path = "../libdd-crashtracker-ffi", default-features = false, features = ["collector", "collector_windows"] }
 
 [dev-dependencies]
 build_common = { path = "../build-common", features = ["cbindgen"] }
 cc.workspace = true
 http = { workspace = true, features = ["std"] }
 libdd-trace-utils = { path = "../libdd-trace-utils", features = ["test-utils"] }
+httpmock.workspace = true
 tempfile.workspace = true
 tools = { path = "../tools" }
 

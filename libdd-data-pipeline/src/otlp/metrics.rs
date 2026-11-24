@@ -316,6 +316,7 @@ impl<C: HttpClientCapability + SleepCapability> OtlpStatsExporter<C> {
         send_otlp_http(
             &self.capabilities,
             &self.config.endpoint_url,
+            "/v1/metrics",
             &self.config.headers,
             self.config.timeout,
             self.test_token.as_deref(),

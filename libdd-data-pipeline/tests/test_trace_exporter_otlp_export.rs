@@ -56,7 +56,8 @@ mod otlp_export_tests {
             .mock_async(move |when, then| {
                 let flag = matcher_flag.clone();
                 when.method("POST")
-                    .path("/v1/traces")
+                    .path("/custom/traces")
+                    .query_param("token", "test")
                     .header("content-type", "application/json")
                     .header("datadog-client-computed-stats", "yes")
                     .json_body_includes(
@@ -112,7 +113,10 @@ mod otlp_export_tests {
             })
             .await;
 
-        let otlp_endpoint = format!("http://localhost:{}/v1/traces", server.port());
+        let otlp_endpoint = format!(
+            "http://localhost:{}/custom/traces?token=test",
+            server.port()
+        );
 
         let task_result = task::spawn_blocking(move || {
             let mut builder = TraceExporterBuilder::default();

@@ -3,7 +3,7 @@
 
 [package]
 name = "libdd-ai-usage"
-version = "0.1.0"
+version = "1.0.0"
 rust-version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -16,6 +16,9 @@ bench = false
 
 [dependencies]
 prost = { workspace = true, features = ["derive", "std"], optional = true }
+libdd-ddsketch = { version = "1.2.0", path = "../libdd-ddsketch" }
+hashbrown = { workspace = true, features = ["default-hasher", "inline-more"] }
+memchr = { workspace = true, features = ["std"] }
 serde = { workspace = true, features = ["derive", "std"] }
 serde_json = { workspace = true, features = ["std"] }
 

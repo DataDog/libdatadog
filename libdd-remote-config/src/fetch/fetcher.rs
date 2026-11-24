@@ -5,6 +5,8 @@
 use super::agentless;
 #[cfg(not(target_arch = "wasm32"))]
 use super::shared::RefcountedFile;
+use libdd_host_identity::entity_id::EntityHeadersExt;
+use libdd_networking::endpoint::EndpointExt;
 
 use crate::targets::{Root, TargetsList};
 use crate::{RemoteConfigCapabilities, RemoteConfigPath, RemoteConfigProduct, Target};
@@ -13,7 +15,8 @@ use hashbrown::HashMap;
 use http::StatusCode;
 use http::uri::PathAndQuery;
 use libdd_capabilities::{HttpClientCapability, SleepCapability};
-use libdd_common::{Endpoint, MutexExt};
+use libdd_common::Endpoint;
+use libdd_common::MutexExt;
 use libdd_trace_protobuf::remoteconfig::{
     ClientGetConfigsRequest, ClientGetConfigsResponse, ClientState, ClientTracer, ConfigState,
     ConfigStatus, TargetFileHash, TargetFileMeta,
@@ -466,6 +469,7 @@ impl<S: FileStorage, C: HttpClientCapability + SleepCapability> ConfigFetcher<S,
             .state
             .endpoint
             .to_request_builder(concat!("Libdatadog/", env!("CARGO_PKG_VERSION")))?
+            .with_entity_headers()
             .method(http::Method::POST)
             .header(
                 http::header::CONTENT_TYPE,
@@ -833,7 +837,7 @@ pub mod tests {
     use crate::fetch::test_server::RemoteConfigServer;
     use http::Response;
     use libdd_capabilities_impl::NativeCapabilities;
-    use libdd_common::http_common;
+    use libdd_networking::http_common;
     use std::mem::transmute;
     use std::sync::LazyLock;
 

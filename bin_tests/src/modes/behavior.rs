@@ -215,6 +215,7 @@ pub fn get_behavior(mode_str: &str) -> Box<dyn Behavior> {
             Box::new(test_021_unhandled_exception_multi_thread::Test)
         }
         "runtime_preload_logger" => Box::new(test_000_donothing::Test),
+        "otel_thread_ctx" => Box::new(test_022_otel_thread_ctx::Test),
         _ => panic!("Unknown mode: {mode_str}"),
     }
 }

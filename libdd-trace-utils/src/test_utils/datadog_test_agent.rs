@@ -6,7 +6,7 @@ use cargo_metadata::MetadataCommand;
 use http_body_util::BodyExt;
 use hyper::body::Incoming;
 use hyper::{Request, Response, Uri};
-use libdd_common::http_common;
+use libdd_networking::http_common;
 use std::collections::HashMap;
 use std::fmt::Write;
 use std::path::Path;
@@ -14,7 +14,7 @@ use std::str::FromStr;
 use std::time::Duration;
 
 const TEST_AGENT_IMAGE_NAME: &str = "ghcr.io/datadog/dd-apm-test-agent/ddapm-test-agent";
-const TEST_AGENT_IMAGE_TAG: &str = "v1.61.1";
+const TEST_AGENT_IMAGE_TAG: &str = "v1.62.0";
 const TEST_AGENT_READY_MSG: &str =
     "INFO:ddapm_test_agent.agent:Trace request stall seconds setting set to 0.0.";
 
@@ -105,8 +105,16 @@ impl Drop for DatadogTestAgentContainer {
     fn drop(&mut self) {
         use std::process::*;
         if let Err(e) = (|| -> anyhow::Result<()> {
-            run_command(Command::new("docker").arg("stop").arg(&self.container_id))
-                .context("docker stop container")?;
+            run_command(
+                Command::new("docker")
+                    // The test agent does not handle SIGTERM, so a default
+                    // `docker stop` always burns its full 10s grace before
+                    // SIGKILL once per test. One second is plenty for a
+                    // stateless container.
+                    .args(["stop", "-t", "1"])
+                    .arg(&self.container_id),
+            )
+            .context("docker stop container")?;
             Ok(())
         })() {
             eprintln!("error stopping test agent container: {e}");

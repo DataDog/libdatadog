@@ -1,0 +1,18 @@
+{
+  "description": "response.failed fails the stream with the error's code.",
+  "format": "openai_responses",
+  "operation_name": "chat",
+  "body": "event: response.created\ndata: {\"type\": \"response.created\", \"response\": {\"model\": \"gpt-5\", \"status\": \"in_progress\"}}\n\nevent: response.output_text.delta\ndata: {\"type\": \"response.output_text.delta\", \"delta\": \"text\"}\n\nevent: response.failed\ndata: {\"type\": \"response.failed\", \"response\": {\"model\": \"gpt-5\", \"error\": {\"code\": \"server_error\", \"message\": \"boom\"}}}\n\n",
+  "expected": {
+    "usage": null,
+    "response_model": "gpt-5",
+    "service_tier": null,
+    "outcome": "failed",
+    "error_name": "server_error",
+    "error": {
+      "code": "server_error",
+      "message": "boom",
+      "name": "server_error"
+    }
+  }
+}
