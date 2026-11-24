@@ -3,6 +3,7 @@
 
 #include <datadog/common.h>
 #include <datadog/http-client.h>
+#include <datadog/shared-runtime.h>
 #include <stdio.h>
 
 // Prints and frees `error`. Returns its code, or -1 if there was no error.
@@ -20,9 +21,20 @@ static int consume_error(ddog_HttpClientError *error, const char *what) {
 int main(void) {
   ddog_HttpClient *client = NULL;
 
+  const ddog_ForkSafeRuntime *runtime = NULL;
+  ddog_SharedRuntimeFFIError *runtime_error = ddog_shared_runtime_new(&runtime);
+  if (runtime_error != NULL) {
+    ddog_shared_runtime_error_free(runtime_error);
+    return 1;
+  }
+
   ddog_HttpClientConfig missing_url = {.timeout_ms = 1000};
-  if (consume_error(ddog_http_client_new(&missing_url, NULL, &client),
+  if (consume_error(ddog_http_client_new(&missing_url, runtime, &client),
                     "config without base_url") != DDOG_HTTP_CLIENT_ERROR_CODE_INVALID_CONFIG) {
+    return 1;
+  }
+  if (consume_error(ddog_http_client_new(&missing_url, NULL, &client),
+                    "client without a runtime") != DDOG_HTTP_CLIENT_ERROR_CODE_INVALID_ARGUMENT) {
     return 1;
   }
 
@@ -31,7 +43,7 @@ int main(void) {
       .base_url = DDOG_CHARSLICE_C("http://127.0.0.1:1"),
       .timeout_ms = 2000,
   };
-  ddog_HttpClientError *error = ddog_http_client_new(&config, NULL, &client);
+  ddog_HttpClientError *error = ddog_http_client_new(&config, runtime, &client);
   if (error != NULL) {
     consume_error(error, "client creation");
     return 1;
@@ -69,5 +81,6 @@ int main(void) {
   }
 
   ddog_http_client_drop(client);
+  ddog_shared_runtime_free(runtime);
   return 0;
 }

@@ -42,7 +42,7 @@ ddsketch = []
 ffe = []
 shared-runtime = []
 otel-thread-ctx = []
-http-client = []
+http-client = ["shared-runtime"]
 catch_panic = []
 regex-lite = ["libdd-regex/regex-lite"]
 

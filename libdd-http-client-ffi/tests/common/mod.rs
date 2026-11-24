@@ -14,7 +14,7 @@ use libdd_http_client_ffi::*;
 use libdd_shared_runtime::ForkSafeRuntime;
 use std::ffi::CStr;
 use std::net::{SocketAddr, TcpListener};
-use std::ptr::{NonNull, null, null_mut};
+use std::ptr::{NonNull, null_mut};
 use std::sync::Arc;
 
 #[derive(Debug)]
@@ -83,7 +83,11 @@ impl Cfg {
     }
 
     pub fn build(&self) -> Result<Client, FfiError> {
-        self.build_with_runtime(null())
+        let runtime = new_shared_runtime();
+        let client = self.build_with_runtime(runtime);
+        // The client holds its own reference.
+        unsafe { free_shared_runtime(runtime) };
+        client
     }
 
     pub fn build_with_runtime(&self, runtime: *const ForkSafeRuntime) -> Result<Client, FfiError> {

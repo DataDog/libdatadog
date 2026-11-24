@@ -5,6 +5,7 @@ mod common;
 
 use common::*;
 use httpmock::prelude::*;
+use libdd_http_client_ffi::HttpClientErrorCode;
 
 #[test]
 fn new_succeeds_for_a_tcp_config_without_connecting() {
@@ -69,4 +70,13 @@ fn several_clients_can_share_one_runtime() {
     drop(first);
     // The second client must survive the first being dropped.
     assert_eq!(second.send(&Req::get("/b")).expect("second").status(), 200);
+}
+
+#[test]
+fn a_null_runtime_is_an_invalid_argument() {
+    let error = Cfg::new("http://localhost:8126")
+        .build_with_runtime(std::ptr::null())
+        .err()
+        .expect("a client needs a runtime");
+    assert!(matches!(error.code, HttpClientErrorCode::InvalidArgument));
 }

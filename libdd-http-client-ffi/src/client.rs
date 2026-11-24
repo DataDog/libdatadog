@@ -53,11 +53,14 @@ pub struct HttpClient {
 impl HttpClient {
     /// # Safety
     ///
-    /// `runtime` must be `NULL` or a live `Arc::into_raw` pointer.
+    /// `runtime` must be a live `Arc::into_raw` pointer, or `NULL` (rejected).
     unsafe fn from_config(
         config: &HttpClientConfig<'_>,
         runtime: *const ForkSafeRuntime,
     ) -> Result<Self, Option<Box<HttpClientError>>> {
+        if runtime.is_null() {
+            return Err(gen_error!(HttpClientErrorCode::InvalidArgument));
+        }
         let base_url = str_arg(config.base_url)?;
         if base_url.is_empty() || config.timeout_ms == 0 {
             return Err(gen_error!(HttpClientErrorCode::InvalidConfig));
@@ -105,19 +108,10 @@ impl HttpClient {
             .build()
             .map_err(|e| Some(Box::new(HttpClientError::from(e))))?;
 
-        let runtime = if runtime.is_null() {
-            Arc::new(ForkSafeRuntime::with_worker_threads(1).map_err(|e| {
-                Some(Box::new(HttpClientError::new(
-                    HttpClientErrorCode::Runtime,
-                    &e.to_string(),
-                )))
-            })?)
-        } else {
-            // SAFETY: takes its own strong reference.
-            unsafe {
-                Arc::increment_strong_count(runtime);
-                Arc::from_raw(runtime)
-            }
+        // SAFETY: `runtime` is non-null and live; takes its own strong reference.
+        let runtime = unsafe {
+            Arc::increment_strong_count(runtime);
+            Arc::from_raw(runtime)
         };
 
         Ok(Self {
@@ -248,18 +242,20 @@ fn normalize_base_url(base_url: &str) -> Result<String, Option<Box<HttpClientErr
 ///
 /// No connection is opened until the first request.
 ///
-/// `runtime` is `NULL` (the client owns a private runtime) or a `ForkSafeRuntime` pointer from
-/// `ddog_shared_runtime_new`. The client takes its own reference, so the caller may free its own
-/// right away.
+/// `runtime` is required (`NULL` is rejected with `InvalidArgument`): a `ForkSafeRuntime` pointer
+/// from `ddog_shared_runtime_new`. The client takes its own reference, so the caller may free its
+/// own right away.
 ///
-/// A client must not be used in a forked child unless its runtime follows the fork protocol of
-/// `ForkSafeRuntime`.
+/// If the process forks, the host must run the fork protocol on `runtime`
+/// (`ddog_shared_runtime_before_fork`, then `ddog_shared_runtime_after_fork_parent` in the parent
+/// or `ddog_shared_runtime_after_fork_child` in the child) before using the client again.
 ///
 /// # Safety
 ///
 /// * `config` must be `NULL` (rejected with `InvalidArgument`) or point to a valid
 ///   [`HttpClientConfig`] whose slices are valid for reads.
-/// * `runtime` must be `NULL` or a pointer obtained from `ddog_shared_runtime_new`.
+/// * `runtime` must be `NULL` (rejected with `InvalidArgument`) or a pointer obtained from
+///   `ddog_shared_runtime_new` that has not been freed.
 /// * `out` must be `NULL` (rejected with `InvalidArgument`) or valid for writes of one pointer.
 #[unsafe(no_mangle)]
 #[must_use]
@@ -342,7 +338,10 @@ pub unsafe extern "C" fn ddog_http_client_send(
 mod tests {
     use super::*;
     use libdd_common_ffi::{CharSlice, Slice};
-    use std::ptr::null;
+
+    fn runtime() -> Arc<ForkSafeRuntime> {
+        Arc::new(ForkSafeRuntime::with_worker_threads(1).expect("runtime"))
+    }
 
     fn config(base_url: CharSlice<'_>, timeout_ms: u64) -> HttpClientConfig<'_> {
         HttpClientConfig {
@@ -364,7 +363,8 @@ mod tests {
 
     fn rejected(base_url: &str, timeout_ms: u64) -> HttpClientErrorCode {
         let config = config(CharSlice::from(base_url), timeout_ms);
-        code(unsafe { HttpClient::from_config(&config, null()) })
+        let runtime = runtime();
+        code(unsafe { HttpClient::from_config(&config, Arc::as_ptr(&runtime)) })
     }
 
     // Exhaustive on purpose: a new upstream method stops this compiling until someone
@@ -430,7 +430,9 @@ mod tests {
         let invalid = [b'h', b't', b't', b'p', b':', b'/', b'/', 0xff, 0xfe];
         let config = config(CharSlice::from_bytes(&invalid), 1_000);
 
-        let result = unsafe { HttpClient::from_config(&config, null()) };
+        let runtime = runtime();
+
+        let result = unsafe { HttpClient::from_config(&config, Arc::as_ptr(&runtime)) };
 
         assert_eq!(code(result), HttpClientErrorCode::InvalidArgument);
     }
@@ -440,9 +442,12 @@ mod tests {
         let mut out: Option<Box<HttpClient>> = None;
         let config = config(CharSlice::from("http://localhost"), 1_000);
 
+        let runtime = runtime();
+        let rt = Arc::as_ptr(&runtime);
+
         let no_config =
-            unsafe { ddog_http_client_new(None, null(), Some(NonNull::from(&mut out).cast())) };
-        let no_out = unsafe { ddog_http_client_new(Some(&config), null(), None) };
+            unsafe { ddog_http_client_new(None, rt, Some(NonNull::from(&mut out).cast())) };
+        let no_out = unsafe { ddog_http_client_new(Some(&config), rt, None) };
 
         assert_eq!(
             no_config.expect("an error").code,
@@ -459,8 +464,14 @@ mod tests {
         let config = config(CharSlice::from(""), 1_000);
         let mut out: Option<Box<HttpClient>> = None;
 
+        let runtime = runtime();
+
         let error = unsafe {
-            ddog_http_client_new(Some(&config), null(), Some(NonNull::from(&mut out).cast()))
+            ddog_http_client_new(
+                Some(&config),
+                Arc::as_ptr(&runtime),
+                Some(NonNull::from(&mut out).cast()),
+            )
         };
 
         assert!(error.is_some());
