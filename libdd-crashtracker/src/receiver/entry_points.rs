@@ -14,21 +14,150 @@ use tokio::{
     net::UnixListener,
 };
 
+/// Wraps stdin as a pollable async reader.
+///
+/// When stdin is a socket or pipe, this struct dups the fd, sets it nonblocking,
+/// and wraps it in the appropriate tokio type. On drop (or via `restore()`),
+/// the original fd's blocking mode is restored.
+#[cfg(unix)]
+struct PollableStdin {
+    /// The original stdin fd
+    original_fd: std::os::unix::io::RawFd,
+    /// Whether we changed the fd to nonblocking and need to restore it
+    needs_restore: bool,
+}
+
+#[cfg(unix)]
+impl PollableStdin {
+    fn new() -> Self {
+        Self {
+            original_fd: 0, // stdin
+            needs_restore: false,
+        }
+    }
+
+    /// Try to make stdin pollable. Returns a tokio BufReader over stdin.
+    ///
+    /// If stdin is a socket, dups it and wraps in `tokio::net::UnixStream`.
+    /// If stdin is a pipe, dups it and wraps in `tokio::net::unix::pipe::Receiver`.
+    /// Otherwise falls back to `tokio::io::stdin()`.
+    fn into_reader(
+        mut self,
+    ) -> anyhow::Result<(Self, BufReader<Box<dyn tokio::io::AsyncRead + Unpin>>)> {
+        use std::os::unix::io::FromRawFd;
+
+        let mut stat: libc::stat = unsafe { std::mem::zeroed() };
+        let ret = unsafe { libc::fstat(self.original_fd, &mut stat) };
+        if ret != 0 {
+            // fstat failed, fall back to tokio stdin
+            let reader: Box<dyn tokio::io::AsyncRead + Unpin> = Box::new(tokio::io::stdin());
+            return Ok((self, BufReader::new(reader)));
+        }
+
+        let mode = stat.st_mode & libc::S_IFMT;
+        if mode == libc::S_IFSOCK {
+            // Socket: dup, set nonblocking, wrap in UnixStream
+            let dup_fd = unsafe { libc::dup(self.original_fd) };
+            if dup_fd < 0 {
+                let reader: Box<dyn tokio::io::AsyncRead + Unpin> = Box::new(tokio::io::stdin());
+                return Ok((self, BufReader::new(reader)));
+            }
+            // Set nonblocking on the dup'd fd
+            let flags = unsafe { libc::fcntl(dup_fd, libc::F_GETFL) };
+            if flags >= 0 {
+                unsafe { libc::fcntl(dup_fd, libc::F_SETFL, flags | libc::O_NONBLOCK) };
+            }
+            let std_stream = unsafe { std::os::unix::net::UnixStream::from_raw_fd(dup_fd) };
+            match tokio::net::UnixStream::from_std(std_stream) {
+                Ok(stream) => {
+                    self.needs_restore = true;
+                    let reader: Box<dyn tokio::io::AsyncRead + Unpin> = Box::new(stream);
+                    return Ok((self, BufReader::new(reader)));
+                }
+                Err(_) => {
+                    // Failed to convert, fall through
+                }
+            }
+        } else if mode == libc::S_IFIFO {
+            // Pipe: dup, set nonblocking, wrap in pipe::Receiver
+            let dup_fd = unsafe { libc::dup(self.original_fd) };
+            if dup_fd < 0 {
+                let reader: Box<dyn tokio::io::AsyncRead + Unpin> = Box::new(tokio::io::stdin());
+                return Ok((self, BufReader::new(reader)));
+            }
+            let flags = unsafe { libc::fcntl(dup_fd, libc::F_GETFL) };
+            if flags >= 0 {
+                unsafe { libc::fcntl(dup_fd, libc::F_SETFL, flags | libc::O_NONBLOCK) };
+            }
+            let std_fd = unsafe { std::os::unix::io::OwnedFd::from_raw_fd(dup_fd) };
+            match tokio::net::unix::pipe::Receiver::from_owned_fd(std_fd) {
+                Ok(receiver) => {
+                    self.needs_restore = true;
+                    let reader: Box<dyn tokio::io::AsyncRead + Unpin> = Box::new(receiver);
+                    return Ok((self, BufReader::new(reader)));
+                }
+                Err(_) => {
+                    // Failed to convert, fall through
+                }
+            }
+        }
+
+        // Fallback: use tokio's stdin wrapper
+        let reader: Box<dyn tokio::io::AsyncRead + Unpin> = Box::new(tokio::io::stdin());
+        Ok((self, BufReader::new(reader)))
+    }
+
+    fn restore(&mut self) {
+        if self.needs_restore {
+            // Restore blocking mode on the original fd
+            let flags = unsafe { libc::fcntl(self.original_fd, libc::F_GETFL) };
+            if flags >= 0 {
+                unsafe { libc::fcntl(self.original_fd, libc::F_SETFL, flags & !libc::O_NONBLOCK) };
+            }
+            self.needs_restore = false;
+        }
+    }
+}
+
+#[cfg(unix)]
+impl Drop for PollableStdin {
+    fn drop(&mut self) {
+        self.restore();
+    }
+}
+
 /*-----------------------------------------
 |                Public API               |
 ------------------------------------------*/
 
 pub fn receiver_entry_point_stdin() -> anyhow::Result<()> {
-    let stream = BufReader::new(tokio::io::stdin());
     let rt = tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()?;
-    // The crashing process started this receiver with its own privileges.
-    rt.block_on(receiver_entry_point(
-        receiver_timeout(),
-        stream,
-        ReceiverFileAccess::Trusted,
-    ))?;
+    // Try to make stdin pollable (socket/pipe), falling back to tokio::io::stdin.
+    // into_reader() must be called inside block_on because tokio::net types
+    // require a runtime context.
+    #[cfg(unix)]
+    {
+        let result = rt.block_on(async {
+            let pollable = PollableStdin::new();
+            let (mut pollable, stream) = pollable.into_reader()?;
+            let result =
+                receiver_entry_point(receiver_timeout(), stream, ReceiverFileAccess::Trusted).await;
+            pollable.restore();
+            result
+        });
+        result?;
+    }
+    #[cfg(not(unix))]
+    {
+        let stream = BufReader::new(tokio::io::stdin());
+        rt.block_on(receiver_entry_point(
+            receiver_timeout(),
+            stream,
+            ReceiverFileAccess::Trusted,
+        ))?;
+    }
     Ok(())
 }
 
@@ -104,6 +233,59 @@ pub fn get_receiver_unix_socket(socket_path: impl AsRef<str>) -> anyhow::Result<
     unix_listener.context("Could not create the unix socket")
 }
 
+/// Receive a crash report from a stream and resolve frames.
+///
+/// Returns `None` if no crash report was received. The stream is kept alive so
+/// the crashing process can be inspected; the caller should drop it before uploading.
+async fn receive_and_resolve(
+    timeout: Duration,
+    stream: &mut (impl AsyncBufReadExt + std::marker::Unpin),
+    access: ReceiverFileAccess,
+) -> anyhow::Result<Option<(CrashtrackerConfiguration, CrashInfo)>> {
+    let Some((config, mut crash_info)) =
+        receive_report_from_stream(timeout, stream, access).await?
+    else {
+        return Ok(None);
+    };
+
+    // The symbolizer opens ELF, perf-map and debug paths without our path checks. Restricted
+    // reports keep the symbols supplied by the worker instead of resolving them here.
+    if !access.is_restricted()
+        && let Err(e) = resolve_frames(&config, &mut crash_info)
+    {
+        crash_info
+            .log_messages
+            .push(format!("Error resolving frames: {e}"));
+    }
+
+    if config.demangle_names()
+        && let Err(e) = crash_info.demangle_names()
+    {
+        crash_info
+            .log_messages
+            .push(format!("Error demangling names: {e}"));
+    }
+
+    Ok(Some((config, crash_info)))
+}
+
+/// Upload a crash report and finish any open spans.
+async fn upload_report(
+    config: &CrashtrackerConfiguration,
+    crash_info: &mut CrashInfo,
+) -> anyhow::Result<()> {
+    // Finish the spans the crash ended. Prepared first, so the report
+    // notes any that could not be finished, then sent alongside the report
+    // so neither waits on, or is lost with, the other. Blocks without an
+    // agent URL go to the agent the report is sent to.
+    let traces = spans_to_close::prepare_all(crash_info, config.endpoint().as_ref());
+    let (upload, ()) = tokio::join!(
+        crash_info.async_upload_to_endpoint(config.endpoint()),
+        spans_to_close::submit_all(traces)
+    );
+    upload
+}
+
 /// Receives data from a crash collector via a stream, formats it into
 /// `CrashInfo` json, and emits it to the endpoint/file defined in `config`.
 ///
@@ -119,38 +301,13 @@ pub(crate) async fn receiver_entry_point(
     access: ReceiverFileAccess,
 ) -> anyhow::Result<()> {
     if let Some((config, mut crash_info)) =
-        receive_report_from_stream(timeout, &mut stream, access).await?
+        receive_and_resolve(timeout, &mut stream, access).await?
     {
-        // The symbolizer opens ELF, perf-map and debug paths without our path checks. Restricted
-        // reports keep the symbols supplied by the worker instead of resolving them here.
-        if !access.is_restricted()
-            && let Err(e) = resolve_frames(&config, &mut crash_info)
-        {
-            crash_info
-                .log_messages
-                .push(format!("Error resolving frames: {e}"));
-        }
         // The crashing process waits for POLLHUP. Keep it alive for inspection, then release it
         // before uploading so a slow endpoint does not prolong the crash pause.
         drop(stream);
 
-        if config.demangle_names()
-            && let Err(e) = crash_info.demangle_names()
-        {
-            crash_info
-                .log_messages
-                .push(format!("Error demangling names: {e}"));
-        }
-        // Finish the spans the crash ended. Prepared first, so the report
-        // notes any that could not be finished, then sent alongside the report
-        // so neither waits on, or is lost with, the other. Blocks without an
-        // agent URL go to the agent the report is sent to.
-        let traces = spans_to_close::prepare_all(&mut crash_info, config.endpoint().as_ref());
-        let (upload, ()) = tokio::join!(
-            crash_info.async_upload_to_endpoint(config.endpoint()),
-            spans_to_close::submit_all(traces)
-        );
-        upload?;
+        upload_report(&config, &mut crash_info).await?;
     }
     Ok(())
 }

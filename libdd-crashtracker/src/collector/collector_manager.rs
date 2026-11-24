@@ -8,7 +8,7 @@ use std::time::Instant;
 
 use super::emitters::{CrashKindData, emit_crashreport};
 use crate::shared::configuration::CrashtrackerConfiguration;
-use libdd_process_utils::unix_utils::{alt_fork, terminate};
+use libdd_process_utils::unix_utils::alt_fork;
 use nix::sys::signal::{self, SaFlags, SigAction, SigHandler, SigSet};
 use std::os::unix::io::RawFd;
 use std::os::unix::{io::FromRawFd, net::UnixStream};
@@ -185,9 +185,10 @@ pub(crate) fn run_collector_child(
         threads_deadline,
         collector_threads,
     );
-    if let Err(e) = report {
-        eprintln!("Failed to flush crash report: {e}");
-        terminate();
+    if let Err(_e) = report {
+        // Give the receiver EOF so it can exit cleanly, then exit with failure.
+        let _ = unix_stream.shutdown(std::net::Shutdown::Write);
+        unsafe { libc::_exit(libc::EXIT_FAILURE) };
     }
 
     // Exit normally
