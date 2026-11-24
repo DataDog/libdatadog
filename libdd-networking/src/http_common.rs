@@ -95,8 +95,9 @@ mod native {
     /// that clone keeps the task cell alive after the runtime drops. The task cell holds the
     /// scheduler handle, which holds the I/O driver and its epoll fd and eventfd.
     ///
-    /// Each task is wrapped in a [`WeakWakerFuture`]. Shared state then only sees the weak waker,
-    /// and the real waker is released when the runtime drops the task.
+    /// Each task is wrapped in a [`WeakWakerFuture`](libdd_weak_waker::WeakWakerFuture). Shared
+    /// state then only sees the weak waker, and the real waker is released when the runtime
+    /// drops the task.
     ///
     /// Unlike [`hyper_util::rt::TokioExecutor`], this executor does not panic outside a tokio
     /// runtime. It drops the task instead. Hyper then reports the connection as closed, or
