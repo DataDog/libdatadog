@@ -395,12 +395,6 @@ fn collect_and_finish(
     collector.finish(timeout_manager);
     receiver.finish(timeout_manager);
 
-    // Revoke ptrace permission now that both collector and receiver are done.
-    #[cfg(target_os = "linux")]
-    unsafe {
-        libc::prctl(libc::PR_SET_PTRACER, 0 as libc::c_ulong);
-    }
-
     Ok(())
 }
 

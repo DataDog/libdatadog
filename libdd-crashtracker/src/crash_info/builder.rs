@@ -150,7 +150,11 @@ impl Default for CrashInfoBuilder {
             metadata: None,
             os_info: None,
             otel_thread_contexts: None,
-            #[cfg(all(target_os = "linux", feature = "otel-thread-ctx"))]
+            #[cfg(all(
+                target_os = "linux",
+                feature = "otel-thread-ctx",
+                any(feature = "collector", feature = "receiver")
+            ))]
             otel_tls_resolution: None,
             proc_info: None,
             sig_info: None,

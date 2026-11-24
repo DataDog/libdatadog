@@ -3,7 +3,7 @@
 
 //! OTel thread context collection via a sidecar (Unix socket) receiver.
 //! The collector reads the crashing thread's OTel record from its own TLS
-//! (no ptrace) and ptraces the other threads.
+//! and ptraces the other threads.
 
 use crate::modes::behavior::Behavior;
 use libdd_crashtracker::CrashtrackerConfiguration;
