@@ -10,6 +10,8 @@
 pub mod normalize_utils;
 pub mod normalizer;
 pub mod normalizer_v1;
+#[cfg(test)]
+mod test_types;
 pub(crate) mod utf8_helpers;
 
 #[cfg(feature = "fuzzing")]
