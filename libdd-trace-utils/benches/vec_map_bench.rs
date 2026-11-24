@@ -28,6 +28,7 @@ const PREFIXES: &[&str] = &["", "http.", "db.", "aws.", "_dd."];
 /// `period`-th insert, so the duplicate rate is `1/period`. We cover 50% (2, unrealistic/worse
 /// case), 25% (4) and 10% (10) to measure how dedup cost scales with duplicate rates.
 const DUP_PERIODS: &[usize] = &[2, 4, 10];
+const DEDUP_BATCH: BatchSize = BatchSize::NumIterations(16);
 
 /// Build a deterministic set of `BytesString` keys shaped like real span tag names.
 fn keys(n: usize) -> Vec<BytesString> {
@@ -142,23 +143,21 @@ fn bench_get_miss(c: &mut Criterion) {
 
 /// Get_mut (hit): mutable lookup of every key.
 fn bench_get_mut(c: &mut Criterion) {
-    let mut group = fast_group(c, "vec_map/get_mut");
+    let mut group = fast_group(c, "vec_map/get_mut_reused_map");
 
     for &n in SIZES {
         group.throughput(criterion::Throughput::Elements(n as u64));
         let lookups = keys(n);
+        let mut map = populated_metrics(n);
         group.bench_with_input(BenchmarkId::from_parameter(n), &n, |b, _| {
-            b.iter_batched_ref(
-                || populated_metrics(n),
-                |map| {
-                    for k in &lookups {
-                        if let Some(v) = map.get_mut(black_box(k.as_str())) {
-                            *v += 1.0;
-                        }
+            b.iter(|| {
+                let map = black_box(&mut map);
+                for key in &lookups {
+                    if let Some(value) = map.get_mut(black_box(key.as_str())) {
+                        *value += 1.0;
                     }
-                },
-                BatchSize::SmallInput,
-            )
+                }
+            })
         });
     }
     group.finish();
@@ -233,7 +232,7 @@ fn bench_dedup(c: &mut Criterion) {
                     map.dedup();
                     black_box(&*map);
                 },
-                BatchSize::SmallInput,
+                DEDUP_BATCH,
             )
         });
         for &period in DUP_PERIODS {
@@ -247,7 +246,7 @@ fn bench_dedup(c: &mut Criterion) {
                             map.dedup();
                             black_box(&*map);
                         },
-                        BatchSize::SmallInput,
+                        DEDUP_BATCH,
                     )
                 },
             );

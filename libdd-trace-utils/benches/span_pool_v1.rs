@@ -1,13 +1,13 @@
 // Copyright 2026-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-use criterion::measurement::Measurement;
-use criterion::{Criterion, Throughput, black_box, criterion_group};
+use criterion::measurement::{Measurement, WallTime};
+use criterion::{Criterion, SamplingMode, Throughput, black_box, criterion_group};
 use libdd_tinybytes::BytesString;
 use libdd_trace_utils::span::BytesData;
 use libdd_trace_utils::span::v1::span_pool::SpanPoolV1;
 use libdd_trace_utils::span::v1::{AttributeValue, Span, TraceChunk};
-use tools::bench_utils::{MeasurementName, memory_allocated_criterion};
+use tools::bench_utils::MeasurementName;
 
 /// Configurations exercised by the benchmarks: `(number of chunks, spans per chunk)`.
 /// The small one resembles a single trace flush; the large one resembles a full payload.
@@ -104,7 +104,7 @@ fn warm_pool(pool: &SpanPoolV1<BytesData>, count: usize) {
 
 #[allow(clippy::too_many_arguments)]
 fn bench_iter<
-    M: Measurement,
+    M: Measurement + MeasurementName,
     F: Fn() -> Span<BytesData>,
     G: Fn() -> TraceChunk<BytesData>,
     H: Fn(Vec<TraceChunk<BytesData>>),
@@ -117,7 +117,9 @@ fn bench_iter<
     get_chunk: G,
     return_chunks: H,
 ) {
-    group.throughput(Throughput::Elements((num_chunks * spans_per_chunk) as u64));
+    if M::name() == WallTime::name() {
+        group.throughput(Throughput::Elements((num_chunks * spans_per_chunk) as u64));
+    }
     group.bench_with_input(
         format!("{num_chunks}x{spans_per_chunk}/{variant_name}"),
         &(num_chunks, spans_per_chunk),
@@ -135,6 +137,9 @@ fn bench_iter<
 /// (recycling spans and chunk shells on drop). Throughput is reported per span.
 fn enqueue_dequeue<M: Measurement + MeasurementName + 'static>(c: &mut Criterion<M>) {
     let mut group = c.benchmark_group(format!("span_pool_v1/{}", M::name()));
+    if M::name() != WallTime::name() {
+        group.sampling_mode(SamplingMode::Flat);
+    }
     for &(num_chunks, spans_per_chunk) in CONFIGS {
         let total = num_chunks * spans_per_chunk;
         let pool = SpanPoolV1::<BytesData>::with_capacity(POOL_CAPACITY);
@@ -166,6 +171,6 @@ fn enqueue_dequeue<M: Measurement + MeasurementName + 'static>(c: &mut Criterion
 criterion_group!(span_pool_v1_benches, enqueue_dequeue,);
 // Not `criterion_group!`: its `config =` would be overridden by the command-line flags.
 pub fn span_pool_v1_alloc_benches() {
-    let mut criterion = memory_allocated_criterion(&super::GLOBAL);
+    let mut criterion = super::pool_allocation_criterion();
     enqueue_dequeue(&mut criterion);
 }

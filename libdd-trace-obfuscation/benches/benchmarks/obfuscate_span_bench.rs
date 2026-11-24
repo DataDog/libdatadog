@@ -9,10 +9,11 @@
 //! configuration knobs drive the pass's allocation behavior, and both are covered: the
 //! credit-card scan enabled or disabled, and a wildcard replace rule present or absent.
 //!
-//! Each entry point is measured twice: in wall time and in allocated bytes.
+//! Each entry point measures wall time, plus allocated bytes for scenarios that allocate.
 
 use std::alloc::System;
 
+use criterion::measurement::WallTime;
 use criterion::{BatchSize, Criterion, black_box, criterion_group};
 use libdd_tinybytes::BytesString;
 use libdd_trace_obfuscation::obfuscate::{obfuscate_chunk_attributes, obfuscate_span};
@@ -29,6 +30,7 @@ static GLOBAL: ReportingAllocator<System> = ReportingAllocator::new(System);
 /// A wildcard rule matching the `token/<value>` marker embedded in two of the span's
 /// attributes, so the replace pass rewrites two values and leaves the rest untouched.
 const WILDCARD_RULES: &str = r#"[{"name": "*", "pattern": "(token/)([^/]*)", "repl": "${1}?"}]"#;
+const INPUT_BATCH: BatchSize = BatchSize::NumIterations(16);
 
 fn bs(s: &str) -> BytesString {
     BytesString::from_string(s.to_string())
@@ -192,13 +194,30 @@ fn trace_chunk() -> TraceChunkBytes {
 fn bench_obfuscate_span<M: criterion::measurement::Measurement + MeasurementName + 'static>(
     c: &mut Criterion<M>,
 ) {
-    let measurement = M::name();
+    let wall_time = M::name() == WallTime::name();
+    let measurement = if wall_time {
+        "wall_time_without_input_drop"
+    } else {
+        M::name()
+    };
     for (label, config) in span_scenarios() {
+        let mut check_allocations =
+            !config.credit_cards.enabled && config.tag_replace_rules.is_empty();
+        if !wall_time && check_allocations {
+            continue;
+        }
         c.bench_function(&format!("obfuscate_span/{label}/{measurement}"), |b| {
-            b.iter_batched(
+            if check_allocations {
+                let mut span = web_span();
+                GLOBAL.assert_no_allocations(&label, || {
+                    obfuscate_span(black_box(&mut span), black_box(&config));
+                });
+                check_allocations = false;
+            }
+            b.iter_batched_ref(
                 web_span,
-                |mut span| obfuscate_span(black_box(&mut span), black_box(&config)),
-                BatchSize::LargeInput,
+                |span| obfuscate_span(black_box(span), black_box(&config)),
+                INPUT_BATCH,
             );
         });
     }
@@ -211,10 +230,10 @@ fn bench_obfuscate_span<M: criterion::measurement::Measurement + MeasurementName
         ("cc=true rules=false", config(true, false)),
     ] {
         c.bench_function(&format!("obfuscate_span/sql/{label}/{measurement}"), |b| {
-            b.iter_batched(
+            b.iter_batched_ref(
                 sql_span,
-                |mut span| obfuscate_span(black_box(&mut span), black_box(&config)),
-                BatchSize::LargeInput,
+                |span| obfuscate_span(black_box(span), black_box(&config)),
+                INPUT_BATCH,
             );
         });
     }
@@ -226,12 +245,12 @@ fn bench_obfuscate_span<M: criterion::measurement::Measurement + MeasurementName
     c.bench_function(
         &format!("obfuscate_span/replace_span_tags_trait/{measurement}"),
         |b| {
-            b.iter_batched(
+            b.iter_batched_ref(
                 web_span,
-                |mut span| {
-                    replace_span_tags_trait(black_box(&mut span), black_box(&rules));
+                |span| {
+                    replace_span_tags_trait(black_box(span), black_box(&rules));
                 },
-                BatchSize::LargeInput,
+                INPUT_BATCH,
             );
         },
     );
@@ -245,12 +264,12 @@ fn bench_obfuscate_span<M: criterion::measurement::Measurement + MeasurementName
         c.bench_function(
             &format!("obfuscate_chunk_attributes/{label}/{measurement}"),
             |b| {
-                b.iter_batched(
+                b.iter_batched_ref(
                     trace_chunk,
-                    |mut chunk| {
-                        obfuscate_chunk_attributes(black_box(&mut chunk), black_box(&config));
+                    |chunk| {
+                        obfuscate_chunk_attributes(black_box(chunk), black_box(&config));
                     },
-                    BatchSize::LargeInput,
+                    INPUT_BATCH,
                 );
             },
         );
