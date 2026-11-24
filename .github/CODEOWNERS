@@ -150,7 +150,9 @@ datadog-sidecar/src/service/ffe_metrics_flusher.rs      @DataDog/libdatadog-php 
 
 libdd-agent-client/Cargo.toml                @DataDog/apm-common-components-core @DataDog/libdatadog-release
 libdd-ai-usage/Cargo.toml                    @DataDog/agent-console @DataDog/trajectory @DataDog/libdatadog-release
+libdd-ai-usage/CHANGELOG.md                  @DataDog/agent-console @DataDog/trajectory @DataDog/libdatadog-release
 libdd-ai-usage-ffi/Cargo.toml                @DataDog/agent-console @DataDog/trajectory @DataDog/libdatadog-release
+libdd-ai-usage-ffi/CHANGELOG.md              @DataDog/agent-console @DataDog/trajectory @DataDog/libdatadog-release
 libdd-capabilities-impl/CHANGELOG.md         @DataDog/apm-common-components-core @DataDog/libdatadog-release
 libdd-capabilities-impl/Cargo.toml           @DataDog/apm-common-components-core @DataDog/libdatadog-release
 libdd-capabilities/CHANGELOG.md              @DataDog/apm-common-components-core @DataDog/libdatadog-release
