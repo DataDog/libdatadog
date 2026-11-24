@@ -241,6 +241,14 @@ impl<S: Span> Span for CompatSpan<S> {
         self.0.component()
     }
 
+    fn name_text(&self) -> Option<&Self::Text> {
+        self.0.name_text()
+    }
+
+    fn component_text(&self) -> Option<&Self::Text> {
+        self.0.component_text()
+    }
+
     fn span_events(&self) -> impl Iterator<Item = &Self::SpanEvent> {
         self.0.span_events()
     }

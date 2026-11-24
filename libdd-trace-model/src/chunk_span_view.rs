@@ -154,6 +154,10 @@ impl<C: TraceChunk> Span for ChunkSpanView<'_, C> {
             .or_else(|| self.chunk.attribute_str(crate::COMPONENT_KEY))
     }
 
+    // `name_text` and `component_text` keep their defaults: the compiler doesn't see that the
+    // span's text type is the chunk's (both are `C::Values::Text`), so the span's stored text
+    // can't be returned without an extra bound on this impl.
+
     fn span_events(&self) -> impl Iterator<Item = &Self::SpanEvent> {
         self.span.span_events()
     }

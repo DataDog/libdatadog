@@ -243,6 +243,22 @@ pub trait Span: Attributes {
     /// The instrumentation `component`, `None` if unset.
     fn component(&self) -> Option<&str>;
 
+    /// The stored text of [`Span::name`], if the implementation stores it as an
+    /// [`Attributes::Text`].
+    ///
+    /// Cloning it can be cheaper than building a new text from [`Span::name`], e.g. for a
+    /// reference-counted text: callers that copy the name to another field use it when they can.
+    /// The default returns `None`, and callers then copy [`Span::name`].
+    fn name_text(&self) -> Option<&Self::Text> {
+        None
+    }
+
+    /// The stored text of [`Span::component`], see [`Span::name_text`]. If it is `Some`, it holds
+    /// the same text as [`Span::component`]. The default returns `None`.
+    fn component_text(&self) -> Option<&Self::Text> {
+        None
+    }
+
     /// View this span's attributes the way v0.4 `meta`/`metrics` would hold them, promoted tags
     /// included. See [`CompatSpan`].
     fn compat(&self) -> &CompatSpan<Self>
