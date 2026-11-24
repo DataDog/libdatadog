@@ -2,12 +2,21 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use std::alloc::System;
+use std::time::Duration;
 
-use criterion::criterion_main;
-use tools::bench_utils::ReportingAllocator;
+use criterion::{Criterion, criterion_main};
+use tools::bench_utils::{
+    AllocatedBytesMeasurement, ReportingAllocator, memory_allocated_criterion,
+};
 
 #[global_allocator]
 pub static GLOBAL: ReportingAllocator<System> = ReportingAllocator::new(System);
+
+fn pool_allocation_criterion() -> Criterion<AllocatedBytesMeasurement<System>> {
+    memory_allocated_criterion(&GLOBAL)
+        .warm_up_time(Duration::from_millis(100))
+        .measurement_time(Duration::from_secs(3))
+}
 
 mod agentless_encoding;
 mod deserialization;

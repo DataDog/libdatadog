@@ -26,6 +26,19 @@ struct BenchConfig {
     span: Span<SliceData<'static>>,
 }
 
+const UNICODE_CASE: &str = "unicode_uppercase_service_rule";
+const ALLOCATION_CHECK_SPANS: usize = 256;
+
+impl BenchConfig {
+    fn sample(&self) {
+        let data = V04SamplingData {
+            is_parent_sampled: self.is_parent_sampled,
+            span: &self.span,
+        };
+        black_box(self.sampler.sample(black_box(&data)));
+    }
+}
+
 fn make_span(
     name: &'static str,
     service: &'static str,
@@ -350,7 +363,7 @@ fn make_configs() -> Vec<BenchConfig> {
         // 17. Unicode service name with uppercase characters — exercises the glob matcher's
         // Unicode fallback path (case-insensitive Unicode lowercasing).
         BenchConfig {
-            name: "unicode_uppercase_service_rule",
+            name: UNICODE_CASE,
             sampler: DatadogSampler::new(
                 vec![SamplingRule::new(
                     1.0,
@@ -396,16 +409,20 @@ pub fn criterion_benchmark(c: &mut Criterion) {
     let configs = make_configs();
 
     for config in &configs {
+        let mut check_allocations = config.name != UNICODE_CASE;
         c.bench_function(
             &format!("datadog_sample_span/{}/wall_time", config.name),
             |b| {
-                b.iter(|| {
-                    let data = V04SamplingData {
-                        is_parent_sampled: config.is_parent_sampled,
-                        span: &config.span,
-                    };
-                    black_box(config.sampler.sample(black_box(&data)));
-                })
+                if check_allocations {
+                    config.sample();
+                    GLOBAL.assert_no_allocations(config.name, || {
+                        for _ in 0..ALLOCATION_CHECK_SPANS {
+                            config.sample();
+                        }
+                    });
+                    check_allocations = false;
+                }
+                b.iter(|| config.sample())
             },
         );
     }
@@ -415,17 +432,12 @@ fn criterion_benchmark_allocs(c: &mut Criterion<AllocatedBytesMeasurement<System
     let configs = make_configs();
 
     for config in &configs {
+        if config.name != UNICODE_CASE {
+            continue;
+        }
         c.bench_function(
             &format!("datadog_sample_span/{}/allocated_bytes", config.name),
-            |b| {
-                b.iter(|| {
-                    let data = V04SamplingData {
-                        is_parent_sampled: config.is_parent_sampled,
-                        span: &config.span,
-                    };
-                    black_box(config.sampler.sample(black_box(&data)));
-                })
-            },
+            |bencher| bencher.iter(|| config.sample()),
         );
     }
 }

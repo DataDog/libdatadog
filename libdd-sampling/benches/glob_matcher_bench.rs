@@ -22,6 +22,12 @@ struct BenchCase {
     subject: &'static str,
 }
 
+impl BenchCase {
+    fn allocates_when_warm(&self) -> bool {
+        !self.pattern.is_ascii() || !self.subject.is_ascii()
+    }
+}
+
 fn cases() -> Vec<BenchCase> {
     vec![
         BenchCase {
@@ -91,14 +97,26 @@ fn cases() -> Vec<BenchCase> {
 fn bench_wall_time(c: &mut Criterion) {
     for case in cases() {
         let matcher = GlobMatcher::new(case.pattern);
+        let mut check_allocations = !case.allocates_when_warm();
         c.bench_function(&format!("glob_matcher/{}/wall_time", case.name), |b| {
-            b.iter(|| black_box(matcher.matches(black_box(case.subject))))
+            let matches = || black_box(matcher.matches(black_box(case.subject)));
+            if check_allocations {
+                matches();
+                GLOBAL.assert_no_allocations(case.name, || {
+                    matches();
+                });
+                check_allocations = false;
+            }
+            b.iter(matches)
         });
     }
 }
 
 fn bench_allocs(c: &mut Criterion<AllocatedBytesMeasurement<System>>) {
     for case in cases() {
+        if !case.allocates_when_warm() {
+            continue;
+        }
         let matcher = GlobMatcher::new(case.pattern);
         c.bench_function(
             &format!("glob_matcher/{}/allocated_bytes", case.name),

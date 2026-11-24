@@ -10,6 +10,7 @@
 use core::{alloc::GlobalAlloc, cell::Cell, time::Duration};
 use std::alloc::System;
 
+use criterion::measurement::Measurement;
 use criterion::{Criterion, Throughput};
 
 pub trait MeasurementName {
@@ -22,8 +23,8 @@ impl MeasurementName for criterion::measurement::WallTime {
     }
 }
 
-/// `Criterion` for the allocation benchmarks. Sampling is deliberately small: allocation is
-/// deterministic, so extra samples cannot refine a constant.
+/// `Criterion` for synchronous workloads that allocate. When the expected result is zero, use
+/// [`ReportingAllocator::assert_no_allocations`]: Criterion cannot analyze a zero measurement.
 ///
 /// Not usable as `criterion_group!`'s `config =` -- that macro appends `.configure_from_args()`,
 /// which would let command-line flags replace the settings below.
@@ -31,7 +32,7 @@ pub fn memory_allocated_criterion(
     global_alloc: &'static ReportingAllocator<System>,
 ) -> Criterion<AllocatedBytesMeasurement<System>> {
     Criterion::default()
-        .with_measurement(AllocatedBytesMeasurement(Cell::new(false), global_alloc))
+        .with_measurement(AllocatedBytesMeasurement(global_alloc))
         .configure_from_args()
         .measurement_time(Duration::from_millis(1))
         .warm_up_time(Duration::from_millis(1))
@@ -40,60 +41,55 @@ pub fn memory_allocated_criterion(
         .sample_size(10)
 }
 
-#[derive(Debug)]
-struct AllocStats {
-    allocated_bytes: usize,
-    #[allow(dead_code)]
-    allocations: usize,
+thread_local! {
+    static ALLOCATED_BYTES: Cell<Option<usize>> = const { Cell::new(None) };
 }
 
-pub struct ReportingAllocator<T: GlobalAlloc> {
-    alloc: T,
-    allocated_bytes: core::sync::atomic::AtomicUsize,
-    allocations: core::sync::atomic::AtomicUsize,
-}
+/// A global allocator that counts requested bytes only on the measuring thread and only while
+/// an allocation measurement is active. Timing runs do not update allocation counters.
+pub struct ReportingAllocator<T: GlobalAlloc>(T);
 
 impl<T: GlobalAlloc> ReportingAllocator<T> {
     pub const fn new(alloc: T) -> Self {
-        Self {
-            alloc,
-            allocated_bytes: core::sync::atomic::AtomicUsize::new(0),
-            allocations: core::sync::atomic::AtomicUsize::new(0),
-        }
+        Self(alloc)
     }
 
-    fn stats(&self) -> AllocStats {
-        AllocStats {
-            allocated_bytes: self
-                .allocated_bytes
-                .load(core::sync::atomic::Ordering::Relaxed),
-            allocations: self.allocations.load(core::sync::atomic::Ordering::Relaxed),
-        }
+    fn start(&self) {
+        ALLOCATED_BYTES.with(|counter| {
+            assert!(counter.get().is_none(), "nested allocation measurement");
+            counter.set(Some(0));
+        });
+    }
+
+    fn end(&self) -> usize {
+        ALLOCATED_BYTES.with(|counter| counter.take().expect("allocation measurement not started"))
+    }
+
+    pub fn assert_no_allocations(&self, scenario: &str, run: impl FnOnce()) {
+        self.start();
+        run();
+        assert_eq!(self.end(), 0, "{scenario} must not allocate");
     }
 }
 
 unsafe impl<T: GlobalAlloc> GlobalAlloc for ReportingAllocator<T> {
     unsafe fn alloc(&self, layout: core::alloc::Layout) -> *mut u8 {
-        unsafe {
-            self.allocated_bytes
-                .fetch_add(layout.size(), core::sync::atomic::Ordering::Relaxed);
-            self.allocations
-                .fetch_add(1, core::sync::atomic::Ordering::Relaxed);
-            self.alloc.alloc(layout)
-        }
+        let _tls_may_be_destroyed = ALLOCATED_BYTES.try_with(|counter| {
+            if let Some(bytes) = counter.get() {
+                counter.set(Some(bytes.wrapping_add(layout.size())));
+            }
+        });
+        unsafe { self.0.alloc(layout) }
     }
 
     unsafe fn dealloc(&self, ptr: *mut u8, layout: core::alloc::Layout) {
         unsafe {
-            self.alloc.dealloc(ptr, layout);
+            self.0.dealloc(ptr, layout);
         }
     }
 }
 
-pub struct AllocatedBytesMeasurement<T: GlobalAlloc + 'static>(
-    Cell<bool>,
-    &'static ReportingAllocator<T>,
-);
+pub struct AllocatedBytesMeasurement<T: GlobalAlloc + 'static>(&'static ReportingAllocator<T>);
 
 impl<T: GlobalAlloc> MeasurementName for AllocatedBytesMeasurement<T> {
     fn name() -> &'static str {
@@ -101,17 +97,17 @@ impl<T: GlobalAlloc> MeasurementName for AllocatedBytesMeasurement<T> {
     }
 }
 
-impl<T: GlobalAlloc> criterion::measurement::Measurement for AllocatedBytesMeasurement<T> {
-    type Intermediate = usize;
+impl<T: GlobalAlloc> Measurement for AllocatedBytesMeasurement<T> {
+    type Intermediate = ();
 
     type Value = usize;
 
     fn start(&self) -> Self::Intermediate {
-        self.1.stats().allocated_bytes
+        self.0.start();
     }
 
-    fn end(&self, i: Self::Intermediate) -> Self::Value {
-        self.1.stats().allocated_bytes - i
+    fn end(&self, (): Self::Intermediate) -> Self::Value {
+        self.0.end()
     }
 
     fn add(&self, v1: &Self::Value, v2: &Self::Value) -> Self::Value {
@@ -123,12 +119,11 @@ impl<T: GlobalAlloc> criterion::measurement::Measurement for AllocatedBytesMeasu
     }
 
     fn to_f64(&self, value: &Self::Value) -> f64 {
-        let b = self.0.get();
-        self.0.set(!b);
-        // Criterion does not handle all-identical measurement values well, and since
-        // allocation is deterministic that tends to happen a lot. Add a small +/- epsilon
-        // so each pair of measurements differs slightly without skewing the distribution.
-        *value as f64 + if b { 0.01 } else { -0.01 }
+        assert_ne!(
+            *value, 0,
+            "use assert_no_allocations for zero-byte workloads"
+        );
+        *value as f64
     }
 
     fn formatter(&self) -> &dyn criterion::measurement::ValueFormatter {
@@ -182,82 +177,43 @@ mod tests {
 
     static SHARED: ReportingAllocator<System> = ReportingAllocator::new(System);
 
-    // --- ReportingAllocator ---
-
-    #[test]
-    fn new_starts_at_zero() {
-        let a = ReportingAllocator::new(System);
-        let s = a.stats();
-        assert_eq!(s.allocated_bytes, 0);
-        assert_eq!(s.allocations, 0);
-    }
-
-    #[test]
-    fn alloc_increments_both_counters() {
-        let a = ReportingAllocator::new(System);
-        let layout = Layout::from_size_align(64, 8).unwrap();
-        let ptr = unsafe { a.alloc(layout) };
-        assert!(!ptr.is_null());
-        assert_eq!(a.stats().allocated_bytes, 64);
-        assert_eq!(a.stats().allocations, 1);
-        unsafe { a.dealloc(ptr, layout) };
-    }
-
-    #[test]
-    fn dealloc_does_not_change_counters() {
-        let a = ReportingAllocator::new(System);
-        let layout = Layout::from_size_align(32, 8).unwrap();
-        let ptr = unsafe { a.alloc(layout) };
-        let bytes_after_alloc = a.stats().allocated_bytes;
-        unsafe { a.dealloc(ptr, layout) };
-        assert_eq!(a.stats().allocated_bytes, bytes_after_alloc);
-        assert_eq!(a.stats().allocations, 1);
-    }
-
-    #[test]
-    fn multiple_allocs_accumulate() {
-        let a = ReportingAllocator::new(System);
-        let l1 = Layout::from_size_align(16, 8).unwrap();
-        let l2 = Layout::from_size_align(32, 8).unwrap();
-        let p1 = unsafe { a.alloc(l1) };
-        let p2 = unsafe { a.alloc(l2) };
-        assert_eq!(a.stats().allocated_bytes, 48);
-        assert_eq!(a.stats().allocations, 2);
-        unsafe {
-            a.dealloc(p1, l1);
-            a.dealloc(p2, l2);
-        }
-    }
-
-    // --- AllocatedBytesMeasurement ---
-
-    #[test]
-    fn measurement_zero_and_add() {
-        let m = AllocatedBytesMeasurement(Cell::new(false), &SHARED);
-        assert_eq!(m.zero(), 0);
-        assert_eq!(m.add(&100, &200), 300);
-    }
-
-    #[test]
-    fn measurement_start_end_tracks_delta() {
-        let m = AllocatedBytesMeasurement(Cell::new(false), &SHARED);
-        let start = m.start();
-        let layout = Layout::from_size_align(256, 8).unwrap();
+    fn allocate(bytes: usize) {
+        let layout = Layout::from_size_align(bytes, 8).unwrap();
         let ptr = unsafe { SHARED.alloc(layout) };
-        // Other tests may also allocate via SHARED concurrently, so allow >= 256.
-        assert!(m.end(start) >= 256);
+        assert!(!ptr.is_null());
         unsafe { SHARED.dealloc(ptr, layout) };
     }
 
     #[test]
-    fn measurement_to_f64_alternates_epsilon() {
-        let m = AllocatedBytesMeasurement(Cell::new(false), &SHARED);
-        // Initial state: Cell = false → first result is value - 0.01
-        assert!((m.to_f64(&1000) - 999.99).abs() < 1e-9);
-        // After first call: Cell = true → result is value + 0.01
-        assert!((m.to_f64(&1000) - 1000.01).abs() < 1e-9);
-        // Alternates back
-        assert!((m.to_f64(&1000) - 999.99).abs() < 1e-9);
+    fn measurement_zero_and_add() {
+        let measurement = AllocatedBytesMeasurement(&SHARED);
+        assert_eq!(measurement.zero(), 0);
+        assert_eq!(measurement.add(&100, &200), 300);
+    }
+
+    #[test]
+    fn measurement_tracks_only_allocations_in_window_on_current_thread() {
+        let measurement = AllocatedBytesMeasurement(&SHARED);
+        allocate(32);
+        measurement.start();
+        std::thread::spawn(|| allocate(128)).join().unwrap();
+        allocate(64);
+        allocate(256);
+        assert_eq!(measurement.end(()), 320);
+        SHARED.assert_no_allocations("empty workload", || {});
+    }
+
+    #[test]
+    fn measurement_reports_exact_bytes() {
+        let measurement = AllocatedBytesMeasurement(&SHARED);
+        assert_eq!(measurement.to_f64(&1000), 1000.0);
+        assert_eq!(measurement.to_f64(&1000), 1000.0);
+    }
+
+    #[test]
+    #[should_panic(expected = "allocating workload must not allocate")]
+    fn zero_allocation_check_detects_allocations() {
+        SHARED.assert_no_allocations("allocating workload", || allocate(32));
     }
 
     #[test]
