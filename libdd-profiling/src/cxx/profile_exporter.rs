@@ -46,7 +46,7 @@ fn apply_timeout_and_resolver(
 ) -> Endpoint {
     // Set timeout if non-zero (0 means use default).
     if timeout_ms > 0 {
-        endpoint.timeout_ms = timeout_ms;
+        endpoint.set_timeout_ms(timeout_ms);
     }
     endpoint.with_system_resolver(use_system_resolver)
 }

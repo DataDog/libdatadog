@@ -291,10 +291,7 @@ async fn fetcher(
     director_root: Vec<u8>,
 ) -> AgentlessFetcher<MockHttp> {
     AgentlessFetcher {
-        endpoint: Endpoint {
-            timeout_ms: 30_000,
-            ..Endpoint::from_slice("http://localhost/")
-        },
+        endpoint: Endpoint::from_slice("http://localhost/").with_timeout(30_000),
         http,
         director_client: TUFClient::with_trusted_root(
             tuf::client::Config::default(),

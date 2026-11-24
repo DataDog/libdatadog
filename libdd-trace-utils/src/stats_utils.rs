@@ -71,7 +71,7 @@ mod mini_agent {
         let client = H::new_client();
         let req = http::Request::builder()
             .method(http::Method::POST)
-            .uri(target.url.clone())
+            .uri(target.url().clone())
             .header("Content-Type", "application/msgpack")
             .header("Content-Encoding", "gzip")
             .header("DD-API-KEY", api_key)

@@ -1021,15 +1021,12 @@ impl<R: SharedRuntime> TraceExporterBuilder<R> {
             let stats_uri = parse_uri(stats_url).map_err(|e: anyhow::Error| {
                 TraceExporterError::Builder(BuilderErrorKind::InvalidUri(e.to_string()))
             })?;
-            let stats_endpoint = Endpoint {
-                url: stats_uri,
-                api_key: Some(api_key.into()),
-                timeout_ms: self
-                    .agentless_timeout
+            let mut stats_endpoint = Endpoint::from_url(stats_uri).with_api_key(api_key);
+            stats_endpoint.set_timeout_ms(
+                self.agentless_timeout
                     .unwrap_or(DEFAULT_AGENTLESS_TIMEOUT)
                     .as_millis() as u64,
-                ..Endpoint::default()
-            };
+            );
             let target = AgentlessStatsTarget {
                 endpoint: stats_endpoint,
                 version: crate::agentless::stats::agentless_stats_version(

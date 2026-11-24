@@ -274,14 +274,14 @@ fn init_crashtracker(dependency_paths: Option<*const *const libc::c_char>) -> an
         .resolve_frames(StacktraceCollection::EnabledWithSymbolsInReceiver)
         .demangle_names(true);
     if let Some(ep) = Config::get().crashtracker_endpoint.as_ref() {
-        config_builder = config_builder.endpoint_url(&ep.url.to_string());
-        if let Some(api_key) = ep.api_key.as_deref() {
+        config_builder = config_builder.endpoint_url(&ep.url().to_string());
+        if let Some(api_key) = ep.api_key() {
             config_builder = config_builder.endpoint_api_key(api_key);
         }
         config_builder = config_builder
-            .endpoint_timeout_ms(ep.timeout_ms)
-            .endpoint_use_system_resolver(ep.use_system_resolver);
-        if let Some(test_token) = ep.test_token.as_deref() {
+            .endpoint_timeout_ms(ep.timeout_ms())
+            .endpoint_use_system_resolver(ep.use_system_resolver());
+        if let Some(test_token) = ep.test_token() {
             config_builder = config_builder.endpoint_test_token(test_token);
         }
     }
