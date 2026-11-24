@@ -1,8 +1,9 @@
 // Copyright 2026-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-//! Cargo builds this integration-test target as its own top-level executable. Its global allocator
-//! intentionally intercepts allocations from the libraries linked into this binary.
+//! Cargo builds this integration-test target as a separate test executable. This file is the root
+//! crate of that executable, so its global allocator applies only to this binary and its linked
+//! libraries.
 //!
 //! The failure state is thread-local so concurrent synchronous tests do not interfere. Every
 //! tracked value below is created, used, and dropped on its test thread; this accounting is not
@@ -52,7 +53,8 @@ thread_local! {
     static STATE: Cell<State> = const { Cell::new(State::DISABLED) };
 }
 
-// This integration-test crate is the top-level package that selects the allocator for its binary.
+// This is the root crate of the test executable, so it selects the allocator only for this binary
+// and its linked libraries.
 #[global_allocator]
 static ALLOCATOR: FailingAllocator = FailingAllocator;
 
