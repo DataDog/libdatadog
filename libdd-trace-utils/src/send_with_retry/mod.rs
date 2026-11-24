@@ -84,10 +84,7 @@ impl std::error::Error for SendWithRetryError {}
 /// # use libdd_trace_utils::send_with_retry::*;
 /// # async fn run() -> SendWithRetryResult {
 /// let payload: Vec<u8> = vec![0, 1, 2, 3];
-/// let target = Endpoint {
-///     url: "localhost:8126/v04/traces".parse::<hyper::Uri>().unwrap(),
-///     ..Endpoint::default()
-/// };
+/// let target = Endpoint::from_url("localhost:8126/v04/traces".parse::<hyper::Uri>().unwrap());
 /// let mut headers = http::HeaderMap::new();
 /// headers.insert(
 ///     http::HeaderName::from_static("content-type"),

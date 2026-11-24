@@ -475,11 +475,8 @@ pub async fn poll_for_mock_hits(
 /// use libdd_types::Endpoint;
 ///
 /// let size = 512;
-/// let target_endpoint = Endpoint {
-///     url: "http://localhost:8080".to_owned().parse().unwrap(),
-///     api_key: Some("test-key".into()),
-///     ..Default::default()
-/// };
+/// let target_endpoint = Endpoint::from_url("http://localhost:8080".to_owned().parse().unwrap())
+///     .with_api_key("test-key");
 ///
 /// let send_data = create_send_data(size, &target_endpoint);
 /// ```

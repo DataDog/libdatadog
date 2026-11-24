@@ -133,13 +133,9 @@ where
         return Err(AgentlessV04Error::InvalidStatsEndpoint(config.endpoint_url));
     }
     let version = agentless_stats_version(&metadata.tracer_version, &metadata.language);
-    let mut endpoint = Endpoint::from_url(url)
-        .with_api_key(trace_config.api_key.clone());
+    let mut endpoint = Endpoint::from_url(url).with_api_key(trace_config.api_key.clone());
     endpoint.set_timeout_ms(u64::try_from(trace_config.timeout.as_millis()).unwrap_or(u64::MAX));
-    let target = AgentlessStatsTarget {
-        endpoint,
-        version,
-    };
+    let target = AgentlessStatsTarget { endpoint, version };
     AgentlessStatsExporter::new(
         config.bucket_size,
         StatsMetadata::from(metadata.clone()),
