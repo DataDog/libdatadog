@@ -13,7 +13,6 @@ Crash detection and reporting library for Datadog APM.
 - **Signal Handling**: Handles Unix signals (SIGSEGV, SIGABRT, SIGBUS, etc.)
 - **Windows Support**: SEH (Structured Exception Handling) on Windows
 - **Metadata Collection**: Gathers crash context, environment, and tags
-- **Async Reporting**: Non-blocking crash report transmission
 - **Symbolication**: Symbol resolution using blazesym
 - **Telemetry Integration**: Reports crashes via Datadog telemetry
 - **Receiver Binary**: Standalone crash receiver process
@@ -55,4 +54,15 @@ use libdd_crashtracker;
 ## Receiver Binary
 
 The crate includes a `crashtracker-receiver` binary that runs as a separate process to ensure crash reports are sent even when the main process crashes.
+
+## Independently supervised receiver
+
+On Unix, the default collector starts a receiver and waits for it to finish, including report delivery, up to the collector timeout.
+A separate process does not by itself let the receiver survive workload shutdown.
+
+To let the collector exit before delivery completes, run the receiver outside the workload shutdown boundary.
+Serve each connection with `async_receiver_entry_point_unix_listener`.
+Configure the collector with the same socket path using `CrashtrackerConfigurationBuilder::unix_socket_path`.
+Use a socket that only trusted collectors can access.
+The receiver closes the collector connection after capture and frame resolution, before it uploads the report.
 
