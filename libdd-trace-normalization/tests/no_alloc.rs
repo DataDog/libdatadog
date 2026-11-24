@@ -59,3 +59,26 @@ fn normalized_span_does_not_allocate() {
     let n = allocations(|| normalizer_v1::normalize_span(&mut span, "python").unwrap());
     assert_eq!(n, 0);
 }
+
+#[test]
+#[cfg_attr(miri, ignore)]
+fn normalized_chunk_does_not_allocate() {
+    let mut chunk = test_types::TestChunk {
+        trace_id: 1,
+        spans: vec![test_types::normalized_span(), test_types::normalized_span()],
+        ..Default::default()
+    };
+    chunk.spans[1].span_id += 1;
+    let opts = normalizer_v1::NormalizeOptions {
+        lang: "python",
+        component2name: false,
+    };
+    let mut seen = std::collections::HashSet::new();
+    // The first call allocates the set, which later calls reuse.
+    normalizer_v1::count_duplicate_span_ids(&chunk, &mut seen, &mut ());
+    let n = allocations(|| {
+        normalizer_v1::normalize_chunk_with(&mut chunk, &opts, &mut ()).unwrap();
+        normalizer_v1::count_duplicate_span_ids(&chunk, &mut seen, &mut ());
+    });
+    assert_eq!(n, 0);
+}

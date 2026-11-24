@@ -31,6 +31,7 @@ pub struct TestSpan {
     pub start: i64,
     pub duration: i64,
     pub env: Option<String>,
+    pub component: Option<String>,
     pub attrs: HashMap<String, Value>,
     pub links: Vec<TestLink>,
 }
@@ -157,7 +158,7 @@ impl Span for TestSpan {
         None
     }
     fn component(&self) -> Option<&str> {
-        None
+        self.component.as_deref()
     }
     fn span_events(&self) -> impl Iterator<Item = &TestLink> {
         std::iter::empty()
@@ -195,7 +196,9 @@ impl SpanMut for TestSpan {
         self.env = Some(value);
     }
     fn set_version(&mut self, _: String) {}
-    fn set_component(&mut self, _: String) {}
+    fn set_component(&mut self, value: String) {
+        self.component = (!value.is_empty()).then_some(value);
+    }
     fn span_events_mut(&mut self) -> impl Iterator<Item = &mut TestLink> {
         std::iter::empty()
     }
@@ -252,6 +255,7 @@ pub fn normalized_span() -> TestSpan {
         start: 1_448_466_874_000_000_000,
         duration: 10_000_000,
         env: Some("prod".to_owned()),
+        component: Some("django".to_owned()),
         attrs: HashMap::from([
             ("peer.service".to_owned(), string("postgres")),
             ("_dd.base_service".to_owned(), string("django-app")),
