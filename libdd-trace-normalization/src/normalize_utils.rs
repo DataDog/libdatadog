@@ -208,60 +208,74 @@ fn normalize(tag: &mut String, remove_digit_start_char: bool) {
     bytes.truncate(write);
 }
 
+/// Whether `name` is a normalized metric name, as the agent's `isValidNormalizedMetricName`
+/// checks: an ASCII letter, then ASCII letters, digits, `.` and `_`, with no `__` and no `_.`.
+fn is_valid_normalized_metric_name(name: &[u8]) -> bool {
+    let Some((first, rest)) = name.split_first() else {
+        return false;
+    };
+    if !first.is_ascii_alphabetic() {
+        return false;
+    }
+    let mut prev = *first;
+    for &b in rest {
+        let valid = b.is_ascii_alphanumeric() || (matches!(b, b'.' | b'_') && prev != b'_');
+        if !valid {
+            return false;
+        }
+        prev = b;
+    }
+    true
+}
+
+/// Normalizes a span name, as the agent's `normMetricNameParse` does.
+///
+/// Characters up to the first ASCII letter are removed: if there is none, the name becomes
+/// empty. Then each run of characters other than ASCII letters, digits and `.` becomes one `_`, an
+/// `_` before a `.` is removed, and no `_` follows a `.`. Consecutive periods are kept. A trailing
+/// `_` is removed.
 fn normalize_metric_name(name: &mut String) {
-    // Since we know that we're only going to write valid utf8 we can work with the Vec directly
+    // SAFETY: only ASCII bytes are written, so the buffer stays valid UTF-8. Non-ASCII bytes are
+    // either removed or replaced as a whole run, as no ASCII byte is part of a multi-byte
+    // character.
     let bytes = unsafe { name.as_mut_vec() };
-    if bytes.is_empty() {
+    let Some(start) = bytes.iter().position(u8::is_ascii_alphabetic) else {
+        bytes.clear();
+        return;
+    };
+    if is_valid_normalized_metric_name(&bytes[start..]) {
+        bytes.drain(..start);
+        if bytes.last() == Some(&b'_') {
+            bytes.pop();
+        }
         return;
     }
 
-    // Find first alpha character, if none is found the metric name is empty
-    let Some((mut read_cursor, _)) = bytes
-        .iter()
-        .enumerate()
-        .find(|(_, c)| c.is_ascii_alphabetic())
-    else {
-        *name = String::new();
-        return;
-    };
-    let mut write_cursor = 0;
-    let mut last_written_char = 0;
-    loop {
-        if read_cursor >= bytes.len() {
-            break;
+    // `bytes[start]` is a letter, so `write` is at least 1 after the first iteration, and the write
+    // position never passes the read position.
+    let mut write = 0;
+    for read in start..bytes.len() {
+        let b = bytes[read];
+        if b.is_ascii_alphanumeric() {
+            bytes[write] = b;
+            write += 1;
+        } else if b == b'.' {
+            if bytes[write - 1] == b'_' {
+                // An `_` before a `.` is replaced by the `.`.
+                bytes[write - 1] = b'.';
+            } else {
+                bytes[write] = b'.';
+                write += 1;
+            }
+        } else if !matches!(bytes[write - 1], b'.' | b'_') {
+            bytes[write] = b'_';
+            write += 1;
         }
-        match (bytes[read_cursor], last_written_char) {
-            (b @ (b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9'), _) => {
-                bytes[write_cursor] = b;
-                last_written_char = b;
-            }
-            // If we've written a _ last, replace it with a .
-            (b'.', b'_') => {
-                // This safe because the first character is alpha so
-                // we don't go back to the beginning
-                write_cursor -= 1;
-                bytes[write_cursor] = b'.';
-                last_written_char = b'.'
-            }
-            // If we've written a _ or a . last, do nothing
-            (_, b'_' | b'.') => {}
-            (b @ (b'_' | b'.'), _) => {
-                bytes[write_cursor] = b;
-                last_written_char = b;
-            }
-            // Otherwise write _ instead of any non conforming char
-            (_, _) => {
-                bytes[write_cursor] = b'_';
-                last_written_char = b'_';
-            }
-        }
-        write_cursor += 1;
-        read_cursor += 1;
     }
-    if last_written_char == b'_' {
-        write_cursor -= 1;
+    if bytes[write - 1] == b'_' {
+        write -= 1;
     }
-    bytes.truncate(write_cursor);
+    bytes.truncate(write);
 }
 
 // truncate_utf8 truncates the given string to make sure it uses less than limit bytes.
@@ -303,6 +317,20 @@ mod tests {
         [test_normalize_dash_string]    ["bad-name"]                        ["bad_name"];
         [test_normalize_invalid_string] ["&***"]                            ["unnamed_operation"];
         [test_normalize_invalid_prefix] ["&&&&&&&_test-name-"]              ["test_name"];
+        // From TestNormalizeName in the agent's normalize_test.go.
+        [test_normalize_last_underscore] ["last.underscore_trunc_"]         ["last.underscore_trunc"];
+        [test_normalize_last_double_underscore] ["last.double_underscore_trunc__"] ["last.double_underscore_trunc"];
+        [test_normalize_double_point]   ["double..point"]                   ["double..point"];
+        [test_normalize_other_char]     ["other_^.character^^_than_underscore"] ["other.character_than_underscore"];
+        [test_normalize_non_alpha_prefix] ["^^_.non_alpha.prefix"]          ["non_alpha.prefix"];
+        [test_normalize_underscore]     ["_"]                               ["unnamed_operation"];
+        // Consecutive periods are kept, as in the agent.
+        [test_normalize_double_point_repaired] ["http..request!"]           ["http..request"];
+        [test_normalize_underscore_double_point] ["a_..b!"]                 ["a..b"];
+        // A valid name is kept as is, but a repaired one has no `_` after a `.`.
+        [test_normalize_point_underscore_valid] ["a._b"]                    ["a._b"];
+        [test_normalize_point_underscore_repaired] ["a._b!"]                ["a.b"];
+        [test_normalize_non_ascii]      ["a\u{e9}b"]                        ["a_b"];
     )]
     #[test]
     fn test_name() {

@@ -548,6 +548,7 @@ mod tests {
             (Value::Float(503.0), true),
             (Value::String("999".to_owned()), false),
             (Value::String("abc".to_owned()), false),
+            (Value::String("+200".to_owned()), false),
             (Value::Int(42), false),
             (Value::Float(200.5), false),
             (Value::Bool(true), false),
