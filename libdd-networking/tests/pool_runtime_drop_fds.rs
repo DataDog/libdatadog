@@ -84,31 +84,32 @@ mod single_threaded_tests {
         done_rx.recv_timeout(Duration::from_secs(5)).unwrap();
     }
 
+    /// fd counts are process-wide, so all checks share one test: two tests would run in
+    /// parallel under the standard test harness.
     #[test]
-    fn pooled_client_releases_driver_fds_after_runtime_drop() {
+    fn pooled_clients_release_driver_fds_after_runtime_drop() {
         let server = start_server();
-        let client = http_common::new_client_periodic();
+        let periodic_client = http_common::new_client_periodic();
+        let default_client = http_common::new_default_client();
         let baseline = driver_fds();
 
+        // One runtime drop, with the client kept alive.
         let rt = build_runtime();
-        send_from_task(&rt, &client, &server);
+        send_from_task(&rt, &periodic_client, &server);
         assert_ne!(driver_fds(), baseline, "the runtime should own driver fds");
         drop(rt);
+        assert_eq!(wait_for_baseline(baseline), baseline, "periodic client");
 
-        assert_eq!(wait_for_baseline(baseline), baseline);
-    }
-
-    #[test]
-    fn pooled_client_works_and_releases_driver_fds_across_runtimes() {
-        let server = start_server();
-        let client = http_common::new_default_client();
-        let baseline = driver_fds();
-
+        // The same client keeps working, and releasing the fds, across runtimes.
         for round in 0..2 {
             let rt = build_runtime();
-            send_from_task(&rt, &client, &server);
+            send_from_task(&rt, &default_client, &server);
             drop(rt);
-            assert_eq!(wait_for_baseline(baseline), baseline, "round {round}");
+            assert_eq!(
+                wait_for_baseline(baseline),
+                baseline,
+                "default client, round {round}"
+            );
         }
     }
 }
