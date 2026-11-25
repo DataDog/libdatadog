@@ -283,6 +283,7 @@ async fn send_with_response_policy<C: HttpClientCapability + SleepCapability>(
         match result {
             Ok(Ok(response)) => {
                 let status = response.status();
+                observed_status.record(status);
                 debug!(
                     url = %target.url,
                     status = status.as_u16(),
