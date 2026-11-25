@@ -75,6 +75,10 @@ impl<S: SpanWithTraceId> Attributes for RootSpanChunk<'_, S> {
     fn attribute_f64(&self, _key: &str) -> Option<f64> {
         None
     }
+
+    fn attribute(&self, _key: &str) -> Option<AttributeRef<'_, S::Values>> {
+        None
+    }
 }
 
 impl<S: SpanWithTraceId> AttributesIter for RootSpanChunk<'_, S> {

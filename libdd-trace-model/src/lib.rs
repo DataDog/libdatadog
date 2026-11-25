@@ -13,9 +13,11 @@ mod compat;
 pub use chunk_span_view::ChunkSpanView;
 pub use compat::CompatSpan;
 
+use alloc::borrow::Cow;
 use alloc::sync::Arc;
 use core::borrow::Borrow;
 use core::fmt::Debug;
+use core::fmt::Write as _;
 use core::hash::{BuildHasher, Hash};
 use std::collections::HashMap;
 
@@ -128,6 +130,12 @@ pub trait Attributes {
     fn has_attribute(&self, key: &str) -> bool {
         self.attribute_str(key).is_some() || self.attribute_f64(key).is_some()
     }
+
+    /// Get the value of the attribute for a given key, of any type, `None` if it is missing.
+    ///
+    /// Unlike [`AttributesMut::attribute_mut`], it doesn't need a mutable borrow, so storage that
+    /// copies on write isn't copied to read a value.
+    fn attribute(&self, key: &str) -> Option<AttributeRef<'_, Self::Values>>;
 }
 
 /// Converts `f` to an `i64` if it is exactly an integer within range.
@@ -207,8 +215,21 @@ pub trait Span: Attributes {
     /// The span id of this span's parent, 0 for a trace root
     fn parent_id(&self) -> u64;
     /// The start timestamp, in nanoseconds since the unix epoch
+    ///
+    /// # V1 spans
+    ///
+    /// The V1 protocol encodes the start and the duration as `u64`, and the agent's V1 path works
+    /// on `u64` values. A V1 value up to `i64::MAX` (until the year 2262) converts exactly, and
+    /// the rules of `libdd-trace-normalization`'s `normalizer_v1` give the agent's result for it.
+    /// A V1 start above `i64::MAX` doesn't fit: an implementation that saturates it to `i64::MAX`
+    /// gets a non-zero duration set to 0 by the normalizer, where the agent keeps it, and one that
+    /// bit-casts it gets a negative start, which the normalizer replaces.
     fn start(&self) -> i64;
     /// The duration, in nanoseconds
+    ///
+    /// For V1 spans, see [`Span::start`]. A V1 duration above `i64::MAX` is invalid: the agent
+    /// sets it to 0, and the normalizer does the same with a negative duration, so an
+    /// implementation can bit-cast it or saturate it.
     fn duration(&self) -> i64;
     /// Returns true if the span is an error
     fn is_error(&self) -> bool;
@@ -540,6 +561,12 @@ impl<T: ValueTypes> AttributeValue<T> {
         }
     }
 
+    /// The value formatted as a string, see [`AttributeRef::format_as_string`].
+    #[must_use]
+    pub fn format_as_string(&self) -> Cow<'_, str> {
+        AttributeRef::from(self).format_as_string()
+    }
+
     /// The numeric value, `None` if this isn't a number. Integers are converted to `f64`.
     #[must_use]
     pub const fn as_f64(&self) -> Option<f64> {
@@ -641,6 +668,78 @@ impl<'a, T: ValueTypes> AttributeRef<'a, T> {
     }
 }
 
+impl<'a, T: ValueTypes> AttributeRef<'a, T> {
+    /// The value formatted as a string, as the agent's `AnyValue.AsString` does for a V1
+    /// attribute (`pkg/proto/pbgo/trace/idx`).
+    ///
+    /// - A string is returned as is, without copying it.
+    /// - A boolean is `true` or `false`, and an integer is in decimal.
+    /// - A float is formatted as Go's `strconv.FormatFloat(f, 'f', -1, 64)`: the shortest decimal
+    ///   representation that round-trips, never in exponent form. The infinities are `+Inf` and
+    ///   `-Inf`, and NaN is `NaN`.
+    /// - Bytes are read as UTF-8. Unlike Go, which keeps them byte for byte, invalid UTF-8
+    ///   sequences are replaced with `U+FFFD`: a Rust string must be valid UTF-8.
+    /// - An array is `[a,b]`, and a map is `{k=v,l=w}`, with the entries in the iteration order of
+    ///   the map.
+    #[must_use]
+    pub fn format_as_string(&self) -> Cow<'a, str> {
+        match *self {
+            Self::String(s) => Cow::Borrowed(s),
+            Self::Bool(b) => Cow::Borrowed(if b { "true" } else { "false" }),
+            _ => {
+                let mut out = String::new();
+                self.write_as_string(&mut out);
+                Cow::Owned(out)
+            }
+        }
+    }
+
+    fn write_as_string(&self, out: &mut String) {
+        // Writing to a `String` doesn't fail, so the `write!` results are ignored.
+        match *self {
+            Self::String(s) => out.push_str(s),
+            Self::Bool(b) => out.push_str(if b { "true" } else { "false" }),
+            Self::Int(i) => {
+                let _ = write!(out, "{i}");
+            }
+            Self::Float(f) => {
+                if f == f64::INFINITY {
+                    out.push_str("+Inf");
+                } else if f == f64::NEG_INFINITY {
+                    out.push_str("-Inf");
+                } else {
+                    // `Display` gives the shortest representation that round-trips, without an
+                    // exponent, and `NaN`, as Go's `FormatFloat` does.
+                    let _ = write!(out, "{f}");
+                }
+            }
+            Self::Bytes(b) => out.push_str(&String::from_utf8_lossy(b)),
+            Self::Array(values) => {
+                out.push('[');
+                for (i, v) in values.iter().enumerate() {
+                    if i > 0 {
+                        out.push(',');
+                    }
+                    AttributeRef::from(v).write_as_string(out);
+                }
+                out.push(']');
+            }
+            Self::KeyValueList(entries) => {
+                out.push('{');
+                for (i, (k, v)) in entries.iter().enumerate() {
+                    if i > 0 {
+                        out.push(',');
+                    }
+                    out.push_str(k);
+                    out.push('=');
+                    AttributeRef::from(v).write_as_string(out);
+                }
+                out.push('}');
+            }
+        }
+    }
+}
+
 impl<'a, T: ValueTypes> From<&'a AttributeValue<T>> for AttributeRef<'a, T> {
     fn from(value: &'a AttributeValue<T>) -> Self {
         match value {
@@ -721,6 +820,54 @@ mod tests {
         assert_eq!(V::Int(i64::MAX).as_i64(), Some(i64::MAX));
         assert_eq!(V::Float(2.0).as_i64(), Some(2));
         assert_eq!(str_value("2").as_i64(), None);
+    }
+
+    #[test]
+    fn format_as_string() {
+        let cases = [
+            (str_value("a b"), "a b"),
+            (V::Bool(false), "false"),
+            (V::Int(-42), "-42"),
+            (V::Float(503.0), "503"),
+            (V::Float(-2.5), "-2.5"),
+            (V::Float(0.1), "0.1"),
+            (V::Float(1e21), "1000000000000000000000"),
+            (V::Float(1e-7), "0.0000001"),
+            (V::Float(-0.0), "-0"),
+            (V::Float(f64::NAN), "NaN"),
+            (V::Float(f64::INFINITY), "+Inf"),
+            (V::Float(f64::NEG_INFINITY), "-Inf"),
+            (V::Bytes(b"200".to_vec()), "200"),
+            (V::Bytes(vec![b'a', 0xff, b'b']), "a\u{FFFD}b"),
+            (V::Array(vec![]), "[]"),
+            (
+                V::Array(vec![
+                    V::Int(1),
+                    V::Array(vec![V::Bool(true), V::Float(2.5)]),
+                ]),
+                "[1,[true,2.5]]",
+            ),
+            (V::KeyValueList(Map::new()), "{}"),
+            (
+                V::KeyValueList(Map::from([(
+                    "k".to_owned(),
+                    V::Array(vec![str_value("v")]),
+                )])),
+                "{k=[v]}",
+            ),
+        ];
+        for (value, expected) in cases {
+            assert_eq!(value.format_as_string(), expected, "{value:?}");
+            assert_eq!(
+                AttributeRef::from(&value).format_as_string(),
+                expected,
+                "{value:?}"
+            );
+        }
+        assert!(matches!(
+            str_value("s").format_as_string(),
+            Cow::Borrowed("s")
+        ));
     }
 
     #[test]

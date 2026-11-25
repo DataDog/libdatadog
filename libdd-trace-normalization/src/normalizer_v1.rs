@@ -4,6 +4,10 @@
 //! Normalization of spans and trace chunks through the [`libdd_trace_model`] traits, mirroring the
 //! agent's `normalizeV1` and `normalizeTraceChunkV1` (`pkg/trace/agent/normalizer.go`). Senders
 //! that bypass the agent (agentless) apply it in the agent's place.
+//!
+//! The V1 protocol encodes the start and the duration of a span as `u64`, and the trait gives
+//! them as `i64`. The rules here give the agent's result for values up to `i64::MAX`, see
+//! [`libdd_trace_model::Span::start`] for the values above it.
 
 use crate::normalize_utils;
 use crate::normalizer::is_valid_http_status_code;
@@ -38,12 +42,7 @@ pub fn normalize_span<S: SpanMut>(span: &mut S, lang: &str) -> anyhow::Result<()
         if let Some(v) = span
             .attribute_str(key)
             .filter(|v| !v.is_empty())
-            .and_then(|v| {
-                normalized(v, |s| {
-                    normalize_utils::truncate_utf8(s, normalize_utils::MAX_SERVICE_LEN);
-                    normalize_utils::normalize_tag(s);
-                })
-            })
+            .and_then(|v| normalized(v, normalize_utils::normalize_peer_service))
         {
             span.set_attribute(
                 TraceText::from_static(key),
@@ -63,6 +62,14 @@ pub fn normalize_span<S: SpanMut>(span: &mut S, lang: &str) -> anyhow::Result<()
         span.set_parent_id(0);
     }
 
+    // The agent's `validateAndFixDurationV1` and `validateAndFixStartTimeV1` work on `u64`
+    // values, and the trait gives `i64` values. For a start and a duration up to `i64::MAX`, the
+    // `i64` rules give the same result: a duration that makes `start + duration` overflow
+    // `i64::MAX` becomes 0, and a start before the year 2000 becomes `now - duration`, or `now` if
+    // that is negative. A V1 duration above `i64::MAX` is a negative `i64` once bit-cast, which
+    // also becomes 0, as in the agent. A V1 start above `i64::MAX` doesn't fit (see
+    // `Span::start`): saturated to `i64::MAX`, its non-zero duration becomes 0, where the agent
+    // keeps it.
     let (mut start, mut duration) = (span.start(), span.duration());
     normalize_utils::normalize_span_start_duration(&mut start, &mut duration);
     span.set_start(start);
@@ -74,32 +81,31 @@ pub fn normalize_span<S: SpanMut>(span: &mut S, lang: &str) -> anyhow::Result<()
     if let Some(v) = span
         .env()
         .filter(|v| !v.is_empty())
-        .and_then(|v| normalized(v, normalize_utils::normalize_tag))
+        .and_then(|v| normalized(v, normalize_utils::normalize_tag_value))
     {
         span.set_env(v.into());
     }
 
-    if span.has_attribute(HTTP_STATUS_CODE_KEY) {
-        let valid = match span.attribute_str(HTTP_STATUS_CODE_KEY) {
-            Some(code) => is_valid_http_status_code(code),
-            None => span
-                .attribute_i64(HTTP_STATUS_CODE_KEY)
-                .is_some_and(|code| (100..600).contains(&code)),
-        };
-        if !valid {
-            span.remove_attribute(HTTP_STATUS_CODE_KEY);
-        }
+    // The agent reads both attributes with `GetAttributeAsString`, which formats a value of any
+    // type (see `AttributeRef::format_as_string`).
+    if span
+        .attribute(HTTP_STATUS_CODE_KEY)
+        .is_some_and(|code| !is_valid_http_status_code(&code.format_as_string()))
+    {
+        span.remove_attribute(HTTP_STATUS_CODE_KEY);
     }
 
     for link in span.span_links_mut() {
-        if let Some(v) = link
-            .attribute_str(LINK_NAME_KEY)
-            .and_then(|v| normalized(v, normalize_utils::normalize_name))
+        let repaired = link.attribute(LINK_NAME_KEY).and_then(|value| {
+            let mut name = value.format_as_string().into_owned();
+            normalize_utils::normalize_name(&mut name);
+            // As the agent, write the name back as a string, whatever the type of the value.
+            (value.as_str() != Some(name.as_str())).then_some(name)
+        });
+        if let Some(name) = repaired
+            && let Some(value) = link.attribute_mut(LINK_NAME_KEY)
         {
-            link.set_attribute(
-                TraceText::from_static(LINK_NAME_KEY),
-                AttributeValue::String(v.into()),
-            );
+            *value = AttributeValue::String(name.into());
         }
     }
     Ok(())
@@ -127,7 +133,10 @@ pub fn normalize_chunk<C: TraceChunkMut>(chunk: &mut C, lang: &str) -> anyhow::R
 #[cfg(test)]
 mod tests {
     use super::*;
-    use libdd_trace_model::{Attributes, AttributesMut, Span, StringData, TraceChunk};
+    use libdd_trace_model::{
+        AttributeRef, Attributes, AttributesMut, Span, StringData, TraceChunk,
+    };
+    use std::cell::Cell;
     use std::collections::HashMap;
 
     type Value = AttributeValue<StringData>;
@@ -159,6 +168,15 @@ mod tests {
         attrs: HashMap<String, Value>,
     }
 
+    thread_local! {
+        static ATTRIBUTE_MUT_CALLS: Cell<usize> = const { Cell::new(0) };
+    }
+
+    /// The number of `AttributesMut::attribute_mut` calls on the test types, on this thread.
+    fn attribute_mut_calls() -> usize {
+        ATTRIBUTE_MUT_CALLS.with(Cell::get)
+    }
+
     macro_rules! impl_attributes {
         ($($ty:ty),*) => {$(
             impl Attributes for $ty {
@@ -178,12 +196,16 @@ mod tests {
                 fn has_attribute(&self, key: &str) -> bool {
                     self.attrs.contains_key(key)
                 }
+                fn attribute(&self, key: &str) -> Option<AttributeRef<'_, StringData>> {
+                    self.attrs.get(key).map(Into::into)
+                }
             }
             impl AttributesMut for $ty {
                 fn retain_attributes(&mut self, mut f: impl FnMut(&str, &mut Value) -> bool) {
                     self.attrs.retain(|k, v| f(k, v));
                 }
                 fn attribute_mut(&mut self, key: &str) -> Option<&mut Value> {
+                    ATTRIBUTE_MUT_CALLS.with(|n| n.set(n.get() + 1));
                     self.attrs.get_mut(key)
                 }
                 fn set_attribute(&mut self, key: String, value: Value) {
@@ -423,6 +445,49 @@ mod tests {
     }
 
     #[test]
+    fn services_are_normalized_as_tag_values() {
+        // TestNormalizeServiceTagV1 in the agent's normalizer_test.go.
+        let mut span = TestSpan {
+            service: "retargeting(api-Staging ".to_owned(),
+            ..valid_span()
+        };
+        span.attrs.insert(
+            PEER_SERVICE_KEY.to_owned(),
+            Value::String("retargeting(api-Peer ".to_owned()),
+        );
+        span.attrs.insert(
+            BASE_SERVICE_KEY.to_owned(),
+            Value::String("retargeting(api-Base ".to_owned()),
+        );
+        let span = normalize(span);
+        assert_eq!(span.service, "retargeting_api-staging");
+        assert_eq!(
+            span.attribute_str(PEER_SERVICE_KEY),
+            Some("retargeting_api-peer")
+        );
+        assert_eq!(
+            span.attribute_str(BASE_SERVICE_KEY),
+            Some("retargeting_api-base")
+        );
+
+        // Leading digits are kept, and an invalid peer service becomes empty.
+        let mut span = TestSpan {
+            service: "1password".to_owned(),
+            ..valid_span()
+        };
+        span.attrs.insert(
+            PEER_SERVICE_KEY.to_owned(),
+            Value::String("127.0.0.1".to_owned()),
+        );
+        span.attrs
+            .insert(BASE_SERVICE_KEY.to_owned(), Value::String("!!!".to_owned()));
+        let span = normalize(span);
+        assert_eq!(span.service, "1password");
+        assert_eq!(span.attribute_str(PEER_SERVICE_KEY), Some("127.0.0.1"));
+        assert_eq!(span.attribute_str(BASE_SERVICE_KEY), Some(""));
+    }
+
+    #[test]
     fn name_and_resource() {
         let span = normalize(TestSpan {
             name: String::new(),
@@ -474,6 +539,47 @@ mod tests {
     }
 
     #[test]
+    fn start_and_duration_match_agent_u64_rules() {
+        // The agent's `validateAndFixDurationV1`, on `u64` values.
+        fn agent_duration(start: u64, duration: u64) -> u64 {
+            if duration > (i64::MAX as u64).wrapping_sub(start) {
+                0
+            } else {
+                duration
+            }
+        }
+        let max = i64::MAX as u64;
+        let valid = VALID_START as u64;
+        let starts = [946_684_800_000_000_000, valid, max - 1, max];
+        let durations = [
+            0,
+            1,
+            10,
+            max - valid,
+            max - valid + 1,
+            max,
+            // Bit-cast to a negative `i64`.
+            max + 1,
+            u64::MAX,
+        ];
+        for start in starts {
+            for duration in durations {
+                let span = normalize(TestSpan {
+                    start: start as i64,
+                    duration: duration as i64,
+                    ..valid_span()
+                });
+                let expected = agent_duration(start, duration);
+                assert_eq!(
+                    (span.start as u64, span.duration as u64),
+                    (start, expected),
+                    "start {start}, duration {duration}"
+                );
+            }
+        }
+    }
+
+    #[test]
     fn span_type_is_truncated() {
         let span = normalize(TestSpan {
             typ: "t".repeat(150),
@@ -489,11 +595,49 @@ mod tests {
             ..valid_span()
         });
         assert_eq!(span.env.as_deref(), Some("prod_env"));
+        // TestNormalizeEnvV1 in the agent's normalizer_test.go: leading digits are kept.
+        let span = normalize(TestSpan {
+            env: Some("123DEVELOPMENT".to_owned()),
+            ..valid_span()
+        });
+        assert_eq!(span.env.as_deref(), Some("123development"));
         let span = normalize(TestSpan {
             env: None,
             ..valid_span()
         });
         assert_eq!(span.env, None);
+    }
+
+    #[test]
+    fn attributes_are_read_without_attribute_mut() {
+        // `attribute_mut` can copy storage that copies on write: values are only read through
+        // `Attributes::attribute`.
+        for code in [Value::String("200".to_owned()), Value::Int(200)] {
+            let mut span = valid_span();
+            span.attrs.insert(HTTP_STATUS_CODE_KEY.to_owned(), code);
+            span.links.push(TestLink {
+                attrs: HashMap::from([(
+                    LINK_NAME_KEY.to_owned(),
+                    Value::String("valid_name".to_owned()),
+                )]),
+            });
+            let before = attribute_mut_calls();
+            let span = normalize(span);
+            assert_eq!(attribute_mut_calls(), before);
+            assert!(span.has_attribute(HTTP_STATUS_CODE_KEY));
+        }
+        // A repaired link name is written through `attribute_mut`.
+        let mut span = valid_span();
+        span.links.push(TestLink {
+            attrs: HashMap::from([(LINK_NAME_KEY.to_owned(), Value::Int(1))]),
+        });
+        let before = attribute_mut_calls();
+        let span = normalize(span);
+        assert_eq!(attribute_mut_calls(), before + 1);
+        assert_eq!(
+            span.links[0].attrs.get(LINK_NAME_KEY),
+            Some(&Value::String("unnamed_operation".to_owned()))
+        );
     }
 
     #[test]
@@ -504,9 +648,20 @@ mod tests {
             (Value::Float(503.0), true),
             (Value::String("999".to_owned()), false),
             (Value::String("abc".to_owned()), false),
+            (Value::String("+200".to_owned()), false),
             (Value::Int(42), false),
             (Value::Float(200.5), false),
             (Value::Bool(true), false),
+            // The agent formats any type before it validates it.
+            (Value::Bytes(b"200".to_vec()), true),
+            (Value::Bytes(b"+200".to_vec()), false),
+            (Value::Int(-200), false),
+            (Value::Float(f64::INFINITY), false),
+            (Value::Array(vec![Value::Int(200)]), false),
+            (
+                Value::KeyValueList(HashMap::from([("a".to_owned(), Value::Int(200))])),
+                false,
+            ),
         ];
         for (value, kept) in cases {
             let mut span = valid_span();
@@ -519,17 +674,43 @@ mod tests {
 
     #[test]
     fn span_link_name() {
-        let mut span = valid_span();
-        span.links.push(TestLink {
-            attrs: HashMap::from([(LINK_NAME_KEY.to_owned(), Value::String(String::new()))]),
-        });
-        span.links.push(TestLink::default());
-        let span = normalize(span);
-        assert_eq!(
-            span.links[0].attribute_str(LINK_NAME_KEY),
-            Some("unnamed_operation")
-        );
-        assert!(!span.links[1].has_attribute(LINK_NAME_KEY));
+        // TestNormalizeSpanLinkNameV1 in the agent's normalizer_test.go, and values of other
+        // types, which the agent formats, normalizes, and writes back as strings.
+        let cases = [
+            (Value::String(String::new()), "unnamed_operation"),
+            (
+                Value::String("!@#$%^&*()_+".to_owned()),
+                "unnamed_operation",
+            ),
+            (Value::String("valid_name".to_owned()), "valid_name"),
+            (Value::String("http..request!".to_owned()), "http..request"),
+            (Value::Int(42), "unnamed_operation"),
+            (Value::Bool(true), "true"),
+            (Value::Float(1.5), "unnamed_operation"),
+            (Value::Bytes(b"Foo Bar".to_vec()), "Foo_Bar"),
+            (
+                Value::Array(vec![Value::String("a".to_owned()), Value::Int(1)]),
+                "a_1",
+            ),
+            (
+                Value::KeyValueList(HashMap::from([("k".to_owned(), Value::Bool(false))])),
+                "k_false",
+            ),
+        ];
+        for (value, expected) in cases {
+            let mut span = valid_span();
+            span.links.push(TestLink {
+                attrs: HashMap::from([(LINK_NAME_KEY.to_owned(), value.clone())]),
+            });
+            span.links.push(TestLink::default());
+            let span = normalize(span);
+            assert_eq!(
+                span.links[0].attrs.get(LINK_NAME_KEY),
+                Some(&Value::String(expected.to_owned())),
+                "{value:?}"
+            );
+            assert!(!span.links[1].has_attribute(LINK_NAME_KEY));
+        }
     }
 
     #[test]
