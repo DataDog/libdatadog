@@ -196,7 +196,18 @@ fn retains_only_the_latest_sampling_feedback() {
 
 #[test]
 fn malformed_later_feedback_does_not_displace_valid_rates() {
-    for later in ["[{}]", r#"{"rate_by_service":null}"#, "{}", "not json"] {
+    for later in [
+        b"[{}]".as_slice(),
+        br#"{"rate_by_service":null}"#,
+        b"{}",
+        b"not json",
+        br#"{"rate_by_service":{"a":0.5,"b":[]}}"#,
+        br#"{"rate_by_service":{"a":{}}}"#,
+        br#"{"rate_by_service":{"a":"0.5"}}"#,
+        br#"{"rate_by_service":{"a":-0.1}}"#,
+        br#"{"rate_by_service":{"a":1.1}}"#,
+        br#"{"rate_by_service":{"a":1e999}}"#,
+    ] {
         let server = MockServer::start();
         let rates = r#"{"rate_by_service":{"service:,env:":0.5}}"#;
         let first = server.mock(|when, then| {

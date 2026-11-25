@@ -52,10 +52,11 @@ impl<'de> serde::Deserialize<'de> for RatesObject {
                 self,
                 mut map: M,
             ) -> Result<RatesObject, M::Error> {
-                while map
-                    .next_entry::<serde::de::IgnoredAny, serde::de::IgnoredAny>()?
-                    .is_some()
-                {}
+                while let Some((_, rate)) = map.next_entry::<serde::de::IgnoredAny, f64>()? {
+                    if !(0.0..=1.0).contains(&rate) {
+                        return Err(serde::de::Error::custom("sampling rate outside [0, 1]"));
+                    }
+                }
                 Ok(RatesObject)
             }
         }
