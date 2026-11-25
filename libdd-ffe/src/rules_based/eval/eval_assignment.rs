@@ -626,16 +626,19 @@ impl Allocation {
         }
     }
 
+    /// The reason depends only on the allocation's rules and dates and on whether the selected
+    /// split declares shards. Full-range shards count as shards even though compilation drops
+    /// them, and the number of splits does not matter.
     fn assignment_reason(&self, split: &Split) -> AssignmentReason {
         let has_time_bounds = self.start_at.is_some() || self.end_at.is_some();
         if !self.rules.is_empty() {
             AssignmentReason::TargetingMatch
-        } else if has_time_bounds && self.splits.len() == 1 && split.shards.is_empty() {
-            AssignmentReason::Default
-        } else if self.splits.len() == 1 && !self.splits[0].has_shards {
-            AssignmentReason::Static
-        } else {
+        } else if split.has_shards {
             AssignmentReason::Split
+        } else if has_time_bounds {
+            AssignmentReason::Default
+        } else {
+            AssignmentReason::Static
         }
     }
 
