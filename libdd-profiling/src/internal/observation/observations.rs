@@ -128,6 +128,40 @@ impl Observations {
             }
         }
     }
+
+    /// Iterates over all observations (timestamped then aggregated), reusing a single
+    /// scratch buffer for timestamped values and borrowing aggregated slices in-place.
+    pub fn try_for_each<F>(self, mut f: F) -> anyhow::Result<()>
+    where
+        F: FnMut(Sample, Option<Timestamp>, &mut [i64]) -> anyhow::Result<()>,
+    {
+        let Some(NonEmptyObservations {
+            mut aggregated_data,
+            timestamped_data,
+            obs_len,
+            ..
+        }) = self.inner
+        else {
+            return Ok(());
+        };
+
+        let mut ts_iter = timestamped_data.try_into_iter()?;
+        let mut values = Vec::new();
+        values.try_reserve_exact(obs_len.len())?;
+        while let Some((sample, ts)) = ts_iter.next_into(&mut values) {
+            f(sample, Some(ts), &mut values)?;
+        }
+
+        for (sample, observation) in &mut aggregated_data.data {
+            // SAFETY: The only way to build one of these is through
+            // [Observations::add], which already checked that the length was correct.
+            let slice = unsafe { observation.as_mut_slice(obs_len) };
+            f(*sample, None, slice)?;
+        }
+
+        // Drop aggregated_data at end of scope, freeing all TrimmedObservations via its Drop impl.
+        Ok(())
+    }
 }
 
 #[derive(Default)]

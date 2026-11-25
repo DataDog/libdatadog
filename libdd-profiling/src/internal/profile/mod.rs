@@ -611,20 +611,27 @@ impl Profile {
 
         let omit_local_root_span_id = self.experimental_omit_local_root_span_id_when_serializing;
         let local_root_span_id_label = self.endpoints.local_root_span_id_label;
-        let iter = std::mem::take(&mut self.observations).try_into_iter()?;
-        for (sample, timestamp, mut values) in iter {
+
+        let locations_len = u64::try_from(self.locations.len())?;
+        for stacktrace in &self.stack_traces {
+            self.check_stacktrace_location_ids_are_valid(&stacktrace.locations, locations_len)?;
+        }
+
+        let mut location_ids: Vec<u64> = Vec::new();
+        let mut pprof_labels: Vec<protobuf::Label> = Vec::new();
+        let observations = std::mem::take(&mut self.observations);
+        observations.try_for_each(|sample, timestamp, values| {
             let off = sample.labels.to_offset();
             let labels = extended_label_sets.get_mut(off).ok_or_else(oob_label_set)?;
             let locations = &self.get_stacktrace(sample.stacktrace)?.locations;
-            let mut location_ids = Vec::new();
-            location_ids.try_reserve_exact(locations.len())?;
+            location_ids.clear();
+            location_ids.try_reserve(locations.len())?;
             location_ids.extend(locations.iter().map(LocationId::to_raw_id));
-            self.check_location_ids_are_valid(&location_ids, self.locations.len())?;
-            self.upscaling_rules.upscale_values(&mut values, labels);
+            self.upscaling_rules.upscale_values(values, labels);
 
-            let mut pprof_labels: Vec<_> = Vec::new();
-            // + 1 for the timestamp (which hasn't ben pushed yet)
-            pprof_labels.try_reserve_exact(labels.len() + 1)?;
+            pprof_labels.clear();
+            // + 1 for the timestamp (which hasn't been pushed yet)
+            pprof_labels.try_reserve(labels.len() + 1)?;
 
             // Try not to fail between labels.push and labels.pop, which would
             // leave the push.
@@ -648,7 +655,7 @@ impl Profile {
 
             let item = protobuf::Sample {
                 location_ids: Record::from(location_ids.as_slice()),
-                values: Record::from(values.as_slice()),
+                values: Record::from(&*values),
                 // SAFETY: converting &[Label] to &[Field<Label,..>] which is
                 // safe, because Field is repr(transparent).
                 labels: unsafe {
@@ -658,7 +665,8 @@ impl Profile {
             };
 
             Record::<_, 2, NO_OPT_ZERO>::from(item).encode(writer)?;
-        }
+            Ok(())
+        })?;
 
         for sample_type in self.sample_types.iter().copied() {
             self.ensure_custom_sample_type_resolved(sample_type, "sample")?;
@@ -766,10 +774,13 @@ impl Profile {
     /// In incident 35390 (JIRA PROF-11456) we observed invalid location_ids being present in
     /// emitted profiles. We're doing extra checks here so that if we see incorrect ids again,
     /// we are 100% sure they were not introduced prior to this stage.
-    fn check_location_ids_are_valid(&self, location_ids: &[u64], len: usize) -> anyhow::Result<()> {
-        let len: u64 = u64::try_from(len)?;
-        for id in location_ids.iter() {
-            let id = *id;
+    fn check_stacktrace_location_ids_are_valid(
+        &self,
+        locations: &[LocationId],
+        len: u64,
+    ) -> anyhow::Result<()> {
+        for id in locations.iter() {
+            let id = id.to_raw_id();
             // Location ids start from 1, that's why they're <= len instead of < len
             anyhow::ensure!(
                 id > 0 && id <= len,
