@@ -23,6 +23,14 @@ impl super::Backend for ReqwestBackend {
         client_config: &HttpClientConfig,
         transport: TransportConfig,
     ) -> Result<Self, HttpClientError> {
+        // reqwest builds its TLS configuration eagerly in `Client::builder().build()`,
+        // even for clients that will only ever speak plain HTTP, and panics when no
+        // process-wide crypto provider is installed (it is built with
+        // rustls-no-provider). Install one up front — this does not load
+        // certificates, so plain-HTTP clients still work in minimal environments.
+        #[cfg(any(feature = "https", feature = "fips"))]
+        crate::tls::ensure_crypto_provider_initialized();
+
         let mut builder = reqwest::Client::builder().timeout(client_config.timeout());
         let base_url_is_https = is_https_url(client_config.base_url());
 
