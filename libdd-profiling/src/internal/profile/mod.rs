@@ -617,21 +617,22 @@ impl Profile {
             self.check_stacktrace_location_ids_are_valid(&stacktrace.locations, locations_len)?;
         }
 
-        let mut location_ids: Vec<u64> = Vec::new();
-        let mut pprof_labels: Vec<protobuf::Label> = Vec::new();
+        let mut sample_encoder = protobuf::SampleEncoder::new();
+        let mut packed_location_ids: Vec<u8> = Vec::new();
+        let mut last_stacktrace: Option<StackTraceId> = None;
         let observations = std::mem::take(&mut self.observations);
         observations.try_for_each(|sample, timestamp, values| {
             let off = sample.labels.to_offset();
             let labels = extended_label_sets.get_mut(off).ok_or_else(oob_label_set)?;
-            let locations = &self.get_stacktrace(sample.stacktrace)?.locations;
-            location_ids.clear();
-            location_ids.try_reserve(locations.len())?;
-            location_ids.extend(locations.iter().map(LocationId::to_raw_id));
+            if last_stacktrace != Some(sample.stacktrace) {
+                let locations = &self.get_stacktrace(sample.stacktrace)?.locations;
+                protobuf::encode_packed_u64(
+                    locations.iter().map(LocationId::to_raw_id),
+                    &mut packed_location_ids,
+                )?;
+                last_stacktrace = Some(sample.stacktrace);
+            }
             self.upscaling_rules.upscale_values(values, labels);
-
-            pprof_labels.clear();
-            // + 1 for the timestamp (which hasn't been pushed yet)
-            pprof_labels.try_reserve(labels.len() + 1)?;
 
             // Try not to fail between labels.push and labels.pop, which would
             // leave the push.
@@ -639,32 +640,28 @@ impl Profile {
                 // The memory was reserved by `expand_label_set`.
                 labels.push(Label::num(self.timestamp_key, ts.get(), StringId::ZERO))
             }
-            if omit_local_root_span_id {
-                pprof_labels.extend(
+            let encode_res = if omit_local_root_span_id {
+                sample_encoder.encode_sample_record(
+                    &packed_location_ids,
+                    values,
                     labels
                         .iter()
                         .filter(|label| label.get_key() != local_root_span_id_label)
                         .map(protobuf::Label::from),
-                );
+                    writer,
+                )
             } else {
-                pprof_labels.extend(labels.iter().map(protobuf::Label::from));
-            }
+                sample_encoder.encode_sample_record(
+                    &packed_location_ids,
+                    values,
+                    labels.iter().map(protobuf::Label::from),
+                    writer,
+                )
+            };
             if timestamp.is_some() {
                 labels.pop();
             }
-
-            let item = protobuf::Sample {
-                location_ids: Record::from(location_ids.as_slice()),
-                values: Record::from(&*values),
-                // SAFETY: converting &[Label] to &[Field<Label,..>] which is
-                // safe, because Field is repr(transparent).
-                labels: unsafe {
-                    &*(pprof_labels.as_slice() as *const [protobuf::Label]
-                        as *const [Record<protobuf::Label, 3, NO_OPT_ZERO>])
-                },
-            };
-
-            Record::<_, 2, NO_OPT_ZERO>::from(item).encode(writer)?;
+            encode_res?;
             Ok(())
         })?;
 
