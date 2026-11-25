@@ -8,10 +8,13 @@ use crate::CrashtrackerConfiguration;
 use crate::StacktraceCollection;
 use crate::crash_info::CrashInfo;
 use anyhow::Context;
+use std::fs::File;
+use std::os::fd::{AsFd, AsRawFd, OwnedFd};
+use std::os::unix::{fs::FileTypeExt, net::UnixStream as StdUnixStream};
 use std::time::Duration;
 use tokio::{
     io::{AsyncBufReadExt, BufReader},
-    net::UnixListener,
+    net::{UnixListener, UnixStream, unix::pipe},
 };
 
 /*-----------------------------------------
@@ -19,17 +22,78 @@ use tokio::{
 ------------------------------------------*/
 
 pub fn receiver_entry_point_stdin() -> anyhow::Result<()> {
-    let stream = BufReader::new(tokio::io::stdin());
     let rt = tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()?;
-    // The crashing process started this receiver with its own privileges.
-    rt.block_on(receiver_entry_point(
-        receiver_timeout(),
-        stream,
-        ReceiverFileAccess::Trusted,
-    ))?;
-    Ok(())
+    rt.block_on(async {
+        let input = File::from(std::io::stdin().as_fd().try_clone_to_owned()?);
+        let kind = input.metadata()?.file_type();
+        let timeout = receiver_timeout();
+        let access = ReceiverFileAccess::Trusted;
+        if !kind.is_socket() && !kind.is_fifo() {
+            drop(input);
+            return receiver_entry_point(timeout, BufReader::new(tokio::io::stdin()), access).await;
+        }
+
+        let mut stdin = PollableStdin::new(input)?;
+        let input = stdin.input.try_clone()?;
+        let report = if kind.is_socket() {
+            let socket = StdUnixStream::from(OwnedFd::from(input));
+            socket.set_nonblocking(true)?;
+            receive_and_resolve(
+                timeout,
+                BufReader::new(UnixStream::from_std(socket)?),
+                access,
+            )
+            .await
+        } else {
+            let pipe = pipe::Receiver::from_file(input)?;
+            receive_and_resolve(timeout, BufReader::new(pipe), access).await
+        };
+        let restored = stdin
+            .restore()
+            .context("Restoring receiver stdin blocking mode");
+        drop(stdin);
+        upload_report(report?).await?;
+        restored
+    })
+}
+
+struct PollableStdin {
+    input: File,
+    restore_blocking: bool,
+}
+
+impl PollableStdin {
+    fn new(input: File) -> std::io::Result<Self> {
+        // SAFETY: input owns an open descriptor and F_GETFL takes no third argument.
+        let flags = unsafe { libc::fcntl(input.as_raw_fd(), libc::F_GETFL) };
+        if flags == -1 {
+            return Err(std::io::Error::last_os_error());
+        }
+        Ok(Self {
+            input,
+            restore_blocking: flags & libc::O_NONBLOCK == 0,
+        })
+    }
+
+    fn restore(&mut self) -> std::io::Result<()> {
+        if !std::mem::take(&mut self.restore_blocking) {
+            return Ok(());
+        }
+        let mut nonblocking: libc::c_int = 0;
+        // SAFETY: input is still open and FIONBIO reads an initialized int.
+        if unsafe { libc::ioctl(self.input.as_raw_fd(), libc::FIONBIO, &mut nonblocking) } == -1 {
+            return Err(std::io::Error::last_os_error());
+        }
+        Ok(())
+    }
+}
+
+impl Drop for PollableStdin {
+    fn drop(&mut self) {
+        let _ = self.restore();
+    }
 }
 
 pub async fn async_receiver_entry_point_unix_listener(
@@ -115,25 +179,39 @@ pub fn get_receiver_unix_socket(socket_path: impl AsRef<str>) -> anyhow::Result<
 /// description.
 pub(crate) async fn receiver_entry_point(
     timeout: Duration,
-    mut stream: impl AsyncBufReadExt + std::marker::Unpin,
+    stream: impl AsyncBufReadExt + std::marker::Unpin,
     access: ReceiverFileAccess,
 ) -> anyhow::Result<()> {
-    if let Some((config, mut crash_info)) =
-        receive_report_from_stream(timeout, &mut stream, access).await?
-    {
+    upload_report(receive_and_resolve(timeout, stream, access).await?).await
+}
+
+async fn receive_and_resolve(
+    timeout: Duration,
+    mut stream: impl AsyncBufReadExt + std::marker::Unpin,
+    access: ReceiverFileAccess,
+) -> anyhow::Result<Option<(CrashtrackerConfiguration, CrashInfo)>> {
+    let mut report = receive_report_from_stream(timeout, &mut stream, access).await?;
+    if let Some((config, crash_info)) = &mut report {
         // The symbolizer opens ELF, perf-map and debug paths without our path checks. Restricted
         // reports keep the symbols supplied by the worker instead of resolving them here.
         if !access.is_restricted()
-            && let Err(e) = resolve_frames(&config, &mut crash_info)
+            && let Err(e) = resolve_frames(config, crash_info)
         {
             crash_info
                 .log_messages
                 .push(format!("Error resolving frames: {e}"));
         }
-        // The crashing process waits for POLLHUP. Keep it alive for inspection, then release it
-        // before uploading so a slow endpoint does not prolong the crash pause.
-        drop(stream);
+    }
+    // The crashing process waits for POLLHUP. Keep it alive for inspection, then release it
+    // before uploading so a slow endpoint does not prolong the crash pause.
+    drop(stream);
+    Ok(report)
+}
 
+async fn upload_report(
+    report: Option<(CrashtrackerConfiguration, CrashInfo)>,
+) -> anyhow::Result<()> {
+    if let Some((config, mut crash_info)) = report {
         if config.demangle_names()
             && let Err(e) = crash_info.demangle_names()
         {

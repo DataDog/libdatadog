@@ -8,8 +8,9 @@ use std::time::Instant;
 
 use super::emitters::{CrashKindData, emit_crashreport};
 use crate::shared::configuration::CrashtrackerConfiguration;
-use libdd_process_utils::unix_utils::{alt_fork, terminate};
+use libdd_process_utils::unix_utils::alt_fork;
 use nix::sys::signal::{self, SaFlags, SigAction, SigHandler, SigSet};
+use std::net::Shutdown;
 use std::os::unix::io::RawFd;
 use std::os::unix::{io::FromRawFd, net::UnixStream};
 use thiserror::Error;
@@ -182,11 +183,11 @@ pub(crate) fn run_collector_child(
         crashing_tid,
         threads_deadline,
     );
-    if let Err(e) = report {
-        eprintln!("Failed to flush crash report: {e}");
-        terminate();
-    }
-
-    // Exit normally
-    unsafe { libc::_exit(0) };
+    let exit_code = if report.is_ok() {
+        libc::EXIT_SUCCESS
+    } else {
+        let _ = unix_stream.shutdown(Shutdown::Write);
+        libc::EXIT_FAILURE
+    };
+    unsafe { libc::_exit(exit_code) };
 }

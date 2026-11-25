@@ -707,7 +707,6 @@ fn wait_for_socket(path: &str, timeout: std::time::Duration) -> bool {
 
 /// Wait for a child process to exit within a timeout. If it doesn't exit in time,
 /// kill it and return the exit status.
-#[cfg(target_os = "linux")]
 fn wait_or_kill(child: &mut process::Child, timeout: std::time::Duration) -> process::ExitStatus {
     let deadline = std::time::Instant::now() + timeout;
     loop {
@@ -2282,6 +2281,69 @@ fn crash_tracking_empty_endpoint() {
     let _ = child.wait();
 }
 
+#[test]
+#[cfg_attr(miri, ignore)]
+fn test_receiver_exits_on_timeout_without_collector_input() -> anyhow::Result<()> {
+    use std::os::fd::{AsRawFd, OwnedFd};
+    use std::os::unix::net::UnixStream;
+    use std::time::Duration;
+
+    let receiver = artifacts::crashtracker_receiver(BuildProfile::Debug);
+    let artifacts = fetch_built_artifacts(&[&receiver])?;
+    let fixtures = bin_tests::test_runner::TestFixtures::new()?;
+    for kind in ["socket", "pipe"] {
+        for nonblocking in [false, true] {
+            let (input, _collector): (OwnedFd, OwnedFd) = if kind == "socket" {
+                let (collector, receiver) = UnixStream::pair()?;
+                (receiver.into(), collector.into())
+            } else {
+                let (receiver, collector) = std::io::pipe()?;
+                (receiver.into(), collector.into())
+            };
+            let fd = input.as_raw_fd();
+            let before = unsafe { libc::fcntl(fd, libc::F_GETFL) };
+            assert_ne!(before, -1);
+            let expected = if nonblocking {
+                before | libc::O_NONBLOCK
+            } else {
+                before & !libc::O_NONBLOCK
+            };
+            assert_eq!(unsafe { libc::fcntl(fd, libc::F_SETFL, expected) }, 0);
+
+            let mut child = process::Command::new(&artifacts[&receiver])
+                .stdin(process::Stdio::from(input.try_clone()?))
+                .stderr(process::Stdio::piped())
+                .env("DD_CRASHTRACKER_RECEIVER_TIMEOUT_MS", "100")
+                .env(
+                    "DD_TRACE_AGENT_URL",
+                    format!("unix://{}/unused-agent.sock", fixtures.output_dir.display()),
+                )
+                .env("_DD_DIRECT_SUBMISSION_ENABLED", "false")
+                .spawn()?;
+
+            let status = wait_or_kill(&mut child, Duration::from_secs(10));
+            let mut stderr = String::new();
+            child
+                .stderr
+                .take()
+                .context("receiver stderr missing")?
+                .read_to_string(&mut stderr)?;
+            assert_eq!(status.code(), Some(1), "{kind}: {status}: {stderr}");
+            assert!(
+                stderr.lines().any(|line| line.starts_with("Timeout:"))
+                    && stderr.contains("Missing crashtracker configuration"),
+                "{kind}: {stderr}"
+            );
+            assert_eq!(
+                unsafe { libc::fcntl(fd, libc::F_GETFL) },
+                expected,
+                "receiver changed {kind} stdin status flags (nonblocking: {nonblocking})"
+            );
+        }
+    }
+    Ok(())
+}
+
 /// Verifies graceful degradation: when the receiver's timeout fires before the collector
 /// sends all data, the receiver still uploads a partial crash report (incomplete=true)
 /// rather than silently discarding everything collected up to that point.
@@ -2289,7 +2351,7 @@ fn crash_tracking_empty_endpoint() {
 #[cfg_attr(miri, ignore)]
 #[cfg(unix)]
 fn test_receiver_uploads_partial_report_on_timeout() -> anyhow::Result<()> {
-    use libdd_crashtracker::ErrorKind;
+    use libdd_crashtracker::{ErrorKind, ProcInfo};
     use std::time::{Duration, Instant};
 
     let receiver = artifacts::crashtracker_receiver(BuildProfile::Debug);
@@ -2297,6 +2359,7 @@ fn test_receiver_uploads_partial_report_on_timeout() -> anyhow::Result<()> {
     let fixtures = bin_tests::test_runner::TestFixtures::new()?;
 
     let config = CrashtrackerConfiguration::builder()
+        .collect_all_threads(true)
         .create_alt_stack(true)
         .demangle_names(false)
         .resolve_frames(StacktraceCollection::WithoutSymbols)
@@ -2323,6 +2386,10 @@ fn test_receiver_uploads_partial_report_on_timeout() -> anyhow::Result<()> {
         si_code_human_readable: SiCodes::SEGV_MAPERR,
         si_signo: libc::SIGSEGV,
         si_signo_human_readable: SignalNames::SIGSEGV,
+    };
+    let proc_info = ProcInfo {
+        pid: process::id(),
+        tid: Some(process::id()),
     };
 
     let socket_path = fixtures.output_dir.join("trace_agent.socket");
@@ -2375,6 +2442,9 @@ fn test_receiver_uploads_partial_report_on_timeout() -> anyhow::Result<()> {
         "DD_CRASHTRACK_BEGIN_METADATA".to_string(),
         serde_json::to_string(&metadata)?,
         "DD_CRASHTRACK_END_METADATA".to_string(),
+        "DD_CRASHTRACK_BEGIN_PROCESSINFO".to_string(),
+        serde_json::to_string(&proc_info)?,
+        "DD_CRASHTRACK_END_PROCESSINFO".to_string(),
         "DD_CRASHTRACK_BEGIN_SIGINFO".to_string(),
         serde_json::to_string(&siginfo)?,
         "DD_CRASHTRACK_END_SIGINFO".to_string(),
@@ -2393,6 +2463,8 @@ fn test_receiver_uploads_partial_report_on_timeout() -> anyhow::Result<()> {
     let mut found_incomplete_report = false;
     let mut found_timeout_log = false;
     let mut found_crash_frame = false;
+    #[cfg(target_os = "linux")]
+    let mut found_incomplete_threads = false;
     let deadline = Instant::now() + Duration::from_secs(3);
 
     while Instant::now() < deadline {
@@ -2416,6 +2488,10 @@ fn test_receiver_uploads_partial_report_on_timeout() -> anyhow::Result<()> {
                 // indicates the report was cut short by the timeout.
                 if body.contains("is_crash:true") && body.contains("incomplete:true") {
                     found_incomplete_report = true;
+                    #[cfg(target_os = "linux")]
+                    {
+                        found_incomplete_threads = body.contains(",threads_incomplete:1,");
+                    }
                 }
                 if found_incomplete_report && found_timeout_log && found_crash_frame {
                     break;
@@ -2428,8 +2504,8 @@ fn test_receiver_uploads_partial_report_on_timeout() -> anyhow::Result<()> {
         }
     }
 
+    let status = wait_or_kill(&mut child, Duration::from_secs(3));
     drop(stdin);
-    let status = child.wait()?;
     assert!(
         status.success(),
         "receiver should exit cleanly after timeout; got: {status:?}"
@@ -2447,7 +2523,227 @@ fn test_receiver_uploads_partial_report_on_timeout() -> anyhow::Result<()> {
         found_timeout_log,
         "receiver should emit a receiver_issue:timeout debug telemetry log when read times out"
     );
+    #[cfg(target_os = "linux")]
+    assert!(
+        found_incomplete_threads,
+        "receiver should mark thread collection incomplete"
+    );
 
+    Ok(())
+}
+
+#[test]
+#[cfg_attr(miri, ignore)]
+#[cfg(target_os = "linux")]
+fn test_receiver_releases_tracee_before_upload_completes() -> anyhow::Result<()> {
+    use libdd_crashtracker::{ErrorKind, ProcInfo};
+    use std::io::{BufRead, BufReader, ErrorKind::WouldBlock};
+    use std::os::unix::{net::UnixListener, process::CommandExt};
+    use std::time::{Duration, Instant};
+
+    let receiver = artifacts::crashtracker_receiver(BuildProfile::Debug);
+    let artifacts = fetch_built_artifacts(&[&receiver])?;
+    let config = CrashtrackerConfiguration::builder()
+        .collect_all_threads(true)
+        .resolve_frames(StacktraceCollection::WithoutSymbols)
+        .build()?;
+
+    for (request, expected_error) in [
+        (libc::PTRACE_INTERRUPT, "Failed to stop seized thread"),
+        (libc::PTRACE_DETACH, "Failed to detach from thread"),
+    ] {
+        let fixtures = bin_tests::test_runner::TestFixtures::new()?;
+        let socket_path = fixtures.output_dir.join("trace_agent.socket");
+        let listener = UnixListener::bind(&socket_path)?;
+        listener.set_nonblocking(true)?;
+        let mut receiver_command = process::Command::new(&artifacts[&receiver]);
+        receiver_command
+            .stdin(process::Stdio::piped())
+            .env("DD_CRASHTRACKING_ERRORS_INTAKE_ENABLED", "false")
+            .env("_DD_DIRECT_SUBMISSION_ENABLED", "false")
+            .env(
+                "DD_TRACE_AGENT_URL",
+                format!("unix://{}", socket_path.display()),
+            )
+            .env("DD_CRASHTRACKER_RECEIVER_TIMEOUT_MS", "10000");
+        unsafe {
+            receiver_command.pre_exec(move || reject_ptrace_request(request as u64));
+        }
+        let mut receiver_child = receiver_command.spawn()?;
+        let receiver_pid = receiver_child.id() as libc::c_ulong;
+        let mut receiver_stdin = receiver_child
+            .stdin
+            .take()
+            .context("receiver stdin missing")?;
+        let mut tracee_command = process::Command::new("cat");
+        tracee_command
+            .stdin(process::Stdio::piped())
+            .stdout(process::Stdio::null());
+        unsafe {
+            tracee_command.pre_exec(move || {
+                if libc::prctl(libc::PR_SET_PTRACER, receiver_pid, 0usize, 0usize, 0usize) != 0 {
+                    let error = std::io::Error::last_os_error();
+                    if error.raw_os_error() != Some(libc::EINVAL) {
+                        return Err(error);
+                    }
+                }
+                Ok(())
+            });
+        }
+
+        let result = (|| -> anyhow::Result<()> {
+            let mut tracee = tracee_command.spawn()?;
+            let pid = tracee.id();
+            let upload = (|| -> anyhow::Result<()> {
+                let proc_info = ProcInfo {
+                    pid,
+                    tid: Some(pid),
+                };
+                let frame = StackFrame {
+                    function: Some("crash_site".into()),
+                    ..StackFrame::default()
+                };
+                writeln!(
+                    receiver_stdin,
+                    "DD_CRASHTRACK_BEGIN_CONFIG\n{}\nDD_CRASHTRACK_END_CONFIG",
+                    serde_json::to_string(&config)?
+                )?;
+                writeln!(
+                    receiver_stdin,
+                    "DD_CRASHTRACK_BEGIN_KIND\n{}\nDD_CRASHTRACK_END_KIND",
+                    serde_json::to_string(&ErrorKind::UnixSignal)?
+                )?;
+                writeln!(
+                    receiver_stdin,
+                    "DD_CRASHTRACK_BEGIN_PROCESSINFO\n{}\nDD_CRASHTRACK_END_PROCESSINFO",
+                    serde_json::to_string(&proc_info)?
+                )?;
+                writeln!(
+                    receiver_stdin,
+                    "DD_CRASHTRACK_BEGIN_STACKTRACE\n{}\nDD_CRASHTRACK_END_STACKTRACE\nDD_CRASHTRACK_DONE",
+                    serde_json::to_string(&frame)?
+                )?;
+
+                let deadline = Instant::now() + Duration::from_secs(5);
+                let mut stream = loop {
+                    match listener.accept() {
+                        Ok((stream, _)) => break stream,
+                        Err(error) if error.kind() == WouldBlock && Instant::now() < deadline => {
+                            std::thread::sleep(Duration::from_millis(10));
+                        }
+                        Err(error) => return Err(error).context("waiting for crash report upload"),
+                    }
+                };
+                stream.set_read_timeout(Some(Duration::from_secs(3)))?;
+                let mut reader = BufReader::new(&mut stream);
+                let mut header = String::new();
+                loop {
+                    anyhow::ensure!(
+                        reader.read_line(&mut header)? > 0,
+                        "missing crash report body"
+                    );
+                    if header == "\r\n" {
+                        break;
+                    }
+                    header.clear();
+                }
+                let telemetry = serde_json::Deserializer::from_reader(reader)
+                    .into_iter::<Value>()
+                    .next()
+                    .context("missing crash telemetry")??;
+                let message = telemetry["payload"]["logs"][0]["message"]
+                    .as_str()
+                    .context("missing crash report")?;
+                let report: Value = serde_json::from_str(message)?;
+                anyhow::ensure!(
+                    report["counters"]["threads_incomplete"] == 1,
+                    "expected incomplete thread collection: {report}"
+                );
+                let expected = format!("{expected_error} {pid}: errno {}", libc::EIO);
+                anyhow::ensure!(
+                    message.contains(&expected),
+                    "expected ptrace failure: {message}"
+                );
+
+                let status_path = format!("/proc/{pid}/status");
+                let deadline = Instant::now() + Duration::from_secs(1);
+                while !fs::read_to_string(&status_path)?
+                    .lines()
+                    .any(|line| line == "TracerPid:\t0")
+                {
+                    anyhow::ensure!(
+                        Instant::now() < deadline,
+                        "tracee {pid} remained attached after {expected}"
+                    );
+                    std::thread::sleep(Duration::from_millis(10));
+                }
+                anyhow::ensure!(
+                    receiver_child.try_wait()?.is_none(),
+                    "receiver exited before acknowledging upload"
+                );
+                stream.write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n")?;
+                Ok(())
+            })();
+            drop(receiver_stdin);
+            let receiver_status = wait_or_kill(&mut receiver_child, Duration::from_secs(3));
+            drop(tracee.stdin.take());
+            let tracee_status = wait_or_kill(&mut tracee, Duration::from_secs(3));
+            upload?;
+            anyhow::ensure!(
+                receiver_status.success(),
+                "receiver exited with {receiver_status}"
+            );
+            anyhow::ensure!(
+                tracee_status.success(),
+                "tracee exited with {tracee_status}"
+            );
+            Ok(())
+        })();
+        result?;
+    }
+    Ok(())
+}
+
+#[cfg(target_os = "linux")]
+fn reject_ptrace_request(request: u64) -> std::io::Result<()> {
+    use std::mem::offset_of;
+
+    let load = (libc::BPF_LD | libc::BPF_W | libc::BPF_ABS) as u16;
+    let equals = (libc::BPF_JMP | libc::BPF_JEQ | libc::BPF_K) as u16;
+    let ret = (libc::BPF_RET | libc::BPF_K) as u16;
+    let request_offset =
+        offset_of!(libc::seccomp_data, args) + usize::from(cfg!(target_endian = "big")) * 4;
+    let instruction = |code, skip, operand| libc::sock_filter {
+        code,
+        jt: 0,
+        jf: skip,
+        k: operand,
+    };
+    let mut filter = [
+        instruction(load, 0, offset_of!(libc::seccomp_data, nr) as u32),
+        instruction(equals, 3, libc::SYS_ptrace as u32),
+        instruction(load, 0, request_offset as u32),
+        instruction(equals, 1, request as u32),
+        instruction(ret, 0, libc::SECCOMP_RET_ERRNO | libc::EIO as u32),
+        instruction(ret, 0, libc::SECCOMP_RET_ALLOW),
+    ];
+    let program = libc::sock_fprog {
+        len: filter.len() as u16,
+        filter: filter.as_mut_ptr(),
+    };
+    unsafe {
+        if libc::prctl(libc::PR_SET_NO_NEW_PRIVS, 1usize, 0usize, 0usize, 0usize) != 0
+            || libc::prctl(
+                libc::PR_SET_SECCOMP,
+                libc::SECCOMP_MODE_FILTER as libc::c_ulong,
+                &raw const program,
+                0usize,
+                0usize,
+            ) != 0
+        {
+            return Err(std::io::Error::last_os_error());
+        }
+    }
     Ok(())
 }
 
@@ -3024,14 +3320,11 @@ fn extend_path<T: AsRef<Path>>(parent: &Path, path: T) -> PathBuf {
 #[cfg_attr(miri, ignore)]
 #[cfg(target_os = "linux")]
 fn test_crash_tracking_otel_thread_ctx() {
-    use bin_tests::modes::unix::test_022_otel_thread_ctx::{MAIN_SPAN_ID, MAIN_TRACE_ID};
+    use bin_tests::modes::unix::test_022_otel_thread_ctx::{
+        MAIN_SPAN_ID, MAIN_TRACE_ID, OTEL_THREADS_ONLY_ENV,
+    };
 
-    let config = CrashTestConfig::new(
-        BuildProfile::Release,
-        TestMode::OtelThreadCtx,
-        CrashType::NullDeref,
-    );
-    let artifacts = StandardArtifacts::new(config.profile);
+    let artifacts = StandardArtifacts::new(BuildProfile::Release);
     let artifacts_map = fetch_built_artifacts(&artifacts.as_slice()).unwrap();
 
     let validator: ValidatorFn = Box::new(move |payload, _fixtures| {
@@ -3065,5 +3358,69 @@ fn test_crash_tracking_otel_thread_ctx() {
         Ok(())
     });
 
-    run_crash_test_with_artifacts(&config, &artifacts_map, &artifacts, validator).unwrap();
+    for otel_only in [false, true] {
+        let config = CrashTestConfig::new(
+            BuildProfile::Release,
+            TestMode::OtelThreadCtx,
+            CrashType::NullDeref,
+        )
+        .with_env(
+            OTEL_THREADS_ONLY_ENV,
+            if otel_only { "true" } else { "false" },
+        );
+        run_crash_test_with_artifacts(&config, &artifacts_map, &artifacts, |payload, fixtures| {
+            validator(payload, fixtures)?;
+            let threads = &payload["error"]["threads"];
+            if otel_only {
+                assert!(threads.is_null(), "expected no native threads: {threads}");
+            } else {
+                let threads = threads.as_array().expect("expected native threads");
+                for name in ["worker-http", "worker-db"] {
+                    assert!(
+                        threads.iter().any(|thread| thread["name"] == name),
+                        "missing native thread {name}"
+                    );
+                }
+            }
+            Ok(())
+        })
+        .unwrap();
+    }
+}
+
+#[test]
+#[cfg_attr(miri, ignore)]
+#[cfg(target_os = "linux")]
+fn test_collector_releases_tracee_and_delivers_report_on_otel_detach_failure() -> anyhow::Result<()>
+{
+    use bin_tests::modes::unix::test_022_otel_thread_ctx::OTEL_THREADS_ONLY_ENV;
+    use std::os::unix::process::{CommandExt, ExitStatusExt};
+    use std::time::Duration;
+
+    let artifacts = StandardArtifacts::new(BuildProfile::Release);
+    let artifacts_map = fetch_built_artifacts(&artifacts.as_slice())?;
+    let fixtures = bin_tests::test_runner::TestFixtures::new()?;
+    let mut command = process::Command::new(&artifacts_map[&artifacts.crashtracker_bin]);
+    command
+        .arg(format!("file://{}", fixtures.crash_profile_path.display()))
+        .arg(&artifacts_map[&artifacts.crashtracker_receiver])
+        .arg(&fixtures.output_dir)
+        .args([
+            TestMode::OtelThreadCtx.as_str(),
+            CrashType::NullDeref.as_str(),
+        ])
+        .env("DD_CRASHTRACKER_RECEIVER_TIMEOUT_MS", "30000")
+        .env(OTEL_THREADS_ONLY_ENV, "true");
+    unsafe {
+        command.pre_exec(|| reject_ptrace_request(libc::PTRACE_DETACH as u64));
+    }
+    let mut child = command.spawn()?;
+    let status = wait_or_kill(&mut child, Duration::from_secs(20));
+    assert_eq!(status.signal(), Some(libc::SIGSEGV), "{status}");
+
+    let report: Value = serde_json::from_reader(fs::File::open(&fixtures.crash_profile_path)?)?;
+    assert_eq!(report["error"]["is_crash"], true);
+    assert_eq!(report["incomplete"], true);
+    assert!(report["experimental"]["otel_thread_contexts"].is_null());
+    Ok(())
 }
