@@ -227,7 +227,7 @@ pub struct AgentInfoFetcher<C: HttpClientCapability + SleepCapability> {
     max_request_bytes: Arc<AtomicUsize>,
     refresh_interval: Duration,
     trigger_rx: Option<mpsc::Receiver<()>>,
-    started: bool,
+    has_fetched: bool,
     /// `C` lives on the struct because `Worker::run(&mut self)` (a fixed trait
     /// signature) calls `fetch_info_with_state::<C>()` internally.
     _phantom: PhantomData<C>,
@@ -253,7 +253,7 @@ impl<C: HttpClientCapability + SleepCapability> AgentInfoFetcher<C> {
             max_request_bytes: response_observer.max_request_bytes.clone(),
             refresh_interval,
             trigger_rx: Some(trigger_rx),
-            started: false,
+            has_fetched: false,
             _phantom: PhantomData,
         };
 
@@ -275,12 +275,9 @@ impl<C: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static> Wor
     for AgentInfoFetcher<C>
 {
     async fn initial_trigger(&mut self) {
-        // Replacements refresh their endpoint immediately; fork restarts retain
-        // the fetched state and wait for the usual timer or response trigger.
-        if self.started {
+        // After a fork, wait only if this fetcher obtained usable state before it.
+        if self.has_fetched {
             self.trigger().await;
-        } else {
-            self.started = true;
         }
     }
 
@@ -315,7 +312,7 @@ impl<C: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static> Wor
 
 impl<C: HttpClientCapability + SleepCapability> AgentInfoFetcher<C> {
     /// Fetch agent info and update cache if needed
-    async fn fetch_and_update(&self) {
+    async fn fetch_and_update(&mut self) {
         let current_info = AGENT_INFO_CACHE.load();
         let current_hash = current_info.as_ref().map(|info| info.state_hash.as_str());
         let current_container_tags_hash = current_info
@@ -341,8 +338,10 @@ impl<C: HttpClientCapability + SleepCapability> AgentInfoFetcher<C> {
             }
             Err(err) => {
                 warn!(?err, "Error while fetching /info");
+                return;
             }
         }
+        self.has_fetched = true;
     }
 
     fn update_payload_limit(&self, info: &AgentInfo) {
@@ -418,29 +417,36 @@ impl ResponseObserver {
 mod single_threaded_tests {
     use super::*;
     use crate::agent_info;
+    use futures::FutureExt;
     use httpmock::prelude::*;
     use libdd_capabilities_impl::NativeCapabilities;
     use libdd_shared_runtime::{BlockingRuntime, ForkSafeRuntime, SharedRuntime};
 
+    #[cfg_attr(miri, ignore)]
     #[tokio::test]
-    async fn restart_waits_for_refresh_instead_of_fetching_again() {
-        use std::future::Future;
-        use std::task::{Context, Poll};
+    async fn restart_waits_for_refresh_only_after_successful_discovery() {
+        let server = MockServer::start_async().await;
+        let mut failure = server.mock(|when, then| {
+            when.path("/info");
+            then.status(503).body(r#"{"error":"unavailable"}"#);
+        });
         let (mut fetcher, observer) = AgentInfoFetcher::<NativeCapabilities>::new(
-            Endpoint::from_slice("http://localhost:8126/info"),
+            Endpoint::from_slice(&server.url("/info")),
             Duration::from_secs(3600),
         );
         fetcher.initial_trigger().await;
-        for _ in 0..5 {
-            let mut trigger = std::pin::pin!(fetcher.initial_trigger());
-            let mut context = Context::from_waker(std::task::Waker::noop());
-            assert!(matches!(trigger.as_mut().poll(&mut context), Poll::Pending));
-            observer.manual_trigger();
-            assert!(matches!(
-                trigger.as_mut().poll(&mut context),
-                Poll::Ready(())
-            ));
-        }
+        fetcher.run().await;
+        failure.assert();
+        failure.delete();
+        let _success = server.mock(|when, then| {
+            when.path("/info");
+            then.status(200).body("{}");
+        });
+        assert!(fetcher.initial_trigger().now_or_never().is_some());
+        fetcher.run().await;
+        assert!(fetcher.initial_trigger().now_or_never().is_none());
+        observer.manual_trigger();
+        assert!(fetcher.initial_trigger().now_or_never().is_some());
     }
 
     #[cfg_attr(miri, ignore)]
@@ -457,11 +463,11 @@ mod single_threaded_tests {
             then.status(200)
                 .body(r#"{"config":{"max_request_bytes":2048}}"#);
         });
-        let (small, small_observer) = AgentInfoFetcher::<NativeCapabilities>::new(
+        let (mut small, small_observer) = AgentInfoFetcher::<NativeCapabilities>::new(
             Endpoint::from_slice(&server.url("/small")),
             Duration::from_secs(60),
         );
-        let (large, large_observer) = AgentInfoFetcher::<NativeCapabilities>::new(
+        let (mut large, large_observer) = AgentInfoFetcher::<NativeCapabilities>::new(
             Endpoint::from_slice(&server.url("/large")),
             Duration::from_secs(60),
         );
@@ -477,6 +483,8 @@ mod single_threaded_tests {
             .unwrap();
         replacement.fetch_and_update().await;
         assert_eq!(replacement_observer.max_request_bytes(), Some(512));
+        // An unchanged response is successful discovery for the replacement, too.
+        assert!(replacement.initial_trigger().now_or_never().is_none());
         large.fetch_and_update().await;
         let before = AGENT_INFO_CACHE.load_full().unwrap();
         small_response.delete();
