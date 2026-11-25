@@ -40,6 +40,8 @@ pub enum PtraceError {
     Enumeration(std::io::Error),
     /// Failed to attach to a thread
     Attach(libc::pid_t, i32),
+    /// Failed to stop a seized thread
+    Stop(libc::pid_t, i32),
     /// Failed to detach from a thread
     Detach(libc::pid_t, i32),
     /// Failed to read or replace the stopped thread's general registers.
@@ -52,6 +54,9 @@ impl std::fmt::Display for PtraceError {
             PtraceError::Enumeration(e) => write!(f, "Failed to enumerate threads: {}", e),
             PtraceError::Attach(tid, errno) => {
                 write!(f, "Failed to attach to thread {}: errno {}", tid, errno)
+            }
+            PtraceError::Stop(tid, errno) => {
+                write!(f, "Failed to stop seized thread {}: errno {}", tid, errno)
             }
             PtraceError::Detach(tid, errno) => {
                 write!(f, "Failed to detach from thread {}: errno {}", tid, errno)
@@ -216,36 +221,24 @@ fn wait_for_stop(tid: libc::pid_t, deadline: Instant) -> Result<(), PtraceError>
                 return Ok(());
             }
             // Got an event but it wasn't a stop (the thread exited).
-            return Err(PtraceError::Attach(tid, unsafe {
-                *libc::__errno_location()
-            }));
+            return Err(PtraceError::Stop(tid, unsafe { *libc::__errno_location() }));
         } else if ret == 0 {
             // Thread not yet stopped; check deadline before sleeping.
             if Instant::now() >= deadline {
-                return Err(PtraceError::Attach(tid, libc::ETIMEDOUT));
+                return Err(PtraceError::Stop(tid, libc::ETIMEDOUT));
             }
             std::thread::sleep(POLL_SLEEP);
         } else {
             // ret == -1: a real error.
-            return Err(PtraceError::Attach(tid, unsafe {
-                *libc::__errno_location()
-            }));
+            return Err(PtraceError::Stop(tid, unsafe { *libc::__errno_location() }));
         }
     }
 }
 
-/// Attach to a thread using PTRACE_SEIZE + PTRACE_INTERRUPT, then wait for it
-/// to enter ptrace-stop state before returning.
+/// Attach to a thread using PTRACE_SEIZE without stopping it.
 ///
-/// `stop_deadline` bounds how long we poll for the stop event.
-///
-/// After the thread enters ptrace-stop, this function also polls until the
-/// instruction pointer is non-zero. On older kernels there may be a race where
-/// `waitpid` returns WIFSTOPPED but the thread's register state hasn't been fully
-/// flushed to the ptrace-accessible area yet. Reading registers in that window
-/// yields zeros, which causes libunwind to produce an empty stack trace.
-pub(crate) fn attach_thread(tid: libc::pid_t, stop_deadline: Instant) -> Result<(), PtraceError> {
-    // PTRACE_SEIZE attaches without stopping the thread
+/// Returns `PtraceError::Attach` on failure.
+fn seize_thread(tid: libc::pid_t) -> Result<(), PtraceError> {
     let result = unsafe {
         libc::ptrace(
             libc::PTRACE_SEIZE,
@@ -258,6 +251,24 @@ pub(crate) fn attach_thread(tid: libc::pid_t, stop_deadline: Instant) -> Result<
         let errno = unsafe { *libc::__errno_location() };
         return Err(PtraceError::Attach(tid, errno));
     }
+    Ok(())
+}
+
+/// Attach to a thread using PTRACE_SEIZE + PTRACE_INTERRUPT, then wait for it
+/// to enter ptrace-stop state before returning.
+///
+/// `stop_deadline` bounds how long we poll for the stop event.
+///
+/// On INTERRUPT failure or stop timeout, returns `PtraceError::Stop` and does
+/// NOT call `detach_thread`: the thread isn't in ptrace-stop, so PTRACE_DETACH
+/// would fail. The caller is responsible for exiting its thread to release the
+/// attachment.
+pub(crate) fn attach_thread(tid: libc::pid_t, stop_deadline: Instant) -> Result<(), PtraceError> {
+    if Instant::now() >= stop_deadline {
+        return Err(PtraceError::Attach(tid, libc::ETIMEDOUT));
+    }
+
+    seize_thread(tid)?;
 
     // PTRACE_INTERRUPT delivers a stop to the seized thread
     let result = unsafe {
@@ -270,14 +281,12 @@ pub(crate) fn attach_thread(tid: libc::pid_t, stop_deadline: Instant) -> Result<
     };
     if result == -1 {
         let errno = unsafe { *libc::__errno_location() };
-        let _ = detach_thread(tid);
-        return Err(PtraceError::Attach(tid, errno));
+        // Don't call detach_thread: thread isn't in ptrace-stop.
+        return Err(PtraceError::Stop(tid, errno));
     }
 
-    if let Err(e) = wait_for_stop(tid, stop_deadline) {
-        let _ = detach_thread(tid);
-        return Err(e);
-    }
+    // wait_for_stop returns PtraceError::Stop on failure; don't detach.
+    wait_for_stop(tid, stop_deadline)?;
 
     // On older kernels, the register state may not be
     // immediately readable after waitpid reports the stop. Spin briefly
@@ -407,11 +416,7 @@ pub(crate) fn detach_thread(tid: libc::pid_t) -> Result<(), PtraceError> {
     };
     if result == -1 {
         let errno = unsafe { *libc::__errno_location() };
-        // ESRCH means the thread already exited; treat as success since
-        // there is nothing left to detach from.
-        if errno != libc::ESRCH {
-            return Err(PtraceError::Detach(tid, errno));
-        }
+        return Err(PtraceError::Detach(tid, errno));
     }
 
     // Drain any pending waitpid event so the kernel fully releases the thread.
@@ -511,9 +516,7 @@ pub fn capture_thread_context(
         set_registers(tid, registers)?;
     }
 
-    // Best-effort detach: if this fails the thread stays in ptrace-stop, but the
-    // receiver exiting will clean it up. Don't discard a good stack trace over it.
-    let _ = detach_thread(tid);
+    detach_thread(tid)?;
 
     Ok(CapturedThreadContext {
         stack_trace,
@@ -551,13 +554,18 @@ fn is_transient_ptrace_error(err: &PtraceError) -> bool {
 /// A capture that succeeds but produces zero frames is also retried: on a
 /// running thread with a confirmed non-zero IP, empty frames indicates a
 /// transient issue.
+///
+/// Returns:
+/// - `Ok(Some(ctx))` — successful capture with frames
+/// - `Ok(None)` — thread gone (Attach error) or all retries exhausted
+/// - `Err(PtraceError::Stop | Detach)` — propagated to exit the tracer thread
 pub(crate) fn capture_with_retry(
     tid: libc::pid_t,
     addr_space: &UnwAddrSpace,
     overall_deadline: Instant,
     initial_context: Option<&Ucontext>,
     while_stopped: &mut dyn FnMut(libc::pid_t),
-) -> Option<CapturedThreadContext> {
+) -> Result<Option<CapturedThreadContext>, PtraceError> {
     for attempt in 0..=MAX_RETRIES {
         let thread_deadline = (Instant::now() + STOP_TIMEOUT_PER_THREAD).min(overall_deadline);
 
@@ -568,10 +576,12 @@ pub(crate) fn capture_with_retry(
             initial_context,
             while_stopped,
         ) {
-            Ok(ctx) if !ctx.stack_trace.frames.is_empty() => return Some(ctx),
+            Ok(ctx) if !ctx.stack_trace.frames.is_empty() => return Ok(Some(ctx)),
             Ok(_) => {}                                      // 0 frames -- retry
             Err(ref e) if is_transient_ptrace_error(e) => {} // ETIMEDOUT -- retry
-            Err(_) => return None,                           // permanent error
+            Err(PtraceError::Attach(..)) => return Ok(None), // thread gone, not retriable
+            Err(other) => return Err(other),                 /* stop/detach error, propagate to
+                                                               * exit tracer */
         }
 
         if attempt == MAX_RETRIES {
@@ -587,10 +597,10 @@ pub(crate) fn capture_with_retry(
 
     // All attempts produced 0 frames or timed out; return None so the caller
     // records the thread with an incomplete stack rather than frames: [].
-    None
+    Ok(None)
 }
 
-/// Visit the crashing thread first, then other threads up to the cap or timeout.
+/// Visit the crashing thread first, then other threads up to the cap or deadline.
 ///
 /// The callback owns each capture, or receives None if attachment or unwinding failed.
 /// Each stop also has a STOP_TIMEOUT_PER_THREAD limit. Returns true if threads were left
@@ -608,7 +618,7 @@ pub(crate) fn stream_thread_contexts<F>(
     parent_pid: libc::pid_t,
     crashing_tid: libc::pid_t,
     max_threads: usize,
-    timeout: Duration,
+    overall_deadline: Instant,
     crashing_context: Option<&Ucontext>,
     skip_crashing_ptrace: bool,
     while_stopped: &mut dyn FnMut(libc::pid_t),
@@ -617,7 +627,10 @@ pub(crate) fn stream_thread_contexts<F>(
 where
     F: FnMut(libc::pid_t, Option<CapturedThreadContext>),
 {
-    let overall_deadline = Instant::now() + timeout;
+    if Instant::now() >= overall_deadline {
+        return Ok(true);
+    }
+
     let tids = enumerate_threads(parent_pid)?;
     let total_eligible = tids.len();
     let mut processed = 0;
@@ -632,6 +645,9 @@ where
 
     // Process the crashing thread first so it is never dropped by the cap.
     if crashing_tid != 0 && tids.contains(&crashing_tid) {
+        if Instant::now() >= overall_deadline {
+            return Ok(true);
+        }
         if skip_crashing_ptrace {
             callback(crashing_tid, None);
         } else {
@@ -641,7 +657,7 @@ where
                 overall_deadline,
                 crashing_context,
                 while_stopped,
-            );
+            )?;
             callback(crashing_tid, context);
         }
         processed += 1;
@@ -655,7 +671,7 @@ where
             break;
         }
 
-        let context = capture_with_retry(tid, &addr_space, overall_deadline, None, while_stopped);
+        let context = capture_with_retry(tid, &addr_space, overall_deadline, None, while_stopped)?;
         callback(tid, context);
         processed += 1;
     }
@@ -860,7 +876,7 @@ mod tests {
             std::process::id() as libc::pid_t,
             current_tid(),
             2,
-            Duration::from_secs(5),
+            Instant::now() + Duration::from_secs(5),
             None,
             false,
             &mut |_| {},
@@ -895,7 +911,7 @@ mod tests {
             std::process::id() as libc::pid_t,
             self_tid,
             64,
-            Duration::from_secs(5),
+            Instant::now() + Duration::from_secs(5),
             None,
             false,
             &mut |_| {},
