@@ -28,6 +28,7 @@ use tokio_util::sync::CancellationToken;
 use tracing::{debug, info, warn};
 
 use crate::handler::{ReceivedPayload, run_dispatch_loop};
+use crate::register::{HostApplication, RegisterRequest, register_connection};
 
 const IO_QUEUE_CAPACITY: usize = 100;
 const DIAL_TIMEOUT: Duration = Duration::from_secs(15);
@@ -54,6 +55,8 @@ pub struct AiGuardX509Config {
     pub api_key: String,
     pub app_name: String,
     pub app_version: String,
+    pub register_url: Option<String>,
+    pub host_tags: Vec<String>,
 }
 
 impl AiGuardX509Config {
@@ -181,11 +184,19 @@ impl Drop for SessionGuard {
     }
 }
 
+#[derive(Debug, Clone)]
+struct RegistrationConfig {
+    url: String,
+    host_application: HostApplication,
+    host_tags: Vec<String>,
+}
+
 async fn run_session_loop(
     ws_url: String,
     endpoint_hostname: String,
     api_key: HeaderValue,
     app_info: AppInfo,
+    registration: Option<RegistrationConfig>,
     tls_config: Arc<rustls::ClientConfig>,
     payload_tx: watch::Sender<Option<ReceivedPayload>>,
     connection_id_tx: watch::Sender<Option<ConnectionId>>,
@@ -200,13 +211,35 @@ async fn run_session_loop(
     ));
 
     let fwd_tx = connection_id_tx.clone();
+    let reg_cfg = registration.clone();
     let fwd_task = AbortOnDrop::from(tokio::spawn(async move {
+        let mut last_registered: Option<String> = None;
         loop {
             let current = rc_conn_id_rx.borrow_and_update().clone();
             if let Some(ref cid) = current {
-                info!(connection_id = %cid, "RC x509 handshake complete");
+                let cid_str = cid.to_string();
+                info!(connection_id = %cid_str, "RC x509 handshake complete");
+                fwd_tx.send_replace(current);
+                if let Some(ref reg) = reg_cfg {
+                    if last_registered.as_deref() != Some(cid_str.as_str()) {
+                        last_registered = Some(cid_str.clone());
+                        let url = reg.url.clone();
+                        let req = RegisterRequest {
+                            connection_id: cid_str,
+                            host_application: reg.host_application.clone(),
+                            host_tags: reg.host_tags.clone(),
+                        };
+                        tokio::spawn(async move {
+                            if let Err(err) = register_connection(&url, &req).await {
+                                warn!(error = %err, "auto-registration failed");
+                            }
+                        });
+                    }
+                }
+            } else {
+                last_registered = None;
+                fwd_tx.send_replace(None);
             }
-            fwd_tx.send_replace(current);
             if rc_conn_id_rx.changed().await.is_err() {
                 break;
             }
@@ -410,6 +443,7 @@ struct X509SessionWorker {
     endpoint_hostname: String,
     api_key: HeaderValue,
     app_info: AppInfo,
+    registration: Option<RegistrationConfig>,
     tls_config: Arc<rustls::ClientConfig>,
     payload_tx: watch::Sender<Option<ReceivedPayload>>,
     connection_id_tx: watch::Sender<Option<ConnectionId>>,
@@ -425,6 +459,7 @@ impl Worker for X509SessionWorker {
                 self.endpoint_hostname.clone(),
                 self.api_key.clone(),
                 self.app_info.clone(),
+                self.registration.clone(),
                 Arc::clone(&self.tls_config),
                 self.payload_tx.clone(),
                 self.connection_id_tx.clone(),
@@ -483,6 +518,7 @@ impl AiGuardX509 {
             worker.endpoint_hostname,
             worker.api_key,
             worker.app_info,
+            worker.registration,
             worker.tls_config,
             worker.payload_tx,
             worker.connection_id_tx,
@@ -543,7 +579,18 @@ fn build_worker(
     let api_key = HeaderValue::from_str(&config.api_key)
         .map_err(|e| AiGuardX509Error::InvalidApiKey(e.to_string()))?;
     let tls_config = build_tls_config()?;
-    let app_info = AppInfo::new(config.app_name, config.app_version);
+    let app_info = AppInfo::new(config.app_name.clone(), config.app_version.clone());
+    let registration = config
+        .register_url
+        .filter(|u| !u.trim().is_empty())
+        .map(|url| RegistrationConfig {
+            url,
+            host_application: HostApplication {
+                name: config.app_name,
+                version: config.app_version,
+            },
+            host_tags: config.host_tags,
+        });
 
     let (payload_tx, payload_rx) = watch::channel(None);
     let (connection_id_tx, connection_id_rx) = watch::channel(None);
@@ -554,6 +601,7 @@ fn build_worker(
         endpoint_hostname,
         api_key,
         app_info,
+        registration,
         tls_config,
         payload_tx,
         connection_id_tx,
@@ -574,6 +622,8 @@ mod tests {
             api_key: "test-key".to_string(),
             app_name: "dd-trace-py".to_string(),
             app_version: "0.1.0".to_string(),
+            register_url: None,
+            host_tags: Vec::new(),
         };
         assert_eq!(cfg.endpoint_hostname().unwrap().to_string(), "config.datad0g.com");
         assert_eq!(
@@ -605,6 +655,8 @@ mod tests {
                 api_key: "dummy".to_string(),
                 app_name: "poc-test".to_string(),
                 app_version: "0.0.1".to_string(),
+                register_url: None,
+                host_tags: Vec::new(),
             },
         )
         .expect("start_on_runtime");
@@ -627,6 +679,8 @@ mod tests {
             api_key,
             app_name: "dd-trace-py-poc".to_string(),
             app_version: "0.1.0".to_string(),
+            register_url: None,
+            host_tags: Vec::new(),
         })
         .expect("start");
 

@@ -20,14 +20,19 @@ bytes = { workspace = true, features = ["std"] }
 fastrand = { workspace = true }
 futures = { workspace = true, features = ["std"] }
 http = { workspace = true, features = ["std"] }
+http-body-util = { workspace = true }
+hyper = { workspace = true, features = ["client", "http1"] }
+hyper-util = { workspace = true, features = ["client-legacy", "http1", "tokio"] }
 libdd-shared-runtime = { path = "../libdd-shared-runtime" }
 pbjson-types = { workspace = true }
 rc-x509-client = { workspace = true, features = ["non-fips"] }
 rc-x509-proto = { workspace = true }
 rc-x509-roots = { workspace = true }
 rustls = { workspace = true, features = ["ring", "std", "tls12"] }
+serde = { workspace = true, features = ["derive", "std"] }
+serde_json = { workspace = true, features = ["std"] }
 thiserror = { workspace = true, features = ["std"] }
-tokio = { workspace = true, features = ["macros", "rt", "sync", "time"] }
+tokio = { workspace = true, features = ["macros", "net", "rt", "sync", "time"] }
 tokio-stream = { workspace = true }
 tokio-tungstenite = { workspace = true, features = ["connect", "rustls-tls-webpki-roots"] }
 tokio-util = { workspace = true }
@@ -38,4 +43,4 @@ webpki-roots = { workspace = true }
 rc-crypto = { workspace = true, features = ["non-fips"] }
 rc-x509-test-client-harness = { workspace = true, features = ["non-fips"] }
 rc-x509-test-helpers = { workspace = true, features = ["non-fips", "test-issuer"] }
-tokio = { workspace = true, features = ["macros", "rt-multi-thread", "sync", "time"] }
+tokio = { workspace = true, features = ["io-util", "macros", "net", "rt-multi-thread", "sync", "time"] }
