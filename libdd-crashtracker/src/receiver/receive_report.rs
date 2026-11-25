@@ -609,6 +609,23 @@ pub(crate) async fn receive_report_from_stream(
 
     attach_additional_files(&mut builder, &config, access, &debug_logger)?;
 
+    #[cfg(target_os = "linux")]
+    if let Some(primary) = builder
+        .error
+        .stack
+        .as_ref()
+        .filter(|stack| !stack.frames.is_empty())
+        && let Some(crashed) = builder
+            .error
+            .threads
+            .as_mut()
+            .and_then(|threads| threads.iter_mut().find(|thread| thread.crashed))
+        && crashed.stack.frames.is_empty()
+    {
+        crashed.stack.clone_from(primary);
+        crashed.stack.incomplete = true;
+    }
+
     // Collect threads within the remaining timeout and keep any results gathered before it ends.
     // Skip this for restricted reports: libunwind opens mapped ELF/debug files without our path
     // checks, and a worker can replace those paths with aliases to host-held descriptors. The
@@ -737,6 +754,7 @@ fn collect_and_add_thread_contexts(
     crashing_tid: Option<u32>,
     deadline: Instant,
 ) -> anyhow::Result<()> {
+    use crate::crash_info::ErrorData;
     use crate::ptrace_collector::{stream_thread_contexts, thread_data_from_capture};
 
     let parent_pid = parent_pid as i32;
@@ -768,7 +786,7 @@ fn collect_and_add_thread_contexts(
     // Called while each thread is ptrace-stopped: read OTel TLS record.
     let mut while_stopped = |tid: libc::pid_t| {
         #[cfg(feature = "otel-thread-ctx")]
-        if collect_otel {
+        if collect_otel && otel_contexts.last().is_none_or(|ctx| ctx.tid != tid) {
             let ctx = try_read_otel_context(
                 tid,
                 otel_resolution,
@@ -830,17 +848,12 @@ fn collect_and_add_thread_contexts(
 
     let incomplete = match outcome {
         Ok(Ok(incomplete)) => incomplete,
-        Ok(Err(_ptrace_err)) => {
-            // A PtraceError::Stop/Detach propagated; the scoped thread exited,
-            // releasing kernel ptrace state. Treat as incomplete.
-            let _ = builder.with_counter("threads_incomplete".to_string(), 1);
+        Ok(Err(error)) => {
+            let _ = builder
+                .with_log_message(format!("Failed to collect thread contexts: {error}"), true);
             true
         }
-        Err(_panic) => {
-            // The scoped thread panicked. Treat as incomplete.
-            let _ = builder.with_counter("threads_incomplete".to_string(), 1);
-            true
-        }
+        Err(_) => true,
     };
 
     if incomplete {
@@ -848,6 +861,30 @@ fn collect_and_add_thread_contexts(
     }
     if let Some(stack) = crashing_stack {
         builder.with_stack(stack)?;
+    }
+    if config.resolve_frames() == StacktraceCollection::EnabledWithInprocessSymbols
+        && !threads.is_empty()
+    {
+        let mut symbolizer = blazesym::symbolize::Symbolizer::new();
+        let mut enrich_stack =
+            ErrorData::stack_enricher(parent_pid as u32, &mut symbolizer, deadline);
+        let mut remaining = threads.iter_mut();
+        let mut unsymbolized = 0;
+        while Instant::now() < deadline
+            && let Some(thread) = remaining.next()
+        {
+            if !enrich_stack(&mut thread.stack) {
+                unsymbolized += 1;
+                break;
+            }
+        }
+        unsymbolized += remaining.len();
+        if unsymbolized > 0 {
+            builder.with_counter(
+                "threads_unsymbolized".to_string(),
+                i64::try_from(unsymbolized)?,
+            )?;
+        }
     }
     let _ = builder.with_threads(threads);
 
