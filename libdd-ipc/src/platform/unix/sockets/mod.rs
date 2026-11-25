@@ -107,21 +107,58 @@ pub(super) fn sendmsg_raw(
 
 /// Closes the descriptors a truncated message brought, which nix does not hand out.
 fn close_truncated_rights(cmsg_buf: &[u8]) {
-    // SAFETY: the buffer outlives the header, and was zeroed before the kernel filled its
-    // start, so the walk ends at the first header it did not write.
+    // Ensure `cmsghdr` alignment before handing the buffer to `CMSG_FIRSTHDR` / `CMSG_NXTHDR`:
+    // `nix::sys::socket::recvmsg` takes a `Vec<u8>`, which only guarantees 1-byte alignment.
+    let mut aligned_storage;
+    let cmsg_buf = if (cmsg_buf.as_ptr() as usize).is_multiple_of(align_of::<libc::cmsghdr>()) {
+        cmsg_buf
+    } else {
+        const { assert!(align_of::<usize>() >= align_of::<libc::cmsghdr>()) };
+        aligned_storage = vec![0usize; cmsg_buf.len().div_ceil(size_of::<usize>())];
+        // SAFETY: `aligned_storage` has at least `cmsg_buf.len()` initialized bytes.
+        let dst = unsafe {
+            std::slice::from_raw_parts_mut(
+                aligned_storage.as_mut_ptr().cast::<u8>(),
+                cmsg_buf.len(),
+            )
+        };
+        dst.copy_from_slice(cmsg_buf);
+        dst
+    };
+
+    // SAFETY: the buffer outlives the header, is aligned to `cmsghdr`, and was zeroed before the
+    // kernel filled its start, so the walk ends at the first header it did not write.
     unsafe {
         let mut header: libc::msghdr = std::mem::zeroed();
         header.msg_control = cmsg_buf.as_ptr() as *mut libc::c_void;
         header.msg_controllen = cmsg_buf.len() as _;
+        let buf_end = cmsg_buf.as_ptr() as usize + cmsg_buf.len();
+        let data_offset = libc::CMSG_LEN(0) as usize;
         let mut cmsg = libc::CMSG_FIRSTHDR(&header);
-        while !cmsg.is_null() && (*cmsg).cmsg_len as usize >= libc::CMSG_LEN(0) as usize {
-            if (*cmsg).cmsg_level == libc::SOL_SOCKET && (*cmsg).cmsg_type == libc::SCM_RIGHTS {
-                let fds = libc::CMSG_DATA(cmsg).cast::<libc::c_int>();
-                let count = ((*cmsg).cmsg_len as usize - libc::CMSG_LEN(0) as usize)
-                    / size_of::<libc::c_int>();
+        while !cmsg.is_null() {
+            let hdr = cmsg.read_unaligned();
+            let cmsg_len = hdr.cmsg_len as usize;
+            if cmsg_len < data_offset {
+                break;
+            }
+            let Some(cmsg_end) = (cmsg as usize).checked_add(cmsg_len) else {
+                break;
+            };
+            let clamped_end = cmsg_end.min(buf_end);
+            if hdr.cmsg_level == libc::SOL_SOCKET && hdr.cmsg_type == libc::SCM_RIGHTS {
+                let data_ptr = libc::CMSG_DATA(cmsg);
+                let data_len = clamped_end.saturating_sub(data_ptr as usize);
+                let fds = data_ptr.cast::<libc::c_int>();
+                let count = data_len / size_of::<libc::c_int>();
                 for i in 0..count {
-                    drop(OwnedFd::from_raw_fd(fds.add(i).read_unaligned()));
+                    let fd = fds.add(i).read_unaligned();
+                    if fd >= 0 {
+                        libc::close(fd);
+                    }
                 }
+            }
+            if cmsg_end > buf_end {
+                break;
             }
             cmsg = libc::CMSG_NXTHDR(&header, cmsg);
         }
@@ -783,5 +820,60 @@ pub async fn send_acks_async<C: AsRawFd>(fd: &AsyncFd<C>, count: u32) {
             Ok(Err(_)) => return,
             Err(_would_block) => {} // re-register for writability
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn close_truncated_rights_clamps_bounds_and_skips_negative_fds() {
+        let mut pipe = [-1; 2];
+        // SAFETY: `pipe` writes two new file descriptors.
+        assert_eq!(unsafe { libc::pipe(pipe.as_mut_ptr()) }, 0);
+
+        let payload_len = 2 * size_of::<libc::c_int>();
+        let space = unsafe { libc::CMSG_SPACE(payload_len as libc::c_uint) } as usize;
+        let mut storage = vec![0usize; space.div_ceil(size_of::<usize>())];
+        let buf =
+            unsafe { std::slice::from_raw_parts_mut(storage.as_mut_ptr().cast::<u8>(), space) };
+
+        // Case 1: valid fd alongside -1 (must close pipe[0] and ignore -1).
+        unsafe {
+            let mut header: libc::msghdr = std::mem::zeroed();
+            header.msg_control = buf.as_mut_ptr() as *mut libc::c_void;
+            header.msg_controllen = buf.len() as _;
+            let cmsg = libc::CMSG_FIRSTHDR(&header);
+            (*cmsg).cmsg_level = libc::SOL_SOCKET;
+            (*cmsg).cmsg_type = libc::SCM_RIGHTS;
+            (*cmsg).cmsg_len = libc::CMSG_LEN(payload_len as libc::c_uint) as _;
+            let data = libc::CMSG_DATA(cmsg).cast::<libc::c_int>();
+            data.add(0).write_unaligned(pipe[0]);
+            data.add(1).write_unaligned(-1);
+        }
+        close_truncated_rights(buf);
+        assert_eq!(unsafe { libc::fcntl(pipe[0], libc::F_GETFD) }, -1);
+
+        // Case 2: oversized cmsg_len extending past buf.len() in an unaligned slice (must realign,
+        // clamp, and close pipe[1]).
+        buf.fill(0);
+        unsafe {
+            let mut header: libc::msghdr = std::mem::zeroed();
+            header.msg_control = buf.as_mut_ptr() as *mut libc::c_void;
+            header.msg_controllen = buf.len() as _;
+            let cmsg = libc::CMSG_FIRSTHDR(&header);
+            (*cmsg).cmsg_level = libc::SOL_SOCKET;
+            (*cmsg).cmsg_type = libc::SCM_RIGHTS;
+            (*cmsg).cmsg_len = (buf.len() + 64) as _;
+            let data = libc::CMSG_DATA(cmsg).cast::<libc::c_int>();
+            data.add(0).write_unaligned(pipe[1]);
+            data.add(1).write_unaligned(-1);
+        }
+        let mut unaligned = vec![0u8; buf.len() + 1];
+        unaligned[1..].copy_from_slice(buf);
+        close_truncated_rights(&unaligned[1..]);
+        assert_eq!(unsafe { libc::fcntl(pipe[1], libc::F_GETFD) }, -1);
     }
 }
