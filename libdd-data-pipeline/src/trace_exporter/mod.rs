@@ -44,7 +44,7 @@ use crate::trace_exporter::error::{
 };
 use crate::trace_exporter::stats::StatsComputationConfig;
 use crate::{
-    agent_info::{self, schema::AgentInfo},
+    agent_info::schema::AgentInfo,
     health_metrics,
     health_metrics::{HealthMetric, SendResult, TransportErrorType},
 };
@@ -581,7 +581,7 @@ impl<
     /// Reconcile in-process stats state with the latest agent info.
     /// Async so the `Enabled` arm can await a stats-worker shutdown without `block_on`.
     async fn check_agent_info(&self) {
-        let Some(agent_info) = agent_info::get_agent_info() else {
+        let Some(agent_info) = self.info_response_observer.agent_info() else {
             return;
         };
         if !self.has_agent_info_state_changed(&agent_info) {
@@ -703,7 +703,7 @@ impl<
             if std::time::Instant::now().duration_since(start) > timeout {
                 anyhow::bail!("Timeout waiting for agent info to be ready",);
             }
-            if agent_info::get_agent_info().is_some() {
+            if self.info_response_observer.agent_info().is_some() {
                 return Ok(());
             }
             tokio::time::sleep(Duration::from_millis(10)).await;
@@ -1755,6 +1755,7 @@ fn add_native_export_marker<T: TraceData>(span: &mut Span<T>) {
 mod tests {
     use self::error::AgentErrorKind;
     use super::*;
+    use crate::agent_info;
     use httpmock::MockServer;
     use httpmock::prelude::*;
     use libdd_capabilities_impl::NativeCapabilities;

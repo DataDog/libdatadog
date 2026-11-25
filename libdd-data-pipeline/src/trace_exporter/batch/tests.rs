@@ -156,7 +156,7 @@ fn stopping_during_feedback_settles_the_acknowledged_attempt_and_p0() {
         .unwrap()
         .block_on(async {
             let (mut fetcher, _) = crate::agent_info::AgentInfoFetcher::<RecordingClient>::new(
-                Endpoint::from_slice("http://localhost:8126/info"),
+                Endpoint::from_slice("http://127.0.0.1:8126/info"),
                 Duration::from_secs(300),
             );
             fetcher.run().await;
@@ -264,7 +264,7 @@ fn p0_accounting_survives_empty_and_all_oversized_selections() {
     runtime
         .block_on(async {
             let (mut fetcher, _) = crate::agent_info::AgentInfoFetcher::<RecordingClient>::new(
-                Endpoint::from_slice("http://localhost:8126/info"),
+                Endpoint::from_slice("http://127.0.0.1:8126/info"),
                 Duration::from_secs(300),
             );
             fetcher.run().await;
@@ -448,7 +448,7 @@ fn p0_counts_remain_pending_after_a_request_build_failure() {
     runtime
         .block_on(async {
             let (mut fetcher, _) = crate::agent_info::AgentInfoFetcher::<RecordingClient>::new(
-                Endpoint::from_slice("http://localhost:8126/info"),
+                Endpoint::from_slice("http://127.0.0.1:8126/info"),
                 Duration::from_secs(300),
             );
             fetcher.run().await;
@@ -482,7 +482,7 @@ fn a_rejected_p0_control_request_disables_v1_for_the_next_batch() {
     runtime
         .block_on(async {
             let (mut fetcher, _) = crate::agent_info::AgentInfoFetcher::<RecordingClient>::new(
-                Endpoint::from_slice("http://localhost:8126/info"),
+                Endpoint::from_slice("http://127.0.0.1:8126/info"),
                 Duration::from_secs(300),
             );
             fetcher.run().await;

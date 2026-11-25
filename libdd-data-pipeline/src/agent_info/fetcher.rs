@@ -363,6 +363,10 @@ impl ResponseObserver {
         }
     }
 
+    pub(crate) fn agent_info(&self) -> Option<Arc<AgentInfo>> {
+        self.state.load_full()
+    }
+
     /// Positive receiver limit fetched for this observer's endpoint, if available.
     pub fn max_request_bytes(&self) -> Option<usize> {
         self.state
