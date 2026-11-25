@@ -243,14 +243,15 @@ impl<C: HttpClientCapability + SleepCapability> AgentInfoFetcher<C> {
     pub fn new(info_endpoint: Endpoint, refresh_interval: Duration) -> (Self, ResponseObserver) {
         // The trigger channel stores a single message to avoid multiple triggers.
         let (trigger_tx, trigger_rx) = mpsc::channel(1);
+        let state = receiver_state(&info_endpoint);
         let response_observer = ResponseObserver {
             trigger_tx,
-            state: receiver_state(&info_endpoint),
+            state: Some(state.clone()),
         };
 
         let fetcher = Self {
             info_endpoint,
-            state: response_observer.state.clone(),
+            state,
             refresh_interval,
             trigger_rx: Some(trigger_rx),
             has_fetched: false,
@@ -351,7 +352,7 @@ impl<C: HttpClientCapability + SleepCapability> AgentInfoFetcher<C> {
 #[derive(Debug, Clone)]
 pub struct ResponseObserver {
     trigger_tx: mpsc::Sender<()>,
-    state: ReceiverState,
+    state: Option<ReceiverState>,
 }
 
 impl ResponseObserver {
@@ -364,12 +365,15 @@ impl ResponseObserver {
     }
 
     pub(crate) fn agent_info(&self) -> Option<Arc<AgentInfo>> {
-        self.state.load_full()
+        self.state
+            .as_ref()
+            .map_or_else(super::get_agent_info, |s| s.load_full())
     }
 
     /// Positive receiver limit fetched for this observer's endpoint, if available.
     pub fn max_request_bytes(&self) -> Option<usize> {
         self.state
+            .as_ref()?
             .load()
             .as_ref()?
             .info
@@ -391,7 +395,7 @@ impl ResponseObserver {
             .get("datadog-agent-state")
             .and_then(|v| v.to_str().ok());
         if let Some(state_str) = state_str {
-            let current_state = self.state.load();
+            let current_state = self.agent_info();
             if current_state.as_ref().map(|s| s.state_hash.as_str()) != Some(state_str) {
                 match self.trigger_tx.try_send(()) {
                     Ok(_) => {}
