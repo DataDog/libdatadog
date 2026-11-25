@@ -145,6 +145,8 @@ impl From<BatchResult> for TraceExporterBatch {
 /// The caller owns observation delivery; native payload telemetry is bypassed.
 /// Only the latest usable sampling response retains its body. Error views expose
 /// codes and HTTP status observations, not allocated diagnostic strings.
+/// The byte cap bounds each encoded request. Temporary allocation can exceed the cap,
+/// and cancellation or deadline expiry cannot interrupt an encode in progress.
 ///
 /// # Safety
 /// All non-null pointers must be valid. `out` must be writable, unaliased, and not

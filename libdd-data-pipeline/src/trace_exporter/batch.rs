@@ -178,7 +178,9 @@ impl<
     ///
     /// The operation-wide elapsed-time budget is the default strategy's attempt
     /// count times the request timeout, plus ten seconds. Each payload retains
-    /// its own retry allowance. Synchronous preparation checks this cooperatively.
+    /// its own retry allowance. The byte limit applies to each encoded request.
+    /// A candidate is encoded in full before splitting: its temporary allocation can exceed
+    /// the limit, and cancellation or deadline expiry cannot interrupt an encode in progress.
     pub fn send_trace_chunks_batched<T: TraceData>(
         &self,
         chunks: PooledChunks<'_, T>,
