@@ -170,8 +170,13 @@ pub(super) fn recvmsg_raw(
     // inherited. Set it atomically where the receive API supports it.
     #[cfg(target_os = "linux")]
     let flags = flags | MsgFlags::MSG_CMSG_CLOEXEC;
-    let msg =
-        recvmsg::<UnixAddr>(fd, &mut iov, Some(&mut cmsg_buf), flags).map_err(io::Error::from)?;
+    let msg = loop {
+        match recvmsg::<UnixAddr>(fd, &mut iov, Some(&mut cmsg_buf), flags) {
+            Ok(msg) => break msg,
+            Err(nix::errno::Errno::EINTR) => continue,
+            Err(e) => return Err(io::Error::from(e)),
+        }
+    };
 
     let bytes = msg.bytes;
     if bytes == 0 {
