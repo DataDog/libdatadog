@@ -12,7 +12,8 @@
 use crate::normalize_utils;
 use crate::normalizer::is_valid_http_status_code;
 use libdd_trace_model::{
-    AttributeValue, Attributes as _, AttributesMut as _, SpanMut, TraceChunkMut, TraceText,
+    AttributeRef, AttributeValue, Attributes as _, AttributesMut as _, SpanMut, TraceChunkMut,
+    TraceText,
 };
 
 const PEER_SERVICE_KEY: &str = "peer.service";
@@ -87,17 +88,26 @@ pub fn normalize_span<S: SpanMut>(span: &mut S, lang: &str) -> anyhow::Result<()
     }
 
     // The agent reads both attributes with `GetAttributeAsString`, which formats a value of any
-    // type (see `AttributeRef::format_as_string`).
+    // type (see `AttributeRef::format_as_string`). The full formatting of an array or a map can
+    // be far larger than the payload, as the V1 string table lets it reference one string many
+    // times, so neither is formatted in full.
     if span
         .attribute(HTTP_STATUS_CODE_KEY)
-        .is_some_and(|code| !is_valid_http_status_code(&code.format_as_string()))
+        .is_some_and(|code| match code {
+            // Formatted as `[...]` or `{...}`, which is never a valid status code.
+            AttributeRef::Array(_) | AttributeRef::KeyValueList(_) => true,
+            _ => !is_valid_http_status_code(&code.format_as_string()),
+        })
     {
         span.remove_attribute(HTTP_STATUS_CODE_KEY);
     }
 
     for link in span.span_links_mut() {
         let repaired = link.attribute(LINK_NAME_KEY).and_then(|value| {
-            let mut name = value.format_as_string().into_owned();
+            // `normalize_name` first truncates to `MAX_NAME_LEN`, so the rest isn't needed.
+            let mut name = value
+                .format_as_string_truncated(normalize_utils::MAX_NAME_LEN)
+                .into_owned();
             normalize_utils::normalize_name(&mut name);
             // As the agent, write the name back as a string, whatever the type of the value.
             (value.as_str() != Some(name.as_str())).then_some(name)
@@ -695,6 +705,11 @@ mod tests {
             (
                 Value::KeyValueList(HashMap::from([("k".to_owned(), Value::Bool(false))])),
                 "k_false",
+            ),
+            // Truncated to `MAX_NAME_LEN` before the leading `[` is stripped.
+            (
+                Value::Array(vec![Value::String("a".repeat(150)); 3]),
+                &"a".repeat(99),
             ),
         ];
         for (value, expected) in cases {

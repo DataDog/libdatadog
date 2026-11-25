@@ -683,21 +683,48 @@ impl<'a, T: ValueTypes> AttributeRef<'a, T> {
     ///   the map.
     #[must_use]
     pub fn format_as_string(&self) -> Cow<'a, str> {
+        self.format_as_string_truncated(usize::MAX)
+    }
+
+    /// [`Self::format_as_string`] truncated to at most `max_len` bytes, on a UTF-8 character
+    /// boundary, without formatting what is cut off.
+    ///
+    /// The V1 string table lets a payload reference one string many times for a few bytes each,
+    /// so the full formatting of an array or a map can be orders of magnitude larger than the
+    /// payload. Use this whenever only a bounded prefix of the value is needed.
+    #[must_use]
+    pub fn format_as_string_truncated(&self, max_len: usize) -> Cow<'a, str> {
         match *self {
-            Self::String(s) => Cow::Borrowed(s),
-            Self::Bool(b) => Cow::Borrowed(if b { "true" } else { "false" }),
+            Self::String(s) => Cow::Borrowed(&s[..s.floor_char_boundary(max_len)]),
+            Self::Bool(b) => {
+                let s = if b { "true" } else { "false" };
+                Cow::Borrowed(&s[..s.floor_char_boundary(max_len)])
+            }
             _ => {
                 let mut out = String::new();
-                self.write_as_string(&mut out);
+                self.write_as_string(&mut out, max_len);
+                out.truncate(out.floor_char_boundary(max_len));
                 Cow::Owned(out)
             }
         }
     }
 
-    fn write_as_string(&self, out: &mut String) {
+    /// Appends the formatting of `self` to `out`, stopping once `out` is at least `limit` bytes
+    /// long: `out` then holds a prefix of the full formatting at least `limit` bytes long, or all
+    /// of it if it is shorter.
+    fn write_as_string(&self, out: &mut String, limit: usize) {
+        // Appends a prefix of `s` that brings `out` to at least `limit` bytes, if `s` is long
+        // enough.
+        fn push_bounded(out: &mut String, s: &str, limit: usize) {
+            let needed = limit.saturating_sub(out.len());
+            out.push_str(&s[..s.ceil_char_boundary(needed)]);
+        }
+        if out.len() >= limit {
+            return;
+        }
         // Writing to a `String` doesn't fail, so the `write!` results are ignored.
         match *self {
-            Self::String(s) => out.push_str(s),
+            Self::String(s) => push_bounded(out, s, limit),
             Self::Bool(b) => out.push_str(if b { "true" } else { "false" }),
             Self::Int(i) => {
                 let _ = write!(out, "{i}");
@@ -713,26 +740,34 @@ impl<'a, T: ValueTypes> AttributeRef<'a, T> {
                     let _ = write!(out, "{f}");
                 }
             }
-            Self::Bytes(b) => out.push_str(&String::from_utf8_lossy(b)),
+            // A bytes value isn't shared through the string table, so its conversion is bounded
+            // by the size of the payload.
+            Self::Bytes(b) => push_bounded(out, &String::from_utf8_lossy(b), limit),
             Self::Array(values) => {
                 out.push('[');
                 for (i, v) in values.iter().enumerate() {
+                    if out.len() >= limit {
+                        return;
+                    }
                     if i > 0 {
                         out.push(',');
                     }
-                    AttributeRef::from(v).write_as_string(out);
+                    AttributeRef::from(v).write_as_string(out, limit);
                 }
                 out.push(']');
             }
             Self::KeyValueList(entries) => {
                 out.push('{');
                 for (i, (k, v)) in entries.iter().enumerate() {
+                    if out.len() >= limit {
+                        return;
+                    }
                     if i > 0 {
                         out.push(',');
                     }
-                    out.push_str(k);
+                    push_bounded(out, k, limit);
                     out.push('=');
-                    AttributeRef::from(v).write_as_string(out);
+                    AttributeRef::from(v).write_as_string(out, limit);
                 }
                 out.push('}');
             }
@@ -868,6 +903,51 @@ mod tests {
             str_value("s").format_as_string(),
             Cow::Borrowed("s")
         ));
+    }
+
+    #[test]
+    fn format_as_string_truncated() {
+        let values = [
+            str_value("aé b"),
+            V::Bool(false),
+            V::Int(-42),
+            V::Float(-2.5),
+            V::Bytes(vec![b'a', 0xff, b'b']),
+            V::Array(vec![
+                V::Int(1),
+                str_value("é"),
+                V::Array(vec![V::Bool(true), V::Float(2.5)]),
+            ]),
+            V::KeyValueList(Map::from([(
+                "ké".to_owned(),
+                V::Array(vec![str_value("v")]),
+            )])),
+        ];
+        for value in values {
+            let full = value.format_as_string();
+            for max_len in 0..=full.len() + 1 {
+                let expected = &full[..full.floor_char_boundary(max_len)];
+                let value_ref = AttributeRef::from(&value);
+                assert_eq!(
+                    value_ref.format_as_string_truncated(max_len),
+                    expected,
+                    "{value:?} {max_len}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn format_as_string_truncated_stops_early() {
+        // One shared string referenced many times, as the V1 string table allows.
+        let value = V::Array(vec![str_value(&"x".repeat(1 << 10)); 1 << 10]);
+        let Cow::Owned(truncated) = AttributeRef::from(&value).format_as_string_truncated(100)
+        else {
+            panic!("an array is formatted into an owned string");
+        };
+        assert_eq!(truncated, format!("[{}", "x".repeat(99)));
+        // Only the needed prefix of the first element was formatted.
+        assert!(truncated.capacity() < 1 << 10, "{}", truncated.capacity());
     }
 
     #[test]
