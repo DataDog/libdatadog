@@ -8,9 +8,13 @@ use criterion::{
 };
 use libdd_trace_normalization::normalize_utils::{normalize_name, normalize_service};
 use libdd_trace_normalization::normalizer::normalize_trace;
+use libdd_trace_normalization::normalizer_v1;
 use libdd_trace_protobuf::pb;
 use std::hint::black_box;
 use std::{collections::HashMap, time::Duration};
+
+#[path = "../src/test_types.rs"]
+mod test_types;
 
 fn normalize_service_bench(c: &mut Criterion) {
     let group = c.benchmark_group("normalization/normalize_service");
@@ -142,10 +146,26 @@ fn normalize_span_bench(c: &mut Criterion) {
     );
 }
 
+fn normalize_v1_span_bench(c: &mut Criterion) {
+    let span = test_types::normalized_span();
+    c.bench_with_input(
+        BenchmarkId::new("normalization/normalize_v1_span", "already_normalized"),
+        &span,
+        |b, span| {
+            b.iter_batched_ref(
+                || span.clone(),
+                |s| black_box(normalizer_v1::normalize_span(black_box(s), "python")),
+                BatchSize::SmallInput,
+            )
+        },
+    );
+}
+
 criterion_group!(
     benches,
     normalize_service_bench,
     normalize_name_bench,
-    normalize_span_bench
+    normalize_span_bench,
+    normalize_v1_span_bench
 );
 criterion_main!(benches);
