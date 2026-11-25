@@ -324,6 +324,11 @@ impl<C: ProfileCodec> Write for Compressor<C> {
     }
 
     #[inline]
+    fn write_all(&mut self, buf: &[u8]) -> io::Result<()> {
+        self.encoder.write_all(buf)
+    }
+
+    #[inline]
     fn flush(&mut self) -> io::Result<()> {
         self.encoder.flush()
     }
