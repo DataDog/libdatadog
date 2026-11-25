@@ -27,7 +27,8 @@ use tokio_tungstenite::{
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, info, warn};
 
-use crate::handler::{ReceivedPayload, run_dispatch_loop};
+use crate::eval::{Decision, PolicyStore};
+use crate::handler::{ReceivedPayload, run_dispatch_loop_with_policy};
 use crate::register::{HostApplication, RegisterRequest, register_connection};
 
 const IO_QUEUE_CAPACITY: usize = 100;
@@ -199,6 +200,7 @@ async fn run_session_loop(
     registration: Option<RegistrationConfig>,
     tls_config: Arc<rustls::ClientConfig>,
     payload_tx: watch::Sender<Option<ReceivedPayload>>,
+    policy_store: PolicyStore,
     connection_id_tx: watch::Sender<Option<ConnectionId>>,
     stop_token: CancellationToken,
 ) {
@@ -270,6 +272,7 @@ async fn run_session_loop(
             &tls_config,
             &event_tx,
             &payload_tx,
+            &policy_store,
             &stop_token,
         )
         .await;
@@ -314,6 +317,7 @@ async fn run_single_connection(
     tls_config: &Arc<rustls::ClientConfig>,
     event_tx: &mpsc::Sender<ConnectionUpdate<WsConnection>>,
     payload_tx: &watch::Sender<Option<ReceivedPayload>>,
+    policy_store: &PolicyStore,
     stop_token: &CancellationToken,
 ) -> String {
     let mut req = match ws_url.into_client_request() {
@@ -351,10 +355,11 @@ async fn run_single_connection(
     let io = WsConnection::new(outgoing_tx, incoming_rx);
 
     let (dispatch_publisher, dispatch_stream, dispatch_responder) = new_dispatcher_interconnect();
-    let dispatch_task = AbortOnDrop::from(tokio::spawn(run_dispatch_loop(
+    let dispatch_task = AbortOnDrop::from(tokio::spawn(run_dispatch_loop_with_policy(
         dispatch_stream,
         dispatch_responder,
         payload_tx.clone(),
+        Some(policy_store.clone()),
     )));
 
     let parsed_host = match EndpointHostname::try_from(endpoint_hostname.to_string()) {
@@ -446,6 +451,7 @@ struct X509SessionWorker {
     registration: Option<RegistrationConfig>,
     tls_config: Arc<rustls::ClientConfig>,
     payload_tx: watch::Sender<Option<ReceivedPayload>>,
+    policy_store: PolicyStore,
     connection_id_tx: watch::Sender<Option<ConnectionId>>,
     stop_token: CancellationToken,
 }
@@ -462,6 +468,7 @@ impl Worker for X509SessionWorker {
                 self.registration.clone(),
                 Arc::clone(&self.tls_config),
                 self.payload_tx.clone(),
+                self.policy_store.clone(),
                 self.connection_id_tx.clone(),
                 self.stop_token.clone(),
             )
@@ -487,6 +494,7 @@ enum RunnerHandle {
 pub struct AiGuardX509 {
     stop_token: CancellationToken,
     payload_rx: watch::Receiver<Option<ReceivedPayload>>,
+    policy_store: PolicyStore,
     connection_id_rx: watch::Receiver<Option<ConnectionId>>,
     _runner: RunnerHandle,
 }
@@ -496,7 +504,8 @@ impl AiGuardX509 {
         runtime: &ForkSafeRuntime,
         config: AiGuardX509Config,
     ) -> Result<Self, AiGuardX509Error> {
-        let (worker, stop_token, payload_rx, connection_id_rx) = build_worker(config)?;
+        let (worker, stop_token, payload_rx, policy_store, connection_id_rx) =
+            build_worker(config)?;
         // restart_on_fork = false: before_fork pauses cleanly via cancellation;
         // parent resumes automatically; forked children spawn a fresh client via product.restart().
         let handle = runtime
@@ -506,13 +515,15 @@ impl AiGuardX509 {
         Ok(Self {
             stop_token,
             payload_rx,
+            policy_store,
             connection_id_rx,
             _runner: RunnerHandle::ForkSafeWorker(handle),
         })
     }
 
     pub fn start(config: AiGuardX509Config) -> Result<Self, AiGuardX509Error> {
-        let (worker, stop_token, payload_rx, connection_id_rx) = build_worker(config)?;
+        let (worker, stop_token, payload_rx, policy_store, connection_id_rx) =
+            build_worker(config)?;
         let task = AbortOnDrop::from(tokio::spawn(run_session_loop(
             worker.ws_url,
             worker.endpoint_hostname,
@@ -521,6 +532,7 @@ impl AiGuardX509 {
             worker.registration,
             worker.tls_config,
             worker.payload_tx,
+            worker.policy_store,
             worker.connection_id_tx,
             worker.stop_token,
         )));
@@ -528,9 +540,18 @@ impl AiGuardX509 {
         Ok(Self {
             stop_token,
             payload_rx,
+            policy_store,
             connection_id_rx,
             _runner: RunnerHandle::StandaloneTask(task),
         })
+    }
+
+    pub fn evaluate(&self, content: &str, tool_name: Option<&str>) -> Decision {
+        self.policy_store.evaluate(content, tool_name)
+    }
+
+    pub fn apply_policy_json(&self, raw: &[u8]) -> Result<(), String> {
+        self.policy_store.apply_json(raw)
     }
 
     pub fn payload(&self) -> Option<ReceivedPayload> {
@@ -570,6 +591,7 @@ fn build_worker(
         X509SessionWorker,
         CancellationToken,
         watch::Receiver<Option<ReceivedPayload>>,
+        PolicyStore,
         watch::Receiver<Option<ConnectionId>>,
     ),
     AiGuardX509Error,
@@ -594,6 +616,7 @@ fn build_worker(
 
     let (payload_tx, payload_rx) = watch::channel(None);
     let (connection_id_tx, connection_id_rx) = watch::channel(None);
+    let policy_store = PolicyStore::new();
     let stop_token = CancellationToken::new();
 
     let worker = X509SessionWorker {
@@ -604,11 +627,12 @@ fn build_worker(
         registration,
         tls_config,
         payload_tx,
+        policy_store: policy_store.clone(),
         connection_id_tx,
         stop_token: stop_token.clone(),
     };
 
-    Ok((worker, stop_token, payload_rx, connection_id_rx))
+    Ok((worker, stop_token, payload_rx, policy_store, connection_id_rx))
 }
 
 #[cfg(test)]

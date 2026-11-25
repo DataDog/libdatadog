@@ -15,6 +15,7 @@ description = "AI Guard RC x509 Magic Tunnel client, dispatch handler, and local
 bench = false
 
 [dependencies]
+arc-swap = { workspace = true }
 async-trait = { workspace = true }
 bytes = { workspace = true, features = ["std"] }
 fastrand = { workspace = true }
@@ -28,6 +29,7 @@ pbjson-types = { workspace = true }
 rc-x509-client = { workspace = true, features = ["non-fips"] }
 rc-x509-proto = { workspace = true }
 rc-x509-roots = { workspace = true }
+regex = { workspace = true, features = ["perf", "std"] }
 rustls = { workspace = true, features = ["ring", "std", "tls12"] }
 serde = { workspace = true, features = ["derive", "std"] }
 serde_json = { workspace = true, features = ["std"] }

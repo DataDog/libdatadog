@@ -3081,6 +3081,7 @@ dependencies = [
 name = "libdd-ai-guard"
 version = "0.1.0"
 dependencies = [
+ "arc-swap",
  "async-trait",
  "bytes",
  "fastrand",
@@ -3097,6 +3098,7 @@ dependencies = [
  "rc-x509-roots",
  "rc-x509-test-client-harness",
  "rc-x509-test-helpers",
+ "regex",
  "rustls",
  "serde",
  "serde_json",
