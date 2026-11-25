@@ -14,9 +14,6 @@ use std::borrow::Borrow;
 // (`msgpack_encoder::v1::{trace_key, chunk_key, SpanKey, SpanLinkKey, SpanEventKey, AnyValueKey}`).
 
 pub(super) mod trace_key {
-    /// Explicit string table, sent before any other string. Our encoder never writes it (it
-    /// streams strings inline instead), but the Agent accepts it, so producers may send it.
-    pub const STRINGS: u8 = 1;
     pub const CONTAINER_ID: u8 = 2;
     pub const LANGUAGE_NAME: u8 = 3;
     pub const LANGUAGE_VERSION: u8 = 4;
@@ -94,6 +91,9 @@ pub(super) const TRACE_ID_LEN: u32 = 16;
 /// V1 strings are encoded inline the first time they appear (as msgpack `str`), and as a
 /// msgpack `uint` reference on every subsequent occurrence. ID 0 is reserved for the empty
 /// string and is pre-inserted on construction.
+///
+/// Strings only enter the table inline (in known or unknown fields): an explicit string table
+/// field is not decoded, and goes through the unknown-field path like any other unknown key.
 ///
 /// The layout matches the Agent's: every non-empty inline string takes the next wire index, even
 /// when its value equals an earlier entry, so references stay aligned with the producer's own
@@ -182,31 +182,6 @@ where
         }
         Err(e) => Err(e),
     }
-}
-
-/// Reads the explicit string table (payload field 1): an array of `str` that fills the table
-/// in order. As in the Agent, it must come before any other string, and its empty entries are
-/// skipped, since the table's entry 0 is always the pre-inserted empty string.
-fn read_string_table<T: DeserializableTraceData>(
-    buf: &mut Buffer<T>,
-    table: &mut StringTable<T>,
-) -> Result<(), DecodeError>
-where
-    T::Text: Clone,
-{
-    if table.seen.len() > 1 {
-        return Err(DecodeError::InvalidFormat(
-            "V1 string table must be sent before any other string".to_owned(),
-        ));
-    }
-    let count = decode::read_array_len(buf.as_mut_slice())
-        .map_err(|_| DecodeError::InvalidFormat("V1 string table len read failure".to_owned()))?;
-    let count = usize::try_from(count).unwrap_or(usize::MAX);
-    table.seen.reserve(buf.capped_capacity(count));
-    for _ in 0..count {
-        read_inline_string(buf, table)?;
-    }
-    Ok(())
 }
 
 /// Reads a string-or-reference value at the current buffer position.
@@ -404,7 +379,6 @@ where
             DecodeError::InvalidFormat("V1 payload key (u8) read failure".to_owned())
         })?;
         match key {
-            trace_key::STRINGS => read_string_table(buf, table)?,
             trace_key::CHUNKS => {
                 payload.chunks = decode_chunks(buf, table)?;
                 saw_chunks = true;
@@ -992,8 +966,6 @@ mod tests {
 
     /// A payload-level field, written before the chunks.
     enum Field {
-        /// Explicit string table (`trace_key::STRINGS`).
-        Table(Vec<&'static [u8]>),
         /// Unknown field 99 carrying an array of strings.
         Unknown(Vec<&'static [u8]>),
         /// A known string field, such as `trace_key::ENV_REF`.
@@ -1007,12 +979,8 @@ mod tests {
         encode::write_map_len(&mut buf, u32::try_from(fields.len() + 1).unwrap()).unwrap();
         for field in fields {
             match field {
-                Field::Table(strings) | Field::Unknown(strings) => {
-                    let key = match field {
-                        Field::Table(_) => trace_key::STRINGS,
-                        _ => 99,
-                    };
-                    wkey(&mut buf, key);
+                Field::Unknown(strings) => {
+                    wkey(&mut buf, 99);
                     encode::write_array_len(&mut buf, u32::try_from(strings.len()).unwrap())
                         .unwrap();
                     for s in strings {
@@ -1178,62 +1146,6 @@ mod tests {
         }
     }
 
-    /// Modeled on the Agent's `TestUnmarshalStringTableUTF8`: the explicit string table fills
-    /// the table from index 0, its empty first entry takes no extra index, and distinct entries
-    /// that repair to the same value keep distinct indices.
-    #[test]
-    fn explicit_string_table_matches_agent_layout() {
-        let bytes = build_payload(
-            &[
-                Field::Table(vec![
-                    b"",
-                    "café 日本語 🐶".as_bytes(),
-                    b"body\xe2\x82",
-                    b"body\xe2\x83",
-                    b"tail",
-                ]),
-                Field::Str(trace_key::LANGUAGE_NAME, Wire::Ref(1)),
-                Field::Str(trace_key::LANGUAGE_VERSION, Wire::Ref(2)),
-                Field::Str(trace_key::TRACER_VERSION, Wire::Ref(3)),
-                Field::Str(trace_key::RUNTIME_ID, Wire::Ref(4)),
-            ],
-            &[],
-        );
-        fn fields<T: DeserializableTraceData>(p: &TracerPayload<T>) -> [String; 4] {
-            [
-                &p.language_name,
-                &p.language_version,
-                &p.tracer_version,
-                &p.runtime_id,
-            ]
-            .map(|s| Borrow::<str>::borrow(s).to_owned())
-        }
-        let expected = [
-            "café 日本語 🐶",
-            "body\u{FFFD}\u{FFFD}",
-            "body\u{FFFD}\u{FFFD}",
-            "tail",
-        ]
-        .map(str::to_owned);
-        assert_eq!(
-            decode_both(&bytes, fields, fields),
-            [expected.clone(), expected]
-        );
-    }
-
-    #[test]
-    fn explicit_string_table_after_another_string_is_rejected() {
-        let bytes = build_payload(
-            &[
-                Field::Str(trace_key::ENV_REF, Wire::Str(b"prod")),
-                Field::Table(vec![b"", b"late"]),
-            ],
-            &[],
-        );
-        let err = from_bytes(Bytes::from(bytes)).expect_err("a late string table must error");
-        assert!(matches!(err, DecodeError::InvalidFormat(m) if m.contains("string table")));
-    }
-
     /// Modeled on the Agent's `TestUnmarshalTracerPayloadUTF8KeyCollision`: distinct wire
     /// strings that repair to the same value each keep their own wire index, and are one
     /// attribute key, so a lookup by the repaired name finds the attribute on every span.
@@ -1255,15 +1167,15 @@ mod tests {
                 vec!["alice", "bob", "carol"],
             ),
             (
-                "string table keys",
+                // Keys and values enter the table through earlier payload fields.
+                "table-referenced keys",
                 build_payload(
-                    &[Field::Table(vec![
-                        b"",
-                        b"user\x80",
-                        b"user\x81",
-                        b"alice",
-                        b"bob",
-                    ])],
+                    &[
+                        Field::Str(trace_key::ENV_REF, Wire::Str(b"user\x80")), // wire index 1
+                        Field::Str(trace_key::HOSTNAME_REF, Wire::Str(b"user\x81")), // index 2
+                        Field::Str(trace_key::APP_VERSION_REF, Wire::Str(b"alice")), // index 3
+                        Field::Str(trace_key::RUNTIME_ID, Wire::Str(b"bob")),   // index 4
+                    ],
                     &[
                         vec![(Wire::Ref(1), Wire::Ref(3))],
                         vec![(Wire::Ref(2), Wire::Ref(4))],
