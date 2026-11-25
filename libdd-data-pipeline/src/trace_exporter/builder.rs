@@ -1023,9 +1023,12 @@ impl<R: SharedRuntime> TraceExporterBuilder<R> {
             })?;
             let mut stats_endpoint = Endpoint::from_url(stats_uri).with_api_key(api_key);
             stats_endpoint.set_timeout_ms(
-                self.agentless_timeout
-                    .unwrap_or(DEFAULT_AGENTLESS_TIMEOUT)
-                    .as_millis() as u64,
+                u64::try_from(
+                    self.agentless_timeout
+                        .unwrap_or(DEFAULT_AGENTLESS_TIMEOUT)
+                        .as_millis(),
+                )
+                .unwrap_or(u64::MAX),
             );
             let target = AgentlessStatsTarget {
                 endpoint: stats_endpoint,

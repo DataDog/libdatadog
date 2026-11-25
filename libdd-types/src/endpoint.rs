@@ -215,11 +215,7 @@ impl Endpoint {
     /// # Returns
     /// Self with the timeout set, allowing for method chaining
     pub fn with_timeout(mut self, timeout_ms: u64) -> Self {
-        self.timeout_ms = if timeout_ms == 0 {
-            Self::DEFAULT_TIMEOUT
-        } else {
-            timeout_ms
-        };
+        self.set_timeout_ms(timeout_ms);
         self
     }
 
@@ -290,11 +286,15 @@ impl Endpoint {
         self.api_key = api_key;
     }
 
-    /// Set the timeout in place. Unlike [`Endpoint::with_timeout`], this is a raw write:
-    /// 0 does not fall back to the default timeout.
+    /// Set the timeout in place. Like [`Endpoint::with_timeout`], passing 0
+    /// falls back to the default timeout.
     #[inline]
     pub fn set_timeout_ms(&mut self, timeout_ms: u64) {
-        self.timeout_ms = timeout_ms;
+        self.timeout_ms = if timeout_ms == 0 {
+            Self::DEFAULT_TIMEOUT
+        } else {
+            timeout_ms
+        };
     }
 
     /// Set or clear the test session token in place.
@@ -357,15 +357,13 @@ mod tests {
         let mut endpoint = Endpoint::default();
         endpoint.set_url(url.clone());
         endpoint.set_api_key(Some("key".into()));
-        endpoint.set_timeout_ms(0);
+        endpoint.set_timeout_ms(1234);
         endpoint.set_test_token(None);
         endpoint.set_use_system_resolver(true);
 
         assert_eq!(endpoint.url(), &url);
         assert_eq!(endpoint.api_key(), Some("key"));
-        // set_timeout_ms is a raw write: unlike with_timeout, 0 does not fall
-        // back to the default timeout.
-        assert_eq!(endpoint.timeout_ms(), 0);
+        assert_eq!(endpoint.timeout_ms(), 1234);
         assert_eq!(endpoint.test_token(), None);
         assert!(endpoint.use_system_resolver());
     }
@@ -384,6 +382,13 @@ mod tests {
     #[test]
     fn with_timeout_zero_falls_back_to_default() {
         let endpoint = Endpoint::default().with_timeout(0);
+        assert_eq!(endpoint.timeout_ms(), Endpoint::DEFAULT_TIMEOUT);
+    }
+
+    #[test]
+    fn set_timeout_ms_zero_falls_back_to_default() {
+        let mut endpoint = Endpoint::default();
+        endpoint.set_timeout_ms(0);
         assert_eq!(endpoint.timeout_ms(), Endpoint::DEFAULT_TIMEOUT);
     }
 }
