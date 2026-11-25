@@ -225,6 +225,7 @@ async fn fetch_and_hash_response<C: HttpClientCapability + SleepCapability>(
 pub struct AgentInfoFetcher<C: HttpClientCapability + SleepCapability> {
     info_endpoint: Endpoint,
     max_request_bytes: Arc<AtomicUsize>,
+    state_hash: Arc<arc_swap::ArcSwapOption<String>>,
     refresh_interval: Duration,
     trigger_rx: Option<mpsc::Receiver<()>>,
     has_fetched: bool,
@@ -246,11 +247,13 @@ impl<C: HttpClientCapability + SleepCapability> AgentInfoFetcher<C> {
         let response_observer = ResponseObserver {
             trigger_tx,
             max_request_bytes: receiver_limit(&info_endpoint),
+            state_hash: Default::default(),
         };
 
         let fetcher = Self {
             info_endpoint,
             max_request_bytes: response_observer.max_request_bytes.clone(),
+            state_hash: response_observer.state_hash.clone(),
             refresh_interval,
             trigger_rx: Some(trigger_rx),
             has_fetched: false,
@@ -353,6 +356,8 @@ impl<C: HttpClientCapability + SleepCapability> AgentInfoFetcher<C> {
             .and_then(|limit| usize::try_from(limit).ok())
             .unwrap_or_default();
         self.max_request_bytes.store(limit, Ordering::Relaxed);
+        self.state_hash
+            .store(Some(Arc::new(info.state_hash.clone())));
     }
 }
 
@@ -364,6 +369,7 @@ impl<C: HttpClientCapability + SleepCapability> AgentInfoFetcher<C> {
 pub struct ResponseObserver {
     trigger_tx: mpsc::Sender<()>,
     max_request_bytes: Arc<AtomicUsize>,
+    state_hash: Arc<arc_swap::ArcSwapOption<String>>,
 }
 
 impl ResponseObserver {
@@ -372,6 +378,7 @@ impl ResponseObserver {
         Self {
             trigger_tx,
             max_request_bytes: Arc::new(AtomicUsize::new(0)),
+            state_hash: Default::default(),
         }
     }
 
@@ -392,8 +399,8 @@ impl ResponseObserver {
             .get("datadog-agent-state")
             .and_then(|v| v.to_str().ok());
         if let Some(state_str) = state_str {
-            let current_state = AGENT_INFO_CACHE.load();
-            if current_state.as_ref().map(|s| s.state_hash.as_str()) != Some(state_str) {
+            let current_state = self.state_hash.load();
+            if current_state.as_ref().map(|s| s.as_str()) != Some(state_str) {
                 match self.trigger_tx.try_send(()) {
                     Ok(_) => {}
                     Err(mpsc::error::TrySendError::Full(_)) => {
