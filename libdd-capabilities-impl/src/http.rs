@@ -17,7 +17,7 @@ pub struct ResponseBodyLimit(pub usize);
 mod native {
     use super::ResponseBodyLimit;
     use libdd_capabilities::http::{
-        ObservedResponseStatus, PreserveResponseStatus, RejectOversizedPayload,
+        ObservedResponseStatus, PreserveResponseStatus,
         ResponseBodyLimit as CapabilityResponseBodyLimit,
     };
     use std::fs::OpenOptions;
@@ -50,12 +50,8 @@ mod native {
         response: http::Response<Body>,
         limit: Option<usize>,
         preserve_status: bool,
-        reject_413: bool,
     ) -> Result<http::Response<bytes::Bytes>, HttpError> {
         let (parts, body) = response.into_parts();
-        if reject_413 && parts.status == http::StatusCode::PAYLOAD_TOO_LARGE {
-            return Ok(http::Response::from_parts(parts, bytes::Bytes::new()));
-        }
         let collected = match limit {
             Some(limit) => Limited::new(body, limit)
                 .collect()
@@ -215,7 +211,6 @@ mod native {
             let client_lock = self.client.clone();
             let response_limit = response_limit(req.extensions());
             let preserve_status = req.extensions().get::<PreserveResponseStatus>().is_some();
-            let reject_413 = req.extensions().get::<RejectOversizedPayload>().is_some();
             let observed_status = req.extensions().get::<ObservedResponseStatus>().cloned();
             async move {
                 // file:// URIs short-circuit to the on-disk recorder used by tests.
@@ -247,7 +242,6 @@ mod native {
                     response.map(Body::incoming),
                     response_limit,
                     preserve_status,
-                    reject_413,
                 )
                 .await
             }
@@ -257,7 +251,6 @@ mod native {
             let client = self.client.get_or_init(new_default_client).clone();
             let response_limit = response_limit(req.extensions());
             let preserve_status = req.extensions().get::<PreserveResponseStatus>().is_some();
-            let reject_413 = req.extensions().get::<RejectOversizedPayload>().is_some();
             let observed_status = req.extensions().get::<ObservedResponseStatus>().cloned();
             let (sender, body) = Body::channel();
             let hyper_req = req.map(|()| body);
@@ -274,7 +267,6 @@ mod native {
                     response.map(Body::incoming),
                     response_limit,
                     preserve_status,
-                    reject_413,
                 )
                 .await
             };

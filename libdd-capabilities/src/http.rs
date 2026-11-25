@@ -21,12 +21,9 @@ pub struct ResponseBodyLimit(pub usize);
 #[derive(Clone, Copy, Debug)]
 pub struct PreserveResponseStatus;
 
-/// A 413 is terminal for this request; its body is not needed to decide delivery.
-#[derive(Clone, Copy, Debug)]
-pub struct RejectOversizedPayload;
-
-/// A bounded-feedback request can retain its acknowledgement if body collection
-/// is cancelled by the caller's timeout. This is per request, never shared across retries.
+/// Record the status before reading the body, so a caller interrupted during
+/// collection can distinguish a received response from an unconfirmed dispatch.
+/// This is per request, never shared across retries.
 #[derive(Clone, Debug, Default)]
 pub struct ObservedResponseStatus(std::sync::Arc<std::sync::atomic::AtomicU16>);
 

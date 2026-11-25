@@ -13,6 +13,7 @@ pub use compression::CompressionStrategy;
 use bytes::Bytes;
 use futures::future::{Either, select};
 use http::HeaderMap;
+use libdd_capabilities::http::ObservedResponseStatus;
 use libdd_capabilities::{HttpClientCapability, HttpError, SleepCapability};
 use libdd_common::Endpoint;
 use libdd_networking::endpoint::EndpointExt;
@@ -205,17 +206,15 @@ async fn send_with_response_policy<C: HttpClientCapability + SleepCapability>(
             "Attempting request"
         );
 
-        let observed_status =
-            response_limit.map(|_| libdd_capabilities::http::ObservedResponseStatus::default());
+        let observed_status = ObservedResponseStatus::default();
         let mut builder = http::Request::builder()
             .method(http::Method::POST)
             .uri(target.url.clone())
-            .extension(libdd_capabilities::http::RejectOversizedPayload);
-        if let (Some(limit), Some(status)) = (response_limit, observed_status.as_ref()) {
+            .extension(observed_status.clone());
+        if let Some(limit) = response_limit {
             builder = builder
                 .extension(libdd_capabilities::http::ResponseBodyLimit(limit))
-                .extension(libdd_capabilities::http::PreserveResponseStatus)
-                .extension(status.clone());
+                .extension(libdd_capabilities::http::PreserveResponseStatus);
         }
         builder = target.set_standard_headers(builder, TRACE_EXPORTER_USER_AGENT);
         for (key, value) in headers {
@@ -238,11 +237,10 @@ async fn send_with_response_policy<C: HttpClientCapability + SleepCapability>(
             Either::Left((response, _)) => Ok(response),
             Either::Right(((), _)) => Err(()),
         };
-        let result = match (
-            result,
-            observed_status.as_ref().and_then(|status| status.get()),
-        ) {
-            (Err(()), Some(status)) => {
+        let result = match (result, observed_status.get()) {
+            (Err(()) | Ok(Err(_)), Some(status))
+                if response_limit.is_some() || status == http::StatusCode::PAYLOAD_TOO_LARGE =>
+            {
                 let mut response = http::Response::new(Bytes::new());
                 *response.status_mut() = status;
                 Ok(Ok(response))
@@ -424,39 +422,49 @@ mod tests {
 
     #[cfg_attr(miri, ignore)]
     #[tokio::test]
-    async fn a_truncated_413_body_does_not_hide_the_terminal_status() {
+    async fn a_truncated_or_stalled_413_body_does_not_hide_the_terminal_status() {
         use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
-        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let address = listener.local_addr().unwrap();
-        let server = tokio::spawn(async move {
-            let (stream, _) = listener.accept().await.unwrap();
-            let mut reader = BufReader::new(stream);
-            let mut line = String::new();
-            loop {
-                line.clear();
-                reader.read_line(&mut line).await.unwrap();
-                if line == "\r\n" {
-                    break;
+        for stall in [false, true] {
+            let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let address = listener.local_addr().unwrap();
+            let (release, wait) = tokio::sync::oneshot::channel();
+            let server = tokio::spawn(async move {
+                let (stream, _) = listener.accept().await.unwrap();
+                let mut reader = BufReader::new(stream);
+                let mut line = String::new();
+                loop {
+                    line.clear();
+                    reader.read_line(&mut line).await.unwrap();
+                    if line == "\r\n" {
+                        break;
+                    }
                 }
-            }
-            reader.read_exact(&mut [0; 3]).await.unwrap();
-            let mut stream = reader.into_inner();
-            stream.write_all(b"HTTP/1.1 413 Payload Too Large\r\nContent-Length: 100\r\nConnection: close\r\n\r\nx").await.unwrap();
-            stream.shutdown().await.unwrap();
-        });
-        let result = send_with_retry(
-            &NativeCapabilities::new_client(),
-            &Endpoint::from_slice(&format!("http://{address}/traces")),
-            vec![1, 2, 3],
-            &HeaderMap::new(),
-            &RetryStrategy::new(2, 1, RetryBackoffType::Constant, None),
-            CompressionStrategy::None,
-        )
-        .await;
-        assert!(
-            matches!(result, Err(SendWithRetryError::Http(response, 1)) if response.status() == http::StatusCode::PAYLOAD_TOO_LARGE)
-        );
-        server.await.unwrap();
+                reader.read_exact(&mut [0; 3]).await.unwrap();
+                let mut stream = reader.into_inner();
+                stream.write_all(b"HTTP/1.1 413 Payload Too Large\r\nContent-Length: 100\r\nConnection: close\r\n\r\nx").await.unwrap();
+                if stall {
+                    let _ = wait.await;
+                }
+                stream.shutdown().await.unwrap();
+            });
+            let result = send_with_retry(
+                &NativeCapabilities::new_client(),
+                &Endpoint {
+                    timeout_ms: 1000,
+                    ..Endpoint::from_slice(&format!("http://{address}/traces"))
+                },
+                vec![1, 2, 3],
+                &HeaderMap::new(),
+                &RetryStrategy::new(2, 1, RetryBackoffType::Constant, None),
+                CompressionStrategy::None,
+            )
+            .await;
+            let _ = release.send(());
+            assert!(
+                matches!(result, Err(SendWithRetryError::Http(response, 1)) if response.status() == http::StatusCode::PAYLOAD_TOO_LARGE)
+            );
+            server.await.unwrap();
+        }
     }
 
     #[cfg_attr(miri, ignore)]

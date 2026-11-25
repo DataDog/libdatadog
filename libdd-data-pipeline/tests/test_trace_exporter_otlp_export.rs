@@ -41,6 +41,32 @@ mod otlp_export_tests {
     }
 
     #[cfg_attr(miri, ignore)]
+    #[test]
+    fn agent_and_otlp_keep_the_receiver_diagnostic_for_a_413() {
+        use libdd_data_pipeline::trace_exporter::error::TraceExporterError;
+        for otlp in [false, true] {
+            let server = httpmock::MockServer::start();
+            let path = if otlp { "/v1/traces" } else { "/v0.4/traces" };
+            let mock = server.mock(|when, then| {
+                when.method("POST").path(path);
+                then.status(413).body("request exceeds receiver limit");
+            });
+            let mut builder = TraceExporterBuilder::default();
+            if otlp {
+                builder.set_otlp_endpoint(&server.url(path));
+            } else {
+                builder.set_url(&server.url("/"));
+            }
+            let exporter = builder.build::<NativeCapabilities>().unwrap();
+            let result = exporter.send(&get_v04_trace_snapshot_test_payload("rejected"));
+            assert!(
+                matches!(result, Err(TraceExporterError::Request(error)) if error.status() == 413 && error.msg() == "request exceeds receiver limit")
+            );
+            mock.assert_calls(1);
+        }
+    }
+
+    #[cfg_attr(miri, ignore)]
     #[tokio::test]
     async fn otlp_export_sends_correct_payload() {
         use httpmock::MockServer;
