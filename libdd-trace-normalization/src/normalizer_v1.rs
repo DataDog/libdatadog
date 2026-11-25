@@ -173,6 +173,12 @@ mod tests {
                 fn has_attribute(&self, key: &str) -> bool {
                     self.attrs.contains_key(key)
                 }
+                fn attribute(
+                    &self,
+                    key: &str,
+                ) -> Option<libdd_trace_model::AttributeRef<'_, StringData>> {
+                    self.attrs.get(key).map(Into::into)
+                }
             }
             impl AttributesMut for $ty {
                 fn retain_attributes(&mut self, mut f: impl FnMut(&str, &mut Value) -> bool) {

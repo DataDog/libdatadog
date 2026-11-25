@@ -9,7 +9,7 @@
 
 use crate::pb;
 use crate::pb::attribute_any_value::AttributeAnyValueType;
-use libdd_trace_model::{Attributes, StringData};
+use libdd_trace_model::{AttributeRef, Attributes, StringData};
 
 impl Attributes for pb::Span {
     type Text = String;
@@ -22,6 +22,14 @@ impl Attributes for pb::Span {
 
     fn attribute_f64(&self, key: &str) -> Option<f64> {
         self.metrics.get(key).copied()
+    }
+
+    /// A `meta` string first, then a `metrics` float, as the typed getters read them.
+    fn attribute(&self, key: &str) -> Option<AttributeRef<'_, StringData>> {
+        if let Some(s) = self.meta.get(key) {
+            return Some(AttributeRef::String(s));
+        }
+        self.metrics.get(key).copied().map(AttributeRef::Float)
     }
 }
 
@@ -103,6 +111,12 @@ impl Attributes for pb::SpanLink {
     fn attribute_f64(&self, _key: &str) -> Option<f64> {
         None
     }
+
+    fn attribute(&self, key: &str) -> Option<AttributeRef<'_, StringData>> {
+        self.attributes
+            .get(key)
+            .map(|s| AttributeRef::String(s.as_str()))
+    }
 }
 
 impl libdd_trace_model::SpanLink for pb::SpanLink {
@@ -123,7 +137,8 @@ impl libdd_trace_model::SpanLink for pb::SpanLink {
     }
 }
 
-/// Typed reads only see single values; array attributes and unknown value types read as missing.
+/// Typed reads only see single values; array attributes and unknown value types read as missing,
+/// also through [`Attributes::attribute`].
 impl Attributes for pb::SpanEvent {
     type Text = String;
     type Bytes = Vec<u8>;
@@ -156,6 +171,18 @@ impl Attributes for pb::SpanEvent {
                 libdd_trace_model::f64_to_exact_i64(value.double_value)
             }
             _ => None,
+        }
+    }
+
+    fn attribute(&self, key: &str) -> Option<AttributeRef<'_, StringData>> {
+        let value = self.attributes.get(key)?;
+        match AttributeAnyValueType::try_from(value.r#type).ok()? {
+            AttributeAnyValueType::StringValue => Some(AttributeRef::String(&value.string_value)),
+            AttributeAnyValueType::BoolValue => Some(AttributeRef::Bool(value.bool_value)),
+            AttributeAnyValueType::IntValue => Some(AttributeRef::Int(value.int_value)),
+            AttributeAnyValueType::DoubleValue => Some(AttributeRef::Float(value.double_value)),
+            // A protobuf array isn't stored as the `StringData` array type.
+            AttributeAnyValueType::ArrayValue => None,
         }
     }
 }
@@ -199,6 +226,12 @@ mod tests {
         // A key in both maps stays reachable through both typed reads.
         assert_eq!(span.attribute_str("shared"), Some("str"));
         assert_eq!(span.attribute_f64("shared"), Some(2.0));
+        assert_eq!(span.attribute("shared"), Some(AttributeRef::String("str")));
+        assert_eq!(
+            span.attribute("_dd.measured"),
+            Some(AttributeRef::Float(1.0))
+        );
+        assert_eq!(span.attribute("missing"), None);
         // Promoted tags are plain meta tags.
         assert_eq!(span.span_kind(), Some("client"));
         assert_eq!(span.env(), Some("prod"));
@@ -260,6 +293,11 @@ mod tests {
         assert_eq!(event.attribute_i64("frac"), None);
         assert_eq!(event.attribute_f64("frac"), Some(4.5));
         assert_eq!(event.attribute_f64("array"), None);
+        assert_eq!(event.attribute("s"), Some(AttributeRef::String("v")));
+        assert_eq!(event.attribute("int"), Some(AttributeRef::Int(i64::MAX)));
+        assert_eq!(event.attribute("frac"), Some(AttributeRef::Float(4.5)));
+        assert_eq!(event.attribute("array"), None);
+        assert_eq!(link.attribute("k"), Some(AttributeRef::String("v")));
 
         let span = pb::Span {
             span_links: vec![link],
