@@ -10,8 +10,9 @@ use tracing::{debug, warn};
 // std::time::SystemTime panics on wasm32.
 use web_time::{SystemTime, UNIX_EPOCH};
 
-use libdd_trace_model::{Span, TraceChunk};
+use libdd_trace_model::{Attributes, Span, TraceChunk};
 use libdd_trace_protobuf::pb;
+use libdd_trace_semantics::{Concept, lookup_f64, lookup_i64};
 use libdd_trace_utils::span::v1::SpanKind;
 
 use aggregation::StatsBucket;
@@ -115,12 +116,43 @@ fn align_timestamp(t: u64, bucket_size: u64) -> u64 {
     t - (t % bucket_size)
 }
 
-/// Return true if the span is eligible for stats computation
+fn is_top_level(attrs: &impl Attributes) -> bool {
+    lookup_i64(attrs, Concept::DdTopLevel) == Some(1)
+}
+
+fn is_measured(attrs: &impl Attributes) -> bool {
+    lookup_i64(attrs, Concept::DdMeasured) == Some(1)
+}
+
+fn is_partial_snapshot(attrs: &impl Attributes) -> bool {
+    lookup_f64(attrs, Concept::DdPartialVersion).is_some_and(|v| v >= 0.0)
+}
+
+/// Evaluates whether a span is eligible for stats computation, returning `Some(is_top_level)`
+/// when eligible and `None` otherwise.
+fn check_span_eligibility<'a>(
+    markers: &impl Attributes,
+    span_kind: impl FnOnce() -> Option<&'a str>,
+    span_kinds_stats_computed: &[String],
+) -> Option<bool> {
+    let top_level = is_top_level(markers);
+    let eligible = (top_level
+        || is_measured(markers)
+        || (!span_kinds_stats_computed.is_empty()
+            && span_kind()
+                .is_some_and(|kind| span_kinds_stats_computed.contains(&kind.to_lowercase()))))
+        && !is_partial_snapshot(markers);
+    eligible.then_some(top_level)
+}
+
+/// Return true if the span is eligible for stats computation.
+///
+/// Eligibility markers (`_dd.top_level`/`_top_level`, `_dd.measured`, `_dd.partial_version`) are
+/// read through the given span's attributes. When passing a [`ChunkSpanView`], note that its
+/// [`Attributes`] implementation falls back to chunk attributes, whereas
+/// [`SpanConcentrator::add_span`] reads these markers from the inner span only.
 pub fn is_span_eligible<T: Span>(span: &T, span_kinds_stats_computed: &[String]) -> bool {
-    (span.has_top_level() || span.is_measured() || {
-        span.span_kind()
-            .is_some_and(|span_kind| span_kinds_stats_computed.contains(&span_kind.to_lowercase()))
-    }) && !span.is_partial_snapshot()
+    check_span_eligibility(span, || span.span_kind(), span_kinds_stats_computed).is_some()
 }
 
 #[cfg(feature = "stats-obfuscation")]
@@ -327,9 +359,15 @@ impl SpanConcentrator {
     ///
     /// The span comes with its chunk, which holds trace-level values such as the origin.
     pub fn add_span<C: TraceChunk>(&mut self, span: &ChunkSpanView<'_, C>) {
-        if !is_span_eligible(span, self.span_kinds_stats_computed.as_slice()) {
+        // Eligibility markers are span-only and never inherited from chunk attributes;
+        // span_kind keeps using the view getter so V1 spans can fall back to the chunk.
+        let Some(top_level) = check_span_eligibility(
+            span.span,
+            || span.span_kind(),
+            self.span_kinds_stats_computed.as_slice(),
+        ) else {
             return;
-        }
+        };
         let mut bucket_timestamp =
             align_timestamp((span.start() + span.duration()) as u64, self.bucket_size);
         // If the span is to old we aggregate it in the latest bucket instead of
@@ -374,12 +412,7 @@ impl SpanConcentrator {
         if target_bucket.obfuscated {
             agg_key.truncate(self.big_resource);
         }
-        target_bucket.insert(
-            agg_key,
-            span.duration(),
-            span.is_error(),
-            span.has_top_level(),
-        );
+        target_bucket.insert(agg_key, span.duration(), span.is_error(), top_level);
     }
 
     #[cfg(feature = "stats-obfuscation")]

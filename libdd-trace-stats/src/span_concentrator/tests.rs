@@ -3529,3 +3529,521 @@ fn test_concentrator_truncate_fields_with_big_resource() {
 fn test_concentrator_truncate_fields_obfuscation_disabled() {
     test_concentrator_truncate_fields_helper(false, false);
 }
+
+#[test]
+fn test_top_level_registry_precedence_v04() {
+    let now = SystemTime::now();
+
+    // _dd.top_level = 0 with _top_level = 1 is NOT top level (first value wins).
+    let shadowed = get_test_span_with_meta(
+        now,
+        1,
+        10,
+        100,
+        5,
+        "svc",
+        "shadowed",
+        0,
+        &[],
+        &[("_dd.top_level", 0.0), ("_top_level", 1.0)],
+    );
+    assert!(!is_span_eligible(&shadowed, &[]));
+
+    // Same span with _dd.measured = 1 is eligible, but top_level_hits must be 0.
+    let shadowed_measured = get_test_span_with_meta(
+        now,
+        2,
+        10,
+        100,
+        5,
+        "svc",
+        "shadowed-measured",
+        0,
+        &[],
+        &[
+            ("_dd.top_level", 0.0),
+            ("_top_level", 1.0),
+            ("_dd.measured", 1.0),
+        ],
+    );
+    assert!(is_span_eligible(&shadowed_measured, &[]));
+
+    // _top_level = 1 alone IS top level.
+    let fallback_only = get_test_span_with_meta(
+        now,
+        3,
+        10,
+        100,
+        5,
+        "svc",
+        "fallback-only",
+        0,
+        &[],
+        &[("_top_level", 1.0)],
+    );
+    assert!(is_span_eligible(&fallback_only, &[]));
+
+    // Fractional _dd.top_level falls through to _top_level = 1.
+    let fractional = get_test_span_with_meta(
+        now,
+        4,
+        10,
+        100,
+        5,
+        "svc",
+        "fractional",
+        0,
+        &[],
+        &[("_dd.top_level", 1.5), ("_top_level", 1.0)],
+    );
+    assert!(is_span_eligible(&fractional, &[]));
+
+    // Partial snapshot version 0.0 is excluded, negative version is not a partial snapshot.
+    let partial_zero = get_test_span_with_meta(
+        now,
+        5,
+        10,
+        100,
+        5,
+        "svc",
+        "partial-zero",
+        0,
+        &[],
+        &[("_top_level", 1.0), ("_dd.partial_version", 0.0)],
+    );
+    assert!(!is_span_eligible(&partial_zero, &[]));
+
+    let partial_neg = get_test_span_with_meta(
+        now,
+        6,
+        10,
+        100,
+        5,
+        "svc",
+        "partial-neg",
+        0,
+        &[],
+        &[("_top_level", 1.0), ("_dd.partial_version", -1.0)],
+    );
+    assert!(is_span_eligible(&partial_neg, &[]));
+
+    let mut concentrator = SpanConcentrator::new(
+        Duration::from_nanos(BUCKET_SIZE),
+        now,
+        vec![],
+        vec![],
+        None,
+        vec![],
+        #[cfg(feature = "stats-obfuscation")]
+        None,
+    );
+    for span in [
+        &shadowed,
+        &shadowed_measured,
+        &fallback_only,
+        &fractional,
+        &partial_zero,
+        &partial_neg,
+    ] {
+        add_span_as_chunk(&mut concentrator, span);
+    }
+
+    let buckets = concentrator.flush(now, true).all_buckets();
+    assert_eq!(buckets.len(), 1);
+    let mut actual: Vec<(&str, u64, u64)> = buckets[0]
+        .stats
+        .iter()
+        .map(|g| (g.resource.as_str(), g.hits, g.top_level_hits))
+        .collect();
+    actual.sort_unstable();
+    assert_eq!(
+        actual,
+        vec![
+            ("fallback-only", 1, 1),
+            ("fractional", 1, 1),
+            ("partial-neg", 1, 1),
+            ("shadowed-measured", 1, 0),
+        ]
+    );
+}
+
+#[test]
+fn test_top_level_registry_precedence_v1() {
+    use libdd_trace_utils::span::v1::{
+        AttributeValue, AttributeValueBytes, SpanBytes as SpanBytesV1, SpanKind, TraceChunkBytes,
+    };
+
+    let now = SystemTime::now();
+    let start = align_timestamp(
+        system_time_to_unix_duration(now).as_nanos() as u64,
+        BUCKET_SIZE,
+    ) as i64;
+
+    let make_span =
+        |resource: &'static str, attrs: Vec<(&'static str, AttributeValueBytes)>| SpanBytesV1 {
+            service: "svc".into(),
+            name: "op".into(),
+            resource: resource.into(),
+            span_id: 2,
+            parent_id: 1,
+            start,
+            duration: 100,
+            span_kind: SpanKind::Internal,
+            attributes: attrs.into_iter().map(|(k, v)| (k.into(), v)).collect(),
+            ..Default::default()
+        };
+
+    // Mirror Agent's TestNewStatSpanFlags table using Float values (matching the registry's
+    // float64 declaration for _dd.top_level/_top_level and the Agent's v1 double fixtures).
+    let cases = vec![
+        ("no-flags", vec![], false),
+        (
+            "measured",
+            vec![("_dd.measured", AttributeValue::Float(1.0))],
+            true,
+        ),
+        (
+            "measured-0",
+            vec![("_dd.measured", AttributeValue::Float(0.0))],
+            false,
+        ),
+        (
+            "tracer-top-level",
+            vec![("_dd.top_level", AttributeValue::Float(1.0))],
+            true,
+        ),
+        (
+            "agent-top-level",
+            vec![("_top_level", AttributeValue::Float(1.0))],
+            true,
+        ),
+        // Conflicting keys: _dd.top_level = 0 shadows _top_level = 1.
+        (
+            "conflicting-top-level",
+            vec![
+                ("_dd.top_level", AttributeValue::Float(0.0)),
+                ("_top_level", AttributeValue::Float(1.0)),
+            ],
+            false,
+        ),
+        // Same conflict, but also measured: eligible with top_level_hits == 0.
+        (
+            "shadowed-measured",
+            vec![
+                ("_dd.top_level", AttributeValue::Float(0.0)),
+                ("_top_level", AttributeValue::Float(1.0)),
+                ("_dd.measured", AttributeValue::Float(1.0)),
+            ],
+            true,
+        ),
+    ];
+
+    let mut spans = Vec::with_capacity(cases.len());
+    for (resource, attrs, expected_eligible) in cases {
+        let span = make_span(resource, attrs);
+        assert_eq!(
+            is_span_eligible(&span, &[]),
+            expected_eligible,
+            "is_span_eligible mismatch for {resource}"
+        );
+        spans.push(span);
+    }
+
+    let chunk = TraceChunkBytes {
+        spans,
+        ..Default::default()
+    };
+
+    let mut concentrator = SpanConcentrator::new(
+        Duration::from_nanos(BUCKET_SIZE),
+        now,
+        vec![],
+        vec![],
+        None,
+        vec![],
+        #[cfg(feature = "stats-obfuscation")]
+        None,
+    );
+    for span in &chunk.spans {
+        concentrator.add_span(&ChunkSpanView {
+            span,
+            chunk: &chunk,
+        });
+    }
+
+    let buckets = concentrator.flush(now, true).all_buckets();
+    assert_eq!(buckets.len(), 1);
+    let mut actual: Vec<(&str, u64, u64)> = buckets[0]
+        .stats
+        .iter()
+        .map(|g| (g.resource.as_str(), g.hits, g.top_level_hits))
+        .collect();
+    actual.sort_unstable();
+    assert_eq!(
+        actual,
+        vec![
+            ("agent-top-level", 1, 1),
+            ("measured", 1, 0),
+            ("shadowed-measured", 1, 0),
+            ("tracer-top-level", 1, 1),
+        ]
+    );
+}
+
+#[test]
+fn test_v1_int_eligibility_markers_known_difference() {
+    // Known difference with the Agent's strictly typed V1 accessor (see
+    // `libdd-trace-semantics/src/lookup.rs` module docs): `Attributes::attribute_f64` also
+    // returns integers on V1 spans, so `float64`-declared markers (`_dd.top_level`, `_top_level`,
+    // `_dd.partial_version`) stored as V1 `AttributeValue::Int` ARE read by libdatadog, matching
+    // libdatadog's previous behavior (whereas the Agent ignores `IntValue` for those keys).
+    use libdd_trace_utils::span::v1::{
+        AttributeValue, AttributeValueBytes, SpanBytes as SpanBytesV1, SpanKind, TraceChunkBytes,
+    };
+
+    let now = SystemTime::now();
+    let start = align_timestamp(
+        system_time_to_unix_duration(now).as_nanos() as u64,
+        BUCKET_SIZE,
+    ) as i64;
+
+    let make_span =
+        |resource: &'static str, attrs: Vec<(&'static str, AttributeValueBytes)>| SpanBytesV1 {
+            service: "svc".into(),
+            name: "op".into(),
+            resource: resource.into(),
+            span_id: 2,
+            parent_id: 1,
+            start,
+            duration: 100,
+            span_kind: SpanKind::Internal,
+            attributes: attrs.into_iter().map(|(k, v)| (k.into(), v)).collect(),
+            ..Default::default()
+        };
+
+    let cases = vec![
+        (
+            "int-dd-top-level",
+            vec![("_dd.top_level", AttributeValue::Int(1))],
+            true,
+        ),
+        (
+            "int-top-level",
+            vec![("_top_level", AttributeValue::Int(1))],
+            true,
+        ),
+        (
+            "int-conflicting-top-level",
+            vec![
+                ("_dd.top_level", AttributeValue::Int(0)),
+                ("_top_level", AttributeValue::Int(1)),
+            ],
+            false,
+        ),
+        (
+            "int-partial-version-zero",
+            vec![
+                ("_dd.top_level", AttributeValue::Float(1.0)),
+                ("_dd.partial_version", AttributeValue::Int(0)),
+            ],
+            false,
+        ),
+        (
+            "int-partial-version-neg",
+            vec![
+                ("_dd.top_level", AttributeValue::Float(1.0)),
+                ("_dd.partial_version", AttributeValue::Int(-1)),
+            ],
+            true,
+        ),
+        (
+            "int-measured",
+            vec![("_dd.measured", AttributeValue::Int(1))],
+            true,
+        ),
+    ];
+
+    let mut spans = Vec::with_capacity(cases.len());
+    for (resource, attrs, expected_eligible) in cases {
+        let span = make_span(resource, attrs);
+        assert_eq!(
+            is_span_eligible(&span, &[]),
+            expected_eligible,
+            "is_span_eligible mismatch for {resource}"
+        );
+        spans.push(span);
+    }
+
+    let chunk = TraceChunkBytes {
+        spans,
+        ..Default::default()
+    };
+
+    let mut concentrator = SpanConcentrator::new(
+        Duration::from_nanos(BUCKET_SIZE),
+        now,
+        vec![],
+        vec![],
+        None,
+        vec![],
+        #[cfg(feature = "stats-obfuscation")]
+        None,
+    );
+    for span in &chunk.spans {
+        concentrator.add_span(&ChunkSpanView {
+            span,
+            chunk: &chunk,
+        });
+    }
+
+    let buckets = concentrator.flush(now, true).all_buckets();
+    assert_eq!(buckets.len(), 1);
+    let mut actual: Vec<(&str, u64, u64)> = buckets[0]
+        .stats
+        .iter()
+        .map(|g| (g.resource.as_str(), g.hits, g.top_level_hits))
+        .collect();
+    actual.sort_unstable();
+    assert_eq!(
+        actual,
+        vec![
+            ("int-dd-top-level", 1, 1),
+            ("int-measured", 1, 0),
+            ("int-partial-version-neg", 1, 1),
+            ("int-top-level", 1, 1),
+        ]
+    );
+}
+
+#[test]
+fn test_v1_eligibility_markers_not_inherited_from_chunk() {
+    use libdd_trace_utils::span::v1::{
+        AttributeValue, AttributeValueBytes, SpanBytes as SpanBytesV1, SpanKind, TraceChunkBytes,
+    };
+
+    let now = SystemTime::now();
+    let start = align_timestamp(
+        system_time_to_unix_duration(now).as_nanos() as u64,
+        BUCKET_SIZE,
+    ) as i64;
+
+    let make_chunk =
+        |resource: &'static str,
+         span_attrs: Vec<(&'static str, AttributeValueBytes)>,
+         chunk_attrs: Vec<(&'static str, AttributeValueBytes)>| TraceChunkBytes {
+            spans: vec![SpanBytesV1 {
+                service: "svc".into(),
+                name: "op".into(),
+                resource: resource.into(),
+                span_id: 2,
+                parent_id: 1,
+                start,
+                duration: 100,
+                span_kind: SpanKind::Internal,
+                attributes: span_attrs.into_iter().map(|(k, v)| (k.into(), v)).collect(),
+                ..Default::default()
+            }],
+            attributes: chunk_attrs
+                .into_iter()
+                .map(|(k, v)| (k.into(), v))
+                .collect(),
+            ..Default::default()
+        };
+
+    let chunks = vec![
+        // Chunk _dd.top_level is NOT inherited -> excluded.
+        make_chunk(
+            "chunk-dd-top-level",
+            vec![],
+            vec![("_dd.top_level", AttributeValue::Float(1.0))],
+        ),
+        // Chunk _top_level is NOT inherited -> excluded.
+        make_chunk(
+            "chunk-top-level",
+            vec![],
+            vec![("_top_level", AttributeValue::Float(1.0))],
+        ),
+        // Chunk _dd.measured is NOT inherited -> excluded.
+        make_chunk(
+            "chunk-measured",
+            vec![],
+            vec![("_dd.measured", AttributeValue::Float(1.0))],
+        ),
+        // Chunk _dd.partial_version is NOT inherited -> span's own _dd.top_level keeps it
+        // eligible.
+        make_chunk(
+            "chunk-partial-span-top-level",
+            vec![("_dd.top_level", AttributeValue::Float(1.0))],
+            vec![("_dd.partial_version", AttributeValue::Float(1.0))],
+        ),
+        // Chunk _dd.top_level is NOT inherited for top_level_hits when span is measured.
+        make_chunk(
+            "chunk-top-level-span-measured",
+            vec![("_dd.measured", AttributeValue::Float(1.0))],
+            vec![("_dd.top_level", AttributeValue::Float(1.0))],
+        ),
+        // Chunk span.kind IS inherited via ChunkSpanView::span_kind() -> eligible, top_level_hits
+        // == 0.
+        make_chunk(
+            "chunk-span-kind",
+            vec![],
+            vec![("span.kind", AttributeValue::String("client".into()))],
+        ),
+    ];
+
+    let mut concentrator = SpanConcentrator::new(
+        Duration::from_nanos(BUCKET_SIZE),
+        now,
+        get_span_kinds(),
+        vec![],
+        None,
+        vec![],
+        #[cfg(feature = "stats-obfuscation")]
+        None,
+    );
+    for chunk in &chunks {
+        for span in &chunk.spans {
+            concentrator.add_span(&ChunkSpanView { span, chunk });
+        }
+    }
+
+    let buckets = concentrator.flush(now, true).all_buckets();
+    assert_eq!(buckets.len(), 1);
+    let mut actual: Vec<(&str, u64, u64)> = buckets[0]
+        .stats
+        .iter()
+        .map(|g| (g.resource.as_str(), g.hits, g.top_level_hits))
+        .collect();
+    actual.sort_unstable();
+    assert_eq!(
+        actual,
+        vec![
+            ("chunk-partial-span-top-level", 1, 1),
+            ("chunk-span-kind", 1, 0),
+            ("chunk-top-level-span-measured", 1, 0),
+        ]
+    );
+
+    // Unlike `add_span` (which reads eligibility markers from `span.span` only), the public
+    // `is_span_eligible` reads through `ChunkSpanView`'s `Attributes` impl, which falls back to
+    // chunk attributes.
+    let span_kinds = get_span_kinds();
+    let view_for = |resource: &str| {
+        let chunk = chunks
+            .iter()
+            .find(|c| c.spans[0].resource.as_str() == resource)
+            .expect("fixture chunk");
+        ChunkSpanView {
+            span: &chunk.spans[0],
+            chunk,
+        }
+    };
+    assert!(is_span_eligible(
+        &view_for("chunk-dd-top-level"),
+        &span_kinds
+    ));
+    assert!(!is_span_eligible(
+        &view_for("chunk-partial-span-top-level"),
+        &span_kinds
+    ));
+}
