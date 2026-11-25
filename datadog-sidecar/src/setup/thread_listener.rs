@@ -244,6 +244,7 @@ impl MasterListener {
             // Only here, never in `clear_inherited_state`: a forked child reaches that path
             // while the parent is still listening on these very files.
             reap(&master.bound_files);
+            crate::fd_limits::close_diagnostics();
 
             info!("Master listener thread shut down successfully");
             Ok(())
@@ -307,6 +308,7 @@ impl MasterListener {
     pub unsafe fn clear_inherited_state() -> io::Result<()> {
         crate::tracer::clear_inherited_state();
         unsafe { crate::service::telemetry::clear_inherited_state() };
+        unsafe { crate::fd_limits::clear_inherited_state() };
 
         let listener_mutex = MASTER_LISTENER.get_or_init(|| Mutex::new(None));
         let mut listener_guard = listener_mutex
