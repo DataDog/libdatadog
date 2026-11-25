@@ -5,11 +5,12 @@ mod generational_ids;
 pub use generational_ids::*;
 
 use crate::api::ManagedStringId;
-use crate::collections::identifiable::{Dedup, StringId};
+use crate::collections::identifiable::{Dedup, Id, StringId};
 use crate::internal::{
-    Function, FunctionId, Label, LabelId, LabelSet, LabelSetId, Location, LocationId, Mapping,
-    MappingId, Profile, Sample, StackTrace, StackTraceId, Timestamp,
+    Function, FunctionId, Label, LabelId, LabelSet, LabelSetId, LabelSetRef, Location, LocationId,
+    Mapping, MappingId, Profile, Sample, StackTrace, StackTraceId, StackTraceRef, Timestamp,
 };
+use std::mem::MaybeUninit;
 use std::sync::atomic::Ordering::SeqCst;
 
 impl Profile {
@@ -55,6 +56,29 @@ impl Profile {
         &mut self,
         labels: &[GenerationalId<LabelId>],
     ) -> anyhow::Result<GenerationalId<LabelSetId>> {
+        const STACK_BUF_LEN: usize = 32;
+        if labels.len() <= STACK_BUF_LEN {
+            let mut buf = [MaybeUninit::<LabelId>::uninit(); STACK_BUF_LEN];
+            for (slot, l) in buf.iter_mut().zip(labels.iter()) {
+                slot.write(l.get(self.generation)?);
+            }
+            // SAFETY: The first `labels.len()` elements were initialized in the loop above.
+            let slice = unsafe {
+                std::slice::from_raw_parts(buf.as_ptr().cast::<LabelId>(), labels.len())
+            };
+            if let Some(idx) = self.label_sets.get_index_of(&LabelSetRef(slice)) {
+                return Ok(GenerationalId::new(
+                    LabelSetId::from_offset(idx),
+                    self.generation,
+                ));
+            }
+            let mut vec = Vec::new();
+            vec.try_reserve_exact(slice.len())?;
+            vec.extend_from_slice(slice);
+            let id = self.label_sets.dedup(LabelSet::new(vec.into_boxed_slice()));
+            return Ok(GenerationalId::new(id, self.generation));
+        }
+
         let mut vec = Vec::new();
         vec.try_reserve_exact(labels.len())?;
         for l in labels.iter() {
@@ -146,6 +170,29 @@ impl Profile {
         &mut self,
         locations: &[GenerationalId<LocationId>],
     ) -> anyhow::Result<GenerationalId<StackTraceId>> {
+        const STACK_BUF_LEN: usize = 256;
+        if locations.len() <= STACK_BUF_LEN {
+            let mut buf = [MaybeUninit::<LocationId>::uninit(); STACK_BUF_LEN];
+            for (slot, l) in buf.iter_mut().zip(locations.iter()) {
+                slot.write(l.get(self.generation)?);
+            }
+            // SAFETY: The first `locations.len()` elements were initialized in the loop above.
+            let slice = unsafe {
+                std::slice::from_raw_parts(buf.as_ptr().cast::<LocationId>(), locations.len())
+            };
+            if let Some(idx) = self.stack_traces.get_index_of(&StackTraceRef(slice)) {
+                return Ok(GenerationalId::new(
+                    StackTraceId::from_offset(idx),
+                    self.generation,
+                ));
+            }
+            let mut vec = Vec::new();
+            vec.try_reserve_exact(slice.len())?;
+            vec.extend_from_slice(slice);
+            let id = self.stack_traces.dedup(StackTrace { locations: vec });
+            return Ok(GenerationalId::new(id, self.generation));
+        }
+
         let locations = {
             let mut vec = Vec::new();
             vec.try_reserve_exact(locations.len())?;

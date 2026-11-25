@@ -130,6 +130,25 @@ pub struct LabelSet {
     labels: Box<[LabelId]>,
 }
 
+/// Borrowed lookup key for `FxIndexSet<LabelSet>` that hashes identically to `LabelSet`
+/// without allocating a `Box<[LabelId]>`.
+#[derive(Eq, PartialEq)]
+pub(crate) struct LabelSetRef<'a>(pub(crate) &'a [LabelId]);
+
+impl std::hash::Hash for LabelSetRef<'_> {
+    #[inline]
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        self.0.hash(state);
+    }
+}
+
+impl indexmap::Equivalent<LabelSet> for LabelSetRef<'_> {
+    #[inline]
+    fn equivalent(&self, key: &LabelSet) -> bool {
+        self.0 == key.labels.as_ref()
+    }
+}
+
 impl LabelSet {
     pub fn is_empty(&self) -> bool {
         self.labels.is_empty()
