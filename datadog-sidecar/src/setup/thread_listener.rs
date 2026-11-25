@@ -341,6 +341,16 @@ impl MasterListener {
     }
 }
 
+/// Clears the registered listener fd on any exit path of `run_listener`, including early failures
+/// before the accept loop starts (e.g. runtime creation or `into_async_listener`).
+struct ClearRegistration(Arc<AtomicI32>);
+
+impl Drop for ClearRegistration {
+    fn drop(&mut self) {
+        self.0.store(-1, Ordering::Relaxed);
+    }
+}
+
 /// Releases the listener before it closes, whichever way the loop ends, including main_loop
 /// dropping it: forked workers then leave its reused number alone, and a new listener may start.
 struct ReleaseListener {
@@ -407,6 +417,7 @@ fn run_listener(
     shutdown_rx: oneshot::Receiver<()>,
     registered: Arc<AtomicI32>,
 ) -> io::Result<()> {
+    let _clear_registration = ClearRegistration(registered.clone());
     info!("Listener thread running, entering IPC server loop");
 
     let cancel = || {};
@@ -476,6 +487,8 @@ mod tests {
         "setup::thread_listener::tests::a_failed_thread_listener_releases_clients_and_registration";
     const STALLED_FLUSH_TEST: &str =
         "setup::thread_listener::tests::a_flush_cut_short_by_a_stalled_agent_stops_the_watchdog";
+    const EARLY_FAILURE_TEST: &str =
+        "setup::thread_listener::tests::an_early_startup_failure_clears_registration";
 
     /// Reports to the test from its re-run process.
     fn say(line: &str) {
@@ -722,5 +735,33 @@ mod tests {
         ));
         // Bypass the test harness, and the threads left.
         unsafe { libc::_exit(0) }
+    }
+
+    /// If `run_listener` fails before entering the accept loop (for example when creating the
+    /// Tokio runtime hits `EMFILE`), it must still clear the registered listener fd so
+    /// `is_active()` turns false, restarts work, and forks do not close a reused fd number.
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn an_early_startup_failure_clears_registration() {
+        if is_rerun(EARLY_FAILURE_TEST) {
+            let pid = std::process::id();
+            let liaison = AbstractUnixSocketLiaison::ipc_for_pid(pid);
+            let listener = liaison.attempt_listen().unwrap().unwrap();
+            let registered = Arc::new(AtomicI32::new(listener.as_raw_fd()));
+            let (_tx, rx) = oneshot::channel();
+            let soft = set_soft_nofile(lowest_free_fd() as libc::rlim_t);
+            let result = run_listener(
+                listener,
+                crate::config::FromEnv::config(),
+                rx,
+                registered.clone(),
+            );
+            set_soft_nofile(soft);
+            let cleared = result.is_err() && registered.load(Ordering::Relaxed) == -1;
+            // SAFETY: exits directly with pass/fail status.
+            unsafe { libc::_exit(if cleared { 0 } else { 1 }) }
+        }
+        let status = rerun(EARLY_FAILURE_TEST).status().unwrap();
+        assert_eq!(status.code(), Some(0));
     }
 }
