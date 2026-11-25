@@ -2,7 +2,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use libdd_data_pipeline::trace_exporter::error::{
-    AgentErrorKind, BuilderErrorKind, InternalErrorKind, NetworkErrorKind, TraceExporterError,
+    AgentErrorKind, BuilderErrorKind, InternalErrorKind, NetworkErrorKind, ShutdownError,
+    TraceExporterError,
 };
 use std::ffi::{CString, c_char};
 use std::fmt::Display;
@@ -133,7 +134,13 @@ impl From<TraceExporterError> for ExporterError {
                     ExporterErrorCode::HttpUnknown
                 }
             }
-            TraceExporterError::Shutdown(_) => ExporterErrorCode::Shutdown,
+            TraceExporterError::Shutdown(e) => match e {
+                ShutdownError::TimedOut(_) => ExporterErrorCode::Shutdown,
+                ShutdownError::Executor(_) => ExporterErrorCode::IoError,
+                ShutdownError::WorkerFailed { .. } | ShutdownError::WorkerAlreadyStopped { .. } => {
+                    ExporterErrorCode::Internal
+                }
+            },
             TraceExporterError::Telemetry(_) => ExporterErrorCode::Telemetry,
             TraceExporterError::Serialization(_) => ExporterErrorCode::Serde,
         };
@@ -177,6 +184,37 @@ mod tests {
         assert_eq!(error.code, ExporterErrorCode::InvalidArgument);
         let msg = unsafe { CStr::from_ptr(error.msg).to_string_lossy() };
         assert_eq!(msg, ExporterErrorCode::InvalidArgument.to_string());
+    }
+
+    #[test]
+    fn shutdown_error_code_test() {
+        use libdd_data_pipeline::trace_exporter::error::ExporterWorker;
+        use libdd_shared_runtime::WorkerHandleError;
+
+        let code = |e| ExporterError::from(TraceExporterError::Shutdown(e)).code;
+        assert_eq!(
+            code(ShutdownError::TimedOut(std::time::Duration::ZERO)),
+            ExporterErrorCode::Shutdown
+        );
+        assert_eq!(
+            code(ShutdownError::Executor(std::io::Error::other(
+                "unavailable"
+            ))),
+            ExporterErrorCode::IoError
+        );
+        assert_eq!(
+            code(ShutdownError::WorkerAlreadyStopped {
+                worker: ExporterWorker::Stats
+            }),
+            ExporterErrorCode::Internal
+        );
+        assert_eq!(
+            code(ShutdownError::WorkerFailed {
+                worker: ExporterWorker::Stats,
+                source: WorkerHandleError::FlushAborted,
+            }),
+            ExporterErrorCode::Internal
+        );
     }
 
     #[test]

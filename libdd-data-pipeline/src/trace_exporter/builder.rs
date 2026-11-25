@@ -1140,6 +1140,9 @@ impl<R: SharedRuntime> TraceExporterBuilder<R> {
                 obfuscation_config: stats_obfuscation_config,
                 #[cfg(feature = "stats-obfuscation")]
                 obfuscation_enabled: self.client_side_stats_obfuscation_enabled,
+                retiring: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+                polling_flushes: Arc::default(),
+                retired: Arc::default(),
             },
             previous_info_state: arc_swap::ArcSwapOption::new(None),
             info_response_observer,

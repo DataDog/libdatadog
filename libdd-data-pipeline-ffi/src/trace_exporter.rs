@@ -1029,6 +1029,38 @@ pub unsafe extern "C" fn ddog_trace_exporter_shutdown(
     )
 }
 
+/// Consumes the exporter and retires its workers without flushing them.
+///
+/// Unlike `ddog_trace_exporter_free` and `ddog_trace_exporter_shutdown`, nothing is flushed:
+/// in-flight requests are dropped and no final stats or telemetry metrics are sent. Unlike
+/// `ddog_trace_exporter_discard`, the workers are cancelled and destroyed. Waits at most
+/// `timeout_ms` for the workers to be destroyed; `0` is an immediate deadline. On timeout, the
+/// workers have already been cancelled and finish retiring in the background. The handle is
+/// consumed on success and error. Other workers on a shared runtime are unaffected. The
+/// deadline bounds worker retirement, not runtime destruction: dropping the last runtime owner
+/// can additionally wait for blocking tasks such as system DNS resolution. Hosts must account
+/// for that separately.
+///
+/// # Safety
+///
+/// `handle` must be valid and must not be used concurrently or after this call.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn ddog_trace_exporter_free_without_flush(
+    handle: Box<TraceExporter>,
+    timeout_ms: u64,
+) -> Option<Box<ExporterError>> {
+    catch_panic!(
+        {
+            let result =
+                handle.shutdown_without_flush(Some(std::time::Duration::from_millis(timeout_ms)));
+            // Drop inside the guard: the last runtime owner can panic while it is destroyed.
+            drop(handle);
+            result.err().map(|err| Box::new(ExporterError::from(err)))
+        },
+        gen_error!(ErrorCode::Panic)
+    )
+}
+
 /// Releases the exporter without flushing or stopping its workers.
 /// The caller must also dispose of the runtime that owns those workers. This is
 /// intended for finalisation and failed fork recovery with an exclusively owned runtime.
@@ -2207,5 +2239,72 @@ mod tests {
             ddog_trace_exporter_error_free(error);
             assert!(config.unwrap().obfuscation_config.is_none());
         }
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn exporter_free_without_flush_test() {
+        let server = MockServer::start();
+        // Matches only once the exporter computes stats, so the stats worker holds data.
+        let mock_traces = server.mock(|when, then| {
+            when.method(POST)
+                .path("/v0.4/traces")
+                .header("datadog-client-computed-stats", "true");
+            then.status(200).body(r#"{"rate_by_service":{}}"#);
+        });
+        let mock_stats = server.mock(|when, then| {
+            when.method(POST).path("/v0.6/stats");
+            then.status(200).body("");
+        });
+        let _mock_info = server.mock(|when, then| {
+            when.method(GET).path("/info");
+            then.status(200)
+                .header("content-type", "application/json")
+                .header("datadog-agent-state", "1")
+                .body(
+                    r#"{"version":"1","client_drop_p0s":true,"endpoints":["/v0.4/traces","/v0.6/stats"]}"#,
+                );
+        });
+        let runtime = Arc::new(ForkSafeRuntime::with_worker_threads(1).unwrap());
+        let cfg = TraceExporterConfig {
+            url: Some(server.url("/")),
+            tracer_version: Some("0.1".to_string()),
+            language: Some("lang".to_string()),
+            language_version: Some("0.1".to_string()),
+            language_interpreter: Some("interpreter".to_string()),
+            service: Some("test-service".to_string()),
+            compute_stats: true,
+            shared_runtime: Some(runtime.clone()),
+            ..Default::default()
+        };
+        unsafe {
+            let mut ptr: MaybeUninit<Box<TraceExporter>> = MaybeUninit::uninit();
+            let ret = ddog_trace_exporter_new(NonNull::new_unchecked(&mut ptr).cast(), Some(&cfg));
+            assert_eq!(ret, None);
+            let exporter = ptr.assume_init();
+            let deadline = std::time::Instant::now() + Duration::from_secs(10);
+            while libdd_data_pipeline::agent_info::get_agent_info().is_none() {
+                assert!(std::time::Instant::now() < deadline, "no agent info");
+                std::thread::sleep(Duration::from_millis(10));
+            }
+            let span = SpanSlice {
+                name: "test".into(),
+                service: "test-service".into(),
+                resource: "test".into(),
+                duration: 10,
+                ..Default::default()
+            };
+            let data = rmp_serde::to_vec_named(&vec![vec![span]]).unwrap();
+            let ret =
+                ddog_trace_exporter_send(Some(exporter.as_ref()), ByteSlice::new(&data), None);
+            assert_eq!(ret, None);
+            mock_traces.assert();
+
+            assert_eq!(ddog_trace_exporter_free_without_flush(exporter, 1000), None);
+        }
+        // Exit: a stats worker that was not discarded would flush here.
+        runtime.shutdown(None).unwrap();
+        std::thread::sleep(Duration::from_millis(300));
+        assert_eq!(mock_stats.calls(), 0);
     }
 }
