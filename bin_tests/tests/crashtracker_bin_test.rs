@@ -3160,3 +3160,228 @@ fn test_crash_tracking_sidecar_otel_thread_ctx() {
     assert!(has_http, "worker-http thread context not found (sidecar)");
     assert!(has_db, "worker-db thread context not found (sidecar)");
 }
+
+#[test]
+#[cfg(all(
+    target_os = "linux",
+    any(target_arch = "x86_64", target_arch = "aarch64")
+))]
+#[cfg_attr(miri, ignore)]
+fn test_crash_tracking_otel_thread_ctx_with_ucontext() {
+    use bin_tests::modes::unix::test_022_otel_thread_ctx::{MAIN_SPAN_ID, MAIN_TRACE_ID};
+
+    let config = CrashTestConfig::new(
+        BuildProfile::Release,
+        TestMode::OtelThreadCtx,
+        CrashType::NullDeref,
+    )
+    .with_env("DD_TEST_UNWIND_FROM_UCONTEXT", "1");
+    let artifacts = StandardArtifacts::new(config.profile);
+    let artifacts_map = fetch_built_artifacts(&artifacts.as_slice()).unwrap();
+
+    let validator: ValidatorFn = Box::new(move |payload, _fixtures| {
+        // Verify OTel contexts are present.
+        let contexts = payload["experimental"]["otel_thread_contexts"]
+            .as_array()
+            .context("experimental.otel_thread_contexts should be an array")?;
+        anyhow::ensure!(
+            contexts.len() >= 3,
+            "expected at least 3 OTel contexts, got {}",
+            contexts.len()
+        );
+        let main_ctx = contexts
+            .iter()
+            .find(|c| c["trace_id"].as_str() == Some(MAIN_TRACE_ID))
+            .context("crashing thread otel context not found")?;
+        anyhow::ensure!(
+            main_ctx["span_id"].as_str() == Some(MAIN_SPAN_ID),
+            "crashing thread span_id mismatch"
+        );
+
+        // Verify thread stacks are present.
+        let threads = payload["error"]["threads"]
+            .as_array()
+            .context("error.threads should be an array")?;
+        anyhow::ensure!(threads.len() >= 3, "expected at least 3 threads");
+
+        Ok(())
+    });
+
+    run_crash_test_with_artifacts(&config, &artifacts_map, &artifacts, validator).unwrap();
+}
+
+#[test]
+#[cfg(all(
+    target_os = "linux",
+    any(target_arch = "x86_64", target_arch = "aarch64")
+))]
+#[cfg_attr(miri, ignore)]
+fn test_crash_tracking_sidecar_multi_thread_with_ucontext() {
+    const RECEIVER_TIMEOUT_MS: &str = "15000";
+    const RECEIVER_WAIT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
+
+    let profile = BuildProfile::Release;
+    let socket_receiver = artifacts::crashtracker_unix_socket_receiver(profile);
+    let artifacts = StandardArtifacts::new(profile);
+    let all_artifacts: Vec<&ArtifactsBuild> = vec![
+        &artifacts.crashtracker_bin,
+        &artifacts.crashtracker_receiver,
+        &socket_receiver,
+    ];
+    let artifacts_map = fetch_built_artifacts(&all_artifacts).unwrap();
+
+    let fixtures = bin_tests::test_runner::TestFixtures::new().unwrap();
+    let socket_path = fixtures.output_dir.join("crashtracker.sock");
+    let socket_path_str = socket_path.to_str().unwrap();
+
+    let mut receiver_proc = process::Command::new(&artifacts_map[&socket_receiver])
+        .arg(socket_path_str)
+        .env("DD_CRASHTRACKER_RECEIVER_TIMEOUT_MS", RECEIVER_TIMEOUT_MS)
+        .spawn()
+        .unwrap();
+
+    assert!(
+        wait_for_socket(socket_path_str, std::time::Duration::from_secs(5)),
+        "Sidecar receiver did not bind socket within timeout"
+    );
+
+    let mut cmd = process::Command::new(&artifacts_map[&artifacts.crashtracker_bin]);
+    cmd.arg(format!("file://{}", fixtures.crash_profile_path.display()))
+        .arg(&artifacts_map[&artifacts.crashtracker_receiver])
+        .arg(&fixtures.output_dir)
+        .arg(TestMode::SidecarMultiThreadCollection.as_str())
+        .arg(CrashType::NullDeref.as_str())
+        .env("DD_TEST_UNIX_SOCKET_PATH", socket_path_str)
+        .env("DD_TEST_RECEIVER_PID", receiver_proc.id().to_string())
+        .env("DD_TEST_UNWIND_FROM_UCONTEXT", "1")
+        .env("DD_CRASHTRACKER_RECEIVER_TIMEOUT_MS", RECEIVER_TIMEOUT_MS);
+
+    let mut child = cmd.spawn().unwrap();
+    let exit_status = child.wait().unwrap();
+    assert!(
+        !exit_status.success(),
+        "Expected crash, got: {exit_status:?}"
+    );
+
+    let receiver_status = wait_or_kill(&mut receiver_proc, RECEIVER_WAIT_TIMEOUT);
+    assert!(
+        receiver_status.success(),
+        "Sidecar receiver error: {receiver_status:?}"
+    );
+
+    let crash_payload =
+        bin_tests::validation::read_and_parse_crash_payload(&fixtures.crash_profile_path).unwrap();
+
+    let all_threads = crash_payload["error"]["threads"]
+        .as_array()
+        .expect("error.threads should be an array");
+    assert!(
+        all_threads.len() >= 3,
+        "expected at least 3 threads (sidecar + ucontext), got {}",
+        all_threads.len()
+    );
+
+    for expected in ["ct_worker_0", "ct_worker_1"] {
+        let worker = all_threads
+            .iter()
+            .find(|t| t["name"].as_str() == Some(expected));
+        assert!(worker.is_some(), "{expected} not found in threads");
+        let frames = worker.unwrap()["stack"]["frames"]
+            .as_array()
+            .expect("stack.frames should be an array");
+        assert!(
+            !frames.is_empty(),
+            "{expected} should have non-empty stack (sidecar + ucontext)"
+        );
+    }
+}
+
+#[test]
+#[cfg(all(
+    target_os = "linux",
+    any(target_arch = "x86_64", target_arch = "aarch64")
+))]
+#[cfg_attr(miri, ignore)]
+fn test_crash_tracking_sidecar_otel_with_ucontext() {
+    use bin_tests::modes::unix::test_023_sidecar_otel_thread_ctx::{MAIN_SPAN_ID, MAIN_TRACE_ID};
+
+    const RECEIVER_TIMEOUT_MS: &str = "15000";
+    const RECEIVER_WAIT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
+
+    let profile = BuildProfile::Release;
+    let socket_receiver = artifacts::crashtracker_unix_socket_receiver(profile);
+    let artifacts = StandardArtifacts::new(profile);
+    let all_artifacts: Vec<&ArtifactsBuild> = vec![
+        &artifacts.crashtracker_bin,
+        &artifacts.crashtracker_receiver,
+        &socket_receiver,
+    ];
+    let artifacts_map = fetch_built_artifacts(&all_artifacts).unwrap();
+
+    let fixtures = bin_tests::test_runner::TestFixtures::new().unwrap();
+    let socket_path = fixtures.output_dir.join("crashtracker.sock");
+    let socket_path_str = socket_path.to_str().unwrap();
+
+    let mut receiver_proc = process::Command::new(&artifacts_map[&socket_receiver])
+        .arg(socket_path_str)
+        .env("DD_CRASHTRACKER_RECEIVER_TIMEOUT_MS", RECEIVER_TIMEOUT_MS)
+        .spawn()
+        .unwrap();
+
+    assert!(
+        wait_for_socket(socket_path_str, std::time::Duration::from_secs(5)),
+        "Sidecar receiver did not bind socket within timeout"
+    );
+
+    let mut cmd = process::Command::new(&artifacts_map[&artifacts.crashtracker_bin]);
+    cmd.arg(format!("file://{}", fixtures.crash_profile_path.display()))
+        .arg(&artifacts_map[&artifacts.crashtracker_receiver])
+        .arg(&fixtures.output_dir)
+        .arg(TestMode::SidecarOtelThreadCtx.as_str())
+        .arg(CrashType::NullDeref.as_str())
+        .env("DD_TEST_UNIX_SOCKET_PATH", socket_path_str)
+        .env("DD_TEST_RECEIVER_PID", receiver_proc.id().to_string())
+        .env("DD_TEST_UNWIND_FROM_UCONTEXT", "1")
+        .env("DD_CRASHTRACKER_RECEIVER_TIMEOUT_MS", RECEIVER_TIMEOUT_MS);
+
+    let mut child = cmd.spawn().unwrap();
+    let exit_status = child.wait().unwrap();
+    assert!(
+        !exit_status.success(),
+        "Expected crash, got: {exit_status:?}"
+    );
+
+    let receiver_status = wait_or_kill(&mut receiver_proc, RECEIVER_WAIT_TIMEOUT);
+    assert!(
+        receiver_status.success(),
+        "Sidecar receiver error: {receiver_status:?}"
+    );
+
+    let crash_payload =
+        bin_tests::validation::read_and_parse_crash_payload(&fixtures.crash_profile_path).unwrap();
+
+    // Verify OTel contexts.
+    let contexts = crash_payload["experimental"]["otel_thread_contexts"]
+        .as_array()
+        .expect("experimental.otel_thread_contexts should be an array");
+    assert!(
+        contexts.len() >= 3,
+        "expected at least 3 OTel contexts (sidecar + ucontext), got {}",
+        contexts.len()
+    );
+    let main_ctx = contexts
+        .iter()
+        .find(|c| c["trace_id"].as_str() == Some(MAIN_TRACE_ID))
+        .expect("crashing thread context not found (sidecar + ucontext)");
+    assert_eq!(main_ctx["span_id"].as_str(), Some(MAIN_SPAN_ID));
+
+    // Verify threads are collected.
+    let all_threads = crash_payload["error"]["threads"]
+        .as_array()
+        .expect("error.threads should be an array");
+    assert!(
+        all_threads.len() >= 3,
+        "expected at least 3 threads (sidecar + otel + ucontext), got {}",
+        all_threads.len()
+    );
+}
