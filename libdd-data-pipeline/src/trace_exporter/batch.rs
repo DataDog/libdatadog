@@ -112,8 +112,13 @@ impl<'de> serde::Deserialize<'de> for FeedbackShape {
     }
 }
 
-fn has_sampling_feedback(body: &[u8]) -> bool {
-    serde_json::from_slice::<FeedbackShape>(body).is_ok()
+fn sampling_feedback(body: &[u8]) -> Option<&str> {
+    if body.len() > MAX_FEEDBACK_BYTES {
+        return None;
+    }
+    let body = std::str::from_utf8(body).ok()?;
+    serde_json::from_str::<FeedbackShape>(body).ok()?;
+    Some(body)
 }
 
 /// One payload outcome, with its own counters. Local serialisation failures have
@@ -409,15 +414,13 @@ impl<
             Ok((response, attempts)) => {
                 self.info_response_observer.check_response(&response);
                 self.emit_send_result(&SendResult::success(size, counts.chunks, attempts));
-                let body = response.body();
-                let rates = body.len() <= MAX_FEEDBACK_BYTES && has_sampling_feedback(body);
-                if rates {
+                if let Some(body) = sampling_feedback(response.body()) {
                     if let Some(previous) = responses.latest_feedback.take() {
                         batch.payloads[previous].response = Ok(AgentResponse::Unchanged);
                     }
                     responses.latest_feedback = Some(batch.payloads.len());
                     Ok(AgentResponse::Changed {
-                        body: String::from_utf8_lossy(body).into_owned(),
+                        body: body.to_owned(),
                     })
                 } else {
                     Ok(AgentResponse::Unchanged)

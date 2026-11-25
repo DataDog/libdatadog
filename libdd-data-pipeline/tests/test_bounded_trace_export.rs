@@ -207,6 +207,7 @@ fn malformed_later_feedback_does_not_displace_valid_rates() {
         br#"{"rate_by_service":{"a":-0.1}}"#,
         br#"{"rate_by_service":{"a":1.1}}"#,
         br#"{"rate_by_service":{"a":1e999}}"#,
+        b"{\"rate_by_service\":{},\"unrelated\":\"\xff\"}",
     ] {
         let server = MockServer::start();
         let rates = r#"{"rate_by_service":{"service:,env:":0.5}}"#;

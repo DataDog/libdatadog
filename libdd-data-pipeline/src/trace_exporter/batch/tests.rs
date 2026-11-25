@@ -418,12 +418,19 @@ fn feedback_validation_skips_unrelated_json_without_building_a_tree() {
         r#"{{"rate_by_service":{{}},"unrelated":[{}0]}}"#,
         "0,".repeat(4_000_000)
     );
-    assert!(has_sampling_feedback(body.as_bytes()));
-    assert!(!has_sampling_feedback(br#"{"rate_by_service":[]}"#));
-    assert!(!has_sampling_feedback(b"[{}]"));
-    assert!(!has_sampling_feedback(
-        br#"{"rate_by_service":{}} trailing"#
-    ));
+    assert!(sampling_feedback(body.as_bytes()).is_some());
+    assert!(sampling_feedback(br#"{"rate_by_service":[]}"#).is_none());
+    assert!(sampling_feedback(b"[{}]").is_none());
+    assert!(sampling_feedback(br#"{"rate_by_service":{}} trailing"#).is_none());
+}
+
+#[test]
+fn feedback_accepts_rate_endpoints_and_respects_the_byte_limit() {
+    let mut body = br#"{"rate_by_service":{"a":0,"b":1,"c":5e-1}}"#.to_vec();
+    body.resize(MAX_FEEDBACK_BYTES, b' ');
+    assert_eq!(sampling_feedback(&body).unwrap().as_bytes(), body);
+    body.push(b' ');
+    assert!(sampling_feedback(&body).is_none());
 }
 
 #[test]
