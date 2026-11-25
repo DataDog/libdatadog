@@ -16,6 +16,8 @@ includes = ["common.h"]
 
 [export]
 prefix = "ddog_"
+# MetadataKind constants must stay in the header; signatures now take raw u32.
+include = ["MetadataKind"]
 exclude = ["rust_eh_personality"]
 renaming_overrides_prefixing = true
 

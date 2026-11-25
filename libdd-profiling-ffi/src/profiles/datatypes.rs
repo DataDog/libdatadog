@@ -1078,7 +1078,7 @@ mod tests {
                 &mut id,
                 dict,
                 CharSlice::from(value),
-                Utf8Option::Validate,
+                u32::from(Utf8Option::Validate),
             ))
         }
         .unwrap();

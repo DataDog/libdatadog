@@ -34,6 +34,31 @@ pub enum MetadataKind {
     ContainerId = 8,
 }
 
+impl From<MetadataKind> for u32 {
+    fn from(value: MetadataKind) -> u32 {
+        value as u32
+    }
+}
+
+impl TryFrom<u32> for MetadataKind {
+    type Error = u32;
+
+    fn try_from(value: u32) -> core::result::Result<Self, Self::Error> {
+        Ok(match value {
+            v if v == u32::from(Self::RuntimeId) => Self::RuntimeId,
+            v if v == u32::from(Self::TracerLanguage) => Self::TracerLanguage,
+            v if v == u32::from(Self::TracerVersion) => Self::TracerVersion,
+            v if v == u32::from(Self::Hostname) => Self::Hostname,
+            v if v == u32::from(Self::ServiceName) => Self::ServiceName,
+            v if v == u32::from(Self::ServiceEnv) => Self::ServiceEnv,
+            v if v == u32::from(Self::ServiceVersion) => Self::ServiceVersion,
+            v if v == u32::from(Self::ProcessTags) => Self::ProcessTags,
+            v if v == u32::from(Self::ContainerId) => Self::ContainerId,
+            v => return Err(v),
+        })
+    }
+}
+
 /// Allocates and returns a pointer to a new `TracerMetadata` object on the heap.
 ///
 /// # Safety
@@ -67,22 +92,27 @@ pub unsafe extern "C" fn ddog_tracer_metadata_free(ptr: *mut TracerMetadata) {
 ///
 /// # Arguments
 /// - `ptr`: Pointer to a `TracerMetadata` instance.
-/// - `kind`: The metadata field to set (as defined in `MetadataKind`).
+/// - `kind`: The metadata field to set, as a `MetadataKind` discriminant value.
 /// - `value`: A null-terminated C string representing the value to set.
 ///
 /// # Safety
-/// - Both `ptr` and `value` must be non-null.
-/// - `value` must point to a valid UTF-8 null-terminated string.
-/// - If the string is not valid UTF-8, the function does nothing.
+/// - `ptr` and `value` must be non-null (otherwise the call is a no-op).
+/// - `kind` must be a valid `MetadataKind` discriminant and `value` must point to a valid UTF-8
+///   null-terminated string; otherwise the call is a no-op.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ddog_tracer_metadata_set(
     ptr: *mut TracerMetadata,
-    kind: MetadataKind,
+    kind: u32,
     value: *const c_char,
 ) {
     if ptr.is_null() || value.is_null() {
         return;
     }
+
+    let kind = match MetadataKind::try_from(kind) {
+        Ok(kind) => kind,
+        Err(_) => return,
+    };
 
     unsafe {
         let c_str = CStr::from_ptr(value);
@@ -229,6 +259,22 @@ mod tests {
             ddog_tracer_metadata_free(ptr);
         }
     }
+    #[test]
+    fn metadata_set_ignores_invalid_kind() {
+        unsafe {
+            let ptr = ddog_tracer_metadata_new();
+
+            // An unknown discriminant must be a no-op rather than UB.
+            ddog_tracer_metadata_set(ptr, 999, c"ignored".as_ptr());
+            assert_eq!((*ptr).hostname, "");
+
+            ddog_tracer_metadata_set(ptr, u32::from(MetadataKind::Hostname), c"myhost".as_ptr());
+            assert_eq!((*ptr).hostname, "myhost");
+
+            ddog_tracer_metadata_free(ptr);
+        }
+    }
+
     #[cfg(target_os = "linux")]
     #[test]
     #[cfg_attr(miri, ignore)]

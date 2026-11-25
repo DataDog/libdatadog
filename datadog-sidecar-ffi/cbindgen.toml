@@ -28,6 +28,8 @@ includes = ["common.h"]
 "target_os = linux" = "__linux__"
 
 [export]
+# EvpTransportMode constants must stay in the header; signatures now take raw u32.
+include = ["EvpTransportMode"]
 prefix = "ddog_"
 renaming_overrides_prefixing = true
 # `repr(transparent)` wrappers, declared opaque in the header above.

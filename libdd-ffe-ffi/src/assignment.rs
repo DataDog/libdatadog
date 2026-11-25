@@ -158,6 +158,30 @@ pub enum ExpectedFlagType {
     Number,
     Any,
 }
+
+impl From<ExpectedFlagType> for u32 {
+    fn from(value: ExpectedFlagType) -> u32 {
+        value as u32
+    }
+}
+
+impl TryFrom<u32> for ExpectedFlagType {
+    type Error = u32;
+
+    fn try_from(value: u32) -> core::result::Result<Self, Self::Error> {
+        Ok(match value {
+            v if v == u32::from(Self::String) => Self::String,
+            v if v == u32::from(Self::Integer) => Self::Integer,
+            v if v == u32::from(Self::Float) => Self::Float,
+            v if v == u32::from(Self::Boolean) => Self::Boolean,
+            v if v == u32::from(Self::Object) => Self::Object,
+            v if v == u32::from(Self::Number) => Self::Number,
+            v if v == u32::from(Self::Any) => Self::Any,
+            v => return Err(v),
+        })
+    }
+}
+
 impl From<ExpectedFlagType> for ffe::ExpectedFlagType {
     fn from(value: ExpectedFlagType) -> ffe::ExpectedFlagType {
         match value {
@@ -233,7 +257,7 @@ pub enum Reason {
 pub unsafe extern "C" fn ddog_ffe_get_assignment(
     config: Handle<Configuration>,
     flag_key: *const c_char,
-    expected_type: ExpectedFlagType,
+    expected_type: u32,
     context: Handle<EvaluationContext>,
 ) -> Handle<ResolutionDetails> {
     // SAFETY: this function has the same handle and string requirements.
@@ -268,6 +292,25 @@ pub enum ExperimentationOptOutMode {
     FutureExperimentsOnly,
 }
 
+impl From<ExperimentationOptOutMode> for u32 {
+    fn from(value: ExperimentationOptOutMode) -> u32 {
+        value as u32
+    }
+}
+
+impl TryFrom<u32> for ExperimentationOptOutMode {
+    type Error = u32;
+
+    fn try_from(value: u32) -> core::result::Result<Self, Self::Error> {
+        Ok(match value {
+            v if v == u32::from(Self::Disabled) => Self::Disabled,
+            v if v == u32::from(Self::Immediate) => Self::Immediate,
+            v if v == u32::from(Self::FutureExperimentsOnly) => Self::FutureExperimentsOnly,
+            v => return Err(v),
+        })
+    }
+}
+
 impl From<ExperimentationOptOutMode> for ffe::ExperimentationOptOutMode {
     fn from(mode: ExperimentationOptOutMode) -> Self {
         match mode {
@@ -291,7 +334,7 @@ impl From<ExperimentationOptOutMode> for ffe::ExperimentationOptOutMode {
 pub unsafe extern "C" fn ddog_ffe_get_assignment_with_options(
     config: Handle<Configuration>,
     flag_key: *const c_char,
-    expected_type: ExpectedFlagType,
+    expected_type: u32,
     context: Handle<EvaluationContext>,
     options: EvaluationOptions,
 ) -> Handle<ResolutionDetails> {
@@ -302,7 +345,13 @@ pub unsafe extern "C" fn ddog_ffe_get_assignment_with_options(
     };
     // SAFETY: this function has the same handle and string requirements.
     unsafe {
-        ddog_ffe_get_assignment_with_opt_out_mode(config, flag_key, expected_type, context, mode)
+        ddog_ffe_get_assignment_with_opt_out_mode(
+            config,
+            flag_key,
+            expected_type,
+            context,
+            u32::from(mode),
+        )
     }
 }
 
@@ -319,10 +368,31 @@ pub unsafe extern "C" fn ddog_ffe_get_assignment_with_options(
 pub unsafe extern "C" fn ddog_ffe_get_assignment_with_opt_out_mode(
     config: Handle<Configuration>,
     flag_key: *const c_char,
-    expected_type: ExpectedFlagType,
+    expected_type: u32,
     context: Handle<EvaluationContext>,
-    mode: ExperimentationOptOutMode,
+    mode: u32,
 ) -> Handle<ResolutionDetails> {
+    let expected_type = match ExpectedFlagType::try_from(expected_type) {
+        Ok(expected_type) => expected_type,
+        Err(raw) => {
+            return Handle::new(
+                EvaluationError::Internal(Str::new(format!(
+                    "ddog_ffe_get_assignment: invalid ExpectedFlagType discriminant {raw}"
+                )))
+                .into(),
+            );
+        }
+    };
+    let mode =
+        match ExperimentationOptOutMode::try_from(mode) {
+            Ok(mode) => mode,
+            Err(raw) => return Handle::new(
+                EvaluationError::Internal(Str::new(format!(
+                    "ddog_ffe_get_assignment: invalid ExperimentationOptOutMode discriminant {raw}"
+                )))
+                .into(),
+            ),
+        };
     catch_assignment_panic(|| {
         // SAFETY: the caller provides valid handles and a valid string.
         unsafe { get_assignment_with_mode(config, flag_key, expected_type, context, mode) }
@@ -1004,7 +1074,7 @@ mod tests {
             ddog_ffe_get_assignment(
                 config_copy,
                 c"root".as_ptr(),
-                ExpectedFlagType::Boolean,
+                u32::from(ExpectedFlagType::Boolean),
                 context_copy,
             )
         };
@@ -1129,7 +1199,9 @@ mod tests {
                     ExperimentationOptOutMode::FutureExperimentsOnly,
                     future_excluded,
                 ),
-            ] {
+            ]
+            .map(|(mode, excluded)| (u32::from(mode), excluded))
+            {
                 // SAFETY: handles have no Drop. Copies borrow live resources, as C callers do.
                 // Each original handle is freed exactly once after its last use.
                 let config_copy = unsafe { std::ptr::read(&config) };
@@ -1140,7 +1212,7 @@ mod tests {
                     ddog_ffe_get_assignment_with_opt_out_mode(
                         config_copy,
                         c"feature".as_ptr(),
-                        ExpectedFlagType::Boolean,
+                        u32::from(ExpectedFlagType::Boolean),
                         context_copy,
                         mode,
                     )
@@ -1166,7 +1238,7 @@ mod tests {
                 ddog_ffe_get_assignment_with_options(
                     config_copy,
                     c"feature".as_ptr(),
-                    ExpectedFlagType::Boolean,
+                    u32::from(ExpectedFlagType::Boolean),
                     context_copy,
                     EvaluationOptions {
                         experimentation_opt_out_immediate: true,
@@ -1182,6 +1254,72 @@ mod tests {
             // SAFETY: all calls using the context completed.
             unsafe { Handle::free(&mut context) };
         }
+        // SAFETY: all calls completed and the configuration handle is still live.
+        unsafe { Handle::free(&mut config) };
+    }
+
+    #[test]
+    fn invalid_discriminants_are_rejected() {
+        let wire = ffe::UniversalFlagConfig::from_json(
+            br#"{"createdAt":"2026-10-19T00:00:00Z","environment":{"name":"test"},"flags":{}}"#
+                .to_vec(),
+        )
+        .unwrap();
+        let mut config = Handle::new(Configuration::from_server_response(wire));
+        let mut context = Handle::new(EvaluationContext::new(None, Default::default()));
+
+        // SAFETY: the copies borrow the live originals below.
+        let config_copy = unsafe { std::ptr::read(&config) };
+        // SAFETY: the copies borrow the live originals below.
+        let context_copy = unsafe { std::ptr::read(&context) };
+        // SAFETY: both handles are live and the key is a static C string.
+        let mut result = unsafe {
+            ddog_ffe_get_assignment(config_copy, c"feature".as_ptr(), u32::MAX, context_copy)
+        };
+        // SAFETY: the returned handle is live until it is freed below.
+        let details = unsafe { result.as_ref() };
+        assert_eq!(ErrorCode::from(details), ErrorCode::General);
+        assert!(
+            details
+                .error_message
+                .as_deref()
+                .is_some_and(|m| m.contains("invalid ExpectedFlagType discriminant")),
+            "{}",
+            details.error_message.as_deref().unwrap_or_default()
+        );
+        // SAFETY: all borrows ended; free the owned result once.
+        unsafe { ddog_ffe_assignment_drop(&mut result) };
+
+        // SAFETY: the copies borrow the live originals below.
+        let config_copy = unsafe { std::ptr::read(&config) };
+        // SAFETY: the copies borrow the live originals below.
+        let context_copy = unsafe { std::ptr::read(&context) };
+        // SAFETY: both handles are still live and the key is a static C string.
+        let mut result = unsafe {
+            ddog_ffe_get_assignment_with_opt_out_mode(
+                config_copy,
+                c"feature".as_ptr(),
+                u32::from(ExpectedFlagType::Boolean),
+                context_copy,
+                u32::MAX,
+            )
+        };
+        // SAFETY: the returned handle is live until it is freed below.
+        let details = unsafe { result.as_ref() };
+        assert_eq!(ErrorCode::from(details), ErrorCode::General);
+        assert!(
+            details
+                .error_message
+                .as_deref()
+                .is_some_and(|m| m.contains("invalid ExperimentationOptOutMode discriminant")),
+            "{}",
+            details.error_message.as_deref().unwrap_or_default()
+        );
+        // SAFETY: all borrows ended; free the owned result once.
+        unsafe { ddog_ffe_assignment_drop(&mut result) };
+
+        // SAFETY: all calls using the context completed.
+        unsafe { Handle::free(&mut context) };
         // SAFETY: all calls completed and the configuration handle is still live.
         unsafe { Handle::free(&mut config) };
     }

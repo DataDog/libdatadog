@@ -24,6 +24,25 @@ pub enum Utf8Option {
     Validate,
 }
 
+impl From<Utf8Option> for u32 {
+    fn from(value: Utf8Option) -> u32 {
+        value as u32
+    }
+}
+
+impl TryFrom<u32> for Utf8Option {
+    type Error = u32;
+
+    fn try_from(value: u32) -> core::result::Result<Self, Self::Error> {
+        Ok(match value {
+            v if v == u32::from(Self::Assume) => Self::Assume,
+            v if v == u32::from(Self::ConvertLossy) => Self::ConvertLossy,
+            v if v == u32::from(Self::Validate) => Self::Validate,
+            v => return Err(v),
+        })
+    }
+}
+
 #[allow(dead_code)]
 #[derive(thiserror::Error, Debug)]
 pub enum Utf8ConversionError {
