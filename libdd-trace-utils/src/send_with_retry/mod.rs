@@ -165,8 +165,8 @@ impl BoundedResponse {
 
     pub fn observed_result(&self) -> Option<SendWithRetryResult> {
         let (attempts, status) = self.attempt.as_ref()?;
-        let status = status.get()?;
-        let response = empty_response(status);
+        let response = empty_response(status.get()?, status.agent_state());
+        let status = response.status();
         Some(if status.is_success() {
             Ok((response, *attempts))
         } else {
@@ -175,9 +175,17 @@ impl BoundedResponse {
     }
 }
 
-fn empty_response(status: http::StatusCode) -> http::Response<Bytes> {
+fn empty_response(
+    status: http::StatusCode,
+    state: Option<&http::HeaderValue>,
+) -> http::Response<Bytes> {
     let mut response = http::Response::new(Bytes::new());
     *response.status_mut() = status;
+    if let Some(state) = state {
+        response
+            .headers_mut()
+            .insert("datadog-agent-state", state.clone());
+    }
     response
 }
 
@@ -275,7 +283,7 @@ async fn send_with_response_policy<C: HttpClientCapability + SleepCapability>(
             (Err(()) | Ok(Err(_)), Some(status))
                 if bounded.is_some() || status == http::StatusCode::PAYLOAD_TOO_LARGE =>
             {
-                Ok(Ok(empty_response(status)))
+                Ok(Ok(empty_response(status, observed_status.agent_state())))
             }
             (result, _) => result,
         };
@@ -283,7 +291,8 @@ async fn send_with_response_policy<C: HttpClientCapability + SleepCapability>(
         match result {
             Ok(Ok(response)) => {
                 let status = response.status();
-                observed_status.record(status);
+                observed_status
+                    .record_headers(status, response.headers().get("datadog-agent-state"));
                 debug!(
                     url = %target.url,
                     status = status.as_u16(),
@@ -426,7 +435,7 @@ mod tests {
             reader.read_exact(&mut [0; 3]).await.unwrap();
             let mut stream = reader.into_inner();
             stream
-                .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 100\r\n\r\nx")
+                .write_all(b"HTTP/1.1 200 OK\r\nDatadog-Agent-State: changed\r\nContent-Length: 100\r\n\r\nx")
                 .await
                 .unwrap();
             let _ = wait.await;
@@ -450,6 +459,7 @@ mod tests {
         let (response, attempts) = result.unwrap();
         assert_eq!(response.status(), http::StatusCode::OK);
         assert_eq!(attempts, 1);
+        assert_eq!(response.headers()["datadog-agent-state"], "changed");
         assert!(response.body().is_empty());
     }
 

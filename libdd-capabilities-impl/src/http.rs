@@ -235,7 +235,10 @@ mod native {
                     .await
                     .map_err(|e| HttpError::Network(e.into()))?;
                 if let Some(status) = observed_status {
-                    status.record(response.status());
+                    status.record_headers(
+                        response.status(),
+                        response.headers().get("datadog-agent-state"),
+                    );
                 }
 
                 collect_response(
@@ -260,7 +263,10 @@ mod native {
                     .await
                     .map_err(|e| HttpError::Network(e.into()))?;
                 if let Some(status) = observed_status {
-                    status.record(response.status());
+                    status.record_headers(
+                        response.status(),
+                        response.headers().get("datadog-agent-state"),
+                    );
                 }
 
                 collect_response(
