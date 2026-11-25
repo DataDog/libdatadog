@@ -3,7 +3,10 @@
 
 use bytes::Bytes;
 use futures::StreamExt;
-use libdd_ai_guard::{DEBUG_PING_URI, handle_dispatch, run_dispatch_loop};
+use libdd_ai_guard::{
+    DEBUG_PING_URI, DecisionAction, PolicyStore, handle_dispatch, run_dispatch_loop,
+    run_dispatch_loop_with_policy,
+};
 use rc_crypto::Signature;
 use rc_x509_client::{
     Payload,
@@ -145,6 +148,62 @@ async fn dispatch_loop_routes_ping_and_rejects_unknown_uri() {
         second_resp.result,
         Err(DispatchError::NoDispatchHandler)
     ));
+
+    drop(publisher);
+    loop_task.await.expect("dispatch loop exits cleanly");
+}
+
+#[tokio::test]
+async fn dispatch_pushes_json_policy_and_evaluates_locally() {
+    let (mut publisher, stream, responder) = new_dispatcher_interconnect();
+    let mut responses = publisher.take_recv_stream().expect("recv stream");
+
+    let (payload_tx, mut payload_rx) = watch::channel(None);
+    let policy_store = PolicyStore::new();
+    let loop_task = tokio::spawn(run_dispatch_loop_with_policy(
+        stream,
+        responder,
+        payload_tx,
+        Some(policy_store.clone()),
+    ));
+
+    // Before any policy push, evaluation falls back to remote.
+    assert_eq!(
+        policy_store.evaluate("secret_project", None).action,
+        DecisionAction::FallbackRemote
+    );
+
+    let policy_json = br#"{"enabled":true,"blocking":true,"rules":[{"id":"r1","type":"REGEX","pattern":"(?i)secret_project","action":"DENY"}],"tool_policies":{"rm_rf":"DENY","read_docs":"ALLOW"}}"#;
+    let ping_req = PingRequest {
+        connection_id: "test-conn".to_string(),
+        reason: "poc-live-config".to_string(),
+        payload: policy_json.to_vec(),
+    };
+    let req_payload = encode(&v1::DispatchRequestPayload {
+        connection_id: None,
+        payload: Some(v1::dispatch_request_payload::Payload::MagicTunnel(
+            MagicTunnelRequest {
+                uri: DEBUG_PING_URI.to_string(),
+                request: encode(&ping_req),
+            },
+        )),
+    });
+
+    publisher
+        .dispatch(Dispatch {
+            correlation_id: CorrelationId::new(10),
+            payload: Payload::from(req_payload),
+        })
+        .await
+        .expect("dispatch policy");
+
+    payload_rx.changed().await.expect("policy payload received");
+    assert!(responses.next().await.expect("resp").result.is_ok());
+
+    let decision = policy_store.evaluate("leaking SECRET_PROJECT", None);
+    assert_eq!(decision.action, DecisionAction::Deny);
+    assert_eq!(decision.rule_id.as_deref(), Some("r1"));
+    assert!(decision.blocking);
 
     drop(publisher);
     loop_task.await.expect("dispatch loop exits cleanly");

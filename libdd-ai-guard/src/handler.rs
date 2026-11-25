@@ -18,6 +18,8 @@ use rc_x509_proto::{
 use tokio::sync::watch;
 use tracing::{debug, info, warn};
 
+use crate::eval::PolicyStore;
+
 pub const DEBUG_PING_URI: &str = "rc.x509.magic_tunnel.remote_config.v1.DebugService/Ping";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -37,8 +39,16 @@ pub fn handle_dispatch(
     dispatch: Dispatch,
     payload_tx: &watch::Sender<Option<ReceivedPayload>>,
 ) -> DispatchResult {
+    handle_dispatch_with_policy(dispatch, payload_tx, None)
+}
+
+pub fn handle_dispatch_with_policy(
+    dispatch: Dispatch,
+    payload_tx: &watch::Sender<Option<ReceivedPayload>>,
+    policy_store: Option<&PolicyStore>,
+) -> DispatchResult {
     let correlation_id = dispatch.correlation_id;
-    let result = route_dispatch(dispatch, payload_tx);
+    let result = route_dispatch(dispatch, payload_tx, policy_store);
     DispatchResult {
         correlation_id,
         result,
@@ -48,6 +58,7 @@ pub fn handle_dispatch(
 fn route_dispatch(
     dispatch: Dispatch,
     payload_tx: &watch::Sender<Option<ReceivedPayload>>,
+    policy_store: Option<&PolicyStore>,
 ) -> Result<v1::DispatchResponsePayload, DispatchError> {
     let req: v1::DispatchRequestPayload = decode(dispatch.payload.as_bytes().clone())
         .map_err(|err| {
@@ -84,6 +95,10 @@ fn route_dispatch(
                 payload = %received.as_utf8_lossy(),
                 "received Magic Tunnel DebugService/Ping payload"
             );
+
+            if let Some(store) = policy_store {
+                store.try_apply_payload(&received.payload);
+            }
 
             let _ = payload_tx.send(Some(received));
 
@@ -126,12 +141,21 @@ fn current_timestamp() -> pbjson_types::Timestamp {
 }
 
 pub async fn run_dispatch_loop(
-    mut stream: DispatchStream,
+    stream: DispatchStream,
     responder: DispatchResponder,
     payload_tx: watch::Sender<Option<ReceivedPayload>>,
 ) {
+    run_dispatch_loop_with_policy(stream, responder, payload_tx, None).await;
+}
+
+pub async fn run_dispatch_loop_with_policy(
+    mut stream: DispatchStream,
+    responder: DispatchResponder,
+    payload_tx: watch::Sender<Option<ReceivedPayload>>,
+    policy_store: Option<PolicyStore>,
+) {
     while let Some(dispatch) = stream.next().await {
-        let result = handle_dispatch(dispatch, &payload_tx);
+        let result = handle_dispatch_with_policy(dispatch, &payload_tx, policy_store.as_ref());
         if responder.send_response(result).await.is_err() {
             debug!("dispatch responder closed, stopping dispatch loop");
             break;
