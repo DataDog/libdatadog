@@ -48,7 +48,7 @@ pub struct Profile {
     period: Option<api::Period>,
     sample_types: Box<[api::SampleType]>,
     sample_type_overrides: HashMap<api::SampleType, OwnedValueType>,
-    stack_traces: FxIndexSet<StackTrace>,
+    stack_traces: StackTraceStore,
     start_time: SystemTime,
     strings: StringTable,
     string_storage: Option<Arc<Mutex<ManagedStringStorage>>>,
@@ -613,25 +613,20 @@ impl Profile {
         let local_root_span_id_label = self.endpoints.local_root_span_id_label;
 
         let locations_len = u64::try_from(self.locations.len())?;
-        for stacktrace in &self.stack_traces {
-            self.check_stacktrace_location_ids_are_valid(&stacktrace.locations, locations_len)?;
-        }
+        let max_location_id = u64::from(self.stack_traces.max_location_id());
+        anyhow::ensure!(
+            max_location_id <= locations_len,
+            "invalid location id found during serialization {:?}, len was {:?}",
+            max_location_id,
+            locations_len
+        );
 
         let mut sample_encoder = protobuf::SampleEncoder::new();
-        let mut packed_location_ids: Vec<u8> = Vec::new();
-        let mut last_stacktrace: Option<StackTraceId> = None;
         let observations = std::mem::take(&mut self.observations);
         observations.try_for_each(|sample, timestamp, values| {
             let off = sample.labels.to_offset();
             let labels = extended_label_sets.get_mut(off).ok_or_else(oob_label_set)?;
-            if last_stacktrace != Some(sample.stacktrace) {
-                let locations = &self.get_stacktrace(sample.stacktrace)?.locations;
-                protobuf::encode_packed_u64(
-                    locations.iter().map(LocationId::to_raw_id),
-                    &mut packed_location_ids,
-                )?;
-                last_stacktrace = Some(sample.stacktrace);
-            }
+            let packed_location_ids = self.stack_traces.get_packed(sample.stacktrace)?;
             self.upscaling_rules.upscale_values(values, labels);
 
             // Try not to fail between labels.push and labels.pop, which would
@@ -642,7 +637,7 @@ impl Profile {
             }
             let encode_res = if omit_local_root_span_id {
                 sample_encoder.encode_sample_record(
-                    &packed_location_ids,
+                    packed_location_ids,
                     values,
                     labels
                         .iter()
@@ -652,7 +647,7 @@ impl Profile {
                 )
             } else {
                 sample_encoder.encode_sample_record(
-                    &packed_location_ids,
+                    packed_location_ids,
                     values,
                     labels.iter().map(protobuf::Label::from),
                     writer,
@@ -664,6 +659,8 @@ impl Profile {
             encode_res?;
             Ok(())
         })?;
+        // Release stack trace slab memory before encoding remaining profile tables.
+        drop(std::mem::take(&mut self.stack_traces));
 
         for sample_type in self.sample_types.iter().copied() {
             self.ensure_custom_sample_type_resolved(sample_type, "sample")?;
@@ -766,27 +763,6 @@ impl Profile {
     pub fn with_start_time(mut self, start_time: SystemTime) -> anyhow::Result<Self> {
         self.set_start_time(start_time)?;
         Ok(self)
-    }
-
-    /// In incident 35390 (JIRA PROF-11456) we observed invalid location_ids being present in
-    /// emitted profiles. We're doing extra checks here so that if we see incorrect ids again,
-    /// we are 100% sure they were not introduced prior to this stage.
-    fn check_stacktrace_location_ids_are_valid(
-        &self,
-        locations: &[LocationId],
-        len: u64,
-    ) -> anyhow::Result<()> {
-        for id in locations.iter() {
-            let id = id.to_raw_id();
-            // Location ids start from 1, that's why they're <= len instead of < len
-            anyhow::ensure!(
-                id > 0 && id <= len,
-                "invalid location id found during serialization {:?}, len was {:?}",
-                id,
-                len
-            )
-        }
-        Ok(())
     }
 }
 
@@ -915,7 +891,7 @@ impl Profile {
     }
 
     fn try_add_stacktrace(&mut self, locations: Vec<LocationId>) -> anyhow::Result<StackTraceId> {
-        self.stack_traces.try_dedup(StackTrace { locations })
+        self.stack_traces.intern_slice(&locations)
     }
 
     fn ensure_custom_sample_type_resolved(
@@ -1014,12 +990,6 @@ impl Profile {
         self.label_sets
             .get_index(id.to_offset())
             .context("LabelSetId to have a valid interned index")
-    }
-
-    fn get_stacktrace(&self, st: StackTraceId) -> anyhow::Result<&StackTrace> {
-        self.stack_traces
-            .get_index(st.to_raw_id())
-            .with_context(|| format!("StackTraceId {st:?} to exist in profile"))
     }
 
     /// Interns the `str` as a string, returning the id in the string table.
