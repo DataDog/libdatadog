@@ -21,6 +21,20 @@ pub(crate) const MAX_SERVICE_LEN: usize = 100;
 /// MAX_TAG_LEN the maximum length a tag can have
 const MAX_TAG_LEN: usize = 200;
 
+/// Why a normalizer changed a value, as the agent's `ErrEmpty`, `ErrTooLong` and `ErrInvalid`.
+///
+/// The `_with_reason` functions return it. The value is normalized in any case: the reason only
+/// tells why it changed, for telemetry.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum NormalizeError {
+    /// The value was empty, and was replaced with a fallback.
+    Empty,
+    /// The value was longer than its limit, and was truncated.
+    TooLong,
+    /// Nothing valid was left after normalization, so the value was replaced with a fallback.
+    Invalid,
+}
+
 // normalize_service normalizes a span service
 pub fn normalize_service(svc: &mut String) {
     normalize_service_with_lang(svc, "");
@@ -32,7 +46,21 @@ pub fn normalize_service(svc: &mut String) {
 /// The service is normalized as a tag value (see [`normalize_tag_value`]), as the agent's
 /// `NormalizeService` does.
 pub fn normalize_service_with_lang(svc: &mut String, lang: &str) {
-    normalize_peer_service(svc);
+    let _ = normalize_service_with_reason(svc, lang);
+}
+
+/// Like [`normalize_service_with_lang`], and returns why the service changed, as the agent's
+/// `NormalizeService` does.
+///
+/// Character repairs alone return `None`. An empty service returns [`NormalizeError::Empty`], and
+/// one with nothing valid left returns [`NormalizeError::Invalid`], even if it was truncated.
+pub fn normalize_service_with_reason(svc: &mut String, lang: &str) -> Option<NormalizeError> {
+    let reason = if svc.is_empty() {
+        Some(NormalizeError::Empty)
+    } else {
+        // A non-empty service that normalizes to nothing returns `Invalid`.
+        normalize_peer_service_with_reason(svc)
+    };
     if svc.is_empty() {
         if lang.is_empty() {
             DEFAULT_SERVICE_NAME.clone_into(svc);
@@ -40,22 +68,57 @@ pub fn normalize_service_with_lang(svc: &mut String, lang: &str) {
             *svc = format!("unnamed-{lang}-service");
         }
     }
+    reason
 }
 
 /// Normalizes a `peer.service` or `_dd.base_service` value, as the agent's `NormalizePeerService`
 /// does: like [`normalize_service`], but a value that normalizes to nothing stays empty.
 pub fn normalize_peer_service(svc: &mut String) {
+    let _ = normalize_peer_service_with_reason(svc);
+}
+
+/// Like [`normalize_peer_service`], and returns why the value changed, as the agent's
+/// `NormalizePeerService` does.
+///
+/// An empty value returns `None`. A value with nothing valid left returns
+/// [`NormalizeError::Invalid`], even if it was truncated.
+pub fn normalize_peer_service_with_reason(svc: &mut String) -> Option<NormalizeError> {
+    if svc.is_empty() {
+        return None;
+    }
+    let too_long = svc.len() > MAX_SERVICE_LEN;
     truncate_utf8(svc, MAX_SERVICE_LEN);
     normalize_tag_value(svc);
+    if svc.is_empty() {
+        Some(NormalizeError::Invalid)
+    } else {
+        too_long.then_some(NormalizeError::TooLong)
+    }
 }
 
 // normalize_name normalizes a span name or an error describing why normalization failed.
 pub fn normalize_name(name: &mut String) {
+    let _ = normalize_name_with_reason(name);
+}
+
+/// Like [`normalize_name`], and returns why the name changed, as the agent's `NormalizeName`
+/// does.
+///
+/// Character repairs alone return `None`. An empty name returns [`NormalizeError::Empty`], and one
+/// without an ASCII letter returns [`NormalizeError::Invalid`], even if it was truncated.
+pub fn normalize_name_with_reason(name: &mut String) -> Option<NormalizeError> {
+    if name.is_empty() {
+        DEFAULT_SPAN_NAME.clone_into(name);
+        return Some(NormalizeError::Empty);
+    }
+    let too_long = name.len() > MAX_NAME_LEN;
     truncate_utf8(name, MAX_NAME_LEN);
     normalize_metric_name(name);
     if name.is_empty() {
         DEFAULT_SPAN_NAME.clone_into(name);
+        return Some(NormalizeError::Invalid);
     }
+    too_long.then_some(NormalizeError::TooLong)
 }
 
 #[allow(clippy::ptr_arg)]
@@ -66,29 +129,48 @@ pub fn normalize_resource(resource: &mut String, name: &str) {
 }
 
 pub fn normalize_span_type(span_type: &mut String) {
+    let _ = normalize_span_type_with_reason(span_type);
+}
+
+/// Like [`normalize_span_type`], and returns [`NormalizeError::TooLong`] if the type was
+/// truncated.
+pub fn normalize_span_type_with_reason(span_type: &mut String) -> Option<NormalizeError> {
+    if span_type.len() <= MAX_TYPE_LEN {
+        return None;
+    }
     truncate_utf8(span_type, MAX_TYPE_LEN);
+    Some(NormalizeError::TooLong)
 }
 
 pub fn normalize_span_start_duration(start: &mut i64, duration: &mut i64) {
     // Start & Duration as nanoseconds timestamps
     // if s.Start is very little, less than year 2000 probably a unit issue so discard
-    if *duration < 0 {
-        *duration = 0;
+    if let Some(fixed) = fixed_duration(*start, *duration) {
+        *duration = fixed;
     }
-    if (*start).checked_add(*duration).is_none() {
-        *duration = 0;
+    if let Some(fixed) = fixed_start(*start, *duration) {
+        *start = fixed;
     }
+}
 
-    if *start < YEAR_2000_NANOSEC_TS {
-        let now = SystemTime::UNIX_EPOCH.elapsed().map_or_else(
-            |e| -(e.duration().as_nanos() as i64),
-            |t| t.as_nanos() as i64,
-        );
-        *start = now - *duration;
-        if *start < 0 {
-            *start = now;
-        }
+/// Returns 0 if `duration` is invalid: negative, or so large that `start + duration` overflows.
+/// Returns `None` if it is valid.
+pub(crate) fn fixed_duration(start: i64, duration: i64) -> Option<i64> {
+    (duration < 0 || start.checked_add(duration).is_none()).then_some(0)
+}
+
+/// Returns the start to use if `start` is before the year 2000, probably a unit issue: now minus
+/// `duration`, or now if that is negative. Returns `None` if `start` is valid.
+pub(crate) fn fixed_start(start: i64, duration: i64) -> Option<i64> {
+    if start >= YEAR_2000_NANOSEC_TS {
+        return None;
     }
+    let now = SystemTime::UNIX_EPOCH.elapsed().map_or_else(
+        |e| -(e.duration().as_nanos() as i64),
+        |t| t.as_nanos() as i64,
+    );
+    let start = now - duration;
+    Some(if start < 0 { now } else { start })
 }
 
 pub fn normalize_parent_id(parent_id: &mut u64, trace_id: u64, span_id: u64) {
@@ -602,6 +684,104 @@ mod tests {
             check("name", is_normalized_name, normalize_name);
             check("span_type", is_normalized_span_type, normalize_span_type);
         }
+    }
+
+    #[test]
+    fn test_normalize_name_with_reason() {
+        // TestNormalizeName in the agent's normalize_test.go.
+        let cases = [
+            ("", "unnamed_operation", Some(NormalizeError::Empty)),
+            ("good", "good", None),
+            ("last.underscore_trunc_", "last.underscore_trunc", None),
+            (
+                "last.double_underscore_trunc__",
+                "last.double_underscore_trunc",
+                None,
+            ),
+            (
+                "Too-Long-.Too-Long-.Too-Long-.Too-Long-.Too-Long-.Too-Long-.Too-Long-.Too-Long-.Too-Long-.Too-Long-.Too-Long-.",
+                "Too_Long.Too_Long.Too_Long.Too_Long.Too_Long.Too_Long.Too_Long.Too_Long.Too_Long.Too_Long.",
+                Some(NormalizeError::TooLong),
+            ),
+            ("double..point", "double..point", None),
+            (
+                "other_^.character^^_than_underscore",
+                "other.character_than_underscore",
+                None,
+            ),
+            ("bad-name", "bad_name", None),
+            ("^^_.non_alpha.prefix", "non_alpha.prefix", None),
+            ("_", "unnamed_operation", Some(NormalizeError::Invalid)),
+        ];
+        for (input, expected, reason) in cases {
+            let mut v = input.to_owned();
+            assert_eq!(normalize_name_with_reason(&mut v), reason, "{input}");
+            assert_eq!(v, expected, "{input}");
+        }
+        // Invalid wins over a truncation.
+        let mut v = "1".repeat(150);
+        assert_eq!(
+            normalize_name_with_reason(&mut v),
+            Some(NormalizeError::Invalid)
+        );
+    }
+
+    #[test]
+    fn test_normalize_service_and_peer_service_with_reason() {
+        // TestNormalizeService and TestNormalizePeerService in the agent's normalize_test.go.
+        for (input, expected) in SERVICE_CASES {
+            let reason = (input.len() > MAX_SERVICE_LEN).then_some(NormalizeError::TooLong);
+            let mut v = (*input).to_owned();
+            assert_eq!(normalize_service_with_reason(&mut v, ""), reason, "{input}");
+            assert_eq!(v, *expected, "{input}");
+            let mut v = (*input).to_owned();
+            assert_eq!(
+                normalize_peer_service_with_reason(&mut v),
+                reason,
+                "{input}"
+            );
+            assert_eq!(v, *expected, "{input}");
+        }
+
+        let mut v = String::new();
+        assert_eq!(
+            normalize_service_with_reason(&mut v, "java"),
+            Some(NormalizeError::Empty)
+        );
+        assert_eq!(v, "unnamed-java-service");
+        let mut v = "!!!".to_owned();
+        assert_eq!(
+            normalize_service_with_reason(&mut v, ""),
+            Some(NormalizeError::Invalid)
+        );
+        assert_eq!(v, "unnamed-service");
+        let mut v = "!".repeat(150);
+        assert_eq!(
+            normalize_service_with_reason(&mut v, ""),
+            Some(NormalizeError::Invalid)
+        );
+
+        let mut v = String::new();
+        assert_eq!(normalize_peer_service_with_reason(&mut v), None);
+        assert_eq!(v, "");
+        let mut v = "!!!".to_owned();
+        assert_eq!(
+            normalize_peer_service_with_reason(&mut v),
+            Some(NormalizeError::Invalid)
+        );
+        assert_eq!(v, "");
+    }
+
+    #[test]
+    fn test_normalize_span_type_with_reason() {
+        let mut v = "sql".repeat(1000);
+        assert_eq!(
+            normalize_span_type_with_reason(&mut v),
+            Some(NormalizeError::TooLong)
+        );
+        assert_eq!(v.len(), MAX_TYPE_LEN);
+        let mut v = "web".to_owned();
+        assert_eq!(normalize_span_type_with_reason(&mut v), None);
     }
 
     // `svcNormCases` of the agent's `normalize_test.go`.
