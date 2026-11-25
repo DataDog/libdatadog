@@ -5,7 +5,7 @@
 use criterion::{BenchmarkId, Criterion, black_box, criterion_group};
 use libdd_crashtracker::{
     CrashtrackerConfiguration, SharedLibrary, StacktraceCollection,
-    benchmark::receiver_entry_point, default_signals, get_tests_folder_path, shared::constants::*,
+    benchmark::receiver_entry_point, default_signals, shared::constants::*,
 };
 use std::fmt::Write;
 use std::time::Duration;
@@ -149,17 +149,10 @@ async fn bench_receiver_entry_point_from_str(data: &str) {
 }
 
 fn load_test_libraries() -> (SharedLibrary, SharedLibrary) {
-    let sofile_c_path = get_tests_folder_path()
-        .expect("Failed to get the tests folder path")
-        .join("libtest.so")
-        .canonicalize()
-        .unwrap();
-
-    let sofile_cpp_path = get_tests_folder_path()
-        .expect("Failed to get the tests folder path")
-        .join("libtest_cpp.so")
-        .canonicalize()
-        .unwrap();
+    // Built by build.rs into this profile's OUT_DIR.
+    let fixtures = std::path::Path::new(env!("OUT_DIR"));
+    let sofile_c_path = fixtures.join("libtest.so").canonicalize().unwrap();
+    let sofile_cpp_path = fixtures.join("libtest_cpp.so").canonicalize().unwrap();
 
     let test_c_so = SharedLibrary::open(sofile_c_path.to_str().unwrap()).unwrap();
     let test_cpp_so = SharedLibrary::open(sofile_cpp_path.to_str().unwrap()).unwrap();
