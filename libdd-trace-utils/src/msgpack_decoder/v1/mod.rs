@@ -5,8 +5,8 @@ pub(super) mod span;
 
 use crate::msgpack_decoder::decode::buffer::Buffer;
 use crate::msgpack_decoder::decode::error::DecodeError;
-use crate::span::DeserializableTraceData;
 use crate::span::v1::{TraceChunk, TracerPayload, TracerPayloadBytes, TracerPayloadSlice};
+use crate::span::{DeserializableTraceData, SpanText};
 use rmp::decode;
 use std::borrow::Borrow;
 
@@ -91,6 +91,14 @@ pub(super) const TRACE_ID_LEN: u32 = 16;
 /// V1 strings are encoded inline the first time they appear (as msgpack `str`), and as a
 /// msgpack `uint` reference on every subsequent occurrence. ID 0 is reserved for the empty
 /// string and is pre-inserted on construction.
+///
+/// Every inline string takes the next wire index, even when its value equals an earlier entry,
+/// so references stay aligned with the producer's own table. Two entries can hold the same value
+/// when invalid UTF-8 is repaired (`"user\x80"` and `"user\x81"` both become `"user\u{FFFD}"`).
+/// The decoded model keys attributes by string value, not by wire index, so equal values are
+/// already one attribute key: `VecMap` lookups match by value and re-encoding dedups them
+/// last-write-wins. Unlike the Agent, which stores attributes by string index and has to map a
+/// repeated value's later wire index back to its first index, no aliasing is needed here.
 pub(super) struct StringTable<T: DeserializableTraceData>
 where
     T::Text: Clone,
@@ -153,7 +161,12 @@ where
     //   uint8/16/32/64   : 0xcc, 0xcd, 0xce, 0xcf
     match marker_byte {
         0xa0..=0xbf | 0xd9 | 0xda | 0xdb => {
-            let s = buf.read_string()?;
+            let s = match buf.read_string() {
+                Ok(s) => s,
+                // `read_string` leaves the buffer in place on a UTF-8 failure.
+                Err(DecodeError::Utf8Error(_)) => read_string_lossy(buf)?,
+                Err(e) => return Err(e),
+            };
             table.record(&s);
             Ok(s)
         }
@@ -169,6 +182,43 @@ where
             "Unexpected msgpack marker 0x{marker_byte:02x} for V1 interned string"
         ))),
     }
+}
+
+/// Reads the msgpack `str` at the current buffer position, repairing invalid UTF-8 with U+FFFD
+/// (see [`lossy_text`]).
+///
+/// This is the slow path for strings that failed UTF-8 validation: the repaired value no longer
+/// matches the wire bytes, so it is copied into an owned allocation instead of borrowing from the
+/// buffer. Valid strings never come here.
+fn read_string_lossy<T: DeserializableTraceData>(
+    buf: &mut Buffer<T>,
+) -> Result<T::Text, DecodeError> {
+    let len = decode::read_str_len(buf.as_mut_slice())
+        .map_err(|_| DecodeError::InvalidFormat("V1 string len read failure".to_owned()))?;
+    let len = usize::try_from(len).map_err(|_| {
+        DecodeError::InvalidFormat(format!("V1 string len {len} exceeds usize::MAX"))
+    })?;
+    let raw = buf
+        .try_slice_and_advance(len)
+        .ok_or_else(|| DecodeError::InvalidFormat("V1 string payload truncated".to_owned()))?;
+    Ok(lossy_text::<T>(raw.borrow()))
+}
+
+/// Builds an owned text from `bytes`, repairing invalid UTF-8 the way the Agent's V1 and v0.4
+/// decoders do: every byte that is not part of a valid sequence becomes one U+FFFD, since Go's
+/// rune decoding advances a single byte on an error. [`String::from_utf8_lossy`] would instead
+/// collapse a truncated multi-byte sequence into one U+FFFD; matching the Agent keeps a repaired
+/// string identical whichever of the two decoded it.
+fn lossy_text<T: DeserializableTraceData>(bytes: &[u8]) -> T::Text {
+    // Each invalid byte grows to the 3-byte U+FFFD, so this may still reallocate once.
+    let mut repaired = String::with_capacity(bytes.len());
+    for chunk in bytes.utf8_chunks() {
+        repaired.push_str(chunk.valid());
+        for _ in chunk.invalid() {
+            repaired.push(char::REPLACEMENT_CHARACTER);
+        }
+    }
+    T::Text::from_owned(repaired)
 }
 
 /// Decodes a V1 msgpack payload from owned bytes into a [`TracerPayloadBytes`].
@@ -235,9 +285,9 @@ where
 }
 
 /// Recursively walks a parsed [`rmpv::ValueRef`], interning every string it contains into
-/// `table`. Strings with invalid UTF-8 are ignored: they can never have been produced by
-/// [`read_interned_string`]'s own encoder-side counterpart, so they can't be the target of a
-/// later back-reference either.
+/// `table`. A producer assigns a wire index to every inline string, whatever its field, so each
+/// one must take a table entry here too, or later references would point one entry off. Strings
+/// with invalid UTF-8 are repaired with U+FFFD, the same as [`read_interned_string`] does.
 ///
 /// `owner` must be a snapshot of the buffer taken before it was advanced past `value`: the
 /// strings inside `value` report a lied `'static` lifetime (see `Buffer::as_mut_slice`) but
@@ -251,9 +301,11 @@ fn record_strings_in_value_ref<T: DeserializableTraceData>(
 {
     match value {
         rmpv::ValueRef::String(s) => {
-            if let Some(s) = (*s).into_str() {
-                table.record(&T::intern_skipped_str(owner, s));
-            }
+            let text = match (*s).into_str() {
+                Some(s) => T::intern_skipped_str(owner, s),
+                None => lossy_text::<T>(s.as_bytes()),
+            };
+            table.record(&text);
         }
         rmpv::ValueRef::Array(items) => {
             for item in items {
@@ -763,9 +815,10 @@ mod tests {
     }
 
     /// Exercises unknown-key skipping at every V1 nesting level in a single payload:
-    /// - payload: unknown field 99 carries the first occurrence of "ghost" (must be harvested as
-    ///   table id 1, a scalar skip at the chunk level exercises the recursive skip, and a
-    ///   subsequent span field back-references "prod" by id to prove the table wasn't desynced).
+    /// - payload: unknown field 99 carries the first occurrence of "gh\xffost", invalid UTF-8 that
+    ///   must still be harvested (repaired) as table id 1; a scalar skip at the chunk level
+    ///   exercises the recursive skip, and a subsequent span field back-references "prod" by id to
+    ///   prove the table wasn't desynced.
     /// - chunk: unknown field 77 carries a nested `[uint, str, map]` value (recursive skip), whose
     ///   inline string "buried" must also be harvested (table id 3).
     /// - span: unknown field 88 carries a scalar (f64) with no string to harvest.
@@ -820,8 +873,8 @@ mod tests {
 
         let mut buf = ByteBuf::new();
         encode::write_map_len(&mut buf, 3).unwrap();
-        wkey(&mut buf, 99); // unknown payload key: first occurrence "ghost" -> table id 1
-        encode::write_str(&mut buf, "ghost").unwrap();
+        wkey(&mut buf, 99); // unknown payload key: first occurrence, invalid UTF-8 -> table id 1
+        wstr_bytes(&mut buf, b"gh\xffost");
         wkey(&mut buf, trace_key::ENV_REF);
         encode::write_str(&mut buf, "prod").unwrap(); // first occurrence -> table id 2
         wkey(&mut buf, trace_key::CHUNKS);
@@ -845,11 +898,219 @@ mod tests {
         assert_eq!(
             span.service.as_str(),
             "prod",
-            "back-reference must still resolve correctly: harvesting \"ghost\" and \"buried\" \
-             while skipping unknown fields must not desync the string table"
+            "back-reference must still resolve correctly: harvesting \"gh\\xffost\" and \
+             \"buried\" while skipping unknown fields must not desync the string table"
         );
         assert_eq!(span.span_links[0].span_id, 777);
         assert_eq!(span.span_events[0].time_unix_nano, 123);
+    }
+
+    /// Writes `bytes` as a msgpack `str`, whether or not they are valid UTF-8.
+    fn wstr_bytes(buf: &mut ByteBuf, bytes: &[u8]) {
+        encode::write_str_len(buf, u32::try_from(bytes.len()).unwrap()).unwrap();
+        buf.as_mut_vec().extend_from_slice(bytes);
+    }
+
+    /// A V1 streaming string on the wire: inline `str` bytes, or a `uint` table reference.
+    enum Wire {
+        Str(&'static [u8]),
+        Ref(u64),
+    }
+
+    fn wstreaming(buf: &mut ByteBuf, value: &Wire) {
+        match value {
+            Wire::Str(bytes) => wstr_bytes(buf, bytes),
+            Wire::Ref(id) => {
+                encode::write_uint(buf, *id).unwrap();
+            }
+        }
+    }
+
+    /// Builds a payload whose optional unknown payload field 99 carries `harvested` strings
+    /// (taking wire indices 1, 2, ... in order), followed by one chunk with one span per
+    /// `(key, value)` pair, each span holding that single string attribute.
+    fn payload_with_string_attrs(harvested: &[&[u8]], spans: &[(Wire, Wire)]) -> Vec<u8> {
+        let mut buf = ByteBuf::new();
+        if harvested.is_empty() {
+            encode::write_map_len(&mut buf, 1).unwrap();
+        } else {
+            encode::write_map_len(&mut buf, 2).unwrap();
+            wkey(&mut buf, 99);
+            encode::write_array_len(&mut buf, u32::try_from(harvested.len()).unwrap()).unwrap();
+            for s in harvested {
+                wstr_bytes(&mut buf, s);
+            }
+        }
+        wkey(&mut buf, trace_key::CHUNKS);
+        encode::write_array_len(&mut buf, 1).unwrap();
+        encode::write_map_len(&mut buf, 2).unwrap();
+        wkey(&mut buf, chunk_key::TRACE_ID);
+        encode::write_bin(&mut buf, &[1u8; 16]).unwrap();
+        wkey(&mut buf, chunk_key::SPANS);
+        encode::write_array_len(&mut buf, u32::try_from(spans.len()).unwrap()).unwrap();
+        for (i, (key, value)) in spans.iter().enumerate() {
+            encode::write_map_len(&mut buf, 3).unwrap();
+            wkey(&mut buf, span_key::SPAN_ID);
+            encode::write_uint(&mut buf, u64::try_from(i).unwrap() + 1).unwrap();
+            wkey(&mut buf, span_key::START);
+            encode::write_uint(&mut buf, 100).unwrap();
+            wkey(&mut buf, span_key::ATTRIBUTES);
+            encode::write_array_len(&mut buf, FLAT_ATTR_STRIDE).unwrap();
+            wstreaming(&mut buf, key);
+            encode::write_uint(&mut buf, u64::from(ANY_VALUE_KEY_STRING)).unwrap();
+            wstreaming(&mut buf, value);
+        }
+        buf.into_vec()
+    }
+
+    /// For each span: its attribute count, and the string value of attribute `key` (if any).
+    fn span_string_attrs<T: DeserializableTraceData>(
+        payload: &TracerPayload<T>,
+        key: &str,
+    ) -> Vec<(usize, Option<String>)>
+    where
+        T::Text: Clone,
+    {
+        payload.chunks[0]
+            .spans
+            .iter()
+            .map(|span| {
+                let value = match span.attributes.get(key) {
+                    Some(AttributeValue::String(s)) => Some(Borrow::<str>::borrow(s).to_owned()),
+                    _ => None,
+                };
+                (span.attributes.len(), value)
+            })
+            .collect()
+    }
+
+    /// Inline strings with invalid UTF-8 are repaired the way the Agent repairs them (one U+FFFD
+    /// per invalid byte), in both decoding modes, and a back-reference to their wire index
+    /// resolves to the repaired value.
+    #[test]
+    fn invalid_utf8_inline_strings_are_repaired() {
+        let cases: [(&'static [u8], &str); 8] = [
+            (b"", ""),
+            (b"elasticsearch.body", "elasticsearch.body"),
+            (
+                "café 日本語 🐶 \u{FFFD}".as_bytes(),
+                "café 日本語 🐶 \u{FFFD}",
+            ),
+            (b"caf\xc3", "caf\u{FFFD}"),
+            (b"body\xe2\x82", "body\u{FFFD}\u{FFFD}"),
+            (b"body\xf0\x9f\x90", "body\u{FFFD}\u{FFFD}\u{FFFD}"),
+            (b"\xe6\x97\xa5\xff\xfe\xe6\x9c\xac", "日\u{FFFD}\u{FFFD}本"),
+            (b"bad\x80value", "bad\u{FFFD}value"),
+        ];
+        for (input, want) in cases {
+            // Key inline (wire index 1), value back-references it.
+            let bytes = payload_with_string_attrs(&[], &[(Wire::Str(input), Wire::Ref(1))]);
+            let expected = vec![(1, Some(want.to_owned()))];
+
+            let (owned, consumed) = from_bytes(Bytes::from(bytes.clone()))
+                .unwrap_or_else(|e| panic!("{input:?} must be repaired, got {e}"));
+            assert_eq!(consumed, bytes.len());
+            assert_eq!(
+                span_string_attrs(&owned, want),
+                expected,
+                "owned, {input:?}"
+            );
+
+            let (borrowed, _) = from_slice(&bytes)
+                .unwrap_or_else(|e| panic!("{input:?} must be repaired, got {e}"));
+            assert_eq!(
+                span_string_attrs(&borrowed, want),
+                expected,
+                "slice, {input:?}"
+            );
+        }
+    }
+
+    /// Modeled on the Agent's `TestUnmarshalTracerPayloadUTF8KeyCollision`: distinct wire
+    /// strings that repair to the same value each keep their own wire index, and are one
+    /// attribute key, so a lookup by the repaired name finds the attribute on every span.
+    #[test]
+    fn repaired_utf8_key_collision() {
+        /// `(name, unknown-field strings, per-span (key, value), expected values)`.
+        type Case = (
+            &'static str,
+            Vec<&'static [u8]>,
+            Vec<(Wire, Wire)>,
+            Vec<&'static str>,
+        );
+        const KEY: &str = "user\u{FFFD}";
+        let cases: [Case; 2] = [
+            (
+                "inline keys",
+                vec![],
+                vec![
+                    (Wire::Str(b"user\x80"), Wire::Str(b"alice")), // wire indices 1, 2
+                    (Wire::Str(b"user\x81"), Wire::Str(b"bob")),   // wire indices 3, 4
+                    (Wire::Ref(3), Wire::Str(b"carol")),           /* reference to the second
+                                                                    * repaired key */
+                ],
+                vec!["alice", "bob", "carol"],
+            ),
+            (
+                // libdatadog has no explicit string table field: strings taken from an unknown
+                // field fill the table ahead of the spans that reference them by index.
+                "string table keys",
+                vec![b"user\x80", b"user\x81", b"alice", b"bob"], // wire indices 1..=4
+                vec![(Wire::Ref(1), Wire::Ref(3)), (Wire::Ref(2), Wire::Ref(4))],
+                vec!["alice", "bob"],
+            ),
+        ];
+        for (name, harvested, spans, want) in cases {
+            let bytes = payload_with_string_attrs(&harvested, &spans);
+            let expected: Vec<_> = want.iter().map(|v| (1, Some((*v).to_owned()))).collect();
+
+            let (owned, _) = from_bytes(Bytes::from(bytes.clone()))
+                .unwrap_or_else(|e| panic!("{name}: decode failed: {e}"));
+            assert_eq!(span_string_attrs(&owned, KEY), expected, "owned, {name}");
+            let (borrowed, _) =
+                from_slice(&bytes).unwrap_or_else(|e| panic!("{name}: decode failed: {e}"));
+            assert_eq!(span_string_attrs(&borrowed, KEY), expected, "slice, {name}");
+
+            // Updating by name must overwrite each span's attribute, not add a second one.
+            let mut owned = owned;
+            for span in &mut owned.chunks[0].spans {
+                span.attributes
+                    .insert_or_replace(bs(KEY), AttributeValue::String(bs("redacted")));
+            }
+            let redacted = vec![(1, Some("redacted".to_owned())); want.len()];
+            assert_eq!(span_string_attrs(&owned, KEY), redacted, "{name}");
+        }
+    }
+
+    /// Re-encoding a payload whose distinct wire strings repaired to the same value sends that
+    /// value inline once: the encoder interns by value, so it never re-sends a duplicate.
+    #[test]
+    fn reencoding_repaired_collision_sends_each_string_once() {
+        let bytes = payload_with_string_attrs(
+            &[b"user\x82"], // unknown-field string that is never referenced
+            &[
+                (Wire::Str(b"user\x80"), Wire::Str(b"alice")),
+                (Wire::Str(b"user\x81"), Wire::Str(b"bob")),
+            ],
+        );
+        let (decoded, _) = from_bytes(Bytes::from(bytes)).expect("repaired payload decodes");
+        let reencoded = to_vec_from_v1(&decoded);
+
+        let repaired = "user\u{FFFD}".as_bytes();
+        let inline_count = reencoded
+            .windows(repaired.len())
+            .filter(|w| *w == repaired)
+            .count();
+        assert_eq!(
+            inline_count, 1,
+            "repaired key must be sent inline exactly once"
+        );
+
+        let (roundtrip, _) = from_bytes(Bytes::from(reencoded)).expect("re-encoded payload");
+        assert_eq!(
+            span_string_attrs(&roundtrip, "user\u{FFFD}"),
+            vec![(1, Some("alice".to_owned())), (1, Some("bob".to_owned()))]
+        );
     }
 
     /// A payload with one span whose attributes are `[key, type, value]` triplets written by
