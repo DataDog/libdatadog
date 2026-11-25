@@ -13,7 +13,7 @@ use crate::normalize_utils;
 use crate::normalizer::is_valid_http_status_code;
 use libdd_trace_model::{
     AttributeRef, AttributeValue, Attributes as _, AttributesMut as _, SpanMut, TraceChunkMut,
-    TraceText,
+    TraceText, ValueTypes,
 };
 
 const PEER_SERVICE_KEY: &str = "peer.service";
@@ -21,11 +21,36 @@ const BASE_SERVICE_KEY: &str = "_dd.base_service";
 const HTTP_STATUS_CODE_KEY: &str = "http.status_code";
 const LINK_NAME_KEY: &str = "link.name";
 
-/// Returns `value` normalized by `normalize`, or `None` if it is already normalized.
-fn normalized(value: &str, normalize: impl FnOnce(&mut String)) -> Option<String> {
+/// Returns `value` normalized by `normalize`, or `None` if `normalize` doesn't change it.
+///
+/// `is_normalized` is a check that doesn't allocate, such as the agent's `isNormalizedASCIITag`:
+/// if it returns `true`, `value` isn't copied. Otherwise, `value` is copied and normalized, and the
+/// result is compared with `value`.
+fn repaired(
+    value: &str,
+    is_normalized: impl FnOnce(&str) -> bool,
+    normalize: impl FnOnce(&mut String),
+) -> Option<String> {
+    if is_normalized(value) {
+        return None;
+    }
     let mut s = value.to_owned();
     normalize(&mut s);
     (s != value).then_some(s)
+}
+
+/// Whether `value`, formatted as [`AttributeRef::format_as_string`] does, is a valid HTTP status
+/// code. Only strings and bytes are formatted, so a number doesn't allocate.
+fn is_valid_http_status_code_value<T: ValueTypes>(value: AttributeRef<'_, T>) -> bool {
+    match value {
+        // A negative integer is formatted with a `-`, which is invalid.
+        AttributeRef::Int(i) => (100..600).contains(&i),
+        // A float is formatted without a fraction only if it is an integer, and `-0` is invalid.
+        AttributeRef::Float(f) => f.fract() == 0.0 && (100.0..600.0).contains(&f),
+        // Formatted as `[...]` or `{...}`, which is never a valid status code.
+        AttributeRef::Array(_) | AttributeRef::KeyValueList(_) => false,
+        _ => is_valid_http_status_code(&value.format_as_string()),
+    }
 }
 
 /// Normalizes `span` in place. `lang` names the fallback service, `unnamed-<lang>-service`.
@@ -34,17 +59,22 @@ fn normalized(value: &str, normalize: impl FnOnce(&mut String)) -> Option<String
 pub fn normalize_span<S: SpanMut>(span: &mut S, lang: &str) -> anyhow::Result<()> {
     anyhow::ensure!(span.span_id() != 0, "SpanID is zero (reason:span_id_zero)");
 
-    if let Some(v) = normalized(span.service(), |s| {
-        normalize_utils::normalize_service_with_lang(s, lang)
-    }) {
+    if let Some(v) = repaired(
+        span.service(),
+        normalize_utils::is_normalized_service,
+        |s| normalize_utils::normalize_service_with_lang(s, lang),
+    ) {
         span.set_service(v.into());
     }
     for key in [PEER_SERVICE_KEY, BASE_SERVICE_KEY] {
-        if let Some(v) = span
-            .attribute_str(key)
-            .filter(|v| !v.is_empty())
-            .and_then(|v| normalized(v, normalize_utils::normalize_peer_service))
-        {
+        if let Some(v) = span.attribute_str(key).and_then(|v| {
+            // An empty value is skipped, and is already normalized.
+            repaired(
+                v,
+                normalize_utils::is_normalized_peer_service,
+                normalize_utils::normalize_peer_service,
+            )
+        }) {
             span.set_attribute(
                 TraceText::from_static(key),
                 AttributeValue::String(v.into()),
@@ -52,7 +82,11 @@ pub fn normalize_span<S: SpanMut>(span: &mut S, lang: &str) -> anyhow::Result<()
         }
     }
 
-    if let Some(v) = normalized(span.name(), normalize_utils::normalize_name) {
+    if let Some(v) = repaired(
+        span.name(),
+        normalize_utils::is_normalized_name,
+        normalize_utils::normalize_name,
+    ) {
         span.set_name(v.into());
     }
     if span.resource().is_empty() {
@@ -73,17 +107,28 @@ pub fn normalize_span<S: SpanMut>(span: &mut S, lang: &str) -> anyhow::Result<()
     // keeps it.
     let (mut start, mut duration) = (span.start(), span.duration());
     normalize_utils::normalize_span_start_duration(&mut start, &mut duration);
-    span.set_start(start);
-    span.set_duration(duration);
+    if duration != span.duration() {
+        span.set_duration(duration);
+    }
+    if start != span.start() {
+        span.set_start(start);
+    }
 
-    if let Some(v) = normalized(span.typ(), normalize_utils::normalize_span_type) {
+    if let Some(v) = repaired(
+        span.typ(),
+        normalize_utils::is_normalized_span_type,
+        normalize_utils::normalize_span_type,
+    ) {
         span.set_type(v.into());
     }
-    if let Some(v) = span
-        .env()
-        .filter(|v| !v.is_empty())
-        .and_then(|v| normalized(v, normalize_utils::normalize_tag_value))
-    {
+    // An empty env is skipped, and is already normalized.
+    if let Some(v) = span.env().and_then(|v| {
+        repaired(
+            v,
+            normalize_utils::is_normalized_tag_value,
+            normalize_utils::normalize_tag_value,
+        )
+    }) {
         span.set_env(v.into());
     }
 
@@ -93,17 +138,19 @@ pub fn normalize_span<S: SpanMut>(span: &mut S, lang: &str) -> anyhow::Result<()
     // times, so neither is formatted in full.
     if span
         .attribute(HTTP_STATUS_CODE_KEY)
-        .is_some_and(|code| match code {
-            // Formatted as `[...]` or `{...}`, which is never a valid status code.
-            AttributeRef::Array(_) | AttributeRef::KeyValueList(_) => true,
-            _ => !is_valid_http_status_code(&code.format_as_string()),
-        })
+        .is_some_and(|code| !is_valid_http_status_code_value(code))
     {
         span.remove_attribute(HTTP_STATUS_CODE_KEY);
     }
 
     for link in span.span_links_mut() {
         let repaired = link.attribute(LINK_NAME_KEY).and_then(|value| {
+            if value
+                .as_str()
+                .is_some_and(normalize_utils::is_normalized_name)
+            {
+                return None;
+            }
             // `normalize_name` first truncates to `MAX_NAME_LEN`, so the rest isn't needed.
             let mut name = value
                 .format_as_string_truncated(normalize_utils::MAX_NAME_LEN)
@@ -143,237 +190,9 @@ pub fn normalize_chunk<C: TraceChunkMut>(chunk: &mut C, lang: &str) -> anyhow::R
 #[cfg(test)]
 mod tests {
     use super::*;
-    use libdd_trace_model::{
-        AttributeRef, Attributes, AttributesMut, Span, StringData, TraceChunk,
-    };
-    use std::cell::Cell;
+    use crate::test_types::*;
+    use libdd_trace_model::Attributes;
     use std::collections::HashMap;
-
-    type Value = AttributeValue<StringData>;
-
-    #[derive(Default)]
-    struct TestLink {
-        attrs: HashMap<String, Value>,
-    }
-
-    #[derive(Default)]
-    struct TestSpan {
-        service: String,
-        name: String,
-        resource: String,
-        typ: String,
-        span_id: u64,
-        parent_id: u64,
-        start: i64,
-        duration: i64,
-        env: Option<String>,
-        attrs: HashMap<String, Value>,
-        links: Vec<TestLink>,
-    }
-
-    #[derive(Default)]
-    struct TestChunk {
-        trace_id: u128,
-        spans: Vec<TestSpan>,
-        attrs: HashMap<String, Value>,
-    }
-
-    thread_local! {
-        static ATTRIBUTE_MUT_CALLS: Cell<usize> = const { Cell::new(0) };
-    }
-
-    /// The number of `AttributesMut::attribute_mut` calls on the test types, on this thread.
-    fn attribute_mut_calls() -> usize {
-        ATTRIBUTE_MUT_CALLS.with(Cell::get)
-    }
-
-    macro_rules! impl_attributes {
-        ($($ty:ty),*) => {$(
-            impl Attributes for $ty {
-                type Text = String;
-                type Bytes = Vec<u8>;
-                type Values = StringData;
-                fn attribute_str(&self, key: &str) -> Option<&str> {
-                    self.attrs.get(key).and_then(Value::as_str)
-                }
-                fn attribute_f64(&self, key: &str) -> Option<f64> {
-                    match self.attrs.get(key)? {
-                        Value::Int(i) => Some(*i as f64),
-                        Value::Float(f) => Some(*f),
-                        _ => None,
-                    }
-                }
-                fn has_attribute(&self, key: &str) -> bool {
-                    self.attrs.contains_key(key)
-                }
-                fn attribute(&self, key: &str) -> Option<AttributeRef<'_, StringData>> {
-                    self.attrs.get(key).map(Into::into)
-                }
-            }
-            impl AttributesMut for $ty {
-                fn retain_attributes(&mut self, mut f: impl FnMut(&str, &mut Value) -> bool) {
-                    self.attrs.retain(|k, v| f(k, v));
-                }
-                fn attribute_mut(&mut self, key: &str) -> Option<&mut Value> {
-                    ATTRIBUTE_MUT_CALLS.with(|n| n.set(n.get() + 1));
-                    self.attrs.get_mut(key)
-                }
-                fn set_attribute(&mut self, key: String, value: Value) {
-                    self.attrs.insert(key, value);
-                }
-                fn remove_attribute(&mut self, key: &str) -> Option<Value> {
-                    self.attrs.remove(key)
-                }
-            }
-        )*};
-    }
-    impl_attributes!(TestLink, TestSpan, TestChunk);
-
-    impl libdd_trace_model::SpanEvent for TestLink {
-        fn name(&self) -> &str {
-            ""
-        }
-        fn time_unix_nano(&self) -> u64 {
-            0
-        }
-    }
-
-    impl libdd_trace_model::SpanLink for TestLink {
-        fn trace_id(&self) -> u128 {
-            0
-        }
-        fn span_id(&self) -> u64 {
-            0
-        }
-        fn tracestate(&self) -> &str {
-            ""
-        }
-        fn flags(&self) -> u32 {
-            0
-        }
-    }
-
-    impl Span for TestSpan {
-        type SpanEvent = TestLink;
-        type SpanLink = TestLink;
-        fn service(&self) -> &str {
-            &self.service
-        }
-        fn resource(&self) -> &str {
-            &self.resource
-        }
-        fn name(&self) -> &str {
-            &self.name
-        }
-        fn typ(&self) -> &str {
-            &self.typ
-        }
-        fn span_id(&self) -> u64 {
-            self.span_id
-        }
-        fn parent_id(&self) -> u64 {
-            self.parent_id
-        }
-        fn start(&self) -> i64 {
-            self.start
-        }
-        fn duration(&self) -> i64 {
-            self.duration
-        }
-        fn is_error(&self) -> bool {
-            false
-        }
-        fn span_kind(&self) -> Option<&str> {
-            None
-        }
-        fn env(&self) -> Option<&str> {
-            self.env.as_deref()
-        }
-        fn version(&self) -> Option<&str> {
-            None
-        }
-        fn component(&self) -> Option<&str> {
-            None
-        }
-        fn span_events(&self) -> impl Iterator<Item = &TestLink> {
-            std::iter::empty()
-        }
-        fn span_links(&self) -> impl Iterator<Item = &TestLink> {
-            self.links.iter()
-        }
-    }
-
-    impl SpanMut for TestSpan {
-        fn set_service(&mut self, value: String) {
-            self.service = value;
-        }
-        fn set_resource(&mut self, value: String) {
-            self.resource = value;
-        }
-        fn set_name(&mut self, value: String) {
-            self.name = value;
-        }
-        fn set_type(&mut self, value: String) {
-            self.typ = value;
-        }
-        fn set_parent_id(&mut self, value: u64) {
-            self.parent_id = value;
-        }
-        fn set_start(&mut self, value: i64) {
-            self.start = value;
-        }
-        fn set_duration(&mut self, value: i64) {
-            self.duration = value;
-        }
-        fn set_error(&mut self, _: bool) {}
-        fn set_span_kind(&mut self, _: &str) {}
-        fn set_env(&mut self, value: String) {
-            self.env = Some(value);
-        }
-        fn set_version(&mut self, _: String) {}
-        fn set_component(&mut self, _: String) {}
-        fn span_events_mut(&mut self) -> impl Iterator<Item = &mut TestLink> {
-            std::iter::empty()
-        }
-        fn span_links_mut(&mut self) -> impl Iterator<Item = &mut TestLink> {
-            self.links.iter_mut()
-        }
-    }
-
-    impl TraceChunk for TestChunk {
-        type Span = TestSpan;
-        fn trace_id(&self) -> u128 {
-            self.trace_id
-        }
-        fn origin(&self) -> &str {
-            ""
-        }
-        fn spans(&self) -> impl Iterator<Item = &TestSpan> {
-            self.spans.iter()
-        }
-        fn priority(&self) -> Option<i32> {
-            None
-        }
-        fn sampling_mechanism(&self) -> Option<u32> {
-            None
-        }
-        fn dropped_trace(&self) -> bool {
-            false
-        }
-    }
-
-    impl TraceChunkMut for TestChunk {
-        fn set_origin(&mut self, _: String) {}
-        fn set_priority(&mut self, _: i32) {}
-        fn set_sampling_mechanism(&mut self, _: u32) {}
-        fn set_dropped_trace(&mut self, _: bool) {}
-        fn spans_mut(&mut self) -> impl Iterator<Item = &mut TestSpan> {
-            self.spans.iter_mut()
-        }
-        fn retain_spans(&mut self, f: impl FnMut(&mut TestSpan) -> bool) {
-            self.spans.retain_mut(f);
-        }
-    }
 
     /// 2023-11-14 in nanoseconds since the epoch.
     const VALID_START: i64 = 1_700_000_000_000_000_000;
@@ -725,6 +544,43 @@ mod tests {
                 "{value:?}"
             );
             assert!(!span.links[1].has_attribute(LINK_NAME_KEY));
+        }
+    }
+
+    #[test]
+    fn http_status_code_fast_path_matches_formatting() {
+        let mut values: Vec<Value> = [-200, 0, 99, 100, 200, 599, 600, i64::MIN, i64::MAX]
+            .into_iter()
+            .map(Value::Int)
+            .collect();
+        values.extend(
+            [
+                -200.0,
+                -0.0,
+                0.0,
+                99.0,
+                99.5,
+                100.0,
+                200.0,
+                200.5,
+                599.0,
+                599.0000000000001,
+                599.5,
+                600.0,
+                1e300,
+                f64::NAN,
+                f64::INFINITY,
+                f64::NEG_INFINITY,
+            ]
+            .into_iter()
+            .map(Value::Float),
+        );
+        for value in values {
+            assert_eq!(
+                is_valid_http_status_code_value((&value).into()),
+                is_valid_http_status_code(&value.format_as_string()),
+                "{value:?}"
+            );
         }
     }
 

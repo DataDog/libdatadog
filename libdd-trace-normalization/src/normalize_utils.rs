@@ -133,6 +133,9 @@ pub fn normalize_tag_value(value: &mut String) {
 /// - Processing stops after [`MAX_TAG_LEN`] characters, or once it reaches `2 * MAX_TAG_LEN` bytes
 ///   of the input. Removed leading characters don't count toward the first limit.
 fn normalize(tag: &mut String, remove_digit_start_char: bool) {
+    if is_normalized_ascii_tag(tag, remove_digit_start_char) {
+        return;
+    }
     // SAFETY: the loop below only writes complete UTF-8 encoded characters and `_` bytes, at a
     // write position that is never ahead of the read position, so the buffer stays valid UTF-8.
     let bytes = unsafe { tag.as_mut_vec() };
@@ -206,6 +209,80 @@ fn normalize(tag: &mut String, remove_digit_start_char: bool) {
     }
     // A pending `_` at the end is dropped, as the agent removes trailing illegal characters.
     bytes.truncate(write);
+}
+
+/// Whether `tag` is ASCII and already normalized, as the agent's `isNormalizedASCIITag` checks:
+/// then [`normalize`] doesn't change it.
+///
+/// `tag` has at most [`MAX_TAG_LEN`] bytes, made of lowercase ASCII letters, `:`, digits, `.`, `/`
+/// and `-`, and `_` followed by one of them. If `check_valid_start_char` is set, it starts with a
+/// lowercase ASCII letter or `:`.
+pub(crate) fn is_normalized_ascii_tag(tag: &str, check_valid_start_char: bool) -> bool {
+    fn is_valid_start_char(b: u8) -> bool {
+        b.is_ascii_lowercase() || b == b':'
+    }
+    fn is_valid_char(b: u8) -> bool {
+        is_valid_start_char(b) || b.is_ascii_digit() || matches!(b, b'.' | b'/' | b'-')
+    }
+
+    let bytes = tag.as_bytes();
+    if bytes.len() > MAX_TAG_LEN {
+        return false;
+    }
+    let mut i = 0;
+    if check_valid_start_char && let Some(&first) = bytes.first() {
+        if !is_valid_start_char(first) {
+            return false;
+        }
+        i = 1;
+    }
+    while i < bytes.len() {
+        let b = bytes[i];
+        if b == b'_' {
+            // An `_` is only valid if a valid character other than `_` follows it.
+            i += 1;
+            if !bytes.get(i).is_some_and(|&b| is_valid_char(b)) {
+                return false;
+            }
+        } else if !is_valid_char(b) {
+            return false;
+        }
+        i += 1;
+    }
+    true
+}
+
+/// Whether [`normalize_service`] doesn't change `svc`.
+pub(crate) fn is_normalized_service(svc: &str) -> bool {
+    !svc.is_empty() && is_normalized_peer_service(svc)
+}
+
+/// Whether [`normalize_peer_service`] doesn't change `svc`.
+pub(crate) fn is_normalized_peer_service(svc: &str) -> bool {
+    svc.len() <= MAX_SERVICE_LEN && is_normalized_ascii_tag(svc, false)
+}
+
+/// Whether [`normalize_tag_value`] doesn't change `value`, as the agent's
+/// `isNormalizedASCIITag(v, false)` checks: `value` is ASCII, has at most 200 bytes, and is made of
+/// lowercase letters, `:`, digits, `.`, `/` and `-`, and `_` followed by one of them.
+///
+/// It doesn't allocate: use it to skip copying a value that is already normalized. A `false`
+/// result doesn't mean that [`normalize_tag_value`] changes the value, for example if it isn't
+/// ASCII.
+pub fn is_normalized_tag_value(value: &str) -> bool {
+    is_normalized_ascii_tag(value, false)
+}
+
+/// Whether [`normalize_name`] doesn't change `name`.
+pub(crate) fn is_normalized_name(name: &str) -> bool {
+    name.len() <= MAX_NAME_LEN
+        && is_valid_normalized_metric_name(name.as_bytes())
+        && !name.ends_with('_')
+}
+
+/// Whether [`normalize_span_type`] doesn't change `span_type`.
+pub(crate) fn is_normalized_span_type(span_type: &str) -> bool {
+    span_type.len() <= MAX_TYPE_LEN
 }
 
 /// Whether `name` is a normalized metric name, as the agent's `isValidNormalizedMetricName`
@@ -435,6 +512,96 @@ mod tests {
         let mut v = format!("{}{}", "1".repeat(350), "a".repeat(300));
         normalize_tag(&mut v);
         assert_eq!(v, "a".repeat(50));
+    }
+
+    #[test]
+    fn test_is_normalized_ascii_tag() {
+        // (input, as a tag value, as a tag)
+        let long = "a".repeat(200);
+        let too_long = "a".repeat(201);
+        let cases = [
+            ("", true, true),
+            ("good:tag/1.2-3", true, true),
+            ("a_b", true, true),
+            ("_a", true, false),
+            ("1a", true, false),
+            (":a", true, true),
+            ("a__b", false, false),
+            ("a_", false, false),
+            ("_", false, false),
+            ("A", false, false),
+            ("a b", false, false),
+            ("é", false, false),
+            (long.as_str(), true, true),
+            (too_long.as_str(), false, false),
+        ];
+        for (input, value, tag) in cases {
+            assert_eq!(
+                (
+                    is_normalized_ascii_tag(input, false),
+                    is_normalized_ascii_tag(input, true)
+                ),
+                (value, tag),
+                "{input:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_is_normalized_matches_normalize() {
+        // Each `is_normalized_*` check must imply that its normalizer keeps the value.
+        let inputs = [
+            "",
+            "a",
+            "A",
+            "_",
+            "a_",
+            "_a",
+            "a__b",
+            "a_b",
+            "a.b",
+            "a..b",
+            "a._b",
+            "a_.b",
+            "1a",
+            ":a",
+            "a-b/c",
+            "a b",
+            "é",
+            "a!",
+            "web",
+            "http..request",
+            "unnamed_operation",
+        ];
+        let long = [
+            "a".repeat(99),
+            "a".repeat(100),
+            "a".repeat(101),
+            "a".repeat(201),
+        ];
+        for input in inputs
+            .iter()
+            .copied()
+            .chain(long.iter().map(String::as_str))
+        {
+            let check = |name: &str, is_normalized: fn(&str) -> bool, f: fn(&mut String)| {
+                let mut v = input.to_owned();
+                f(&mut v);
+                if is_normalized(input) {
+                    assert_eq!(v, input, "{name}({input:?})");
+                }
+            };
+            check("service", is_normalized_service, normalize_service);
+            check(
+                "peer_service",
+                is_normalized_peer_service,
+                normalize_peer_service,
+            );
+            check("tag_value", is_normalized_tag_value, normalize_tag_value);
+            check("tag", |t| is_normalized_ascii_tag(t, true), normalize_tag);
+            check("name", is_normalized_name, normalize_name);
+            check("span_type", is_normalized_span_type, normalize_span_type);
+        }
     }
 
     // `svcNormCases` of the agent's `normalize_test.go`.
