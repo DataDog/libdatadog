@@ -239,6 +239,7 @@ datadog-profiling-replayer/Cargo.toml        @DataDog/libdatadog-profiling @Data
 libdd-alloc/CHANGELOG.md                     @DataDog/libdatadog-profiling @DataDog/libdatadog-release
 libdd-alloc/Cargo.toml                       @DataDog/libdatadog-profiling @DataDog/libdatadog-release
 libdd-profiling-ffi/Cargo.toml               @DataDog/libdatadog-profiling @DataDog/libdatadog-release
+libdd-profiling-ffi/src/lib.rs               @DataDog/libdatadog-profiling @DataDog/libdatadog-release
 libdd-profiling-heap-allocator/CHANGELOG.md  @DataDog/libdatadog-profiling @DataDog/libdatadog-release
 libdd-profiling-heap-allocator/Cargo.toml    @DataDog/libdatadog-profiling @DataDog/libdatadog-release
 libdd-profiling-heap-gotter-ffi/Cargo.toml   @DataDog/libdatadog-profiling @DataDog/libdatadog-release
