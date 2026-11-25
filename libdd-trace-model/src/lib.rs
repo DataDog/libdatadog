@@ -130,6 +130,12 @@ pub trait Attributes {
     fn has_attribute(&self, key: &str) -> bool {
         self.attribute_str(key).is_some() || self.attribute_f64(key).is_some()
     }
+
+    /// Get the value of the attribute for a given key, of any type, `None` if it is missing.
+    ///
+    /// Unlike [`AttributesMut::attribute_mut`], it doesn't need a mutable borrow, so storage that
+    /// copies on write isn't copied to read a value.
+    fn attribute(&self, key: &str) -> Option<AttributeRef<'_, Self::Values>>;
 }
 
 /// Converts `f` to an `i64` if it is exactly an integer within range.
