@@ -26,18 +26,18 @@ node_total="${2:-1}"
 # 
 # Retune as benchmarks are added/removed; unknown crates default to 1.
 # 
-# Latest re-evaluation of weights: 2026-10-13
+# Latest re-evaluation of weights: 2026-11-19
 crate_weight() {
   case "$1" in
-    libdd-trace-utils) echo 15 ;;
+    libdd-trace-utils) echo 10 ;;
     libdd-profiling-heap-allocator) echo 7 ;;
+    libdd-trace-obfuscation) echo 7 ;;
     libdd-sampling) echo 6 ;;
     libdd-ddsketch) echo 5 ;;
-    libdd-data-pipeline) echo 5 ;;
     libdd-ffe-test-suite) echo 4 ;;
-    libdd-crashtracker) echo 4 ;;
+    libdd-data-pipeline) echo 2 ;;
     libdd-profiling) echo 2 ;;
-    libdd-trace-obfuscation) echo 3 ;;
+    libdd-crashtracker | libdd-trace-stats | libdd-ipc | libdd-trace-normalization) echo 1 ;;
     *) echo 1 ;;
   esac
 }
