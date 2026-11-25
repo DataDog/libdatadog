@@ -308,7 +308,8 @@ impl TraceFilterer {
         };
         match filter.key() {
             "env" => {
-                let normalized_value = normalize_utils::normalize_tag_cloned(value);
+                let mut normalized_value = value.to_owned();
+                normalize_utils::normalize_tag_value(&mut normalized_value);
                 filter.matches_tag_value(&normalized_value)
             }
             "http.status_code" => {

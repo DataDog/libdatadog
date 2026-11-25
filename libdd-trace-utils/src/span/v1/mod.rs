@@ -124,6 +124,10 @@ macro_rules! impl_vec_map_attributes {
             fn has_attribute(&self, key: &str) -> bool {
                 self.attributes.contains_key(key)
             }
+
+            fn attribute(&self, key: &str) -> Option<libdd_trace_model::AttributeRef<'_, T>> {
+                self.attributes.get(key).map(Into::into)
+            }
         }
 
         impl<T: TraceData> libdd_trace_model::AttributesIter for $ty<T> {
@@ -962,6 +966,15 @@ mod tests {
         );
         assert_eq!(compat.attribute_str("team"), Some("core"));
         assert_eq!(compat.attribute_str("env"), Some("staging"));
+        // The any-type accessor sees the promoted tags and the chunk fallback the same way.
+        assert_eq!(
+            compat.attribute("env"),
+            Some(AttributeRef::String("staging"))
+        );
+        assert_eq!(compat.attribute("team"), Some(AttributeRef::String("core")));
+        assert_eq!(view.attribute("env"), None);
+        assert_eq!(view.attribute("team"), Some(AttributeRef::String("core")));
+        assert_eq!(compat.attribute("_dd.origin"), None);
         assert!(!compat.has_attribute("component"));
         // Promoted chunk tags get no compatibility.
         assert_eq!(compat.attribute_str("_dd.origin"), None);
@@ -988,6 +1001,7 @@ mod tests {
         // The span's integer hides the chunk's string, for typed reads as for iteration.
         assert_eq!(view.attribute_str("k"), None);
         assert_eq!(view.attribute_i64("k"), Some(1));
+        assert_eq!(view.attribute("k"), Some(AttributeRef::Int(1)));
         assert!(view.has_attribute("k"));
         assert_eq!(
             view.attributes().collect::<Vec<_>>(),

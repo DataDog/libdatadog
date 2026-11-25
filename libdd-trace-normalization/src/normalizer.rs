@@ -31,7 +31,7 @@ pub(crate) fn normalize_span(s: &mut pb::Span) -> anyhow::Result<()> {
     normalize_utils::normalize_span_type(&mut s.r#type);
 
     if let Some(env_tag) = s.meta.get_mut("env") {
-        normalize_utils::normalize_tag(env_tag);
+        normalize_utils::normalize_tag_value(env_tag);
     }
 
     if let Some(code) = s.meta.get("http.status_code")
@@ -43,11 +43,16 @@ pub(crate) fn normalize_span(s: &mut pb::Span) -> anyhow::Result<()> {
     Ok(())
 }
 
+/// Whether `sc` is a valid HTTP status code, between 100 and 599, as the agent's
+/// `IsValidStatusCode` checks.
+///
+/// As Go's `strconv.ParseUint`, only ASCII digits are accepted: `+200` and ` 200` are invalid.
 pub fn is_valid_http_status_code(sc: &str) -> bool {
-    if let Ok(code) = sc.parse::<i64>() {
-        return (100..600).contains(&code);
+    if sc.is_empty() || !sc.bytes().all(|b| b.is_ascii_digit()) {
+        return false;
     }
-    false
+    sc.parse::<u64>()
+        .is_ok_and(|code| (100..600).contains(&code))
 }
 
 /// normalize_trace takes a trace and
@@ -411,6 +416,19 @@ mod tests {
     }
 
     #[test]
+    fn test_normalize_env_keeps_leading_digits() {
+        let mut test_span = new_test_span();
+        test_span
+            .meta
+            .insert("env".to_string(), "123DEVELOPMENT".to_string());
+        test_span.service = "1password".to_string();
+
+        assert!(normalizer::normalize_span(&mut test_span).is_ok());
+        assert_eq!("123development", test_span.meta.get("env").unwrap());
+        assert_eq!("1password", test_span.service);
+    }
+
+    #[test]
     fn test_special_zipkin_root_span() {
         let mut test_span = new_test_span();
         test_span.parent_id = 42;
@@ -486,6 +504,17 @@ mod tests {
         assert!(!normalizer::is_valid_http_status_code("600"));
         assert!(!normalizer::is_valid_http_status_code(
             "Invalid status code"
+        ));
+        // Only ASCII digits, as Go's `strconv.ParseUint`.
+        assert!(normalizer::is_valid_http_status_code("0200"));
+        assert!(!normalizer::is_valid_http_status_code("+200"));
+        assert!(!normalizer::is_valid_http_status_code("-200"));
+        assert!(!normalizer::is_valid_http_status_code(" 200"));
+        assert!(!normalizer::is_valid_http_status_code("2_00"));
+        assert!(!normalizer::is_valid_http_status_code("200.0"));
+        assert!(!normalizer::is_valid_http_status_code(""));
+        assert!(!normalizer::is_valid_http_status_code(
+            "18446744073709551716"
         ));
     }
 
