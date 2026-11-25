@@ -147,6 +147,7 @@ impl From<BatchResult> for TraceExporterBatch {
 /// codes and HTTP status observations, not allocated diagnostic strings.
 /// The byte cap bounds each encoded request. Temporary allocation can exceed the cap,
 /// and cancellation or deadline expiry cannot interrupt an encode in progress.
+/// Discovery reconciliation can also wait for the stats worker's final flush after the deadline.
 ///
 /// # Safety
 /// All non-null pointers must be valid. `out` must be writable, unaliased, and not

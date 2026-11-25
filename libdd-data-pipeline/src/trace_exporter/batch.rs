@@ -146,6 +146,7 @@ impl<
     /// its own retry allowance. The byte limit applies to each encoded request.
     /// A candidate is encoded in full before splitting: its temporary allocation can exceed
     /// the limit, and cancellation or deadline expiry cannot interrupt an encode in progress.
+    /// Discovery reconciliation can also wait beyond this budget for the stats worker's final flush.
     pub fn send_trace_chunks_batched<T: TraceData>(
         &self,
         chunks: PooledChunks<'_, T>,
