@@ -1,7 +1,7 @@
 // Copyright 2026-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-use super::CdnEndpoint;
+use super::{CdnEndpoint, CdnProxy};
 use base64::Engine;
 use flate2::read::MultiGzDecoder;
 use http::header::{
@@ -63,11 +63,29 @@ pub(super) struct HyperTransport {
 }
 
 impl HyperTransport {
-    pub(super) fn new(language: String, version: String, service: Option<String>) -> Self {
+    pub(super) fn new(
+        language: String,
+        version: String,
+        service: Option<String>,
+        proxy: CdnProxy,
+    ) -> Self {
+        // Proxying is explicit: the subscription's proxy configuration or
+        // none at all. The environment is never consulted.
+        let connector = match proxy.url {
+            Some(proxy_url) => {
+                let mut matcher =
+                    libdd_networking::connector::Matcher::builder().all(proxy_url.clone());
+                if let Some(no_proxy) = proxy.no_proxy.filter(|no| !no.is_empty()) {
+                    matcher = matcher.no(no_proxy);
+                }
+                libdd_networking::connector::Connector::with_proxy(matcher.build())
+            }
+            None => libdd_networking::connector::Connector::default(),
+        };
         Self {
             // Leave redirects visible: credentials must never be forwarded
             // to a location supplied by the server.
-            client: http_common::new_client_periodic(),
+            client: http_common::new_client_periodic_with(connector),
             language,
             version,
             service: usage_service(service),
@@ -565,7 +583,7 @@ mod tests {
         });
         let cancellation = CancellationToken::new();
         let stop = cancellation.clone();
-        let transport = HyperTransport::new("php".into(), "1.27".into(), None);
+        let transport = HyperTransport::new("php".into(), "1.27".into(), None, CdnProxy::default());
         let request = tokio::spawn(async move {
             transport
                 .get(&endpoint, Duration::from_secs(30), None, &stop)
@@ -587,6 +605,58 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn configured_proxy_routes_the_request_through_the_proxy() {
+        use tokio::io::AsyncReadExt;
+        // A destination that would never answer if dialed directly.
+        let endpoint = CdnEndpoint::custom("http://config.example.invalid/config").unwrap();
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let proxy_addr = listener.local_addr().unwrap();
+        let (received, connect_received) = tokio::sync::oneshot::channel();
+        let server = tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.unwrap();
+            let mut request = Vec::new();
+            let mut buf = [0; 1024];
+            loop {
+                let n = socket.read(&mut buf).await.unwrap_or(0);
+                if n == 0 {
+                    break;
+                }
+                request.extend_from_slice(&buf[..n]);
+                if request.windows(4).any(|w| w == b"\r\n\r\n") {
+                    break;
+                }
+            }
+            received.send(request).unwrap();
+            // Never complete the tunnel: the client's request is expected to
+            // fail, which is fine — we only care that it came through us.
+            std::future::pending::<()>().await
+        });
+        let transport = HyperTransport::new(
+            "php".into(),
+            "1.27".into(),
+            None,
+            CdnProxy {
+                url: Some(format!("http://{proxy_addr}")),
+                no_proxy: None,
+            },
+        );
+        let _ = transport
+            .get(
+                &endpoint,
+                Duration::from_secs(2),
+                None,
+                &CancellationToken::new(),
+            )
+            .await;
+        let request = tokio::time::timeout(Duration::from_secs(5), connect_received)
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(request.starts_with(b"CONNECT config.example.invalid:80"));
+        server.abort();
+    }
+
+    #[tokio::test]
     async fn retry_after_survives_discarding_an_error_body() {
         use tokio::io::{AsyncReadExt, AsyncWriteExt};
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -599,7 +669,7 @@ mod tests {
             assert!(socket.read(&mut request).await.unwrap() > 0);
             socket.write_all(b"HTTP/1.1 429 Too Many Requests\r\nRetry-After: 10\r\nContent-Length: 100000000\r\n\r\n").await.unwrap();
         });
-        let response = HyperTransport::new("php".into(), "1.27".into(), None)
+        let response = HyperTransport::new("php".into(), "1.27".into(), None, CdnProxy::default())
             .get(
                 &endpoint,
                 Duration::from_secs(5),
@@ -639,7 +709,8 @@ mod tests {
                 .await
                 .unwrap();
         });
-        let transport = HyperTransport::new("python".into(), "1.0".into(), None);
+        let transport =
+            HyperTransport::new("python".into(), "1.0".into(), None, CdnProxy::default());
         let response = transport
             .get(
                 &endpoint,

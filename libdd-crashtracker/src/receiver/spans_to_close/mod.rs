@@ -24,7 +24,6 @@ use crate::crash_info::{
 };
 use chrono::{DateTime, Utc};
 use http::uri::PathAndQuery;
-use libdd_capabilities::HttpClientCapability;
 use libdd_capabilities_impl::NativeCapabilities;
 use libdd_common::{Endpoint, parse_uri};
 use libdd_trace_model::{AttributesMut, SpanMut, TraceChunkMut, ValueTypes};
@@ -349,7 +348,7 @@ pub(crate) async fn submit_all(submissions: Vec<Submission>) {
     if submissions.is_empty() {
         return;
     }
-    let capabilities = Arc::new(NativeCapabilities::new_client());
+    let capabilities = Arc::new(crate::crash_info::upload_http::capabilities());
     let mut submissions = submissions.into_iter();
     let mut set = tokio::task::JoinSet::new();
     for submission in submissions.by_ref().take(MAX_CONCURRENT_SUBMISSIONS) {
@@ -712,7 +711,7 @@ mod tests {
     }
 
     async fn submit_once(submission: Submission) -> anyhow::Result<u16> {
-        submit(&NativeCapabilities::new_client(), submission).await
+        submit(&crate::crash_info::upload_http::capabilities(), submission).await
     }
 
     /// The request head a submission of `block` sends to a local agent.

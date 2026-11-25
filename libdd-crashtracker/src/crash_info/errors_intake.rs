@@ -573,7 +573,9 @@ impl ErrorsIntakeUploader {
             .body(serde_json::to_string(payload)?.into())?;
 
         // Create HTTP client and send request
-        let client = libdd_networking::http_common::new_client_periodic();
+        let client = libdd_networking::http_common::new_client_periodic_with(
+            crate::crash_info::upload_http::connector(),
+        );
 
         tokio::time::timeout(
             Duration::from_millis(endpoint.timeout_ms),

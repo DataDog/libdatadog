@@ -41,6 +41,11 @@ pub use certificate_distrust::platform_verifier_with_distrust;
 #[cfg(feature = "hyper-proxy")]
 mod proxy;
 
+// Re-exported so `Connector::with_proxy` callers can build matchers without
+// depending on hyper-util themselves.
+#[cfg(feature = "hyper-proxy")]
+pub use hyper_util::client::proxy::matcher::Matcher;
+
 // Skipped under Miri: the certificate distrust tests exercise ring-backed
 // signature verification, whose FFI cannot execute there.
 #[cfg(all(test, feature = "https", not(feature = "use_webpki_roots"), not(miri)))]
@@ -73,7 +78,22 @@ impl Connector {
     /// Make sure this function is not called frequently. Fetching the root certificates is an
     /// expensive operation. Access the globally cached connector via Connector::default().
     fn new() -> Self {
-        // Load the root certificates once for both the direct connector and the proxy.
+        #[cfg(feature = "tls-core")]
+        let tls_config = https::build_tls_config().ok();
+
+        Self::direct(
+            #[cfg(feature = "tls-core")]
+            tls_config,
+        )
+    }
+
+    /// A connector routing connections through the proxies selected by `matcher`.
+    ///
+    /// The default connector is always direct; proxying is opt-in per connector and the
+    /// environment is never consulted implicitly. Callers wanting environment-derived
+    /// configuration must read it themselves and build the `Matcher` explicitly.
+    #[cfg(feature = "hyper-proxy")]
+    pub fn with_proxy(matcher: Matcher) -> Self {
         #[cfg(feature = "tls-core")]
         let tls_config = https::build_tls_config().ok();
 
@@ -82,14 +102,12 @@ impl Connector {
             tls_config.clone(),
         );
 
-        #[cfg(feature = "hyper-proxy")]
-        let direct = Connector::Proxy(Box::new(proxy::HttpProxyConnector::new(
+        Connector::Proxy(Box::new(proxy::HttpProxyConnector::new(
             direct,
+            matcher,
             #[cfg(feature = "tls-core")]
             tls_config,
-        )));
-
-        direct
+        )))
     }
 
     /// A direct connector using `tls_config`, or plain HTTP if no TLS configuration could be
@@ -312,12 +330,24 @@ mod tests {
     #[test]
     #[cfg_attr(miri, ignore)]
     #[cfg(feature = "tls-core")]
-    /// Verify that building the connector loads the root certificates only once, also when the
-    /// direct connector is wrapped in the proxy connector.
+    /// Verify that building the connector loads the root certificates only once, including for
+    /// the proxy connector, which reuses the same configuration for its direct dialer.
     fn test_new_builds_tls_config_once() {
         let built = || super::https::TLS_CONFIGS_BUILT.with(|built| built.get());
         let before = built();
         let _connector = super::Connector::new();
+        assert_eq!(built() - before, 1);
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    #[cfg(all(feature = "tls-core", feature = "hyper-proxy"))]
+    fn test_with_proxy_builds_tls_config_once() {
+        use super::Matcher;
+
+        let built = || super::https::TLS_CONFIGS_BUILT.with(|built| built.get());
+        let before = built();
+        let _connector = super::Connector::with_proxy(Matcher::builder().build());
         assert_eq!(built() - before, 1);
     }
 

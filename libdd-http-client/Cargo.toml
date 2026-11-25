@@ -37,7 +37,8 @@ hyper-backend = [
     "dep:hyper-util",
     "dep:http-body-util",
 ]
-# Honor HTTPS_PROXY/NO_PROXY environment variables in the hyper backend.
+# Compile proxy support into the hyper backend for explicitly configured clients
+# (`HttpClientBuilder::proxy`). This feature never changes default client behavior.
 hyper-proxy = ["hyper-backend", "libdd-networking?/hyper-proxy"]
 fips = [
   "dep:reqwest",

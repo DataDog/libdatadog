@@ -4,8 +4,8 @@
 //! CDN configuration fetching, independent of a tracer or sidecar lifecycle.
 //!
 //! Run the fetcher on the caller's Tokio runtime and cancel it before disposing
-//! of its sink. Select `cdn,https` for ring or `cdn,fips` for FIPS HTTPS via
-//! `libdd-networking`. CDN enables HTTP(S)_PROXY/NO_PROXY support independently of TLS.
+//! of its sink. CDN requests are proxied only when the subscription explicitly
+//! configures one (see [`CdnProxy`]); the fetcher never reads the environment.
 
 mod endpoint;
 mod poller;
@@ -17,6 +17,31 @@ use std::sync::Arc;
 use std::time::Duration;
 use tokio_util::sync::CancellationToken;
 use transport::HyperTransport;
+
+/// Explicit proxy routing for CDN requests.
+///
+/// The fetcher never reads the environment; the caller decides how to source
+/// this — including proxy environment variables — and passes it explicitly.
+/// Debug redacts the URL, which may carry credentials.
+#[derive(Clone, Default, Eq, PartialEq, Hash, serde::Serialize, serde::Deserialize)]
+pub struct CdnProxy {
+    /// Proxy URL (`http://` or `https://` with a host); credentials allowed
+    /// (`http://user:pass@proxy:8080`).
+    #[serde(default)]
+    pub url: Option<String>,
+    /// Comma-separated entries that bypass the proxy, `NO_PROXY` syntax.
+    #[serde(default)]
+    pub no_proxy: Option<String>,
+}
+
+impl std::fmt::Debug for CdnProxy {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("CdnProxy")
+            .field("url", &self.url.as_ref().map(|_| "[REDACTED]"))
+            .field("no_proxy", &self.no_proxy)
+            .finish()
+    }
+}
 
 /// Complete subscription identity. Credentials participate in equality/hash so
 /// different organizations can never share an authenticated fetcher or snapshot.
@@ -35,6 +60,9 @@ pub struct CdnConfig {
     /// This is not a validation error, so flag fetching continues.
     #[serde(default)]
     pub service: Option<String>,
+    /// Explicit proxy routing for CDN requests; direct when unset.
+    #[serde(default)]
+    pub proxy: CdnProxy,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, thiserror::Error)]
@@ -49,6 +77,8 @@ pub enum InvalidConfig {
     Language,
     #[error("invalid CDN client version")]
     Version,
+    #[error("invalid CDN proxy")]
+    Proxy,
 }
 
 impl CdnConfig {
@@ -74,6 +104,14 @@ impl CdnConfig {
             || http::HeaderValue::from_str(&self.version).is_err()
         {
             return Err(InvalidConfig::Version);
+        }
+        if let Some(proxy_url) = &self.proxy.url {
+            let Ok(url) = url::Url::parse(proxy_url) else {
+                return Err(InvalidConfig::Proxy);
+            };
+            if !matches!(url.scheme(), "http" | "https") || url.host_str().is_none() {
+                return Err(InvalidConfig::Proxy);
+            }
         }
         Ok(())
     }
@@ -103,7 +141,12 @@ impl<S: ConfigurationSink> CdnFetcher<S> {
                 config.endpoint,
                 config.poll_interval,
                 config.request_timeout,
-                HyperTransport::new(config.language, config.version, config.service),
+                HyperTransport::new(
+                    config.language,
+                    config.version,
+                    config.service,
+                    config.proxy,
+                ),
                 sink,
                 Arc::new(PollState::default()),
             ),
@@ -130,12 +173,20 @@ mod tests {
             language: "php".into(),
             version: "1.27.0".into(),
             service: Some("checkout".into()),
+            proxy: CdnProxy {
+                url: Some("http://secret-user:secret-pass@proxy.example:8080".into()),
+                no_proxy: Some("localhost".into()),
+            },
         };
         let decoded: CdnConfig =
             bincode::deserialize(&bincode::serialize(&config).unwrap()).unwrap();
         assert_eq!(decoded, config);
         assert!(decoded.validate().is_ok());
         assert!(!format!("{config:?}").contains("secret-key"));
+        assert!(
+            !format!("{config:?}").contains("secret-pass"),
+            "proxy credentials must be redacted from Debug"
+        );
         let mut other = config.clone();
         other.endpoint = CdnEndpoint::managed("datadoghq.com", "production", "other-key").unwrap();
         assert_ne!(other, config);
@@ -145,6 +196,10 @@ mod tests {
         // Each service has its own fetcher.
         other = config.clone();
         other.service = Some("billing".into());
+        assert_ne!(other, config);
+        // Each proxy routing has its own fetcher.
+        other = config.clone();
+        other.proxy.url = Some("http://proxy.example:3128".into());
         assert_ne!(other, config);
     }
 
@@ -157,6 +212,7 @@ mod tests {
             language: "php".into(),
             version: "1.27.0".into(),
             service: None,
+            proxy: CdnProxy::default(),
         };
         let mut wire = serde_json::to_value(&config).unwrap();
         wire["endpoint"]["api_key"] = "secret".into();
@@ -189,11 +245,15 @@ mod tests {
             language: "php".into(),
             version: "1.27.0".into(),
             service: Some("checkout".into()),
+            proxy: CdnProxy::default(),
         };
         let mut wire = serde_json::to_value(&config).unwrap();
         wire.as_object_mut().unwrap().remove("service");
+        // Subscriptions serialized by older senders have no proxy field.
+        wire.as_object_mut().unwrap().remove("proxy");
         let decoded: CdnConfig = serde_json::from_value(wire).unwrap();
         assert_eq!(decoded.service, None);
+        assert_eq!(decoded.proxy, CdnProxy::default());
     }
 
     #[test]
@@ -206,6 +266,7 @@ mod tests {
             language: "php".into(),
             version: "1.27.0".into(),
             service: None,
+            proxy: CdnProxy::default(),
         };
         for (field, expected) in [
             ("endpoint", "invalid CDN endpoint"),
@@ -213,6 +274,7 @@ mod tests {
             ("request_timeout", "invalid CDN request timeout"),
             ("language", "invalid CDN client language"),
             ("version", "invalid CDN client version"),
+            ("proxy", "invalid CDN proxy"),
         ] {
             let mut invalid = config.clone();
             match field {
@@ -225,6 +287,7 @@ mod tests {
                 "request_timeout" => invalid.request_timeout = Duration::from_secs(301),
                 "language" => invalid.language = "secret-language\r\n".into(),
                 "version" => invalid.version = "secret-version\r\n".into(),
+                "proxy" => invalid.proxy.url = Some("secret-proxy://not-http\r\n".into()),
                 _ => unreachable!(),
             }
             let error = invalid.validate().unwrap_err();
@@ -270,6 +333,7 @@ mod tests {
             language: "php".into(),
             version: "1.27.0".into(),
             service: service.map(Into::into),
+            proxy: CdnProxy::default(),
         };
         let sink = CountingSink::default();
         let mut fetcher = CdnFetcher::new(config, sink.clone()).expect("valid configuration");

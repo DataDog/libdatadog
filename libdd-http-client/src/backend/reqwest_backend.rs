@@ -23,8 +23,45 @@ impl super::Backend for ReqwestBackend {
         client_config: &HttpClientConfig,
         transport: TransportConfig,
     ) -> Result<Self, HttpClientError> {
+        // reqwest builds its TLS configuration eagerly in `Client::builder().build()`,
+        // even for clients that will only ever speak plain HTTP, and panics when no
+        // process-wide crypto provider is installed (it is built with
+        // rustls-no-provider). Install one up front — this does not load
+        // certificates, so plain-HTTP clients still work in minimal environments.
+        #[cfg(any(feature = "https", feature = "fips"))]
+        crate::tls::ensure_crypto_provider_initialized();
+
         let mut builder = reqwest::Client::builder().timeout(client_config.timeout());
         let base_url_is_https = is_https_url(client_config.base_url());
+
+        // Proxying is explicit only. `no_proxy()` also disables reqwest's
+        // implicit environment/system proxy detection, which reads `getenv`
+        // behind the caller's back (and can crash under php-fpm's mutating env
+        // configuration; see the matching comment in libdd-networking's
+        // `to_reqwest_client_builder`).
+        let proxy_config = client_config.proxy();
+        if proxy_config.is_empty() {
+            builder = builder.no_proxy();
+        } else {
+            let no_proxy = reqwest::NoProxy::from_string(&proxy_config.no_proxy_joined());
+            let add = |builder: reqwest::ClientBuilder,
+                       result: reqwest::Result<reqwest::Proxy>|
+             -> Result<reqwest::ClientBuilder, HttpClientError> {
+                let mut proxy =
+                    result.map_err(|e| HttpClientError::InvalidConfig(error_chain(&e)))?;
+                proxy = proxy.no_proxy(no_proxy.clone());
+                Ok(builder.proxy(proxy))
+            };
+            if let Some(url) = proxy_config.all_proxy() {
+                builder = add(builder, reqwest::Proxy::all(url))?;
+            }
+            if let Some(url) = proxy_config.http_proxy() {
+                builder = add(builder, reqwest::Proxy::http(url))?;
+            }
+            if let Some(url) = proxy_config.https_proxy() {
+                builder = add(builder, reqwest::Proxy::https(url))?;
+            }
+        }
 
         // Route reqwest HTTPS through the shared TLS configuration so the
         // compromised-key distrust check and the selected crypto provider apply

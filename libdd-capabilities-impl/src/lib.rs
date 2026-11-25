@@ -60,6 +60,18 @@ impl NativeCapabilities {
             file: NativeFileCapability,
         }
     }
+
+    /// A bundle whose HTTP client uses `http` instead of the default one, for
+    /// callers that configure their transport explicitly (e.g. the crash
+    /// receiver's proxy-aware uploads).
+    pub fn with_http(http: NativeHttpClient) -> Self {
+        Self {
+            http,
+            sleep: NativeSleepCapability,
+            env: NativeEnvCapability,
+            file: NativeFileCapability,
+        }
+    }
 }
 
 impl HttpClientCapability for NativeCapabilities {
