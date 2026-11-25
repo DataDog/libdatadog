@@ -653,6 +653,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "block-buffer"
+version = "0.12.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d2f6c7dbe95a6ed67ad9f18e57daf93a2f034c524b99fd2b76d18fdfeb6660aa"
+dependencies = [
+ "hybrid-array",
+]
+
+[[package]]
 name = "block2"
 version = "0.6.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1175,6 +1184,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "const-oid"
+version = "0.10.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "be95d4a884358a21a199689323c29e9256b4a1b315e22f183d155422041d3a9a"
+
+[[package]]
 name = "const_format"
 version = "0.2.34"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1367,6 +1382,15 @@ checksum = "1bfb12502f3fc46cca1bb51ac28df9d618d813cdc3d2f25b9fe775a34af26bb3"
 dependencies = [
  "generic-array",
  "typenum",
+]
+
+[[package]]
+name = "crypto-common"
+version = "0.2.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ce6e4c961d6cd6c9a86db418387425e8bdeaf05b3c8bc1411e6dca4c252f1453"
+dependencies = [
+ "hybrid-array",
 ]
 
 [[package]]
@@ -1712,8 +1736,19 @@ version = "0.10.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9ed9a281f7bc9b7576e61468ba615a66a5c8cfdff42420a70aa82701a3b1e292"
 dependencies = [
- "block-buffer",
- "crypto-common",
+ "block-buffer 0.10.4",
+ "crypto-common 0.1.6",
+]
+
+[[package]]
+name = "digest"
+version = "0.11.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f1dd6dbb5841937940781866fa1281a1ff7bd3bf827091440879f9994983d5c2"
+dependencies = [
+ "block-buffer 0.12.1",
+ "const-oid",
+ "crypto-common 0.2.2",
 ]
 
 [[package]]
@@ -2352,7 +2387,7 @@ dependencies = [
  "http 1.1.0",
  "httpdate",
  "mime",
- "sha1",
+ "sha1 0.10.7",
 ]
 
 [[package]]
@@ -2544,6 +2579,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9a3a5bfb195931eeb336b2a7b4d761daec841b97f947d34394601737a7bba5e4"
 
 [[package]]
+name = "hybrid-array"
+version = "0.4.10"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3944cf8cf766b40e2a1a333ee5e9b563f854d5fa49d6a8ca2764e97c6eddb214"
+dependencies = [
+ "typenum",
+]
+
+[[package]]
 name = "hyper"
 version = "1.11.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2579,7 +2623,7 @@ dependencies = [
  "tokio",
  "tokio-rustls",
  "tower-service",
- "webpki-roots",
+ "webpki-roots 1.0.10",
 ]
 
 [[package]]
@@ -2613,7 +2657,7 @@ dependencies = [
  "libc",
  "percent-encoding",
  "pin-project-lite",
- "socket2 0.5.10",
+ "socket2 0.6.5",
  "tokio",
  "tower-service",
  "tracing",
@@ -2898,9 +2942,9 @@ checksum = "49f1f14873335454500d59611f1cf4a4b0f786f9ac11f4312a78e4cf2566695b"
 
 [[package]]
 name = "jiff"
-version = "0.2.46"
+version = "1.0.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "175dc66334db3b9ab9985bf8b61cfed50dc16d20964bb47f9e479adcae984a7f"
+checksum = "107f2e89536b6818514025f6787b0d94d819e54fe3b40365275fc753de485b3f"
 dependencies = [
  "jiff-core",
  "jiff-static",
@@ -2914,36 +2958,36 @@ dependencies = [
 
 [[package]]
 name = "jiff-core"
-version = "0.1.8"
+version = "1.0.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e599b80292e597019b8b3e392de3f4bea2959ddfb8c7dff60e035e9e311a2c1b"
+checksum = "d44c923edf2bf456a982253f1a9ee1f6e89e421dffd0065d9b9a581da0def58f"
 dependencies = [
  "log",
 ]
 
 [[package]]
 name = "jiff-static"
-version = "0.2.46"
+version = "1.0.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c7b1af7547d47354bc438d797e3854601bde8f8d185780c5ba4ab27afa54f1ba"
+checksum = "4996f71e569e3a3e32b925c28ef8f0027dc30bb1d594b33eeda409eea185f5c8"
 dependencies = [
  "jiff-core",
  "proc-macro2",
  "quote",
- "syn 2.0.119",
+ "syn 3.0.6",
 ]
 
 [[package]]
 name = "jiff-tzdb"
-version = "0.1.10"
+version = "1.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0980fca2cc272465bd60e82397607ba9f33add9e48defd77923301bbd03808f2"
+checksum = "12e71a1b68a875a44a33bb7a1dd84392cb77145a3367a552a3cfe6a4f5cf3afc"
 
 [[package]]
 name = "jiff-tzdb-platform"
-version = "0.1.3"
+version = "1.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "875a5a69ac2bab1a891711cf5eccbec1ce0341ea805560dcd90b7a2e925132e8"
+checksum = "dc65b284afcfa8f6cf189c7274c805505314a7ab975c60e1f548bff56525420e"
 dependencies = [
  "jiff-tzdb",
 ]
@@ -3037,15 +3081,27 @@ dependencies = [
 name = "libdd-ai-guard"
 version = "0.1.0"
 dependencies = [
+ "async-trait",
  "bytes",
+ "fastrand",
  "futures",
+ "http 1.1.0",
+ "libdd-shared-runtime",
  "pbjson-types",
+ "rc-crypto",
  "rc-x509-client",
  "rc-x509-proto",
  "rc-x509-roots",
  "rc-x509-test-client-harness",
+ "rc-x509-test-helpers",
+ "rustls",
+ "thiserror 2.0.21",
  "tokio",
+ "tokio-stream",
+ "tokio-tungstenite",
+ "tokio-util",
  "tracing",
+ "webpki-roots 1.0.10",
 ]
 
 [[package]]
@@ -3633,7 +3689,7 @@ dependencies = [
  "tools",
  "tower-service",
  "webpki-root-certs",
- "webpki-roots",
+ "webpki-roots 1.0.10",
 ]
 
 [[package]]
@@ -5231,7 +5287,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "343d3bd7056eda839b03204e68deff7d1b13aba7af2b2fd16890697274262ee7"
 dependencies = [
  "heck",
- "itertools 0.10.5",
+ "itertools 0.14.0",
  "log",
  "multimap",
  "petgraph",
@@ -5250,7 +5306,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1ad9c5423459fa2f729b8d9235fab810aa29628b171467744fc86d21460ad70d"
 dependencies = [
  "anyhow",
- "itertools 0.10.5",
+ "itertools 0.14.0",
  "proc-macro2",
  "quote",
  "syn 2.0.119",
@@ -5454,6 +5510,7 @@ version = "0.10.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8f6fa277c67e6ea590466f04c3fe82cb509f0864fe470643e5570de9514a9b11"
 dependencies = [
+ "chacha20",
  "getrandom 0.4.3",
  "rand_core 0.10.1",
 ]
@@ -5543,8 +5600,7 @@ dependencies = [
 [[package]]
 name = "rc-crypto"
 version = "0.1.8"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "fc043ccd9875fad87e145e8397020f06937b1ebace241e66c539cf1b860705d5"
+source = "git+https://github.com/DataDog/libdd-rc?rev=a6948fedc931f95a9780bebd1c8cf43848008146#a6948fedc931f95a9780bebd1c8cf43848008146"
 dependencies = [
  "aws-lc-rs",
  "bytes",
@@ -5563,10 +5619,10 @@ dependencies = [
 [[package]]
 name = "rc-x509-client"
 version = "0.3.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "84bd4d37ae9f8a21a63b7753a982e41ac849fe3eeb2256e31a5746b60793718a"
+source = "git+https://github.com/DataDog/libdd-rc?rev=a6948fedc931f95a9780bebd1c8cf43848008146#a6948fedc931f95a9780bebd1c8cf43848008146"
 dependencies = [
  "futures",
+ "hashbrown 0.17.1",
  "pin-project",
  "rc-crypto",
  "rc-x509-proto",
@@ -5582,8 +5638,7 @@ dependencies = [
 [[package]]
 name = "rc-x509-proto"
 version = "0.5.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "39e88de3049732cd619c70098ce124db649da6e241e9b91a03c4caa43c28b79e"
+source = "git+https://github.com/DataDog/libdd-rc?rev=a6948fedc931f95a9780bebd1c8cf43848008146#a6948fedc931f95a9780bebd1c8cf43848008146"
 dependencies = [
  "bytes",
  "glob",
@@ -5594,14 +5649,14 @@ dependencies = [
  "proptest-derive",
  "prost",
  "prost-build",
+ "prost-types",
  "serde",
 ]
 
 [[package]]
 name = "rc-x509-roots"
 version = "1.1.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f7a9d5ae2bb12e912152965a800d143d1677f3143caf4d5edb3015f45398bb9c"
+source = "git+https://github.com/DataDog/libdd-rc?rev=a6948fedc931f95a9780bebd1c8cf43848008146#a6948fedc931f95a9780bebd1c8cf43848008146"
 dependencies = [
  "rc-crypto",
 ]
@@ -5609,13 +5664,15 @@ dependencies = [
 [[package]]
 name = "rc-x509-test-client-harness"
 version = "0.3.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c6c595171283882f9122e88674b070ca2193473a8cf7bc7e0b6d49ca1344e395"
+source = "git+https://github.com/DataDog/libdd-rc?rev=a6948fedc931f95a9780bebd1c8cf43848008146#a6948fedc931f95a9780bebd1c8cf43848008146"
 dependencies = [
  "assert_matches",
  "rc-crypto",
  "rc-x509-client",
  "rc-x509-proto",
+ "rc-x509-roots",
+ "rc-x509-test-helpers",
+ "rc-x509-trust",
  "tokio",
  "tokio-stream",
  "tokio-util",
@@ -5623,10 +5680,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "rc-x509-test-helpers"
+version = "0.1.2"
+source = "git+https://github.com/DataDog/libdd-rc?rev=a6948fedc931f95a9780bebd1c8cf43848008146#a6948fedc931f95a9780bebd1c8cf43848008146"
+dependencies = [
+ "proptest",
+ "rc-crypto",
+ "rc-x509-roots",
+ "rcgen 0.14.10",
+ "time",
+ "valuable",
+]
+
+[[package]]
 name = "rc-x509-trust"
 version = "0.3.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e7c26e0024d1d327af44e65cef46d4696ba5a84208c8b6f554f79e9c0bdb280b"
+source = "git+https://github.com/DataDog/libdd-rc?rev=a6948fedc931f95a9780bebd1c8cf43848008146#a6948fedc931f95a9780bebd1c8cf43848008146"
 dependencies = [
  "bytes",
  "mini-moka",
@@ -6313,7 +6382,18 @@ checksum = "a978451301f4db1d02937a4ab3ccce137717b81826e79b7d49ffe3244a13c3b8"
 dependencies = [
  "cfg-if",
  "cpufeatures 0.2.14",
- "digest",
+ "digest 0.10.7",
+]
+
+[[package]]
+name = "sha1"
+version = "0.11.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "aacc4cc499359472b4abe1bf11d0b12e688af9a805fa5e3016f9a386dc2d0214"
+dependencies = [
+ "cfg-if",
+ "cpufeatures 0.3.1",
+ "digest 0.11.3",
 ]
 
 [[package]]
@@ -6324,7 +6404,7 @@ checksum = "793db75ad2bcafc3ffa7c68b215fee268f537982cd901d132f89c6343f3a3dc8"
 dependencies = [
  "cfg-if",
  "cpufeatures 0.2.14",
- "digest",
+ "digest 0.10.7",
 ]
 
 [[package]]
@@ -6974,6 +7054,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "tokio-tungstenite"
+version = "0.30.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "17a073bfed563fa236697a068031408a93cd9522e08abf9933ead3e73411bd71"
+dependencies = [
+ "futures-util",
+ "log",
+ "rustls",
+ "rustls-pki-types",
+ "tokio",
+ "tokio-rustls",
+ "tungstenite",
+ "webpki-roots 0.26.11",
+]
+
+[[package]]
 name = "tokio-util"
 version = "0.7.20"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -7280,6 +7376,24 @@ name = "try-lock"
 version = "0.2.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e421abadd41a4225275504ea4d6566923418b7f05506fbc9c0fe86ba7396114b"
+
+[[package]]
+name = "tungstenite"
+version = "0.30.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e48ac77174b19c110a50ab2128b24215ac9cb40e0e12e093fb602d175c569d22"
+dependencies = [
+ "bytes",
+ "data-encoding",
+ "http 1.1.0",
+ "httparse",
+ "log",
+ "rand 0.10.4",
+ "rustls",
+ "rustls-pki-types",
+ "sha1 0.11.0",
+ "thiserror 2.0.21",
+]
 
 [[package]]
 name = "twox-hash"
@@ -7631,6 +7745,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "58ec80e73fd8baf57bf0d9615554c75348bda990d6d5bbeab964dd068319fecb"
 dependencies = [
  "rustls-pki-types",
+]
+
+[[package]]
+name = "webpki-roots"
+version = "0.26.11"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "521bc38abb08001b01866da9f51eb7c5d647a19260e00054a8c7fd5f9e57f7a9"
+dependencies = [
+ "webpki-roots 1.0.10",
 ]
 
 [[package]]

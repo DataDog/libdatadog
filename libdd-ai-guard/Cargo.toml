@@ -15,15 +15,27 @@ description = "AI Guard RC x509 Magic Tunnel client, dispatch handler, and local
 bench = false
 
 [dependencies]
+async-trait = { workspace = true }
 bytes = { workspace = true, features = ["std"] }
+fastrand = { workspace = true }
 futures = { workspace = true, features = ["std"] }
+http = { workspace = true, features = ["std"] }
+libdd-shared-runtime = { path = "../libdd-shared-runtime" }
 pbjson-types = { workspace = true }
 rc-x509-client = { workspace = true, features = ["non-fips"] }
 rc-x509-proto = { workspace = true }
 rc-x509-roots = { workspace = true }
-tokio = { workspace = true, features = ["sync", "time"] }
+rustls = { workspace = true, features = ["ring", "std", "tls12"] }
+thiserror = { workspace = true, features = ["std"] }
+tokio = { workspace = true, features = ["macros", "rt", "sync", "time"] }
+tokio-stream = { workspace = true }
+tokio-tungstenite = { workspace = true, features = ["connect", "rustls-tls-webpki-roots"] }
+tokio-util = { workspace = true }
 tracing = { workspace = true, features = ["std"] }
+webpki-roots = { workspace = true }
 
 [dev-dependencies]
+rc-crypto = { workspace = true, features = ["non-fips"] }
 rc-x509-test-client-harness = { workspace = true, features = ["non-fips"] }
+rc-x509-test-helpers = { workspace = true, features = ["non-fips", "test-issuer"] }
 tokio = { workspace = true, features = ["macros", "rt-multi-thread", "sync", "time"] }
