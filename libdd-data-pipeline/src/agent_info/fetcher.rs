@@ -16,21 +16,21 @@ use libdd_networking::endpoint::EndpointExt;
 use libdd_shared_runtime::Worker;
 use sha2::{Digest, Sha256};
 use std::marker::PhantomData;
-use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, LazyLock};
 use std::time::Duration;
 use tokio::sync::mpsc;
 use tracing::{debug, warn};
 
-type ReceiverLimits = Vec<(Endpoint, Arc<AtomicUsize>)>;
+type ReceiverState = Arc<arc_swap::ArcSwapOption<AgentInfo>>;
+type ReceiverLimits = Vec<(Endpoint, ReceiverState)>;
 const MAX_CACHED_RECEIVERS: usize = 64;
 // Retain known caps across exporter replacement without an unbounded endpoint
 // registry or a process-global mutex that a fork could inherit while locked.
 static RECEIVER_LIMITS: LazyLock<arc_swap::ArcSwap<ReceiverLimits>> =
     LazyLock::new(|| arc_swap::ArcSwap::from_pointee(Vec::new()));
 
-fn receiver_limit(endpoint: &Endpoint) -> Arc<AtomicUsize> {
-    let candidate = Arc::new(AtomicUsize::new(0));
+fn receiver_state(endpoint: &Endpoint) -> ReceiverState {
+    let candidate = ReceiverState::default();
     RECEIVER_LIMITS.rcu(|current| {
         if current.iter().any(|(key, _)| key == endpoint) {
             return Arc::clone(current);
@@ -224,8 +224,7 @@ async fn fetch_and_hash_response<C: HttpClientCapability + SleepCapability>(
 #[derive(Debug)]
 pub struct AgentInfoFetcher<C: HttpClientCapability + SleepCapability> {
     info_endpoint: Endpoint,
-    max_request_bytes: Arc<AtomicUsize>,
-    state_hash: Arc<arc_swap::ArcSwapOption<String>>,
+    state: ReceiverState,
     refresh_interval: Duration,
     trigger_rx: Option<mpsc::Receiver<()>>,
     has_fetched: bool,
@@ -246,14 +245,12 @@ impl<C: HttpClientCapability + SleepCapability> AgentInfoFetcher<C> {
         let (trigger_tx, trigger_rx) = mpsc::channel(1);
         let response_observer = ResponseObserver {
             trigger_tx,
-            max_request_bytes: receiver_limit(&info_endpoint),
-            state_hash: Default::default(),
+            state: receiver_state(&info_endpoint),
         };
 
         let fetcher = Self {
             info_endpoint,
-            max_request_bytes: response_observer.max_request_bytes.clone(),
-            state_hash: response_observer.state_hash.clone(),
+            state: response_observer.state.clone(),
             refresh_interval,
             trigger_rx: Some(trigger_rx),
             has_fetched: false,
@@ -316,7 +313,7 @@ impl<C: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static> Wor
 impl<C: HttpClientCapability + SleepCapability> AgentInfoFetcher<C> {
     /// Fetch agent info and update cache if needed
     async fn fetch_and_update(&mut self) {
-        let current_info = AGENT_INFO_CACHE.load();
+        let current_info = self.state.load_full();
         let current_hash = current_info.as_ref().map(|info| info.state_hash.as_str());
         let current_container_tags_hash = current_info
             .as_ref()
@@ -329,14 +326,13 @@ impl<C: HttpClientCapability + SleepCapability> AgentInfoFetcher<C> {
         .await;
         match res {
             Ok(FetchInfoStatus::NewState(new_info)) => {
-                self.update_payload_limit(&new_info);
+                let info = Arc::new(*new_info);
+                self.state.store(Some(info.clone()));
                 debug!("New /info state received");
-                AGENT_INFO_CACHE.store(Some(Arc::new(*new_info)));
+                AGENT_INFO_CACHE.store(Some(info));
             }
             Ok(FetchInfoStatus::SameState) => {
-                if let Some(info) = current_info.as_ref() {
-                    self.update_payload_limit(info);
-                }
+                AGENT_INFO_CACHE.store(current_info);
                 debug!("Agent info is up-to-date")
             }
             Err(err) => {
@@ -345,19 +341,6 @@ impl<C: HttpClientCapability + SleepCapability> AgentInfoFetcher<C> {
             }
         }
         self.has_fetched = true;
-    }
-
-    fn update_payload_limit(&self, info: &AgentInfo) {
-        let limit = info
-            .info
-            .config
-            .as_ref()
-            .and_then(|config| config.max_request_bytes)
-            .and_then(|limit| usize::try_from(limit).ok())
-            .unwrap_or_default();
-        self.max_request_bytes.store(limit, Ordering::Relaxed);
-        self.state_hash
-            .store(Some(Arc::new(info.state_hash.clone())));
     }
 }
 
@@ -368,8 +351,7 @@ impl<C: HttpClientCapability + SleepCapability> AgentInfoFetcher<C> {
 #[derive(Debug, Clone)]
 pub struct ResponseObserver {
     trigger_tx: mpsc::Sender<()>,
-    max_request_bytes: Arc<AtomicUsize>,
-    state_hash: Arc<arc_swap::ArcSwapOption<String>>,
+    state: ReceiverState,
 }
 
 impl ResponseObserver {
@@ -377,15 +359,21 @@ impl ResponseObserver {
     pub fn new(trigger_tx: mpsc::Sender<()>) -> Self {
         Self {
             trigger_tx,
-            max_request_bytes: Arc::new(AtomicUsize::new(0)),
-            state_hash: Default::default(),
+            state: Default::default(),
         }
     }
 
     /// Positive receiver limit fetched for this observer's endpoint, if available.
     pub fn max_request_bytes(&self) -> Option<usize> {
-        let limit = self.max_request_bytes.load(Ordering::Relaxed);
-        (limit > 0).then_some(limit)
+        self.state
+            .load()
+            .as_ref()?
+            .info
+            .config
+            .as_ref()?
+            .max_request_bytes
+            .and_then(|n| usize::try_from(n).ok())
+            .filter(|n| *n > 0)
     }
 
     /// Check the given HTTP response for agent state changes and trigger a fetch if needed.
@@ -399,8 +387,8 @@ impl ResponseObserver {
             .get("datadog-agent-state")
             .and_then(|v| v.to_str().ok());
         if let Some(state_str) = state_str {
-            let current_state = self.state_hash.load();
-            if current_state.as_ref().map(|s| s.as_str()) != Some(state_str) {
+            let current_state = self.state.load();
+            if current_state.as_ref().map(|s| s.state_hash.as_str()) != Some(state_str) {
                 match self.trigger_tx.try_send(()) {
                     Ok(_) => {}
                     Err(mpsc::error::TrySendError::Full(_)) => {
