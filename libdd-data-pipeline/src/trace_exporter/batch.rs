@@ -415,8 +415,14 @@ impl<
                     .body()
                     .len()
                     .min(responses.diagnostic_bytes_remaining);
-                *response.body_mut() = Bytes::copy_from_slice(&response.body()[..length]);
-                responses.diagnostic_bytes_remaining -= length;
+                let text = String::from_utf8_lossy(&response.body()[..length]);
+                let mut end = text.len().min(responses.diagnostic_bytes_remaining);
+                while !text.is_char_boundary(end) {
+                    end -= 1;
+                }
+                let diagnostic = Bytes::copy_from_slice(&text.as_bytes()[..end]);
+                responses.diagnostic_bytes_remaining -= diagnostic.len();
+                *response.body_mut() = diagnostic;
                 self.handle_send_error(
                     SendWithRetryError::Http(response, attempts),
                     size,
