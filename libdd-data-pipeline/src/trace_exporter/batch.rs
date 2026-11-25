@@ -328,12 +328,13 @@ impl<
                     result,
                     &mut responses,
                 )
-                .await?;
-            if completed_attempt {
+                .await;
+            let rejected_v1 = self.disable_rejected_v1(format, result);
+            if completed_attempt? {
                 headers.generic.dropped_p0_traces = 0;
                 headers.generic.dropped_p0_spans = 0;
             }
-            if self.disable_rejected_v1(format, result) {
+            if rejected_v1 {
                 format = TraceExporterOutputFormat::V04;
                 endpoint.url = format.add_path(&self.endpoint.url);
                 planner.fallback_to_v04();
@@ -349,7 +350,7 @@ impl<
                 spans: 0,
             };
             let request_headers = self.serializer.build_traces_headers(headers, 0, None);
-            self.send_batch_payload(
+            let attempt = self.send_batch_payload(
                 &endpoint,
                 bytes,
                 request_headers,
@@ -357,8 +358,9 @@ impl<
                 result,
                 &mut responses,
             )
-            .await?;
+            .await;
             self.disable_rejected_v1(format, result);
+            attempt?;
         }
         Ok(())
     }
