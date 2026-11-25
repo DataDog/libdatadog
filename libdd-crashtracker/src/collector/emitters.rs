@@ -153,26 +153,19 @@ pub(crate) fn emit_crashreport(
         );
     }
 
-    // Always emit the OTel TLS resolution data when available, so the receiver
-    // can resolve OTel contexts from thread pointers captured during the single
-    // ptrace pass (no second ptrace needed).
     #[cfg(all(target_os = "linux", feature = "otel-thread-ctx"))]
-    if config.collect_otel_thread_contexts() {
-        let _ = emit_otel_tls_resolution(pipe);
-    }
-
-    // The collector only does its own otel ptrace pass when it is already doing
-    // thread collection (single-pass: TP is captured alongside the stack).
-    // When collector_threads is false, the receiver will handle otel collection.
-    #[cfg(all(target_os = "linux", feature = "otel-thread-ctx"))]
-    if collector_threads && config.collect_otel_thread_contexts() {
-        emit_otel_thread_contexts(
-            pipe,
-            ppid,
-            crashing_tid,
-            config.max_threads(),
-            threads_deadline,
-        )?;
+    if config.collect_all_threads() && config.collect_otel_thread_contexts() {
+        if collector_threads {
+            emit_otel_thread_contexts(
+                pipe,
+                ppid,
+                crashing_tid,
+                config.max_threads(),
+                threads_deadline,
+            )?;
+        } else {
+            let _ = emit_otel_tls_resolution(pipe);
+        }
     }
 
     writeln!(pipe, "{DD_CRASHTRACK_DONE}")?;
@@ -478,7 +471,7 @@ fn emit_threads<W: Write + Send>(
     supplied_main: Option<StackTrace>,
     deadline: Instant,
 ) -> Result<(), EmitterError> {
-    use crate::crash_info::{CachedElfResolvers, ErrorData};
+    use crate::crash_info::ErrorData;
     use crate::ptrace_collector::{
         crash_site_registers, parse_hex_address, stream_thread_contexts, thread_data_from_capture,
     };
@@ -500,20 +493,15 @@ fn emit_threads<W: Write + Send>(
                 });
                 let crash_site = crashing_context.as_ref().and_then(crash_site_registers);
                 // blazesym's types are not Send; create and retain the cache on this thread.
-                let normalizer = ErrorData::create_normalizer();
-                let src = ErrorData::create_symbolizer_source(ppid as u32);
                 let mut symbolizer = blazesym::symbolize::Symbolizer::new();
-                let mut elf_resolvers = CachedElfResolvers::new(&mut symbolizer);
-                let mut enrich_stack = |stack: &mut StackTrace| {
-                    // Failed lookups leave raw addresses and record errors on the frames.
-                    let _ =
-                        stack.normalize_ips(&normalizer, (ppid as u32).into(), &mut elf_resolvers);
-                    let _ = stack.resolve_names(&src, elf_resolvers.symbolizer());
-                };
+                let mut enrich_stack =
+                    ErrorData::stack_enricher(ppid as u32, &mut symbolizer, deadline);
 
                 // Preserve the runtime's exception stack independently of thread collection.
-                if let Some(mut stack) = supplied_main {
-                    enrich_stack(&mut stack);
+                if let Some(mut stack) = supplied_main
+                    && enrich_stack(&mut stack)
+                    && Instant::now() < deadline
+                {
                     emit_whole_stacktrace(w, &stack)?;
                 }
 
@@ -522,7 +510,9 @@ fn emit_threads<W: Write + Send>(
                     let mut thread =
                         thread_data_from_capture(ppid, crashing_tid, crash_site, tid, captured);
                     if Instant::now() < deadline {
-                        enrich_stack(&mut thread.stack);
+                        if !enrich_stack(&mut thread.stack) {
+                            unsymbolized += 1;
+                        }
 
                         // Replace the primary stack only if trimming reached the faulting frame.
                         let at_crash_site = crash_site.is_some_and(|(ip, _)| {
@@ -1035,7 +1025,7 @@ fn emit_otel_tls_resolution(w: &mut impl Write) -> Result<(), EmitterError> {
 ///   results.
 #[cfg(all(target_os = "linux", feature = "otel-thread-ctx"))]
 fn emit_otel_thread_contexts(
-    w: &mut impl Write,
+    w: &mut (impl Write + Send),
     ppid: i32,
     crashing_tid: libc::pid_t,
     max_threads: usize,
@@ -1043,7 +1033,7 @@ fn emit_otel_thread_contexts(
 ) -> Result<(), EmitterError> {
     use crate::otel_tls_reader::ProcMemReader;
     use crate::ptrace_collector::{
-        attach_thread, detach_thread, enumerate_threads, read_thread_pointer,
+        PtraceError, attach_thread, detach_thread, enumerate_threads, read_thread_pointer,
     };
 
     if Instant::now() >= deadline {
@@ -1099,95 +1089,116 @@ fn emit_otel_thread_contexts(
         if record_ptr != 0 {
             let mut local_buf = [0u8; 640];
             if let Some(len) = read_local_record(record_ptr as *const u8, &mut local_buf) {
-                writeln!(w, "{DD_CRASHTRACK_BEGIN_OTEL_THREAD_CTX} {crashing_tid}")?;
-                for byte in &local_buf[..len] {
-                    write!(w, "{byte:02x}")?;
-                }
-                writeln!(w)?;
-                writeln!(w, "{DD_CRASHTRACK_END_OTEL_THREAD_CTX}")?;
-                w.flush()?;
+                emit_otel_record(w, crashing_tid, &local_buf[..len])?;
             }
         }
     }
 
-    // Stack workspace reused across threads; only the first `record_len` bytes
-    // are valid after each read.
-    let mut record_buf = [0u8; 640];
-    // Opened lazily after the first ptrace attach, since some kernels require an
-    // active ptrace relationship before allowing /proc/<pid>/mem access.
-    let mut mem: Option<ProcMemReader> = None;
-    let mut processed = 0;
+    if !tids.iter().any(|&tid| tid != crashing_tid) {
+        return Ok(());
+    }
 
-    // attach, resolve TLS, read record, detach, emit.
-    let mut try_emit_otel = |tid: libc::pid_t| -> Result<bool, EmitterError> {
-        let stop_deadline = (Instant::now() + stop_timeout).min(deadline);
-        if attach_thread(tid, stop_deadline).is_err() {
-            return Ok(false);
-        }
+    with_otel_tracer(w, |w| {
+        // Stack workspace reused across threads; only the first `record_len` bytes
+        // are valid after each read.
+        let mut record_buf = [0u8; 640];
+        // Opened lazily after the first ptrace attach, since some kernels require an
+        // active ptrace relationship before allowing /proc/<pid>/mem access.
+        let mut mem: Option<ProcMemReader> = None;
+        let mut processed = 0;
 
-        // Keep the thread stopped while reading TP, resolving TLS, and reading
-        // the record so it cannot resume and invalidate the addresses.
-        let emitted = (|| -> Result<bool, EmitterError> {
-            let mem = match mem.as_mut() {
-                Some(m) => m,
-                None => match ProcMemReader::open(pid) {
-                    Ok(m) => mem.insert(m),
-                    Err(_) => return Ok(false),
-                },
-            };
+        // attach, resolve TLS, read record, detach, emit.
+        let mut try_emit_otel = |tid: libc::pid_t| -> Result<bool, EmitterError> {
+            let stop_deadline = (Instant::now() + stop_timeout).min(deadline);
+            match attach_thread(tid, stop_deadline) {
+                Ok(()) => {}
+                Err(PtraceError::Attach(..)) => return Ok(false),
+                Err(error) => return Err(error.into()),
+            }
 
-            let tp = match read_thread_pointer(tid) {
-                Ok(tp) => tp,
-                Err(_) => return Ok(false),
-            };
+            // Keep the thread stopped while reading TP, resolving TLS, and reading
+            // the record so it cannot resume and invalidate the addresses.
+            let record_len = (|| {
+                let mem = match mem.as_mut() {
+                    Some(m) => m,
+                    None => mem.insert(ProcMemReader::open(pid).ok()?),
+                };
 
-            // Try DTV walk; fall back to TP-relative offset.
-            let slot_addr = if let Some((modid, offset, dtv_off)) = dtv_resolution {
-                match mem.resolve_tls_addr(tp, dtv_off, modid, offset) {
-                    Ok(addr) => addr,
-                    Err(_) => return Ok(false),
+                let tp = read_thread_pointer(tid).ok()?;
+
+                let slot_addr = if let Some((modid, offset, dtv_off)) = dtv_resolution {
+                    mem.resolve_tls_addr(tp, dtv_off, modid, offset).ok()?
+                } else {
+                    (tp as i64).wrapping_add(tp_offset?) as u64
+                };
+
+                let record_ptr = mem.read_tls_slot(slot_addr).ok()?;
+                if record_ptr == 0 {
+                    return None;
                 }
-            } else if let Some(off) = tp_offset {
-                (tp as i64).wrapping_add(off) as u64
-            } else {
+                mem.read_record(record_ptr, &mut record_buf).ok()?
+            })();
+            detach_thread(tid)?;
+
+            let Some(record_len) = record_len else {
                 return Ok(false);
             };
-
-            let record_ptr = match mem.read_tls_slot(slot_addr) {
-                Ok(ptr) if ptr != 0 => ptr,
-                _ => return Ok(false),
-            };
-            let record_len = match mem.read_record(record_ptr, &mut record_buf) {
-                Ok(Some(n)) => n,
-                _ => return Ok(false),
-            };
-
-            writeln!(w, "{DD_CRASHTRACK_BEGIN_OTEL_THREAD_CTX} {tid}")?;
-            for byte in &record_buf[..record_len] {
-                write!(w, "{byte:02x}")?;
-            }
-            writeln!(w)?;
-            writeln!(w, "{DD_CRASHTRACK_END_OTEL_THREAD_CTX}")?;
-            w.flush()?;
+            emit_otel_record(w, tid, &record_buf[..record_len])?;
             Ok(true)
-        })();
+        };
 
-        let _ = detach_thread(tid);
-        emitted
-    };
+        for tid in tids {
+            if tid == crashing_tid {
+                continue;
+            }
+            if Instant::now() >= deadline || processed >= max_threads {
+                break;
+            }
+            if try_emit_otel(tid)? {
+                processed += 1;
+            }
+        }
 
-    for tid in tids {
-        if tid == crashing_tid {
-            continue;
-        }
-        if Instant::now() >= deadline || processed >= max_threads {
-            break;
-        }
-        if matches!(try_emit_otel(tid), Ok(true)) {
-            processed += 1;
-        }
+        Ok(())
+    })
+}
+
+#[cfg(all(target_os = "linux", feature = "otel-thread-ctx"))]
+fn with_otel_tracer<W: Write + Send>(
+    w: &mut W,
+    collect: impl FnOnce(&mut W) -> Result<(), EmitterError> + Send,
+) -> Result<(), EmitterError> {
+    let outcome = std::thread::scope(|scope| {
+        std::thread::Builder::new()
+            .spawn_scoped(scope, || collect(w))
+            .map(|worker| worker.join())
+    });
+    if let Ok(Ok(result)) = outcome
+        && !matches!(result, Err(EmitterError::Ptrace(_)))
+    {
+        return result;
     }
 
+    writeln!(w, "{DD_CRASHTRACK_BEGIN_COUNTERS}")?;
+    writeln!(w, "{{\"otel_thread_contexts_incomplete\": 1}}")?;
+    writeln!(w, "{DD_CRASHTRACK_END_COUNTERS}")?;
+    w.flush()?;
+    Ok(())
+}
+
+#[cfg(all(target_os = "linux", feature = "otel-thread-ctx"))]
+fn emit_otel_record(
+    w: &mut impl Write,
+    tid: libc::pid_t,
+    record: &[u8],
+) -> Result<(), EmitterError> {
+    writeln!(w, "{DD_CRASHTRACK_BEGIN_OTEL_THREAD_CTX} {tid}")?;
+    for byte in record {
+        write!(w, "{byte:02x}")?;
+    }
+    writeln!(w)?;
+    writeln!(w, "{DD_CRASHTRACK_END_OTEL_THREAD_CTX}")?;
+    w.flush()?;
     Ok(())
 }
 
@@ -1232,6 +1243,37 @@ mod tests {
 
     use super::*;
     use alloc::str;
+
+    #[cfg(all(target_os = "linux", feature = "otel-thread-ctx"))]
+    #[test]
+    fn test_sidecar_otel_tracer_stop_failure_keeps_report_writable() -> anyhow::Result<()> {
+        use crate::ptrace_collector::PtraceError;
+
+        let mut output = Vec::new();
+        with_otel_tracer(&mut output, |_| {
+            Err(PtraceError::Stop(123, libc::ETIMEDOUT).into())
+        })?;
+        assert_eq!(
+            String::from_utf8(output)?.lines().collect::<Vec<_>>(),
+            [
+                DD_CRASHTRACK_BEGIN_COUNTERS,
+                "{\"otel_thread_contexts_incomplete\": 1}",
+                DD_CRASHTRACK_END_COUNTERS,
+            ]
+        );
+        Ok(())
+    }
+
+    #[cfg(all(target_os = "linux", feature = "otel-thread-ctx"))]
+    #[test]
+    fn test_sidecar_otel_tracer_write_failure_propagates() {
+        let mut output = Vec::new();
+        let result = with_otel_tracer(&mut output, |_| {
+            Err(std::io::Error::from(std::io::ErrorKind::BrokenPipe).into())
+        });
+        assert!(matches!(result, Err(EmitterError::WriteError(_))));
+        assert!(output.is_empty());
+    }
 
     #[test]
     fn test_emit_complete_stacktrace() {

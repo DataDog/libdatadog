@@ -98,33 +98,69 @@ impl StackTrace {
         pid: Pid,
         elf_resolvers: &mut CachedElfResolvers,
     ) -> anyhow::Result<()> {
-        let mut errors = 0;
-        for frame in &mut self.frames {
-            frame
-                .normalize_ip(normalizer, pid, elf_resolvers)
-                .unwrap_or_else(|e| {
-                    frame
-                        .comments
-                        .push(format!("normalize_ip failed with {e:#}"));
-                    errors += 1;
-                });
-        }
+        let (_, errors) = self.apply_to_frames(
+            "normalize_ip",
+            |frame| frame.normalize_ip(normalizer, pid, elf_resolvers),
+            || true,
+        );
         anyhow::ensure!(errors == 0);
         Ok(())
     }
 
     pub fn resolve_names(&mut self, src: &Source, symbolizer: &Symbolizer) -> anyhow::Result<()> {
-        let mut errors = 0;
-        for frame in &mut self.frames {
-            frame.resolve_names(src, symbolizer).unwrap_or_else(|e| {
-                frame
-                    .comments
-                    .push(format!("resolve_names failed with {e:#}"));
-                errors += 1;
-            });
-        }
+        let (_, errors) = self.apply_to_frames(
+            "resolve_names",
+            |frame| frame.resolve_names(src, symbolizer),
+            || true,
+        );
         anyhow::ensure!(errors == 0);
         Ok(())
+    }
+
+    #[cfg(all(target_os = "linux", any(feature = "collector", feature = "receiver")))]
+    pub(crate) fn enrich_with_deadline(
+        &mut self,
+        normalizer: &Normalizer,
+        pid: Pid,
+        elf_resolvers: &mut CachedElfResolvers,
+        source: &Source,
+        deadline: std::time::Instant,
+    ) -> bool {
+        let within_budget = || std::time::Instant::now() < deadline;
+        let (normalized, _) = self.apply_to_frames(
+            "normalize_ip",
+            |frame| frame.normalize_ip(normalizer, pid, elf_resolvers),
+            within_budget,
+        );
+        normalized
+            && self
+                .apply_to_frames(
+                    "resolve_names",
+                    |frame| frame.resolve_names(source, elf_resolvers.symbolizer()),
+                    within_budget,
+                )
+                .0
+    }
+
+    fn apply_to_frames(
+        &mut self,
+        operation: &str,
+        mut apply: impl FnMut(&mut StackFrame) -> anyhow::Result<()>,
+        mut can_continue: impl FnMut() -> bool,
+    ) -> (bool, usize) {
+        let mut errors = 0;
+        for frame in &mut self.frames {
+            if !can_continue() {
+                return (false, errors);
+            }
+            if let Err(error) = apply(frame) {
+                frame
+                    .comments
+                    .push(format!("{operation} failed with {error:#}"));
+                errors += 1;
+            }
+        }
+        (true, errors)
     }
 }
 
@@ -415,6 +451,30 @@ impl super::test_utils::TestInstance for StackFrame {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(unix)]
+    #[test]
+    fn test_frame_budget_keeps_unvisited_frames() {
+        let frame = StackFrame {
+            ip: Some("0x1234".to_string()),
+            ..StackFrame::default()
+        };
+        let mut stack = StackTrace::from_frames(vec![frame.clone(), frame.clone()], false);
+        let mut budget = [true, false].into_iter();
+        let (complete, errors) = stack.apply_to_frames(
+            "resolve_names",
+            |frame| {
+                frame.function = Some("resolved".to_string());
+                Ok(())
+            },
+            || budget.next().unwrap_or(false),
+        );
+
+        assert!(!complete);
+        assert_eq!(errors, 0);
+        assert_eq!(stack.frames[0].function.as_deref(), Some("resolved"));
+        assert_eq!(stack.frames[1], frame);
+    }
 
     #[test]
     fn test_demangle_rust() {

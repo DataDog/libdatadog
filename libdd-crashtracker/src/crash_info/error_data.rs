@@ -42,7 +42,7 @@ impl<'a> CachedElfResolvers<'a> {
     }
 
     /// Resolve names without dropping the ELF cache between stacks.
-    #[cfg(target_os = "linux")]
+    #[cfg(all(target_os = "linux", any(feature = "collector", feature = "receiver")))]
     pub(crate) fn symbolizer(&self) -> &blazesym::symbolize::Symbolizer {
         self.symbolizer
     }
@@ -134,6 +134,26 @@ impl ErrorData {
             .enable_build_ids(true)
             .enable_build_id_caching(true)
             .build()
+    }
+
+    #[cfg(all(target_os = "linux", any(feature = "collector", feature = "receiver")))]
+    pub(crate) fn stack_enricher(
+        pid: u32,
+        symbolizer: &mut blazesym::symbolize::Symbolizer,
+        deadline: std::time::Instant,
+    ) -> impl FnMut(&mut StackTrace) -> bool + '_ {
+        let normalizer = Self::create_normalizer();
+        let source = Self::create_symbolizer_source(pid);
+        let mut elf_resolvers = CachedElfResolvers::new(symbolizer);
+        move |stack| {
+            stack.enrich_with_deadline(
+                &normalizer,
+                pid.into(),
+                &mut elf_resolvers,
+                &source,
+                deadline,
+            )
+        }
     }
 
     pub fn resolve_names(&mut self, pid: u32) -> anyhow::Result<()> {

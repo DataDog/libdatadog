@@ -627,6 +627,21 @@ fn test_crash_tracking_bin_keeps_inprocess_symbols_with_saved_context() {
             !crashed_thread_frames(payload)?.is_empty(),
             "remote crashed-thread stack should still be collected"
         );
+        let worker = payload["error"]["threads"]
+            .as_array()
+            .context("missing collected threads")?
+            .iter()
+            .find(|thread| thread["name"] == "ct_worker_0")
+            .context("missing worker thread")?;
+        let worker_frames = worker["stack"]["frames"]
+            .as_array()
+            .context("missing worker frames")?;
+        anyhow::ensure!(
+            worker_frames.iter().any(|frame| frame["function"]
+                .as_str()
+                .is_some_and(|name| name.contains("worker_fn_0"))),
+            "in-process mode should also symbolize the worker stack: {worker_frames:?}"
+        );
         Ok(())
     });
 
@@ -886,6 +901,17 @@ fn test_crash_tracking_sidecar_multi_thread_collection() {
         all_threads.len(),
         serde_json::to_string_pretty(&crash_payload).unwrap_or_default()
     );
+
+    let crashed = all_threads
+        .iter()
+        .find(|thread| thread["crashed"] == true)
+        .expect("missing crashing thread");
+    let primary_frames = crash_payload["error"]["stack"]["frames"]
+        .as_array()
+        .expect("missing primary frames");
+    assert!(!primary_frames.is_empty());
+    assert_eq!(crashed["stack"]["frames"].as_array(), Some(primary_frames));
+    assert_eq!(crashed["stack"]["incomplete"], true);
 
     let thread_names: Vec<&str> = all_threads
         .iter()
@@ -2282,6 +2308,62 @@ fn crash_tracking_empty_endpoint() {
     let _ = child.wait();
 }
 
+#[test]
+#[cfg(target_os = "linux")]
+#[cfg_attr(miri, ignore)]
+fn test_receiver_preserves_stdin_status_flags() -> anyhow::Result<()> {
+    use std::os::fd::{AsRawFd, OwnedFd};
+    use std::os::unix::net::UnixStream;
+    use std::time::Duration;
+
+    let receiver = artifacts::crashtracker_receiver(BuildProfile::Debug);
+    let artifacts = fetch_built_artifacts(&[&receiver])?;
+    let fixtures = bin_tests::test_runner::TestFixtures::new()?;
+
+    let (socket_writer, socket_reader) = UnixStream::pair()?;
+    let (pipe_reader, pipe_writer) = std::io::pipe()?;
+    let inputs: [(&str, OwnedFd); 3] = [
+        ("socket", socket_reader.into()),
+        ("pipe", pipe_reader.into()),
+        ("write-only pipe", pipe_writer.into()),
+    ];
+    for (kind, input) in inputs {
+        for nonblocking in [false, true] {
+            let fd = input.as_raw_fd();
+            let flags = unsafe { libc::fcntl(fd, libc::F_GETFL) };
+            assert_ne!(flags, -1);
+            let expected = if nonblocking {
+                flags | libc::O_NONBLOCK
+            } else {
+                flags & !libc::O_NONBLOCK
+            };
+            assert_eq!(unsafe { libc::fcntl(fd, libc::F_SETFL, expected) }, 0);
+
+            let mut child = process::Command::new(&artifacts[&receiver])
+                .stdin(process::Stdio::from(input.try_clone()?))
+                .stderr(process::Stdio::null())
+                .env("DD_CRASHTRACKER_RECEIVER_TIMEOUT_MS", "100")
+                .env(
+                    "DD_TRACE_AGENT_URL",
+                    format!("unix://{}/unused-agent.sock", fixtures.output_dir.display()),
+                )
+                .env("_DD_DIRECT_SUBMISSION_ENABLED", "false")
+                .spawn()?;
+
+            let status = wait_or_kill(&mut child, Duration::from_secs(5));
+            assert_eq!(
+                unsafe { libc::fcntl(fd, libc::F_GETFL) },
+                expected,
+                "{kind} changed stdin flags (nonblocking: {nonblocking})"
+            );
+            assert_eq!(status.code(), Some(1), "{kind}: {status}");
+        }
+        drop(input);
+    }
+    drop(socket_writer);
+    Ok(())
+}
+
 /// Verifies graceful degradation: when the receiver's timeout fires before the collector
 /// sends all data, the receiver still uploads a partial crash report (incomplete=true)
 /// rather than silently discarding everything collected up to that point.
@@ -3024,17 +3106,33 @@ fn extend_path<T: AsRef<Path>>(parent: &Path, path: T) -> PathBuf {
 #[cfg_attr(miri, ignore)]
 #[cfg(target_os = "linux")]
 fn test_crash_tracking_otel_thread_ctx() {
+    assert_otel_thread_contexts(BuildProfile::Release, false);
+}
+
+#[test]
+#[cfg(target_os = "linux")]
+#[cfg_attr(miri, ignore)]
+fn test_crash_tracking_otel_thread_ctx_after_unwind_retry() {
+    assert_otel_thread_contexts(BuildProfile::Debug, true);
+}
+
+#[cfg(target_os = "linux")]
+fn assert_otel_thread_contexts(profile: BuildProfile, force_unwind_retry: bool) {
     use bin_tests::modes::unix::test_022_otel_thread_ctx::{MAIN_SPAN_ID, MAIN_TRACE_ID};
 
-    let config = CrashTestConfig::new(
-        BuildProfile::Release,
-        TestMode::OtelThreadCtx,
-        CrashType::NullDeref,
-    );
+    let mut config = CrashTestConfig::new(profile, TestMode::OtelThreadCtx, CrashType::NullDeref);
+    if force_unwind_retry {
+        config = config
+            .with_env("DD_TEST_UNWIND_FROM_UCONTEXT", "1")
+            .with_env("DD_TEST_ZERO_UNWIND_IP", "1");
+    }
     let artifacts = StandardArtifacts::new(config.profile);
     let artifacts_map = fetch_built_artifacts(&artifacts.as_slice()).unwrap();
 
     let validator: ValidatorFn = Box::new(move |payload, _fixtures| {
+        if force_unwind_retry {
+            assert!(crashed_thread_frames(payload)?.is_empty());
+        }
         let contexts = payload["experimental"]["otel_thread_contexts"]
             .as_array()
             .expect("experimental.otel_thread_contexts should be an array");
@@ -3043,6 +3141,12 @@ fn test_crash_tracking_otel_thread_ctx() {
             "expected at least 3 OTel thread contexts (main + 2 workers), got {}",
             contexts.len()
         );
+        let tids: std::collections::HashSet<_> = contexts
+            .iter()
+            .map(|context| context["tid"].as_i64())
+            .collect();
+        assert!(!tids.contains(&None), "OTel contexts must have a TID");
+        assert_eq!(tids.len(), contexts.len(), "duplicate OTel thread contexts");
 
         // Find the crashing thread's context by trace_id.
         let main_ctx = contexts
@@ -3134,6 +3238,7 @@ fn test_crash_tracking_sidecar_otel_thread_ctx() {
     let crash_payload =
         bin_tests::validation::read_and_parse_crash_payload(&fixtures.crash_profile_path).unwrap();
 
+    assert_eq!(crash_payload["incomplete"], false);
     let contexts = crash_payload["experimental"]["otel_thread_contexts"]
         .as_array()
         .expect("experimental.otel_thread_contexts should be an array");

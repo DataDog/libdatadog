@@ -8,134 +8,50 @@ use crate::CrashtrackerConfiguration;
 use crate::StacktraceCollection;
 use crate::crash_info::CrashInfo;
 use anyhow::Context;
+use std::fs::File;
+use std::os::fd::{AsFd, AsRawFd, OwnedFd};
+use std::os::unix::{fs::FileTypeExt, net::UnixStream as StdUnixStream};
 use std::time::Duration;
 use tokio::{
     io::{AsyncBufReadExt, BufReader},
-    net::UnixListener,
+    net::{UnixListener, UnixStream, unix::pipe},
 };
 
-/// Wraps stdin as a pollable async reader.
-///
-/// When stdin is a socket or pipe, this struct dups the fd, sets it nonblocking,
-/// and wraps it in the appropriate tokio type. On drop (or via `restore()`),
-/// the original fd's blocking mode is restored.
-#[cfg(unix)]
 struct PollableStdin {
-    /// The original stdin fd
-    original_fd: std::os::unix::io::RawFd,
-    /// Whether stdin was originally nonblocking (so we restore the right state).
-    was_nonblocking: bool,
-    /// Whether we changed the fd flags and need to restore them.
-    needs_restore: bool,
+    input: File,
+    restore_blocking: bool,
 }
 
-#[cfg(unix)]
 impl PollableStdin {
-    fn new() -> Self {
-        let flags = unsafe { libc::fcntl(0, libc::F_GETFL) };
-        Self {
-            original_fd: 0, // stdin
-            was_nonblocking: flags >= 0 && (flags & libc::O_NONBLOCK) != 0,
-            needs_restore: false,
+    fn new(input: File) -> std::io::Result<Self> {
+        // SAFETY: input owns an open descriptor and F_GETFL takes no third argument.
+        let flags = unsafe { libc::fcntl(input.as_raw_fd(), libc::F_GETFL) };
+        if flags == -1 {
+            return Err(std::io::Error::last_os_error());
         }
+        Ok(Self {
+            input,
+            restore_blocking: flags & libc::O_NONBLOCK == 0,
+        })
     }
 
-    /// Try to make stdin pollable. Returns a tokio BufReader over stdin.
-    ///
-    /// If stdin is a socket, dups it and wraps in `tokio::net::UnixStream`.
-    /// If stdin is a pipe, dups it and wraps in `tokio::net::unix::pipe::Receiver`.
-    /// Otherwise falls back to `tokio::io::stdin()`.
-    fn into_reader(
-        mut self,
-    ) -> anyhow::Result<(Self, BufReader<Box<dyn tokio::io::AsyncRead + Unpin>>)> {
-        use std::os::unix::io::FromRawFd;
-
-        let mut stat: libc::stat = unsafe { std::mem::zeroed() };
-        let ret = unsafe { libc::fstat(self.original_fd, &mut stat) };
-        if ret != 0 {
-            // fstat failed, fall back to tokio stdin
-            let reader: Box<dyn tokio::io::AsyncRead + Unpin> = Box::new(tokio::io::stdin());
-            return Ok((self, BufReader::new(reader)));
+    fn restore(&mut self) -> std::io::Result<()> {
+        if !self.restore_blocking {
+            return Ok(());
         }
-
-        let mode = stat.st_mode & libc::S_IFMT;
-        if mode == libc::S_IFSOCK {
-            // Socket: dup, set nonblocking, wrap in UnixStream
-            let dup_fd = unsafe { libc::dup(self.original_fd) };
-            if dup_fd < 0 {
-                let reader: Box<dyn tokio::io::AsyncRead + Unpin> = Box::new(tokio::io::stdin());
-                return Ok((self, BufReader::new(reader)));
-            }
-            // Set nonblocking on the dup'd fd
-            let flags = unsafe { libc::fcntl(dup_fd, libc::F_GETFL) };
-            if flags >= 0 {
-                unsafe { libc::fcntl(dup_fd, libc::F_SETFL, flags | libc::O_NONBLOCK) };
-            }
-            let std_stream = unsafe { std::os::unix::net::UnixStream::from_raw_fd(dup_fd) };
-            match tokio::net::UnixStream::from_std(std_stream) {
-                Ok(stream) => {
-                    self.needs_restore = true;
-                    let reader: Box<dyn tokio::io::AsyncRead + Unpin> = Box::new(stream);
-                    return Ok((self, BufReader::new(reader)));
-                }
-                Err(_) => {
-                    // Failed to convert, fall through
-                }
-            }
-        } else if mode == libc::S_IFIFO {
-            // Pipe: dup, set nonblocking, wrap in pipe::Receiver
-            let dup_fd = unsafe { libc::dup(self.original_fd) };
-            if dup_fd < 0 {
-                let reader: Box<dyn tokio::io::AsyncRead + Unpin> = Box::new(tokio::io::stdin());
-                return Ok((self, BufReader::new(reader)));
-            }
-            let flags = unsafe { libc::fcntl(dup_fd, libc::F_GETFL) };
-            if flags >= 0 {
-                unsafe { libc::fcntl(dup_fd, libc::F_SETFL, flags | libc::O_NONBLOCK) };
-            }
-            let std_fd = unsafe { std::os::unix::io::OwnedFd::from_raw_fd(dup_fd) };
-            match tokio::net::unix::pipe::Receiver::from_owned_fd(std_fd) {
-                Ok(receiver) => {
-                    self.needs_restore = true;
-                    let reader: Box<dyn tokio::io::AsyncRead + Unpin> = Box::new(receiver);
-                    return Ok((self, BufReader::new(reader)));
-                }
-                Err(_) => {
-                    // Failed to convert, fall through
-                }
-            }
+        let mut nonblocking: libc::c_int = 0;
+        // SAFETY: input is still open and FIONBIO reads an initialized int.
+        if unsafe { libc::ioctl(self.input.as_raw_fd(), libc::FIONBIO, &mut nonblocking) } == -1 {
+            return Err(std::io::Error::last_os_error());
         }
-
-        // Fallback: use tokio's stdin wrapper
-        let reader: Box<dyn tokio::io::AsyncRead + Unpin> = Box::new(tokio::io::stdin());
-        Ok((self, BufReader::new(reader)))
-    }
-
-    fn restore(&mut self) {
-        if self.needs_restore {
-            // Restore the original nonblocking state rather than unconditionally
-            // clearing O_NONBLOCK. Dup'd descriptors share file-status flags,
-            // so forcing blocking mode would affect any fd the caller still holds.
-            let flags = unsafe { libc::fcntl(self.original_fd, libc::F_GETFL) };
-            if flags >= 0 {
-                let new_flags = if self.was_nonblocking {
-                    flags | libc::O_NONBLOCK
-                } else {
-                    flags & !libc::O_NONBLOCK
-                };
-                if new_flags != flags {
-                    unsafe { libc::fcntl(self.original_fd, libc::F_SETFL, new_flags) };
-                }
-            }
-            self.needs_restore = false;
-        }
+        self.restore_blocking = false;
+        Ok(())
     }
 }
 
-#[cfg(unix)]
 impl Drop for PollableStdin {
     fn drop(&mut self) {
-        self.restore();
+        let _ = self.restore();
     }
 }
 
@@ -147,31 +63,36 @@ pub fn receiver_entry_point_stdin() -> anyhow::Result<()> {
     let rt = tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()?;
-    // Try to make stdin pollable (socket/pipe), falling back to tokio::io::stdin.
-    // into_reader() must be called inside block_on because tokio::net types
-    // require a runtime context.
-    #[cfg(unix)]
-    {
-        let result = rt.block_on(async {
-            let pollable = PollableStdin::new();
-            let (mut pollable, stream) = pollable.into_reader()?;
-            let result =
-                receiver_entry_point(receiver_timeout(), stream, ReceiverFileAccess::Trusted).await;
-            pollable.restore();
-            result
-        });
-        result?;
-    }
-    #[cfg(not(unix))]
-    {
-        let stream = BufReader::new(tokio::io::stdin());
-        rt.block_on(receiver_entry_point(
-            receiver_timeout(),
-            stream,
-            ReceiverFileAccess::Trusted,
-        ))?;
-    }
-    Ok(())
+    rt.block_on(async {
+        let input = File::from(std::io::stdin().as_fd().try_clone_to_owned()?);
+        let kind = input.metadata()?.file_type();
+        let timeout = receiver_timeout();
+        let access = ReceiverFileAccess::Trusted;
+        if !kind.is_socket() && !kind.is_fifo() {
+            drop(input);
+            return receiver_entry_point(timeout, BufReader::new(tokio::io::stdin()), access).await;
+        }
+
+        let mut stdin = PollableStdin::new(input)?;
+        let input = stdin.input.try_clone()?;
+        let report = if kind.is_socket() {
+            let socket = StdUnixStream::from(OwnedFd::from(input));
+            socket.set_nonblocking(true)?;
+            let mut stream = BufReader::new(UnixStream::from_std(socket)?);
+            receive_and_resolve(timeout, &mut stream, access).await
+        } else {
+            let mut stream = BufReader::new(pipe::Receiver::from_file(input)?);
+            receive_and_resolve(timeout, &mut stream, access).await
+        };
+        let restored = stdin
+            .restore()
+            .context("Restoring receiver stdin blocking mode");
+        drop(stdin);
+        if let Some((config, mut crash_info)) = report? {
+            upload_report(&config, &mut crash_info).await?;
+        }
+        restored
+    })
 }
 
 pub async fn async_receiver_entry_point_unix_listener(
@@ -271,14 +192,6 @@ async fn receive_and_resolve(
             .push(format!("Error resolving frames: {e}"));
     }
 
-    if config.demangle_names()
-        && let Err(e) = crash_info.demangle_names()
-    {
-        crash_info
-            .log_messages
-            .push(format!("Error demangling names: {e}"));
-    }
-
     Ok(Some((config, crash_info)))
 }
 
@@ -287,6 +200,14 @@ async fn upload_report(
     config: &CrashtrackerConfiguration,
     crash_info: &mut CrashInfo,
 ) -> anyhow::Result<()> {
+    if config.demangle_names()
+        && let Err(e) = crash_info.demangle_names()
+    {
+        crash_info
+            .log_messages
+            .push(format!("Error demangling names: {e}"));
+    }
+
     // Finish the spans the crash ended. Prepared first, so the report
     // notes any that could not be finished, then sent alongside the report
     // so neither waits on, or is lost with, the other. Blocks without an
