@@ -74,27 +74,26 @@ pub fn normalize_span<S: SpanMut>(span: &mut S, lang: &str) -> anyhow::Result<()
         span.set_env(v.into());
     }
 
-    if span.has_attribute(HTTP_STATUS_CODE_KEY) {
-        let valid = match span.attribute_str(HTTP_STATUS_CODE_KEY) {
-            Some(code) => is_valid_http_status_code(code),
-            None => span
-                .attribute_i64(HTTP_STATUS_CODE_KEY)
-                .is_some_and(|code| (100..600).contains(&code)),
-        };
-        if !valid {
-            span.remove_attribute(HTTP_STATUS_CODE_KEY);
-        }
+    // The agent reads both attributes with `GetAttributeAsString`, which formats a value of any
+    // type (see `AttributeRef::format_as_string`).
+    if span
+        .attribute(HTTP_STATUS_CODE_KEY)
+        .is_some_and(|code| !is_valid_http_status_code(&code.format_as_string()))
+    {
+        span.remove_attribute(HTTP_STATUS_CODE_KEY);
     }
 
     for link in span.span_links_mut() {
-        if let Some(v) = link
-            .attribute_str(LINK_NAME_KEY)
-            .and_then(|v| normalized(v, normalize_utils::normalize_name))
+        let repaired = link.attribute(LINK_NAME_KEY).and_then(|value| {
+            let mut name = value.format_as_string().into_owned();
+            normalize_utils::normalize_name(&mut name);
+            // As the agent, write the name back as a string, whatever the type of the value.
+            (value.as_str() != Some(name.as_str())).then_some(name)
+        });
+        if let Some(name) = repaired
+            && let Some(value) = link.attribute_mut(LINK_NAME_KEY)
         {
-            link.set_attribute(
-                TraceText::from_static(LINK_NAME_KEY),
-                AttributeValue::String(v.into()),
-            );
+            *value = AttributeValue::String(name.into());
         }
     }
     Ok(())
@@ -122,7 +121,10 @@ pub fn normalize_chunk<C: TraceChunkMut>(chunk: &mut C, lang: &str) -> anyhow::R
 #[cfg(test)]
 mod tests {
     use super::*;
-    use libdd_trace_model::{Attributes, AttributesMut, Span, StringData, TraceChunk};
+    use libdd_trace_model::{
+        AttributeRef, Attributes, AttributesMut, Span, StringData, TraceChunk,
+    };
+    use std::cell::Cell;
     use std::collections::HashMap;
 
     type Value = AttributeValue<StringData>;
@@ -154,6 +156,15 @@ mod tests {
         attrs: HashMap<String, Value>,
     }
 
+    thread_local! {
+        static ATTRIBUTE_MUT_CALLS: Cell<usize> = const { Cell::new(0) };
+    }
+
+    /// The number of `AttributesMut::attribute_mut` calls on the test types, on this thread.
+    fn attribute_mut_calls() -> usize {
+        ATTRIBUTE_MUT_CALLS.with(Cell::get)
+    }
+
     macro_rules! impl_attributes {
         ($($ty:ty),*) => {$(
             impl Attributes for $ty {
@@ -173,10 +184,7 @@ mod tests {
                 fn has_attribute(&self, key: &str) -> bool {
                     self.attrs.contains_key(key)
                 }
-                fn attribute(
-                    &self,
-                    key: &str,
-                ) -> Option<libdd_trace_model::AttributeRef<'_, StringData>> {
+                fn attribute(&self, key: &str) -> Option<AttributeRef<'_, StringData>> {
                     self.attrs.get(key).map(Into::into)
                 }
             }
@@ -185,6 +193,7 @@ mod tests {
                     self.attrs.retain(|k, v| f(k, v));
                 }
                 fn attribute_mut(&mut self, key: &str) -> Option<&mut Value> {
+                    ATTRIBUTE_MUT_CALLS.with(|n| n.set(n.get() + 1));
                     self.attrs.get_mut(key)
                 }
                 fn set_attribute(&mut self, key: String, value: Value) {
@@ -547,6 +556,38 @@ mod tests {
     }
 
     #[test]
+    fn attributes_are_read_without_attribute_mut() {
+        // `attribute_mut` can copy storage that copies on write: values are only read through
+        // `Attributes::attribute`.
+        for code in [Value::String("200".to_owned()), Value::Int(200)] {
+            let mut span = valid_span();
+            span.attrs.insert(HTTP_STATUS_CODE_KEY.to_owned(), code);
+            span.links.push(TestLink {
+                attrs: HashMap::from([(
+                    LINK_NAME_KEY.to_owned(),
+                    Value::String("valid_name".to_owned()),
+                )]),
+            });
+            let before = attribute_mut_calls();
+            let span = normalize(span);
+            assert_eq!(attribute_mut_calls(), before);
+            assert!(span.has_attribute(HTTP_STATUS_CODE_KEY));
+        }
+        // A repaired link name is written through `attribute_mut`.
+        let mut span = valid_span();
+        span.links.push(TestLink {
+            attrs: HashMap::from([(LINK_NAME_KEY.to_owned(), Value::Int(1))]),
+        });
+        let before = attribute_mut_calls();
+        let span = normalize(span);
+        assert_eq!(attribute_mut_calls(), before + 1);
+        assert_eq!(
+            span.links[0].attrs.get(LINK_NAME_KEY),
+            Some(&Value::String("unnamed_operation".to_owned()))
+        );
+    }
+
+    #[test]
     fn http_status_code() {
         let cases = [
             (Value::String("200".to_owned()), true),
@@ -558,6 +599,16 @@ mod tests {
             (Value::Int(42), false),
             (Value::Float(200.5), false),
             (Value::Bool(true), false),
+            // The agent formats any type before it validates it.
+            (Value::Bytes(b"200".to_vec()), true),
+            (Value::Bytes(b"+200".to_vec()), false),
+            (Value::Int(-200), false),
+            (Value::Float(f64::INFINITY), false),
+            (Value::Array(vec![Value::Int(200)]), false),
+            (
+                Value::KeyValueList(HashMap::from([("a".to_owned(), Value::Int(200))])),
+                false,
+            ),
         ];
         for (value, kept) in cases {
             let mut span = valid_span();
@@ -570,17 +621,43 @@ mod tests {
 
     #[test]
     fn span_link_name() {
-        let mut span = valid_span();
-        span.links.push(TestLink {
-            attrs: HashMap::from([(LINK_NAME_KEY.to_owned(), Value::String(String::new()))]),
-        });
-        span.links.push(TestLink::default());
-        let span = normalize(span);
-        assert_eq!(
-            span.links[0].attribute_str(LINK_NAME_KEY),
-            Some("unnamed_operation")
-        );
-        assert!(!span.links[1].has_attribute(LINK_NAME_KEY));
+        // TestNormalizeSpanLinkNameV1 in the agent's normalizer_test.go, and values of other
+        // types, which the agent formats, normalizes, and writes back as strings.
+        let cases = [
+            (Value::String(String::new()), "unnamed_operation"),
+            (
+                Value::String("!@#$%^&*()_+".to_owned()),
+                "unnamed_operation",
+            ),
+            (Value::String("valid_name".to_owned()), "valid_name"),
+            (Value::String("http..request!".to_owned()), "http..request"),
+            (Value::Int(42), "unnamed_operation"),
+            (Value::Bool(true), "true"),
+            (Value::Float(1.5), "unnamed_operation"),
+            (Value::Bytes(b"Foo Bar".to_vec()), "Foo_Bar"),
+            (
+                Value::Array(vec![Value::String("a".to_owned()), Value::Int(1)]),
+                "a_1",
+            ),
+            (
+                Value::KeyValueList(HashMap::from([("k".to_owned(), Value::Bool(false))])),
+                "k_false",
+            ),
+        ];
+        for (value, expected) in cases {
+            let mut span = valid_span();
+            span.links.push(TestLink {
+                attrs: HashMap::from([(LINK_NAME_KEY.to_owned(), value.clone())]),
+            });
+            span.links.push(TestLink::default());
+            let span = normalize(span);
+            assert_eq!(
+                span.links[0].attrs.get(LINK_NAME_KEY),
+                Some(&Value::String(expected.to_owned())),
+                "{value:?}"
+            );
+            assert!(!span.links[1].has_attribute(LINK_NAME_KEY));
+        }
     }
 
     #[test]
