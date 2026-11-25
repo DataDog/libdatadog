@@ -35,8 +35,9 @@ pub struct Decision {
 }
 
 #[derive(Debug, Clone, Deserialize)]
-#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+#[serde(rename_all = "lowercase")]
 enum RuleType {
+    #[serde(alias = "REGEX")]
     Regex,
 }
 
