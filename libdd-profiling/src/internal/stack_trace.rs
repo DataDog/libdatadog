@@ -38,27 +38,30 @@ fn hash_bytes(bytes: &[u8]) -> u64 {
     BuildHasherDefault::<rustc_hash::FxHasher>::default().hash_one(bytes)
 }
 
-/// Encodes a non-zero `u32` as a protobuf varint into `dst` (must have >= 5 bytes remaining),
-/// returning the number of bytes written (1..=5).
-#[inline]
-fn encode_u32_varint_uninit(mut v: u32, dst: &mut [MaybeUninit<u8>]) -> usize {
-    if v < 0x80 {
-        dst[0].write(v as u8);
-        return 1;
+/// Encodes a `u32` as a protobuf varint at `dst` and returns the advanced pointer.
+///
+/// # Safety
+/// `dst` must be valid for writes of at least 5 bytes.
+#[inline(always)]
+unsafe fn encode_u32_varint_ptr(mut v: u32, mut dst: *mut u8) -> *mut u8 {
+    unsafe {
+        if v < 0x80 {
+            dst.write(v as u8);
+            return dst.add(1);
+        }
+        if v < 0x4000 {
+            dst.write((v as u8) | 0x80);
+            dst.add(1).write((v >> 7) as u8);
+            return dst.add(2);
+        }
+        while v >= 0x80 {
+            dst.write((v as u8) | 0x80);
+            dst = dst.add(1);
+            v >>= 7;
+        }
+        dst.write(v as u8);
+        dst.add(1)
     }
-    if v < 0x4000 {
-        dst[0].write((v as u8) | 0x80);
-        dst[1].write((v >> 7) as u8);
-        return 2;
-    }
-    let mut i = 0;
-    while v >= 0x80 {
-        dst[i].write((v as u8) | 0x80);
-        v >>= 7;
-        i += 1;
-    }
-    dst[i].write(v as u8);
-    i + 1
 }
 
 /// Appends a `u32` protobuf varint to `out` with fallible capacity reservation.
@@ -163,16 +166,22 @@ impl StackTraceStore {
         let mut max_loc: u32 = 0;
         if locations.len() <= Self::STACK_FRAMES_LIMIT {
             let mut buf = [MaybeUninit::<u8>::uninit(); Self::STACK_FRAMES_LIMIT * 5];
-            let mut pos = 0usize;
+            let base = buf.as_mut_ptr().cast::<u8>();
+            let mut dst = base;
             for l in locations {
                 let id = l.get(generation)?.as_u32();
                 if id > max_loc {
                     max_loc = id;
                 }
-                pos += encode_u32_varint_uninit(id, &mut buf[pos..]);
+                // SAFETY: `locations.len() <= STACK_FRAMES_LIMIT` and each u32 varint
+                // writes at most 5 bytes, so `dst` has >= 5 bytes remaining in `buf`.
+                dst = unsafe { encode_u32_varint_ptr(id, dst) };
             }
-            // SAFETY: bytes `0..pos` were all initialized by `encode_u32_varint_uninit`.
-            let packed = unsafe { std::slice::from_raw_parts(buf.as_ptr().cast::<u8>(), pos) };
+            // SAFETY: `base..dst` lies within `buf` and every byte in that range was written.
+            let packed = unsafe {
+                let len = dst.offset_from(base) as usize;
+                std::slice::from_raw_parts(base, len)
+            };
             return self.intern_packed(packed, max_loc);
         }
 
@@ -193,16 +202,22 @@ impl StackTraceStore {
         let mut max_loc: u32 = 0;
         if locations.len() <= Self::STACK_FRAMES_LIMIT {
             let mut buf = [MaybeUninit::<u8>::uninit(); Self::STACK_FRAMES_LIMIT * 5];
-            let mut pos = 0usize;
+            let base = buf.as_mut_ptr().cast::<u8>();
+            let mut dst = base;
             for l in locations {
                 let id = l.as_u32();
                 if id > max_loc {
                     max_loc = id;
                 }
-                pos += encode_u32_varint_uninit(id, &mut buf[pos..]);
+                // SAFETY: `locations.len() <= STACK_FRAMES_LIMIT` and each u32 varint
+                // writes at most 5 bytes, so `dst` has >= 5 bytes remaining in `buf`.
+                dst = unsafe { encode_u32_varint_ptr(id, dst) };
             }
-            // SAFETY: bytes `0..pos` were all initialized by `encode_u32_varint_uninit`.
-            let packed = unsafe { std::slice::from_raw_parts(buf.as_ptr().cast::<u8>(), pos) };
+            // SAFETY: `base..dst` lies within `buf` and every byte in that range was written.
+            let packed = unsafe {
+                let len = dst.offset_from(base) as usize;
+                std::slice::from_raw_parts(base, len)
+            };
             return self.intern_packed(packed, max_loc);
         }
 
