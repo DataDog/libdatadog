@@ -83,7 +83,12 @@ fn sampling_feedback(body: &[u8]) -> Option<String> {
         .rate_by_service
         .get();
     serde_json::from_str::<RatesObject>(rates).ok()?;
-    Some(format!(r#"{{"rate_by_service":{rates}}}"#))
+    let prefix = r#"{"rate_by_service":"#;
+    let mut body = String::with_capacity(prefix.len() + rates.len() + 1);
+    body.push_str(prefix);
+    body.push_str(rates);
+    body.push('}');
+    Some(body)
 }
 
 /// One payload outcome, with its own counters. Local serialisation failures have
