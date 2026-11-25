@@ -428,7 +428,15 @@ fn feedback_validation_skips_unrelated_json_without_building_a_tree() {
 fn feedback_accepts_rate_endpoints_and_respects_the_byte_limit() {
     let mut body = br#"{"rate_by_service":{"a":0,"b":1,"c":5e-1}}"#.to_vec();
     body.resize(MAX_FEEDBACK_BYTES, b' ');
-    assert_eq!(sampling_feedback(&body).unwrap().as_bytes(), body);
+    assert_eq!(
+        sampling_feedback(&body).unwrap(),
+        r#"{"rate_by_service":{"a":0,"b":1,"c":5e-1}}"#
+    );
+    assert_eq!(
+        sampling_feedback(br#"{"rate_by_service":{},"extra":"\uD800"}"#).unwrap(),
+        r#"{"rate_by_service":{}}"#
+    );
+    assert!(sampling_feedback(br#"{"rate_by_service":{"\uD800":1}}"#).is_none());
     body.push(b' ');
     assert!(sampling_feedback(&body).is_none());
 }

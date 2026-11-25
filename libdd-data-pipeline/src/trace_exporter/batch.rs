@@ -52,7 +52,7 @@ impl<'de> serde::Deserialize<'de> for RatesObject {
                 self,
                 mut map: M,
             ) -> Result<RatesObject, M::Error> {
-                while let Some((_, rate)) = map.next_entry::<serde::de::IgnoredAny, f64>()? {
+                while let Some((_, rate)) = map.next_entry::<String, f64>()? {
                     if !(0.0..=1.0).contains(&rate) {
                         return Err(serde::de::Error::custom("sampling rate outside [0, 1]"));
                     }
@@ -65,60 +65,25 @@ impl<'de> serde::Deserialize<'de> for RatesObject {
 }
 
 #[derive(serde::Deserialize)]
-#[serde(field_identifier)]
-enum FeedbackField {
-    #[serde(rename = "rate_by_service")]
-    Rates,
-    #[serde(other)]
-    Other,
+struct FeedbackShape<'a> {
+    #[serde(borrow)]
+    rate_by_service: &'a serde_json::value::RawValue,
 }
 
-struct FeedbackShape;
-
-impl<'de> serde::Deserialize<'de> for FeedbackShape {
-    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        struct FeedbackVisitor;
-        impl<'de> serde::de::Visitor<'de> for FeedbackVisitor {
-            type Value = FeedbackShape;
-            fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-                formatter.write_str("an Agent response object")
-            }
-            fn visit_map<M: serde::de::MapAccess<'de>>(
-                self,
-                mut map: M,
-            ) -> Result<FeedbackShape, M::Error> {
-                let mut found = false;
-                while let Some(field) = map.next_key::<FeedbackField>()? {
-                    match field {
-                        FeedbackField::Rates => {
-                            if found {
-                                return Err(serde::de::Error::duplicate_field("rate_by_service"));
-                            }
-                            map.next_value::<RatesObject>()?;
-                            found = true;
-                        }
-                        FeedbackField::Other => {
-                            map.next_value::<serde::de::IgnoredAny>()?;
-                        }
-                    }
-                }
-                if !found {
-                    return Err(serde::de::Error::missing_field("rate_by_service"));
-                }
-                Ok(FeedbackShape)
-            }
-        }
-        deserializer.deserialize_map(FeedbackVisitor)
-    }
-}
-
-fn sampling_feedback(body: &[u8]) -> Option<&str> {
+fn sampling_feedback(body: &[u8]) -> Option<String> {
     if body.len() > MAX_FEEDBACK_BYTES {
         return None;
     }
     let body = std::str::from_utf8(body).ok()?;
-    serde_json::from_str::<FeedbackShape>(body).ok()?;
-    Some(body)
+    if !body.trim_start().starts_with('{') {
+        return None;
+    }
+    let rates = serde_json::from_str::<FeedbackShape>(body)
+        .ok()?
+        .rate_by_service
+        .get();
+    serde_json::from_str::<RatesObject>(rates).ok()?;
+    Some(format!(r#"{{"rate_by_service":{rates}}}"#))
 }
 
 /// One payload outcome, with its own counters. Local serialisation failures have
@@ -432,9 +397,7 @@ impl<
                         batch.payloads[previous].response = Ok(AgentResponse::Unchanged);
                     }
                     responses.latest_feedback = Some(batch.payloads.len());
-                    Ok(AgentResponse::Changed {
-                        body: body.to_owned(),
-                    })
+                    Ok(AgentResponse::Changed { body })
                 } else {
                     Ok(AgentResponse::Unchanged)
                 }
