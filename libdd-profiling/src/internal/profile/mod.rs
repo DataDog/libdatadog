@@ -41,7 +41,7 @@ pub struct Profile {
     functions: FxIndexSet<Function>,
     generation: interning_api::Generation,
     labels: FxIndexSet<Label>,
-    label_sets: FxIndexSet<LabelSet>,
+    label_sets: LabelSetStore,
     locations: FxIndexSet<Location>,
     mappings: FxIndexSet<Mapping>,
     observations: Observations,
@@ -335,7 +335,7 @@ impl Profile {
             values.len(),
         );
 
-        let labels = self.label_sets.try_dedup(LabelSet::new(labels))?;
+        let labels = self.label_sets.intern_slice(&labels)?;
 
         let stacktrace = self.try_add_stacktrace(locations)?;
         self.observations
@@ -565,7 +565,7 @@ impl Profile {
 
     /// Resolves label ids into labels and appends the endpoint label, leaving
     /// one spare slot for a sample timestamp label.
-    fn expand_label_set(&self, label_set: &LabelSet) -> anyhow::Result<Vec<Label>> {
+    fn expand_label_set(&self, label_set: &[LabelId]) -> anyhow::Result<Vec<Label>> {
         let endpoint_label = self.get_endpoint_for_label_set(label_set)?;
         let mut labels = Vec::new();
         // +1 for the timestamp label
@@ -605,8 +605,8 @@ impl Profile {
         let mut extended_label_sets: Vec<Vec<Label>> = Vec::new();
         extended_label_sets.try_reserve_exact(label_sets.len())?;
 
-        for label_set in label_sets {
-            extended_label_sets.push(self.expand_label_set(&label_set)?);
+        for label_set in label_sets.iter() {
+            extended_label_sets.push(self.expand_label_set(label_set)?);
         }
 
         let omit_local_root_span_id = self.experimental_omit_local_root_span_id_when_serializing;
@@ -964,7 +964,7 @@ impl Profile {
             .map(|v| Label::str(self.endpoints.endpoint_label, *v)))
     }
 
-    fn get_endpoint_for_label_set(&self, label_set: &LabelSet) -> anyhow::Result<Option<Label>> {
+    fn get_endpoint_for_label_set(&self, label_set: &[LabelId]) -> anyhow::Result<Option<Label>> {
         if let Some(label) = label_set.iter().find_map(|id| {
             if let Ok(label) = self.get_label(*id)
                 && label.get_key() == self.endpoints.local_root_span_id_label
@@ -986,9 +986,9 @@ impl Profile {
     }
 
     #[allow(dead_code)]
-    fn get_label_set(&self, id: LabelSetId) -> anyhow::Result<&LabelSet> {
+    fn get_label_set(&self, id: LabelSetId) -> anyhow::Result<&[LabelId]> {
         self.label_sets
-            .get_index(id.to_offset())
+            .get(id)
             .context("LabelSetId to have a valid interned index")
     }
 
