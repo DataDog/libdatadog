@@ -84,10 +84,12 @@ pub extern "C" fn ddog_daemon_entry_point(trampoline_data: &TrampolineData) {
                 let shutdown = shutdown.clone();
                 async move {
                     if termsig.recv().await.is_some() {
-                        // Armed first: logging blocks if its destination stalls.
+                        // Arm the deadline and wake the accept loop before logging: logging blocks
+                        // if its destination stalls.
                         crate::entry::exit_after_deadline("SIGTERM");
-                        info!("Received SIGTERM, shutting down");
                         shutdown.notify_one();
+                        tokio::task::yield_now().await;
+                        info!("Received SIGTERM, shutting down");
                     }
                 }
             });
@@ -900,6 +902,14 @@ mod tests {
         assert_eq!(
             unsafe { libc::kill(sidecar.pid() as i32, libc::SIGTERM) },
             0
+        );
+        // The listener must release its name right away, not wait for the shutdown deadline.
+        while !sidecar.name_is_free() && sent.elapsed() < std::time::Duration::from_secs(3) {
+            std::thread::sleep(std::time::Duration::from_millis(20));
+        }
+        assert!(
+            sidecar.name_is_free(),
+            "the sidecar kept the listener name while its log was stalled"
         );
         let status =
             sidecar.wait(crate::entry::SHUTDOWN_DEADLINE + std::time::Duration::from_secs(5));

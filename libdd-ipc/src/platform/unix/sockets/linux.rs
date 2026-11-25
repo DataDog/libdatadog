@@ -49,8 +49,11 @@ impl SeqpacketListener {
     pub fn try_accept(&self) -> io::Result<SeqpacketConn> {
         loop {
             // Close-on-exec, or a child the server execs keeps the client connected.
-            let new_fd =
-                accept4(self.inner.as_raw_fd(), SockFlag::SOCK_CLOEXEC).map_err(io::Error::from)?;
+            let new_fd = match accept4(self.inner.as_raw_fd(), SockFlag::SOCK_CLOEXEC) {
+                Ok(fd) => fd,
+                Err(nix::errno::Errno::EINTR) => continue,
+                Err(e) => return Err(io::Error::from(e)),
+            };
             let owned = unsafe { OwnedFd::from_raw_fd(new_fd) };
             let conn = SeqpacketConn::from_owned(owned)?;
             // Peek to detect EOF phantom connections left by is_listening probes.

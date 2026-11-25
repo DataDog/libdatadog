@@ -11,6 +11,8 @@ use std::sync::Mutex;
 #[cfg(unix)]
 use std::sync::OnceLock;
 #[cfg(target_os = "linux")]
+use std::sync::atomic::{AtomicI32, Ordering};
+#[cfg(target_os = "linux")]
 use std::time::{Duration, Instant};
 use tracing::error;
 #[cfg(target_os = "linux")]
@@ -151,6 +153,11 @@ pub(crate) fn report_exhaustion(cause: fmt::Arguments) {
 #[cfg(target_os = "linux")]
 static FD_DIRECTORY: Mutex<Option<FdDirectory>> = Mutex::new(None);
 
+/// Raw descriptor of `FD_DIRECTORY`, or -1 when closed. Lets a forked child close an inherited
+/// handle without blocking if another thread held `FD_DIRECTORY` at fork time.
+#[cfg(target_os = "linux")]
+static FD_DIRECTORY_FD: AtomicI32 = AtomicI32::new(-1);
+
 #[cfg(target_os = "linux")]
 struct FdDirectory {
     dir: std::ptr::NonNull<libc::DIR>,
@@ -166,6 +173,8 @@ unsafe impl Send for FdDirectory {}
 impl Drop for FdDirectory {
     fn drop(&mut self) {
         // SAFETY: the stream is live and owned by this value.
+        let fd = unsafe { libc::dirfd(self.dir.as_ptr()) };
+        _ = FD_DIRECTORY_FD.compare_exchange(fd, -1, Ordering::Relaxed, Ordering::Relaxed);
         unsafe { libc::closedir(self.dir.as_ptr()) };
     }
 }
@@ -179,9 +188,44 @@ pub(crate) fn prepare_diagnostics() {
             .as_ref()
             .is_none_or(|directory| directory.pid != pid)
         {
+            directory.take();
             // SAFETY: the path is a valid, NUL-terminated string.
             let dir = unsafe { libc::opendir(c"/proc/self/fd".as_ptr()) };
-            *directory = std::ptr::NonNull::new(dir).map(|dir| FdDirectory { dir, pid });
+            if let Some(dir) = std::ptr::NonNull::new(dir) {
+                // SAFETY: `dir` was just returned by `opendir`.
+                FD_DIRECTORY_FD.store(unsafe { libc::dirfd(dir.as_ptr()) }, Ordering::Relaxed);
+                *directory = Some(FdDirectory { dir, pid });
+            }
+        }
+    }
+}
+
+/// Closes the pre-opened diagnostics directory handle (e.g. on orderly in-process shutdown).
+#[cfg(unix)]
+pub(crate) fn close_diagnostics() {
+    #[cfg(target_os = "linux")]
+    if let Ok(mut directory) = FD_DIRECTORY.lock() {
+        directory.take();
+    }
+}
+
+/// Closes any `/proc/self/fd` handle inherited across `fork()`.
+///
+/// # Safety
+/// Call in the child after `fork()`, before starting threads.
+#[cfg(unix)]
+pub(crate) unsafe fn clear_inherited_state() {
+    #[cfg(target_os = "linux")]
+    {
+        if let Ok(mut directory) = FD_DIRECTORY.try_lock() {
+            directory.take();
+        } else {
+            let fd = FD_DIRECTORY_FD.swap(-1, Ordering::Relaxed);
+            if fd >= 0 {
+                // SAFETY: inherited from the parent's `FD_DIRECTORY`; closing it only drops this
+                // child's reference.
+                unsafe { libc::close(fd) };
+            }
         }
     }
 }
@@ -275,5 +319,32 @@ mod tests {
         assert_eq!(raised(256, libc::RLIM_INFINITY), Some(100_000));
         assert_eq!(raised(4096, 4096), None);
         assert_eq!(raised(libc::RLIM_INFINITY, libc::RLIM_INFINITY), None);
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn close_and_clear_release_the_fd_directory_handle() {
+        const TEST: &str = "fd_limits::tests::close_and_clear_release_the_fd_directory_handle";
+        if crate::test_util::is_rerun(TEST) {
+            prepare_diagnostics();
+            let opened = FD_DIRECTORY_FD.load(Ordering::Relaxed) >= 0;
+            close_diagnostics();
+            let closed = FD_DIRECTORY_FD.load(Ordering::Relaxed) == -1;
+            prepare_diagnostics();
+            let reopened = FD_DIRECTORY_FD.load(Ordering::Relaxed) >= 0;
+            // SAFETY: single-threaded child process.
+            unsafe { clear_inherited_state() };
+            let cleared = FD_DIRECTORY_FD.load(Ordering::Relaxed) == -1;
+            // SAFETY: exits directly with pass/fail status.
+            unsafe {
+                libc::_exit(if opened && closed && reopened && cleared {
+                    0
+                } else {
+                    1
+                })
+            }
+        }
+        let status = crate::test_util::rerun(TEST).status().unwrap();
+        assert_eq!(status.code(), Some(0));
     }
 }
