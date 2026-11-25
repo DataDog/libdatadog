@@ -83,11 +83,7 @@ impl StackTraceStore {
     #[inline]
     fn bytes_at(&self, idx: u32) -> &[u8] {
         let i = idx as usize;
-        let start = if i == 0 {
-            0
-        } else {
-            self.ends[i - 1] as usize
-        };
+        let start = if i == 0 { 0 } else { self.ends[i - 1] as usize };
         let end = self.ends[i] as usize;
         &self.data[start..end]
     }
@@ -139,8 +135,8 @@ impl StackTraceStore {
                     .len()
                     .checked_add(packed.len())
                     .context("stack trace slab length overflow")?;
-                let new_end = u32::try_from(new_end)
-                    .context("stack trace slab exceeded u32::MAX bytes")?;
+                let new_end =
+                    u32::try_from(new_end).context("stack trace slab exceeded u32::MAX bytes")?;
 
                 self.data.try_reserve(packed.len())?;
                 self.ends.try_reserve(1)?;
@@ -237,12 +233,11 @@ impl StackTraceStore {
     #[inline]
     pub fn get_packed(&self, id: StackTraceId) -> anyhow::Result<&[u8]> {
         let i = id.to_raw_id();
-        anyhow::ensure!(i < self.ends.len(), "StackTraceId {id:?} to exist in profile");
-        let start = if i == 0 {
-            0
-        } else {
-            self.ends[i - 1] as usize
-        };
+        anyhow::ensure!(
+            i < self.ends.len(),
+            "StackTraceId {id:?} to exist in profile"
+        );
+        let start = if i == 0 { 0 } else { self.ends[i - 1] as usize };
         let end = self.ends[i] as usize;
         Ok(&self.data[start..end])
     }
@@ -323,6 +318,9 @@ mod tests {
             &mut expected_deep,
         )
         .unwrap();
-        assert_eq!(store.get_packed(deep_id1).unwrap(), expected_deep.as_slice());
+        assert_eq!(
+            store.get_packed(deep_id1).unwrap(),
+            expected_deep.as_slice()
+        );
     }
 }

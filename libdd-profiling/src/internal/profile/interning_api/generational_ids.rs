@@ -36,7 +36,9 @@ pub struct GenerationalId<T: Copy> {
 #[cold]
 #[inline(never)]
 fn generation_mismatch() -> anyhow::Error {
-    anyhow::anyhow!("Condition failed: `self.generation == expected_generation || self.generation == Generation::IMMORTAL`")
+    anyhow::anyhow!(
+        "Condition failed: `self.generation == expected_generation || self.generation == Generation::IMMORTAL`"
+    )
 }
 
 impl<T: Copy> GenerationalId<T> {

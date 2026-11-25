@@ -158,11 +158,7 @@ impl LabelSetStore {
     #[inline]
     fn slice_at(&self, idx: u32) -> &[LabelId] {
         let i = idx as usize;
-        let start = if i == 0 {
-            0
-        } else {
-            self.ends[i - 1] as usize
-        };
+        let start = if i == 0 { 0 } else { self.ends[i - 1] as usize };
         let end = self.ends[i] as usize;
         &self.data[start..end]
     }
@@ -236,9 +232,8 @@ impl LabelSetStore {
                 slot.write(l.get(generation)?);
             }
             // SAFETY: The first `labels.len()` elements were initialized in the loop above.
-            let slice = unsafe {
-                std::slice::from_raw_parts(buf.as_ptr().cast::<LabelId>(), labels.len())
-            };
+            let slice =
+                unsafe { std::slice::from_raw_parts(buf.as_ptr().cast::<LabelId>(), labels.len()) };
             return self.intern_slice(slice);
         }
 
@@ -274,22 +269,14 @@ impl LabelSetStore {
         if i >= self.ends.len() {
             return None;
         }
-        let start = if i == 0 {
-            0
-        } else {
-            self.ends[i - 1] as usize
-        };
+        let start = if i == 0 { 0 } else { self.ends[i - 1] as usize };
         let end = self.ends[i] as usize;
         Some(&self.data[start..end])
     }
 
     pub fn iter(&self) -> impl ExactSizeIterator<Item = &[LabelId]> {
         (0..self.ends.len()).map(|i| {
-            let start = if i == 0 {
-                0
-            } else {
-                self.ends[i - 1] as usize
-            };
+            let start = if i == 0 { 0 } else { self.ends[i - 1] as usize };
             let end = self.ends[i] as usize;
             &self.data[start..end]
         })
