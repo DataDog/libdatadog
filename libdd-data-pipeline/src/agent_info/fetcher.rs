@@ -157,6 +157,8 @@ async fn fetch_and_hash_response<C: HttpClientCapability + SleepCapability>(
         }
     };
 
+    anyhow::ensure!(res.status().is_success(), "/info returned {}", res.status());
+
     // Extract the Datadog-Container-Tags-Hash header
     let container_tags_hash = res
         .headers()
@@ -445,7 +447,7 @@ mod single_threaded_tests {
     #[tokio::test]
     async fn payload_limits_remain_scoped_to_the_fetching_endpoint() {
         let server = MockServer::start_async().await;
-        let _small = server.mock(|when, then| {
+        let mut small_response = server.mock(|when, then| {
             when.path("/small");
             then.status(200)
                 .body(r#"{"config":{"max_request_bytes":512}}"#);
@@ -476,8 +478,27 @@ mod single_threaded_tests {
         replacement.fetch_and_update().await;
         assert_eq!(replacement_observer.max_request_bytes(), Some(512));
         large.fetch_and_update().await;
+        let before = AGENT_INFO_CACHE.load_full().unwrap();
+        small_response.delete();
+        let mut failure = server.mock(|when, then| {
+            when.path("/small");
+            then.status(500).body(r#"{"error":"unavailable"}"#);
+        });
+        small.fetch_and_update().await;
+        failure.assert();
+        assert!(Arc::ptr_eq(&before, &AGENT_INFO_CACHE.load_full().unwrap()));
         assert_eq!(small_observer.max_request_bytes(), Some(512));
         assert_eq!(large_observer.max_request_bytes(), Some(2048));
+        // After recovery, /small now returns the state last fetched from /large.
+        // SameState still needs to refresh /small's own receiver limit.
+        failure.delete();
+        let _recovery = server.mock(|when, then| {
+            when.path("/small");
+            then.status(200)
+                .body(r#"{"config":{"max_request_bytes":2048}}"#);
+        });
+        small.fetch_and_update().await;
+        assert_eq!(small_observer.max_request_bytes(), Some(2048));
     }
 
     const TEST_INFO: &str = r#"{
