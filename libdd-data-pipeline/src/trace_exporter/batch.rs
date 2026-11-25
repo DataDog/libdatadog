@@ -239,11 +239,19 @@ impl<
             }
         };
         tokio::pin!(interrupted);
-        tokio::select! {
-            biased;
-            kind = &mut interrupted => return Err(io::Error::from(kind).into()),
-            _ = self.check_agent_info() => (),
-        }
+        let check_stop = || {
+            if cancel.is_cancelled() {
+                Err(io::Error::from(io::ErrorKind::Interrupted))
+            } else if Instant::now() >= deadline {
+                Err(io::Error::from(io::ErrorKind::TimedOut))
+            } else {
+                Ok(())
+            }
+        };
+        check_stop()?;
+        // Removing a stats worker transfers responsibility for its final flush.
+        self.check_agent_info().await;
+        check_stop()?;
         let (mut headers, _) = self.prepare_trace_chunks(&mut traces);
         result.unattempted_chunks = traces.len();
         result.unattempted_spans = traces.iter().map(Vec::len).sum();
@@ -350,15 +358,16 @@ impl<
                 spans: 0,
             };
             let request_headers = self.serializer.build_traces_headers(headers, 0, None);
-            let attempt = self.send_batch_payload(
-                &endpoint,
-                bytes,
-                request_headers,
-                counts,
-                result,
-                &mut responses,
-            )
-            .await;
+            let attempt = self
+                .send_batch_payload(
+                    &endpoint,
+                    bytes,
+                    request_headers,
+                    counts,
+                    result,
+                    &mut responses,
+                )
+                .await;
             self.disable_rejected_v1(format, result);
             attempt?;
         }
