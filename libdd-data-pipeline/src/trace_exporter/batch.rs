@@ -18,8 +18,8 @@ use libdd_common::Endpoint;
 use libdd_shared_runtime::{BlockingRuntime, SharedRuntime};
 use libdd_trace_utils::{
     send_with_retry::{
-        CompressionStrategy, RetryStrategy, SendWithRetryError, SendWithRetryResult,
-        send_with_bounded_response,
+        BoundedResponse, CompressionStrategy, RetryStrategy, SendWithRetryError,
+        SendWithRetryResult, send_with_bounded_response,
     },
     span::{TraceData, span_pool::PooledChunks},
 };
@@ -32,7 +32,8 @@ use tokio_util::sync::CancellationToken;
 const MAX_FEEDBACK_BYTES: usize = 8 * 1024 * 1024;
 const MAX_DIAGNOSTIC_BYTES: usize = 64 * 1024;
 
-struct ResponseState {
+struct ResponseState<F> {
+    interrupted: F,
     latest_feedback: Option<usize>,
     diagnostic_bytes_remaining: usize,
 }
@@ -198,14 +199,11 @@ impl<
         };
         let never_cancelled = CancellationToken::new();
         let cancel = cancel.unwrap_or(&never_cancelled);
-        let outcome = self.shared_runtime.block_on(async {
-            tokio::select! {
-                biased;
-                _ = cancel.cancelled() => Err(io::Error::from(io::ErrorKind::Interrupted).into()),
-                _ = self.capabilities.sleep(deadline.saturating_duration_since(Instant::now())) => Err(io::Error::from(io::ErrorKind::TimedOut).into()),
-                outcome = self.send_batch(chunks, max_payload_bytes, cancel, deadline, &mut result) => outcome,
-            }
-        }).map_err(TraceExporterError::from).and_then(|outcome| outcome);
+        let outcome = self
+            .shared_runtime
+            .block_on(self.send_batch(chunks, max_payload_bytes, cancel, deadline, &mut result))
+            .map_err(TraceExporterError::from)
+            .and_then(|outcome| outcome);
         result.error = outcome.err();
         result
     }
@@ -225,7 +223,19 @@ impl<
                 ),
             ));
         }
-        self.check_agent_info().await;
+        let interrupted = async {
+            tokio::select! {
+                biased;
+                _ = cancel.cancelled() => io::ErrorKind::Interrupted,
+                _ = self.capabilities.sleep(deadline.saturating_duration_since(Instant::now())) => io::ErrorKind::TimedOut,
+            }
+        };
+        tokio::pin!(interrupted);
+        tokio::select! {
+            biased;
+            kind = &mut interrupted => return Err(io::Error::from(kind).into()),
+            _ = self.check_agent_info() => (),
+        }
         let (mut headers, _) = self.prepare_trace_chunks(&mut traces);
         result.unattempted_chunks = traces.len();
         result.unattempted_spans = traces.iter().map(Vec::len).sum();
@@ -256,6 +266,7 @@ impl<
             }))
         };
         let mut responses = ResponseState {
+            interrupted,
             latest_feedback: None,
             diagnostic_bytes_remaining: MAX_DIAGNOSTIC_BYTES,
         };
@@ -296,10 +307,6 @@ impl<
             if stop() {
                 return Err(stopped());
             }
-            result.unattempted_chunks -= counts.chunks;
-            result.unattempted_spans -= counts.spans;
-            result.in_flight_chunks = counts.chunks;
-            result.in_flight_spans = counts.spans;
             let request_headers =
                 self.serializer
                     .build_traces_headers(headers.clone(), counts.chunks, None);
@@ -312,12 +319,10 @@ impl<
                     result,
                     &mut responses,
                 )
-                .await;
+                .await?;
             if completed_attempt {
                 headers.generic.dropped_p0_traces = 0;
                 headers.generic.dropped_p0_spans = 0;
-                result.pending_p0_traces = 0;
-                result.pending_p0_spans = 0;
             }
             if self.disable_rejected_v1(format, result) {
                 format = TraceExporterOutputFormat::V04;
@@ -335,21 +340,16 @@ impl<
                 spans: 0,
             };
             let request_headers = self.serializer.build_traces_headers(headers, 0, None);
-            let completed_attempt = self
-                .send_batch_payload(
-                    &endpoint,
-                    bytes,
-                    request_headers,
-                    counts,
-                    result,
-                    &mut responses,
-                )
-                .await;
+            self.send_batch_payload(
+                &endpoint,
+                bytes,
+                request_headers,
+                counts,
+                result,
+                &mut responses,
+            )
+            .await?;
             self.disable_rejected_v1(format, result);
-            if completed_attempt {
-                result.pending_p0_traces = 0;
-                result.pending_p0_spans = 0;
-            }
         }
         Ok(())
     }
@@ -376,19 +376,31 @@ impl<
         headers: http::HeaderMap,
         counts: PayloadCounts,
         batch: &mut BatchResult,
-        responses: &mut ResponseState,
-    ) -> bool {
+        responses: &mut ResponseState<impl Future<Output = io::ErrorKind> + Unpin>,
+    ) -> Result<bool, TraceExporterError> {
         let size = bytes.len();
-        let result = send_with_bounded_response(
-            &self.capabilities,
-            endpoint,
-            bytes,
-            &headers,
-            &RetryStrategy::default(),
-            CompressionStrategy::None,
-            MAX_FEEDBACK_BYTES,
-        )
-        .await;
+        let mut policy = BoundedResponse::new(MAX_FEEDBACK_BYTES);
+        let outcome = tokio::select! {
+            biased;
+            kind = &mut responses.interrupted => Err(kind),
+            result = async {
+                batch.unattempted_chunks -= counts.chunks;
+                batch.unattempted_spans -= counts.spans;
+                batch.in_flight_chunks = counts.chunks;
+                batch.in_flight_spans = counts.spans;
+                send_with_bounded_response(&self.capabilities, endpoint, bytes, &headers,
+                    &RetryStrategy::default(), CompressionStrategy::None, &mut policy).await
+            } => Ok(result),
+        };
+        let (result, interrupted) = match outcome {
+            Ok(result) => (result, None),
+            Err(kind) => (
+                policy
+                    .observed_result()
+                    .ok_or_else(|| io::Error::from(kind))?,
+                Some(kind),
+            ),
+        };
         let completed_attempt = !matches!(&result, Err(SendWithRetryError::Build(_)));
         let report = observations(&result, size, counts);
         let response = match result {
@@ -436,7 +448,14 @@ impl<
             response,
             observations: report,
         });
-        completed_attempt
+        if completed_attempt {
+            batch.pending_p0_traces = 0;
+            batch.pending_p0_spans = 0;
+        }
+        if let Some(kind) = interrupted {
+            return Err(io::Error::from(kind).into());
+        }
+        Ok(completed_attempt)
     }
 }
 

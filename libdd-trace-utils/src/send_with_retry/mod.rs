@@ -148,6 +148,39 @@ pub async fn send_with_retry_and_size<C: HttpClientCapability + SleepCapability>
     .await
 }
 
+/// Body collection policy and current attempt for one bounded send. The status
+/// remains available if the owner drops the send future during body collection.
+pub struct BoundedResponse {
+    limit: usize,
+    attempt: Option<(Attempts, ObservedResponseStatus)>,
+}
+
+impl BoundedResponse {
+    pub fn new(limit: usize) -> Self {
+        Self {
+            limit,
+            attempt: None,
+        }
+    }
+
+    pub fn observed_result(&self) -> Option<SendWithRetryResult> {
+        let (attempts, status) = self.attempt.as_ref()?;
+        let status = status.get()?;
+        let response = empty_response(status);
+        Some(if status.is_success() {
+            Ok((response, *attempts))
+        } else {
+            Err(SendWithRetryError::Http(response, *attempts))
+        })
+    }
+}
+
+fn empty_response(status: http::StatusCode) -> http::Response<Bytes> {
+    let mut response = http::Response::new(Bytes::new());
+    *response.status_mut() = status;
+    response
+}
+
 /// Send trace data while bounding optional response feedback. Status and headers
 /// survive body errors, so an acknowledged send is not replayed for its feedback.
 #[allow(clippy::result_large_err)]
@@ -158,7 +191,7 @@ pub async fn send_with_bounded_response<C: HttpClientCapability + SleepCapabilit
     headers: &HeaderMap,
     retry_strategy: &RetryStrategy,
     compression_strategy: CompressionStrategy,
-    response_limit: usize,
+    response: &mut BoundedResponse,
 ) -> SendWithRetryResult {
     send_with_response_policy(
         capabilities,
@@ -167,7 +200,7 @@ pub async fn send_with_bounded_response<C: HttpClientCapability + SleepCapabilit
         headers,
         retry_strategy,
         compression_strategy,
-        Some(response_limit),
+        Some(response),
     )
     .await
     .0
@@ -180,7 +213,7 @@ async fn send_with_response_policy<C: HttpClientCapability + SleepCapability>(
     headers: &HeaderMap,
     retry_strategy: &RetryStrategy,
     compression_strategy: CompressionStrategy,
-    response_limit: Option<usize>,
+    mut bounded: Option<&mut BoundedResponse>,
 ) -> (SendWithRetryResult, usize) {
     let mut request_attempt = 0;
     let timeout = Duration::from_millis(target.timeout_ms);
@@ -211,9 +244,10 @@ async fn send_with_response_policy<C: HttpClientCapability + SleepCapability>(
             .method(http::Method::POST)
             .uri(target.url.clone())
             .extension(observed_status.clone());
-        if let Some(limit) = response_limit {
+        if let Some(policy) = bounded.as_deref_mut() {
+            policy.attempt = Some((request_attempt, observed_status.clone()));
             builder = builder
-                .extension(libdd_capabilities::http::ResponseBodyLimit(limit))
+                .extension(libdd_capabilities::http::ResponseBodyLimit(policy.limit))
                 .extension(libdd_capabilities::http::PreserveResponseStatus);
         }
         builder = target.set_standard_headers(builder, TRACE_EXPORTER_USER_AGENT);
@@ -239,11 +273,9 @@ async fn send_with_response_policy<C: HttpClientCapability + SleepCapability>(
         };
         let result = match (result, observed_status.get()) {
             (Err(()) | Ok(Err(_)), Some(status))
-                if response_limit.is_some() || status == http::StatusCode::PAYLOAD_TOO_LARGE =>
+                if bounded.is_some() || status == http::StatusCode::PAYLOAD_TOO_LARGE =>
             {
-                let mut response = http::Response::new(Bytes::new());
-                *response.status_mut() = status;
-                Ok(Ok(response))
+                Ok(Ok(empty_response(status)))
             }
             (result, _) => result,
         };
@@ -409,7 +441,7 @@ mod tests {
             &HeaderMap::new(),
             &RetryStrategy::new(2, 1, RetryBackoffType::Constant, None),
             CompressionStrategy::None,
-            1024,
+            &mut BoundedResponse::new(1024),
         )
         .await;
         let _ = release.send(());

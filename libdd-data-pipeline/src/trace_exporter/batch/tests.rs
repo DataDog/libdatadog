@@ -14,6 +14,7 @@ struct CancellingClient {
     requests: Arc<AtomicUsize>,
     token: CancellationToken,
     complete: bool,
+    stalled_feedback: bool,
 }
 
 impl HttpClientCapability for CancellingClient {
@@ -28,12 +29,31 @@ impl HttpClientCapability for CancellingClient {
         &self,
         request: http::Request<Bytes>,
     ) -> Result<http::Response<Bytes>, HttpError> {
-        if request.method() == http::Method::POST
-            && self.requests.fetch_add(1, Ordering::SeqCst) == 1
-        {
-            self.token.cancel();
-            if !self.complete {
-                return std::future::pending().await;
+        if request.uri().path() == "/info" {
+            return RecordingClient::default().request(request).await;
+        }
+        if request.method() == http::Method::POST && request.uri().path().ends_with("/traces") {
+            let attempt = self.requests.fetch_add(1, Ordering::SeqCst);
+            if self.stalled_feedback {
+                assert_eq!(request.headers()["datadog-client-dropped-p0-traces"], "1");
+                let observed = request
+                    .extensions()
+                    .get::<libdd_capabilities::http::ObservedResponseStatus>()
+                    .unwrap();
+                if attempt == 0 {
+                    observed.record(http::StatusCode::SERVICE_UNAVAILABLE);
+                    return Ok(http::Response::builder()
+                        .status(503)
+                        .body(Bytes::new())
+                        .unwrap());
+                }
+                observed.record(http::StatusCode::ACCEPTED);
+            }
+            if attempt == 1 {
+                self.token.cancel();
+                if !self.complete {
+                    return std::future::pending().await;
+                }
             }
         }
         Ok(http::Response::builder()
@@ -47,7 +67,15 @@ impl SleepCapability for CancellingClient {
     fn new() -> Self {
         Self::default()
     }
-    async fn sleep(&self, _: std::time::Duration) {
+    async fn sleep(&self, duration: std::time::Duration) {
+        if self.stalled_feedback {
+            if duration == Duration::from_millis(100) {
+                return; // Retry the first 503.
+            }
+            if (Duration::from_secs(15)..=Duration::from_secs(16)).contains(&duration) {
+                return self.token.cancelled().await; // Advance only the operation deadline.
+            }
+        }
         std::future::pending::<()>().await;
     }
 }
@@ -119,6 +147,70 @@ fn cancellation_with_the_final_response_does_not_fail_completed_work() {
         &batch.payloads[1].response,
         Ok(AgentResponse::Changed { .. })
     ));
+}
+
+#[test]
+fn stopping_during_feedback_settles_the_acknowledged_attempt_and_p0() {
+    use libdd_shared_runtime::Worker;
+    ForkSafeRuntime::new()
+        .unwrap()
+        .block_on(async {
+            let (mut fetcher, _) = crate::agent_info::AgentInfoFetcher::<RecordingClient>::new(
+                Endpoint::from_slice("http://localhost:8126/info"),
+                Duration::from_secs(300),
+            );
+            fetcher.run().await;
+        })
+        .unwrap();
+    for deadline in [false, true] {
+        let mut builder = TraceExporter::<CancellingClient, ForkSafeRuntime>::builder();
+        builder
+            .enable_stats(Duration::from_secs(3600))
+            .set_connection_timeout(Some(1000));
+        let mut exporter = builder.build::<CancellingClient>().unwrap();
+        exporter.capabilities.stalled_feedback = true;
+        let chunks = (1..=3)
+            .map(|id| {
+                let mut span = SpanBytes {
+                    trace_id: id,
+                    span_id: u64::try_from(id).unwrap(),
+                    resource: BytesString::from("x".repeat(600)),
+                    ..Default::default()
+                };
+                span.metrics.insert(
+                    "_sampling_priority_v1".into(),
+                    if id == 1 { 0.0 } else { 1.0 },
+                );
+                vec![span]
+            })
+            .collect();
+        let result = exporter.send_trace_chunks_batched(
+            PooledChunks::unpooled(chunks),
+            1024,
+            (!deadline).then_some(&exporter.capabilities.token),
+        );
+        let kind = if deadline {
+            io::ErrorKind::TimedOut
+        } else {
+            io::ErrorKind::Interrupted
+        };
+        assert!(
+            matches!(result.error, Some(TraceExporterError::Io(error)) if error.kind() == kind)
+        );
+        assert_eq!((result.in_flight_chunks, result.in_flight_spans), (0, 0));
+        assert_eq!(
+            (result.unattempted_chunks, result.unattempted_spans),
+            (1, 1)
+        );
+        assert_eq!((result.pending_p0_traces, result.pending_p0_spans), (0, 0));
+        assert_eq!(result.payloads.len(), 1);
+        let payload = &result.payloads[0];
+        assert!(matches!(payload.response, Ok(AgentResponse::Unchanged)));
+        assert_eq!(payload.observations.chunks_sent, 1);
+        assert_eq!(payload.observations.status_code, 202);
+        assert_eq!(payload.observations.requests_count, 2);
+        assert_eq!(exporter.capabilities.requests.load(Ordering::SeqCst), 2);
+    }
 }
 
 #[derive(Clone, Debug, Default)]
