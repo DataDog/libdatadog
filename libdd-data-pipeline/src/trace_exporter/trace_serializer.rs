@@ -46,6 +46,16 @@ impl TraceSerializer {
         }
     }
 
+    #[cfg(all(feature = "external-observations", not(target_arch = "wasm32")))]
+    pub(super) fn batch_hint(&self) -> usize {
+        self.previous_serialised_len.load(Ordering::Relaxed)
+    }
+
+    #[cfg(all(feature = "external-observations", not(target_arch = "wasm32")))]
+    pub(super) fn remember_batch_size(&self, n: usize) {
+        self.previous_serialised_len.store(n, Ordering::Relaxed);
+    }
+
     /// Prepare traces payload and HTTP headers for sending to agent
     pub(super) fn prepare_traces_payload<T: TraceData>(
         &self,

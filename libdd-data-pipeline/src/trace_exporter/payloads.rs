@@ -36,6 +36,7 @@ pub(super) struct Payloads<'a, T: TraceData> {
     format: TraceExporterOutputFormat,
     limit: usize,
     ranges: ChunkRanges,
+    pub(super) initial_capacity: usize,
 }
 
 impl<'a, T: TraceData> Payloads<'a, T> {
@@ -51,6 +52,7 @@ impl<'a, T: TraceData> Payloads<'a, T> {
             format,
             limit,
             ranges: ChunkRanges::new(0..traces.len()),
+            initial_capacity: 0,
         }
     }
 
@@ -70,7 +72,15 @@ impl<'a, T: TraceData> Payloads<'a, T> {
         let (indices, encoded) = self.ranges.next_with(
             |r| {
                 (!stop()).then(|| {
-                    TraceSerializer::encode_range(&self.traces[r], self.metadata, self.format, 0)
+                    let capacity = std::mem::take(&mut self.initial_capacity)
+                        .min(self.limit)
+                        .min(u32::MAX as usize);
+                    TraceSerializer::encode_range(
+                        &self.traces[r],
+                        self.metadata,
+                        self.format,
+                        capacity,
+                    )
                 })
             },
             |result| match result {
