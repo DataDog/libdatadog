@@ -26,6 +26,10 @@ impl ObservationLength {
     pub const fn new(obs_len: usize) -> Self {
         Self(obs_len)
     }
+
+    pub const fn len(&self) -> usize {
+        self.0
+    }
 }
 
 /// This represents a `Vec<i64>` associated with a sample

@@ -12,7 +12,7 @@ use crate::collections::identifiable::Id;
 use crate::internal::Timestamp;
 use crate::profiles::{DefaultObservationCodec as DefaultCodec, ObservationCodec};
 use byteorder::{NativeEndian, ReadBytesExt};
-use std::io::{self, BufWriter, Write};
+use std::io::{self, BufWriter, Read, Write};
 
 pub type TimestampedObservations = TimestampedObservationsImpl<DefaultCodec>;
 
@@ -85,16 +85,19 @@ impl<C: ObservationCodec> TimestampedObservationsImpl<C> {
     }
 }
 
-impl<C: ObservationCodec> Iterator for TimestampedObservationsIterImpl<C> {
-    type Item = (Sample, Timestamp, Vec<i64>);
-
-    fn next(&mut self) -> Option<Self::Item> {
-        // In here we read the bytes in the same order as in add above
-
-        let stacktrace = self.decoder.read_u32::<NativeEndian>().ok()?;
-        let labels = self.decoder.read_u32::<NativeEndian>().ok()?;
-        let ts = self.decoder.read_i64::<NativeEndian>().ok()?;
-        let mut values = Vec::with_capacity(self.sample_types_len);
+impl<C: ObservationCodec> TimestampedObservationsIterImpl<C> {
+    /// Decodes the next observation into `values`, reusing its existing allocation.
+    pub fn next_into(&mut self, values: &mut Vec<i64>) -> Option<(Sample, Timestamp)> {
+        // Read fixed-size header (stacktrace: u32, labels: u32, ts: i64) in one call.
+        let mut header = [0u8; 16];
+        self.decoder.read_exact(&mut header).ok()?;
+        let stacktrace = u32::from_ne_bytes([header[0], header[1], header[2], header[3]]);
+        let labels = u32::from_ne_bytes([header[4], header[5], header[6], header[7]]);
+        let ts = i64::from_ne_bytes([
+            header[8], header[9], header[10], header[11], header[12], header[13], header[14],
+            header[15],
+        ]);
+        values.clear();
         for _ in 0..self.sample_types_len {
             values.push(self.decoder.read_i64::<NativeEndian>().ok()?);
         }
@@ -104,7 +107,16 @@ impl<C: ObservationCodec> Iterator for TimestampedObservationsIterImpl<C> {
                 labels: LabelSetId::from_offset(labels as usize),
             },
             std::num::NonZeroI64::new(ts)?,
-            values,
         ))
+    }
+}
+
+impl<C: ObservationCodec> Iterator for TimestampedObservationsIterImpl<C> {
+    type Item = (Sample, Timestamp, Vec<i64>);
+
+    fn next(&mut self) -> Option<Self::Item> {
+        let mut values = Vec::with_capacity(self.sample_types_len);
+        let (sample, ts) = self.next_into(&mut values)?;
+        Some((sample, ts, values))
     }
 }
