@@ -4,6 +4,7 @@
 use bytes::Bytes;
 use futures::StreamExt;
 use libdd_ai_guard::{DEBUG_PING_URI, handle_dispatch, run_dispatch_loop};
+use rc_crypto::Signature;
 use rc_x509_client::{
     Payload,
     dispatch::{Dispatch, DispatchError, new_dispatcher_interconnect},
@@ -17,12 +18,16 @@ use rc_x509_proto::{
     },
     protocol::v1,
 };
-use rc_x509_test_client_harness::client::{TestClient, conn_id_to_proto};
+use rc_x509_test_client_harness::{TestClientBuilder, client::conn_id_to_proto};
+use rc_x509_test_helpers::test_issuer::TestChain;
 use tokio::sync::watch;
 
 #[tokio::test]
 async fn mock_io_magic_tunnel_ping_roundtrip() {
-    let mut client = TestClient::new();
+    let chain = TestChain::default();
+    let mut client = TestClientBuilder::default()
+        .with_testing_roots(chain.root())
+        .build();
     let mut conn = client.new_connection().await;
 
     let conn_id = conn.perform_handshake().await;
@@ -35,8 +40,14 @@ async fn mock_io_magic_tunnel_ping_roundtrip() {
     };
     let correlation_id = CorrelationId::new(7);
 
-    conn.dispatch_magic_tunnel(correlation_id, DEBUG_PING_URI, encode(&ping_req))
-        .await;
+    conn.dispatch_magic_tunnel(
+        correlation_id,
+        chain.leaf.cert().cert_id(),
+        Signature::try_from([42_u8; 10].as_slice()).unwrap(),
+        DEBUG_PING_URI,
+        encode(&ping_req),
+    )
+    .await;
 
     let (payload_tx, payload_rx) = watch::channel(None);
 
