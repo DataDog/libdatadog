@@ -251,7 +251,8 @@ impl<
         let limit = self
             .info_response_observer
             .max_request_bytes()
-            .map_or(local_limit, |agent| local_limit.min(agent));
+            // The Agent's limited reader needs one byte left to read EOF.
+            .map_or(local_limit, |agent| local_limit.min(agent - 1));
         let mut format = self.effective_output_format();
         let mut endpoint = Endpoint {
             url: format.add_path(&self.endpoint.url),
