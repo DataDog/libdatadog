@@ -229,11 +229,12 @@ impl<
         } else {
             local_limit
         };
-        let limit = self
-            .info_response_observer
-            .max_request_bytes()
-            // The Agent's limited reader needs one byte left to read EOF.
-            .map_or(local_limit, |agent| local_limit.min(agent - 1));
+        let limit = || {
+            self.info_response_observer
+                .max_request_bytes()
+                // The Agent's limited reader needs one byte left to read EOF.
+                .map_or(local_limit, |agent| local_limit.min(agent - 1))
+        };
         let mut format = self.effective_output_format();
         let mut endpoint = Endpoint {
             url: format.add_path(&self.endpoint.url),
@@ -252,8 +253,12 @@ impl<
             latest_feedback: None,
             diagnostic_bytes_remaining: MAX_DIAGNOSTIC_BYTES,
         };
-        let mut planner = Payloads::new(&traces, &self.metadata, format, limit);
-        while let Some(payload) = planner.next(&stop) {
+        let mut planner = Payloads::new(&traces, &self.metadata, format, limit());
+        loop {
+            planner.set_limit(limit());
+            let Some(payload) = planner.next(&stop) else {
+                break;
+            };
             let (counts, bytes) = match payload {
                 Payload::Stopped => return Err(stopped()),
                 Payload::Encoded { indices, bytes } => (
@@ -317,7 +322,7 @@ impl<
             if stop() {
                 return Err(stopped());
             }
-            let bytes = super::payloads::empty(&self.metadata, format, limit, &stop)?;
+            let bytes = super::payloads::empty(&self.metadata, format, limit(), &stop)?;
             let counts = PayloadCounts {
                 chunks: 0,
                 spans: 0,

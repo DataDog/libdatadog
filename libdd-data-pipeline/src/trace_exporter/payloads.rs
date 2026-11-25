@@ -54,6 +54,10 @@ impl<'a, T: TraceData> Payloads<'a, T> {
         }
     }
 
+    pub(super) fn set_limit(&mut self, limit: usize) {
+        self.limit = limit;
+    }
+
     pub(super) fn fallback_to_v04(&mut self) {
         self.format = TraceExporterOutputFormat::V04;
     }
