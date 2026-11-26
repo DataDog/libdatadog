@@ -205,6 +205,37 @@ async fn dispatch_pushes_json_policy_and_evaluates_locally() {
     assert_eq!(decision.rule_id.as_deref(), Some("r1"));
     assert!(decision.blocking);
 
+    // Live SDS Vault push over the same Magic Tunnel preserves prior rules.
+    let sds_json = br#"{"sds":{"enabled":true,"mode":"vault","presets":["credit_card","email"],"block_rehydrate_tools":["send_external_webhook"]}}"#;
+    let sds_ping = PingRequest {
+        connection_id: "test-conn".to_string(),
+        reason: "poc-sds-vault".to_string(),
+        payload: sds_json.to_vec(),
+    };
+    let sds_req = encode(&v1::DispatchRequestPayload {
+        connection_id: None,
+        payload: Some(v1::dispatch_request_payload::Payload::MagicTunnel(
+            MagicTunnelRequest {
+                uri: DEBUG_PING_URI.to_string(),
+                request: encode(&sds_ping),
+            },
+        )),
+    });
+    publisher
+        .dispatch(Dispatch {
+            correlation_id: CorrelationId::new(11),
+            payload: Payload::from(sds_req),
+        })
+        .await
+        .expect("dispatch sds policy");
+    payload_rx.changed().await.expect("sds payload received");
+    assert!(responses.next().await.expect("sds resp").result.is_ok());
+
+    let tok = policy_store.tokenize(&["Email alice@acme.com about card 4532-0151-1283-0366"]);
+    assert_eq!(tok.texts[0], "Email <EMAIL_1> about card <CC_1>");
+    let detok = policy_store.detokenize("Replied to <EMAIL_1>", &tok.vault, None);
+    assert_eq!(detok.text, "Replied to alice@acme.com");
+
     drop(publisher);
     loop_task.await.expect("dispatch loop exits cleanly");
 }
