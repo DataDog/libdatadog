@@ -39,7 +39,7 @@ execFileSync(wasmOpt, [source, '-Oz', '--converge', '--enable-mutable-globals',
 // The Endive AOT compiler maps every wasm function to one JVM method, and wasm-opt's
 // -Oz/--converge inlining grows a function past the JVM's 64 KiB method limit, which would
 // silently push it to the interpreter. The Java artifact uses -O1, which keeps every
-// function compilable, and the Gradle build treats any interpreter fallback as an error.
+// function small enough for one JVM method.
 const javaArtifact = `${root}/artifacts/remote-config-java.wasm`
 execFileSync(wasmOpt, [source, '-O1', '--enable-mutable-globals',
   '--enable-nontrapping-float-to-int', '--enable-bulk-memory', '--enable-sign-ext',

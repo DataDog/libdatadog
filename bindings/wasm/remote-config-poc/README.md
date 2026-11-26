@@ -21,6 +21,8 @@ The build restores the pinned Wasmtime NuGet package for the .NET host. Wasmtime
 
 `abi.json` defines the ABI version, function names, and scalar arguments. `scripts/generate.mjs` emits Rust exports, JavaScript declarations and memory helpers, typed C# delegates and memory helpers, and the Java `RcAbi` class. Generated files are checked in. `--check` detects divergence.
 
+The Java host is split into an embeddable library and a CLI demo. `RemoteConfigHost.load()` instantiates the AOT-compiled reactor (WASI preview 1, inherited clocks and randomness) and returns public `RcAbi` bindings; `RemoteConfigClient.create()` owns a guest client handle and drives the poll loop over a pluggable `HttpTransport` — `JavaNetHttpTransport` provides the default java.net.http implementation, and tracer hosts can substitute their own transport. `Main` remains the CLI used by the conformance suite.
+
 ```text
 abi.json -> Rust exports -> libdd-remote-config -> one WASM reactor
         -> JavaScript binding -> Node HTTP/timers

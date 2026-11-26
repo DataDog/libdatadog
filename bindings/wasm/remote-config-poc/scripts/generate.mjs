@@ -70,6 +70,9 @@ function javaMethod (name) {
   return name.replace(/^rc_/, '').replace(/_([a-z])/g, (_, letter) => letter.toUpperCase())
 }
 
+/** Raw registry/memory primitives that stay package-private: misuse corrupts guest state. */
+const javaInternal = new Set(['alloc', 'free', 'bufferPtr', 'bufferLen', 'error'])
+
 emit('hosts/java/src/main/java/com/datadoghq/remoteconfig/poc/RcAbi.java', `
 package com.datadoghq.remoteconfig.poc;
 
@@ -83,15 +86,16 @@ import run.endive.runtime.Memory;
 /**
  * Bindings for the shared remote-config WASM ABI, mirroring hosts/node/bindings.mjs and
  * hosts/dotnet/Bindings.g.cs. All guest calls return an i32 handle: -1 is the error sentinel,
- * ids are allocated from 1, and 0 from rc_result means no outcome yet.
+ * ids are allocated from 1, and 0 from rc_result means no outcome yet. The class and its
+ * members are public so host libraries outside this package can drive the reactor.
  */
-final class RcAbi {
+public final class RcAbi {
     private final Memory memory;
 ` +
 exports.map(([name]) => `    private final ExportFunction ${javaField(name)};
 `).join('') +
 `
-    RcAbi(Instance instance) {
+    public RcAbi(Instance instance) {
         memory = instance.memory();
         if (memory == null) throw new IllegalStateException("Missing memory export");
 ` +
@@ -110,7 +114,7 @@ exports.map(([name]) => `        ${javaField(name)} = function(instance, "${name
     }
 
     /** Throws a descriptive exception when the guest reports -1. */
-    int check(int result) {
+    public int check(int result) {
         if (result >= 0) return result;
         int error = error();
         if (error <= 0) throw new IllegalStateException("Guest error buffer unavailable");
@@ -119,11 +123,12 @@ exports.map(([name]) => `        ${javaField(name)} = function(instance, "${name
 
     // Unchecked guest calls, mirroring the raw delegate fields of the .NET bindings.
 ` +
-exports.map(([name, args]) => `    int ${javaMethod(name)}(${args.map(arg => `int ${arg}`).join(', ')}) { return call(${javaField(name)}${args.length ? ', ' + args.join(', ') : ''}); }
+exports.map(([name, args]) => `    ${javaInternal.has(javaMethod(name)) ? '' : 'public '}int ${javaMethod(name)}(${args.map(arg => `int ${arg}`).join(', ')}) { return call(${javaField(name)}${args.length ? ', ' + args.join(', ') : ''}); }
 `).join('') +
 `
-    /** Allocates a guest buffer and writes the UTF-8 JSON encoding of value into it. */
-    int write(Object value) {
+    /** Allocates a guest buffer and writes value.toString() into it, without JSON encoding; pass
+     * an org.json value (JSONObject, JSONArray) so the text is its JSON encoding. */
+    public int write(Object value) {
         byte[] bytes = value.toString().getBytes(StandardCharsets.UTF_8);
         int buffer = check(alloc(bytes.length));
         try {
@@ -138,7 +143,7 @@ exports.map(([name, args]) => `    int ${javaMethod(name)}(${args.map(arg => `in
     }
 
     /** Allocates a guest buffer and writes raw bytes into it, without JSON encoding. */
-    int writeBytes(byte[] bytes) {
+    public int writeBytes(byte[] bytes) {
         int buffer = check(alloc(bytes.length));
         try {
             memory.write(call(rcBufferPtr, buffer), bytes);
@@ -150,7 +155,7 @@ exports.map(([name, args]) => `    int ${javaMethod(name)}(${args.map(arg => `in
     }
 
     /** Copies a guest buffer out and frees it; ownership returns to the guest. */
-    byte[] read(int buffer) {
+    public byte[] read(int buffer) {
         try {
             int length = check(call(rcBufferLen, buffer));
             return memory.readBytes(call(rcBufferPtr, buffer), length);
@@ -159,11 +164,11 @@ exports.map(([name, args]) => `    int ${javaMethod(name)}(${args.map(arg => `in
         }
     }
 
-    JSONObject json(int buffer) {
+    public JSONObject json(int buffer) {
         return new JSONObject(new String(read(check(buffer)), StandardCharsets.UTF_8));
     }
 
-    JSONArray jsonArray(int buffer) {
+    public JSONArray jsonArray(int buffer) {
         return new JSONArray(new String(read(check(buffer)), StandardCharsets.UTF_8));
     }
 }
