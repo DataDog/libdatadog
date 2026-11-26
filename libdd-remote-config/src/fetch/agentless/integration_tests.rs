@@ -596,6 +596,45 @@ async fn dc_rotate(
         .unwrap()
 }
 
+/// Rotate the shared embedded v1 repo once to a DC's local ONLINE keys, the
+/// way production DCs are keyed: the root role stays on the shared signing
+/// key (root signing keys are the same in every DC; only the online role
+/// keys differ), and the rotation step still verifies from the embedded
+/// root.
+async fn dc_rotate_shared_root(
+    shared_root_key: &Ed25519PrivateKey,
+    dc: &DcKeys,
+    prev: &RawSignedMetadataSet<Json>,
+) -> RawSignedMetadataSet<Json> {
+    let db = Database::<Json>::from_trusted_metadata(prev).unwrap();
+    let mut repo = EphemeralRepository::<Json>::new();
+    RepoBuilder::from_database(&mut repo, &db)
+        .trusted_root_keys(&[shared_root_key])
+        .trusted_targets_keys(&[&dc.targets])
+        .trusted_snapshot_keys(&[&dc.snapshot])
+        .trusted_timestamp_keys(&[&dc.timestamp])
+        .signing_root_keys(&[shared_root_key])
+        .stage_root()
+        .unwrap()
+        .commit()
+        .await
+        .unwrap()
+}
+
+/// The key IDs of one role of a metadata set's root, as a sorted set.
+fn role_key_ids(
+    set: &RawSignedMetadataSet<Json>,
+    role: &str,
+) -> std::collections::BTreeSet<String> {
+    let root: serde_json::Value = serde_json::from_slice(set.root().unwrap().as_bytes()).unwrap();
+    root["signed"]["roles"][role]["keyids"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|k| k.as_str().unwrap().to_string())
+        .collect()
+}
+
 /// A v2 root at the DC's keys that was **not** signed by the shared embedded
 /// root key: a chain the embedded root cannot verify. Built from scratch —
 /// `RepoBuilder::from_database` refuses to commit a root the previous
@@ -731,15 +770,19 @@ async fn test_same_chain_rejoins_without_org_uuid_pin() {
     assert_eq!(f.next_backoff(), None);
 }
 
-/// Regression test for the removed SameChain key comparison. Production
-/// datacenters share the root signing keys of both repositories, so the old
-/// comparison classified every real DC switch as a replay of the current
-/// chain and kept the fetcher locked out: the recovery poll re-verified the
-/// new DC's payload successfully, the key check returned SameChain, and the
-/// fetcher stayed failed forever. Now a valid fresh-join payload is accepted
-/// even when it is signed by the latched keys (as a real-DC switch or a
-/// same-chain rejoin after a transient failure is), and a genuine DC switch
-/// with shared root keys recovers.
+/// Regression test for the removed SameChain key comparison. The root
+/// signing keys are the same in every datacenter: only the online role keys
+/// (targets, snapshot, timestamp) differ per DC. The removed comparison
+/// checked whether the root keys differed between the latched state and the
+/// fresh-join payload (different keys: DC switch, same keys: replay), so on
+/// a real DC switch it always saw "same keys": the recovery poll re-verified
+/// the new DC's payload successfully, the check routed it back through the
+/// normal `apply()` path, where it kept failing against the latched online
+/// keys forever.
+///
+/// This test builds both DCs with a shared root signing key, exactly like
+/// production, and asserts the property first: same root key IDs across DCs,
+/// different online key IDs. A genuine DC switch must recover.
 #[tokio::test]
 #[cfg_attr(miri, ignore)]
 async fn test_dc_switch_with_shared_root_keys_recovers() {
@@ -748,23 +791,32 @@ async fn test_dc_switch_with_shared_root_keys_recovers() {
     let embedded_cfg = build_v1(&shared_config_key).await;
     let embedded_dir = build_v1(&shared_director_key).await;
 
-    // Both DCs rotated once to their own local role keys, cross-signed from
-    // the shared embedded root, and the shared root key stays the root
-    // signing key of every reached root (root key IDs are therefore equal
-    // across DCs, like in production; only the online role keys differ).
+    // Both DCs rotated once: the root role stays on the shared signing key,
+    // the online roles move to the DC's keys. Cross-signing is trivial: the
+    // shared key signs the step, and it is the trusted key of both v1 and
+    // v2's root role.
     let dc_a = new_dc_keys();
     let dc_b = new_dc_keys();
-    let cfg_a = dc_rotate(&shared_config_key, &dc_a, &embedded_cfg).await;
-    let dir_a = dc_rotate(&shared_director_key, &dc_a, &embedded_dir).await;
-    let cfg_b = dc_rotate(&shared_config_key, &dc_b, &embedded_cfg).await;
-    let dir_b = dc_rotate(&shared_director_key, &dc_b, &embedded_dir).await;
+    let cfg_a = dc_rotate_shared_root(&shared_config_key, &dc_a, &embedded_cfg).await;
+    let dir_a = dc_rotate_shared_root(&shared_director_key, &dc_a, &embedded_dir).await;
+    let cfg_b = dc_rotate_shared_root(&shared_config_key, &dc_b, &embedded_cfg).await;
+    let dir_b = dc_rotate_shared_root(&shared_director_key, &dc_b, &embedded_dir).await;
 
-    let (b_snap_bytes, b_ts_bytes) = config_snapshot_with_org_uuid_keys(
-        &cfg_b,
-        &dc_b.snapshot,
-        &dc_b.timestamp,
-        "ORG-A",
+    // The property that defeated the removed check: identical root keys in
+    // both DCs, different online keys.
+    assert_eq!(role_key_ids(&cfg_a, "root"), role_key_ids(&cfg_b, "root"));
+    assert_eq!(role_key_ids(&dir_a, "root"), role_key_ids(&dir_b, "root"));
+    assert_ne!(
+        role_key_ids(&cfg_a, "snapshot"),
+        role_key_ids(&cfg_b, "snapshot")
     );
+    assert_ne!(
+        role_key_ids(&dir_a, "snapshot"),
+        role_key_ids(&dir_b, "snapshot")
+    );
+
+    let (b_snap_bytes, b_ts_bytes) =
+        config_snapshot_with_org_uuid_keys(&cfg_b, &dc_b.snapshot, &dc_b.timestamp, "ORG-A");
     let b_fresh_join = {
         let mut r = fresh_join(&cfg_b, &dir_b);
         let metas = r.config_metas.as_mut().unwrap();
