@@ -7,22 +7,22 @@ use super::ffi;
 use super::profile::EncodedProfile;
 use crate::exporter;
 use crate::internal;
-use libdd_common::{Endpoint, parse_uri};
+use libdd_types::{Endpoint, parse_uri};
 
 struct PreparedExportArgs<'a> {
     files: Vec<(String, &'a [u8])>,
-    additional_tags: Vec<libdd_common::tag::Tag>,
+    additional_tags: Vec<libdd_types::tag::Tag>,
     process_tags: Option<String>,
     internal_metadata: Option<serde_json::Value>,
     info: Option<serde_json::Value>,
 }
 
-fn tags_from_cxx(tags: Vec<ffi::Tag>) -> anyhow::Result<Vec<libdd_common::tag::Tag>> {
+fn tags_from_cxx(tags: Vec<ffi::Tag>) -> anyhow::Result<Vec<libdd_types::tag::Tag>> {
     tags.iter()
         .map(|tag| {
             let key = String::from_utf8_lossy(tag.key);
             let value = String::from_utf8_lossy(tag.value);
-            libdd_common::tag::Tag::new(key, value)
+            libdd_types::tag::Tag::new(key, value)
         })
         .collect()
 }
@@ -46,7 +46,7 @@ fn apply_timeout_and_resolver(
 ) -> Endpoint {
     // Set timeout if non-zero (0 means use default).
     if timeout_ms > 0 {
-        endpoint.timeout_ms = timeout_ms;
+        endpoint.set_timeout_ms(timeout_ms);
     }
     endpoint.with_system_resolver(use_system_resolver)
 }

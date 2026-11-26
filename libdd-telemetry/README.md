@@ -69,7 +69,7 @@ With no features at all, the metric namespace and type enums
 (`data::metrics::{MetricNamespace, MetricType}`) remain available without
 `alloc`.
 
-The metric `Tag` is defined by the alloc-compatible `libdd-common` crate, so
+The metric `Tag` is defined by the alloc-compatible `libdd-types` crate, so
 existing `libdd_common::tag::Tag` callers continue to use the same concrete
 type.
 

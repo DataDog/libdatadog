@@ -8,7 +8,7 @@
 
 #[cfg(feature = "telemetry")]
 use libdd_capabilities::{HttpClientCapability, MaybeSend, SleepCapability};
-use libdd_common::tag::const_assert;
+use libdd_types::tag::const_assert;
 
 /// Bitset of collapsed stats key fields
 pub struct CollapsedFieldSet(usize);
@@ -103,14 +103,14 @@ impl CollapsedFieldsMetrics {
     }
 
     #[cfg(any(feature = "telemetry", feature = "dogstatsd"))]
-    fn oversized_additional_tags_tag() -> libdd_common::tag::Tag {
-        libdd_common::tag!("oversized", "additional_metric_tags")
+    fn oversized_additional_tags_tag() -> libdd_types::tag::Tag {
+        libdd_types::tag!("oversized", "additional_metric_tags")
     }
 
     /// Given a bitmask of collapsed fields, returns the list of tags to attach to
     /// telemetry/dogstatsd
     #[cfg(any(feature = "telemetry", feature = "dogstatsd"))]
-    fn fields_mask_to_list(mask: usize) -> Vec<libdd_common::tag::Tag> {
+    fn fields_mask_to_list(mask: usize) -> Vec<libdd_types::tag::Tag> {
         let mut tags = Vec::new();
         for field_pow in 0..CollapsedFieldSet::FIELDS.len() {
             let field_value = 1 << field_pow;
@@ -124,16 +124,16 @@ impl CollapsedFieldsMetrics {
             }
             let field_tag = match field_value {
                 CollapsedFieldSet::RESOURCE_NAME => {
-                    libdd_common::tag!("collapsed", "resource")
+                    libdd_types::tag!("collapsed", "resource")
                 }
                 CollapsedFieldSet::HTTP_ENDPOINT => {
-                    libdd_common::tag!("collapsed", "http_endpoint")
+                    libdd_types::tag!("collapsed", "http_endpoint")
                 }
                 CollapsedFieldSet::PEER_TAGS => {
-                    libdd_common::tag!("collapsed", "peer_tags")
+                    libdd_types::tag!("collapsed", "peer_tags")
                 }
                 CollapsedFieldSet::ADDITIONAL_TAGS => {
-                    libdd_common::tag!("collapsed", "additional_metric_tags")
+                    libdd_types::tag!("collapsed", "additional_metric_tags")
                 }
                 // Should be unreachable, but don't fail in prod if provided with an invalid field
                 // set

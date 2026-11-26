@@ -12,8 +12,8 @@ bench = false
 
 [dependencies]
 libdd-live-debugger = { path = "../libdd-live-debugger" }
-libdd-common = { path = "../libdd-common" }
-libdd-common-ffi = { path = "../libdd-common-ffi", default-features = false, features = ["std"] }
+libdd-types = { path = "../libdd-types" }
+libdd-types-ffi = { path = "../libdd-types-ffi", default-features = false, features = ["std"] }
 libdd-regex = { path = "../libdd-regex" }
 percent-encoding = { workspace = true, features = ["std"] }
 serde_json.workspace = true
@@ -23,7 +23,7 @@ log.workspace = true
 
 [features]
 default = ["cbindgen"]
-cbindgen = ["build_common/cbindgen", "libdd-common-ffi/cbindgen"]
+cbindgen = ["build_common/cbindgen", "libdd-types-ffi/cbindgen"]
 regex-lite = ["libdd-regex/regex-lite"]
 
 [build-dependencies]

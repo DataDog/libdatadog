@@ -6,12 +6,12 @@ use crate::agent_remote_config::AgentRemoteConfigWriter;
 use crate::service::agent_info::AgentInfoGuard;
 use futures::future::join_all;
 use libdd_capabilities_impl::{HttpClientCapability, NativeCapabilities};
-use libdd_common::Endpoint;
-use libdd_common::MutexExt;
 use libdd_ipc::platform::NamedShmHandle;
 use libdd_trace_utils::trace_utils;
 use libdd_trace_utils::trace_utils::SendData;
 use libdd_trace_utils::trace_utils::SendDataResult;
+use libdd_types::Endpoint;
+use libdd_types::MutexExt;
 use serde::{Deserialize, Serialize};
 use std::collections::hash_map::Entry;
 use std::collections::{BTreeMap, HashMap};
@@ -295,7 +295,7 @@ impl TraceFlusher {
         self.metrics.lock_or_panic().update(&response);
         match response.last_result {
             Ok(response) if response.status().is_success() => {
-                if endpoint.api_key.is_none() {
+                if endpoint.api_key().is_none() {
                     // not when intake
                     self.write_remote_configs(endpoint.clone(), response.into_body().to_vec());
                 }
@@ -412,11 +412,8 @@ mod tests {
             .load(Ordering::Relaxed) as usize
             / 2;
 
-        let target_endpoint = Endpoint {
-            url: server.url("").to_owned().parse().unwrap(),
-            api_key: Some("test-key".into()),
-            ..Default::default()
-        };
+        let target_endpoint =
+            Endpoint::from_url(server.url("").to_owned().parse().unwrap()).with_api_key("test-key");
 
         let send_data_1 = create_send_data(size, &target_endpoint);
         let send_data_2 = create_send_data(size, &target_endpoint);
@@ -453,11 +450,8 @@ mod tests {
             .min_force_drop_size_bytes
             .load(Ordering::Relaxed) as usize
             - 1;
-        let target_endpoint = Endpoint {
-            url: server.url("").to_owned().parse().unwrap(),
-            api_key: Some("test-key".into()),
-            ..Default::default()
-        };
+        let target_endpoint =
+            Endpoint::from_url(server.url("").to_owned().parse().unwrap()).with_api_key("test-key");
         let send_data_1 = create_send_data(size, &target_endpoint);
 
         trace_flusher.enqueue(send_data_1, Duration::MAX, None);
@@ -485,11 +479,8 @@ mod tests {
                     .body(r#"{"status":"ok"}"#);
             })
             .await;
-        let target_endpoint = Endpoint {
-            url: server.url("").to_owned().parse().unwrap(),
-            api_key: Some("test-key".into()),
-            ..Default::default()
-        };
+        let target_endpoint =
+            Endpoint::from_url(server.url("").to_owned().parse().unwrap()).with_api_key("test-key");
 
         trace_flusher.enqueue(
             create_send_data(100, &target_endpoint),
@@ -529,11 +520,8 @@ mod tests {
             .min_force_drop_size_bytes
             .load(Ordering::Relaxed) as usize
             + 1;
-        let target_endpoint = Endpoint {
-            url: server.url("").to_owned().parse().unwrap(),
-            api_key: Some("test-key".into()),
-            ..Default::default()
-        };
+        let target_endpoint =
+            Endpoint::from_url(server.url("").to_owned().parse().unwrap()).with_api_key("test-key");
 
         let send_data_1 = create_send_data(size, &target_endpoint);
 
@@ -554,10 +542,7 @@ mod tests {
                 then.status(404).body("404 page not found");
             })
             .await;
-        let target_endpoint = Endpoint {
-            url: server.url("").to_owned().parse().unwrap(),
-            ..Default::default()
-        };
+        let target_endpoint = Endpoint::from_url(server.url("").to_owned().parse().unwrap());
         let mut send_data = create_send_data(100, &target_endpoint);
         send_data.set_retry_strategy(RetryStrategy::new(0, 0, RetryBackoffType::Constant, None));
 

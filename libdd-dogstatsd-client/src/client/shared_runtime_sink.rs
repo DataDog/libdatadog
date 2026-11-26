@@ -6,8 +6,8 @@
 use anyhow::anyhow;
 use async_trait::async_trait;
 use cadence::{MetricSink, SinkStats};
-use libdd_common::Endpoint;
 use libdd_shared_runtime::{SharedRuntime, WorkerHandle, worker::Worker};
+use libdd_types::Endpoint;
 use std::fmt;
 use std::io;
 use std::panic::RefUnwindSafe;
@@ -130,7 +130,8 @@ pub fn create_shared_runtime_sink(
 ) -> anyhow::Result<(SharedRuntimeMetricSink, WorkerHandle)> {
     let (tx, rx) = mpsc::channel(QUEUE_SIZE);
 
-    let sink: Arc<dyn MetricSink + Send + Sync + RefUnwindSafe> = match endpoint.url.scheme_str() {
+    let sink: Arc<dyn MetricSink + Send + Sync + RefUnwindSafe> = match endpoint.url().scheme_str()
+    {
         #[cfg(unix)]
         Some("unix") => Arc::new(sink::create_unix_sink(endpoint)?),
         _ => Arc::new(sink::create_udp_sink(endpoint)?),

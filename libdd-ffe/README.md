@@ -35,7 +35,7 @@ The existing `ddog_ffe_get_assignment_with_options` interface and boolean layout
 Enable `cdn,https` to fetch managed or custom CDN configuration on an existing
 Tokio runtime using ring. For FIPS builds, disable default features and select
 `cdn,fips` instead; initialize the FIPS crypto provider before constructing the
-fetcher, as required by `libdd-common`. `cdn` itself does not select a TLS
+fetcher, as required by `libdd-networking`. `cdn` itself does not select a TLS
 provider and enables the shared connector's `HTTP_PROXY`, `HTTPS_PROXY`, and
 `NO_PROXY` support. Implement `ConfigurationSink` to publish accepted
 configuration; return `ApplyError` if publication fails so the ETag stays at the

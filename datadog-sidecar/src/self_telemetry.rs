@@ -10,11 +10,11 @@ use crate::service::ffe_flagevaluation_flusher::{
 };
 use crate::watchdog::WatchdogHandle;
 use libdd_capabilities_impl::NativeCapabilities;
-use libdd_common::{MutexExt, tag, tag::Tag};
 use libdd_ffe::telemetry::flagevaluation::ContextTruncationReason;
 use libdd_telemetry::data::metrics::{MetricNamespace, MetricType};
 use libdd_telemetry::metrics::ContextKey;
 use libdd_telemetry::worker::{LifecycleAction, TelemetryActions, TelemetryWorkerBuilder};
+use libdd_types::{MutexExt, tag, tag::Tag};
 
 /// The sidecar runs the telemetry worker on native, so its handle is pinned to
 /// [`NativeCapabilities`].
@@ -422,8 +422,8 @@ mod tests {
     };
     use crate::watchdog::Watchdog;
     use httpmock::{Method::POST, MockServer};
-    use libdd_common::Endpoint;
     use libdd_telemetry::config::TelemetryEndpoint;
+    use libdd_types::Endpoint;
     use serde_json::{Value, json};
 
     fn contains_expected_omission_metric(value: &Value) -> bool {
@@ -495,13 +495,11 @@ mod tests {
         };
         server.ffe_flagevaluation_coalescer.enqueue(
             NativeCapabilities::new(),
-            Endpoint {
-                url: http
-                    .url("/evp_proxy/v2/api/v2/flagevaluation")
+            Endpoint::from_url(
+                http.url("/evp_proxy/v2/api/v2/flagevaluation")
                     .parse()
                     .unwrap(),
-                ..Default::default()
-            },
+            ),
             FfeFlagEvaluationBatch {
                 context: FfeTelemetryContext {
                     service: "svc".into(),

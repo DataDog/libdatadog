@@ -5,7 +5,7 @@ use crate::fetch::FileStorage;
 use crate::file_change_tracker::{FilePath, UpdatedFiles};
 use crate::parse::{ParserRegistry, default_registry};
 use crate::{RemoteConfigParsed, RemoteConfigPath};
-use libdd_common::MutexExt;
+use libdd_types::MutexExt;
 use std::ops::Deref;
 use std::sync::{Arc, Mutex, MutexGuard};
 

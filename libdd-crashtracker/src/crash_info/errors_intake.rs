@@ -18,8 +18,8 @@ use super::{
 use anyhow::Context;
 use chrono::{DateTime, Utc};
 use http::{Uri, uri::PathAndQuery};
-use libdd_common::{Endpoint, parse_uri};
 use libdd_env::{env_bool, env_from_str, env_str_not_empty};
+use libdd_types::{Endpoint, parse_uri};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
@@ -44,14 +44,14 @@ fn endpoint_with_errors_intake_path(
     mut endpoint: Endpoint,
     direct_submission_enabled: bool,
 ) -> anyhow::Result<Endpoint> {
-    let mut uri_parts = endpoint.url.into_parts();
+    let mut uri_parts = endpoint.url().clone().into_parts();
     if uri_parts
         .scheme
         .as_ref()
         .is_some_and(|scheme| scheme.as_str() != "file")
     {
         uri_parts.path_and_query = Some(PathAndQuery::from_static(
-            if endpoint.api_key.is_some() && direct_submission_enabled {
+            if endpoint.api_key().is_some() && direct_submission_enabled {
                 DIRECT_ERRORS_INTAKE_URL_PATH
             } else {
                 AGENT_ERRORS_INTAKE_URL_PATH
@@ -59,7 +59,7 @@ fn endpoint_with_errors_intake_path(
         ));
     }
 
-    endpoint.url = Uri::from_parts(uri_parts)?;
+    endpoint.set_url(Uri::from_parts(uri_parts)?);
     Ok(endpoint)
 }
 
@@ -220,11 +220,9 @@ impl ErrorsIntakeConfig {
         };
 
         if let Ok(parsed_url) = parse_uri(&url) {
-            let _res = this.set_endpoint(Endpoint {
-                url: parsed_url,
-                api_key,
-                ..Default::default()
-            });
+            let mut endpoint = Endpoint::from_url(parsed_url);
+            endpoint.set_api_key(api_key);
+            let _res = this.set_endpoint(endpoint);
         }
 
         this
@@ -236,12 +234,9 @@ impl ErrorsIntakeConfig {
     }
 
     pub fn set_host_from_url(&mut self, host_url: &str) -> anyhow::Result<()> {
-        let endpoint = self.endpoint.take().unwrap_or_default();
-
-        self.set_endpoint(Endpoint {
-            url: parse_uri(host_url)?,
-            ..endpoint
-        })
+        let mut endpoint = self.endpoint.take().unwrap_or_default();
+        endpoint.set_url(parse_uri(host_url)?);
+        self.set_endpoint(endpoint)
     }
 }
 
@@ -508,8 +503,8 @@ impl ErrorsIntakeUploader {
         };
 
         // Handle file endpoint
-        if endpoint.url.scheme_str() == Some("file") {
-            let path = libdd_common::decode_uri_path_in_authority(&endpoint.url)
+        if endpoint.url().scheme_str() == Some("file") {
+            let path = libdd_types::decode_uri_path_in_authority(endpoint.url())
                 .context("errors intake file path is not valid")?;
 
             let file_path = path.with_extension("errors");
@@ -556,7 +551,7 @@ impl ErrorsIntakeUploader {
             .with_entity_headers();
 
         // Add errors intake specific headers
-        if endpoint.api_key.is_some() {
+        if endpoint.api_key().is_some() {
             // Direct intake - DD-API-KEY is added by to_request_builder
         } else {
             // Agent proxy - add EvP subdomain header
@@ -568,7 +563,7 @@ impl ErrorsIntakeUploader {
             .method(http::Method::POST)
             .header(
                 http::header::CONTENT_TYPE,
-                libdd_common::header::APPLICATION_JSON,
+                libdd_types::header::APPLICATION_JSON,
             )
             .body(serde_json::to_string(payload)?.into())?;
 
@@ -576,7 +571,7 @@ impl ErrorsIntakeUploader {
         let client = libdd_networking::http_common::new_client_periodic();
 
         tokio::time::timeout(
-            Duration::from_millis(endpoint.timeout_ms),
+            Duration::from_millis(endpoint.timeout_ms()),
             client.request(req),
         )
         .await??;
@@ -871,14 +866,14 @@ mod tests {
 
         // Should use error-tracking-intake.datadoghq.com for direct submission
         assert_eq!(
-            endpoint.url.host(),
+            endpoint.url().host(),
             Some("error-tracking-intake.datadoghq.com")
         );
-        assert_eq!(endpoint.url.scheme_str(), Some("https"));
-        assert!(endpoint.api_key.is_some());
+        assert_eq!(endpoint.url().scheme_str(), Some("https"));
+        assert!(endpoint.api_key().is_some());
 
         // With direct submission enabled and API key, should use direct path
-        assert_eq!(endpoint.url.path(), DIRECT_ERRORS_INTAKE_URL_PATH);
+        assert_eq!(endpoint.url().path(), DIRECT_ERRORS_INTAKE_URL_PATH);
     }
 
     #[test]
@@ -897,12 +892,12 @@ mod tests {
 
         // Should use error-tracking-intake with custom site
         assert_eq!(
-            endpoint.url.host(),
+            endpoint.url().host(),
             Some("error-tracking-intake.us3.datadoghq.com")
         );
-        assert_eq!(endpoint.url.scheme_str(), Some("https"));
-        assert!(endpoint.api_key.is_some());
-        assert_eq!(endpoint.url.path(), DIRECT_ERRORS_INTAKE_URL_PATH);
+        assert_eq!(endpoint.url().scheme_str(), Some("https"));
+        assert!(endpoint.api_key().is_some());
+        assert_eq!(endpoint.url().path(), DIRECT_ERRORS_INTAKE_URL_PATH);
     }
 
     #[test]
@@ -916,11 +911,11 @@ mod tests {
         let cfg = ErrorsIntakeConfig::from_env();
         let endpoint = cfg.endpoint().unwrap();
 
-        assert_eq!(endpoint.url.host(), Some("localhost"));
-        assert_eq!(endpoint.url.port_u16(), Some(9126));
+        assert_eq!(endpoint.url().host(), Some("localhost"));
+        assert_eq!(endpoint.url().port_u16(), Some(9126));
 
         // Should use agent proxy path
-        assert_eq!(endpoint.url.path(), AGENT_ERRORS_INTAKE_URL_PATH);
+        assert_eq!(endpoint.url().path(), AGENT_ERRORS_INTAKE_URL_PATH);
     }
 
     #[test]
@@ -938,12 +933,12 @@ mod tests {
         let endpoint = cfg.endpoint().unwrap();
 
         // Should use agent URL, not direct submission
-        assert_eq!(endpoint.url.host(), Some("localhost"));
-        assert_eq!(endpoint.url.port_u16(), Some(9126));
+        assert_eq!(endpoint.url().host(), Some("localhost"));
+        assert_eq!(endpoint.url().port_u16(), Some(9126));
 
         // Should use agent proxy path, not direct path
-        assert_eq!(endpoint.url.path(), AGENT_ERRORS_INTAKE_URL_PATH);
-        assert!(endpoint.api_key.is_none());
+        assert_eq!(endpoint.url().path(), AGENT_ERRORS_INTAKE_URL_PATH);
+        assert!(endpoint.api_key().is_none());
     }
 
     #[test]
@@ -981,17 +976,17 @@ mod tests {
         let cfg = ErrorsIntakeConfig::from_settings(&settings);
         let endpoint = cfg.endpoint().unwrap();
 
-        assert_eq!(endpoint.url.scheme_str(), Some("unix"));
+        assert_eq!(endpoint.url().scheme_str(), Some("unix"));
         // The original socket path is preserved in authority for unix:// URLs (URL encoded)
-        let decoded_path = libdd_common::decode_uri_path_in_authority(&endpoint.url).unwrap();
+        let decoded_path = libdd_types::decode_uri_path_in_authority(endpoint.url()).unwrap();
         assert_eq!(
             decoded_path.to_string_lossy(),
             "/var/run/datadog/apm.socket"
         );
 
         // Should use agent proxy path
-        assert_eq!(endpoint.url.path(), AGENT_ERRORS_INTAKE_URL_PATH);
-        assert!(endpoint.api_key.is_none());
+        assert_eq!(endpoint.url().path(), AGENT_ERRORS_INTAKE_URL_PATH);
+        assert!(endpoint.api_key().is_none());
     }
 
     #[test]
@@ -1007,14 +1002,14 @@ mod tests {
         let cfg = ErrorsIntakeConfig::from_env();
         let endpoint = cfg.endpoint().unwrap();
 
-        assert_eq!(endpoint.url.scheme_str(), Some("windows"));
+        assert_eq!(endpoint.url().scheme_str(), Some("windows"));
         // For windows: scheme, the pipe name is URL-encoded in the authority
-        let decoded_path = libdd_common::decode_uri_path_in_authority(&endpoint.url).unwrap();
+        let decoded_path = libdd_types::decode_uri_path_in_authority(endpoint.url()).unwrap();
         assert_eq!(decoded_path.to_string_lossy(), "my_custom_pipe");
 
         // Should use agent proxy path
-        assert_eq!(endpoint.url.path(), AGENT_ERRORS_INTAKE_URL_PATH);
-        assert!(endpoint.api_key.is_none());
+        assert_eq!(endpoint.url().path(), AGENT_ERRORS_INTAKE_URL_PATH);
+        assert!(endpoint.api_key().is_none());
     }
 
     #[test]
@@ -1029,13 +1024,13 @@ mod tests {
         let cfg = ErrorsIntakeConfig::from_env();
         let endpoint = cfg.endpoint().unwrap();
 
-        assert_eq!(endpoint.url.scheme_str(), Some("unix"));
-        let decoded_path = libdd_common::decode_uri_path_in_authority(&endpoint.url).unwrap();
+        assert_eq!(endpoint.url().scheme_str(), Some("unix"));
+        let decoded_path = libdd_types::decode_uri_path_in_authority(endpoint.url()).unwrap();
         assert_eq!(decoded_path.to_string_lossy(), "/tmp/custom.socket");
 
         // Should use agent proxy path
-        assert_eq!(endpoint.url.path(), AGENT_ERRORS_INTAKE_URL_PATH);
-        assert!(endpoint.api_key.is_none());
+        assert_eq!(endpoint.url().path(), AGENT_ERRORS_INTAKE_URL_PATH);
+        assert!(endpoint.api_key().is_none());
     }
 
     #[test]
@@ -1052,8 +1047,8 @@ mod tests {
         let cfg = ErrorsIntakeConfig::from_env();
         let endpoint = cfg.endpoint().unwrap();
 
-        assert_eq!(endpoint.url.host(), Some("priority-url"));
-        assert_eq!(endpoint.url.port_u16(), Some(9999));
+        assert_eq!(endpoint.url().host(), Some("priority-url"));
+        assert_eq!(endpoint.url().port_u16(), Some(9999));
 
         clear_errors_intake_env();
 
@@ -1064,8 +1059,8 @@ mod tests {
         let cfg = ErrorsIntakeConfig::from_env();
         let endpoint = cfg.endpoint().unwrap();
 
-        assert_eq!(endpoint.url.host(), Some("custom-host"));
-        assert_eq!(endpoint.url.port_u16(), Some(7777));
+        assert_eq!(endpoint.url().host(), Some("custom-host"));
+        assert_eq!(endpoint.url().port_u16(), Some(7777));
 
         // Test 3: Default fallback when nothing is set and no UDS socket
         let settings = ErrorsIntakeSettings {
@@ -1075,8 +1070,8 @@ mod tests {
         let cfg = ErrorsIntakeConfig::from_settings(&settings);
         let endpoint = cfg.endpoint().unwrap();
 
-        assert_eq!(endpoint.url.host(), Some(DEFAULT_AGENT_HOST));
-        assert_eq!(endpoint.url.port_u16(), Some(DEFAULT_AGENT_PORT));
+        assert_eq!(endpoint.url().host(), Some(DEFAULT_AGENT_HOST));
+        assert_eq!(endpoint.url().port_u16(), Some(DEFAULT_AGENT_PORT));
     }
 
     #[test]
@@ -1095,12 +1090,12 @@ mod tests {
 
         // Should use direct submission URL, not agent URL
         assert_eq!(
-            endpoint.url.host(),
+            endpoint.url().host(),
             Some("error-tracking-intake.datadoghq.com")
         );
-        assert_eq!(endpoint.url.scheme_str(), Some("https"));
-        assert!(endpoint.api_key.is_some());
-        assert_eq!(endpoint.url.path(), DIRECT_ERRORS_INTAKE_URL_PATH);
+        assert_eq!(endpoint.url().scheme_str(), Some("https"));
+        assert!(endpoint.api_key().is_some());
+        assert_eq!(endpoint.url().path(), DIRECT_ERRORS_INTAKE_URL_PATH);
 
         clear_errors_intake_env();
 
@@ -1113,10 +1108,10 @@ mod tests {
         let endpoint = cfg.endpoint().unwrap();
 
         // Should use agent URL
-        assert_eq!(endpoint.url.host(), Some("agent-host"));
-        assert_eq!(endpoint.url.port_u16(), Some(8888));
-        assert!(endpoint.api_key.is_none());
-        assert_eq!(endpoint.url.path(), AGENT_ERRORS_INTAKE_URL_PATH);
+        assert_eq!(endpoint.url().host(), Some("agent-host"));
+        assert_eq!(endpoint.url().port_u16(), Some(8888));
+        assert!(endpoint.api_key().is_none());
+        assert_eq!(endpoint.url().path(), AGENT_ERRORS_INTAKE_URL_PATH);
     }
 
     #[test]
@@ -1138,8 +1133,8 @@ mod tests {
         let endpoint = cfg.endpoint().unwrap();
 
         // Should use host/port, not UDS socket
-        assert_eq!(endpoint.url.host(), Some("custom-host"));
-        assert_eq!(endpoint.url.port_u16(), Some(9999));
-        assert_eq!(endpoint.url.path(), AGENT_ERRORS_INTAKE_URL_PATH);
+        assert_eq!(endpoint.url().host(), Some("custom-host"));
+        assert_eq!(endpoint.url().port_u16(), Some(9999));
+        assert_eq!(endpoint.url().path(), AGENT_ERRORS_INTAKE_URL_PATH);
     }
 }

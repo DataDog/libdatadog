@@ -5,9 +5,9 @@
 //! fill and read the payload through the exported `extern "C"` functions only, as a tracer does.
 
 use datadog_sidecar_ffi::span::*;
-use libdd_common_ffi::slice::{AsBytes, CharSlice};
 use libdd_trace_utils::msgpack_encoder::v1::to_vec_from_v1;
 use libdd_trace_utils::span::v1::{SpanBytes, TraceChunkBytes, TracerPayloadBytes};
+use libdd_types_ffi::slice::{AsBytes, CharSlice};
 use std::collections::HashMap;
 use std::ffi::CStr;
 

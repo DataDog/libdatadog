@@ -6,9 +6,9 @@ use http::Method;
 use http::header::HeaderValue;
 use http::uri::PathAndQuery;
 use libdd_capabilities::{Bytes, HttpClientCapability, SleepCapability};
-use libdd_common::Endpoint;
 use libdd_host_identity::entity_id::EntityHeadersExt;
 use libdd_networking::endpoint::EndpointExt;
+use libdd_types::Endpoint;
 use std::time::Duration;
 
 /// EVP proxy path for FFE flag evaluation intake.
@@ -82,17 +82,14 @@ fn optional_valid_header_value(value: impl AsRef<str>) -> Option<String> {
 /// Agentless submission is not wired yet, so API-key endpoints are rejected
 /// until this sender grows direct intake routing.
 pub fn flagevaluation_agent_proxy_endpoint(base: &Endpoint) -> Option<Endpoint> {
-    if base.api_key.is_some() {
+    if base.api_key().is_some() {
         return None;
     }
 
-    let mut parts = base.url.clone().into_parts();
+    let mut parts = base.url().clone().into_parts();
     parts.path_and_query = Some(PathAndQuery::from_static(EVP_FLAGEVALUATION_PATH));
     let url = http::Uri::from_parts(parts).ok()?;
-    Some(Endpoint {
-        url,
-        ..base.clone()
-    })
+    Some(base.clone().with_url(url))
 }
 
 /// POST a structured FFE flag evaluation batch through the Agent EVP proxy.
@@ -162,7 +159,7 @@ async fn send_payload<C: HttpClientCapability + SleepCapability>(
         }
     };
 
-    let timeout = Duration::from_millis(endpoint.timeout_ms);
+    let timeout = Duration::from_millis(endpoint.timeout_ms());
     let response = tokio::select! {
         biased;
         result = client.request(req) => result,
@@ -265,10 +262,7 @@ mod tests {
     }
 
     fn endpoint_for(server: &MockServer) -> Endpoint {
-        Endpoint {
-            url: server.url("/").parse().unwrap(),
-            ..Endpoint::default()
-        }
+        Endpoint::from_url(server.url("/").parse().unwrap())
     }
 
     fn send_config_without_producer_identity() -> FlagEvaluationEvpSendConfig {
@@ -579,11 +573,7 @@ mod tests {
     #[cfg_attr(miri, ignore)] // hanging HTTP timeout is prohibitively slow under Miri
     #[tokio::test]
     async fn timeout_returns_without_waiting_for_http_response() {
-        let ep = Endpoint {
-            url: "http://localhost:8126".parse().unwrap(),
-            timeout_ms: 1,
-            ..Endpoint::default()
-        };
+        let ep = Endpoint::from_url("http://localhost:8126".parse().unwrap()).with_timeout(1);
 
         send_flag_evaluation_batch(
             &HangingCapabilities,
@@ -596,25 +586,24 @@ mod tests {
 
     #[test]
     fn endpoint_preserves_authority_overrides_path() {
-        let base = Endpoint {
-            url: "http://agent.internal:8126/v0.4/traces".parse().unwrap(),
-            ..Endpoint::default()
-        };
+        let base = Endpoint::from_url("http://agent.internal:8126/v0.4/traces".parse().unwrap());
         let ep = flagevaluation_agent_proxy_endpoint(&base).unwrap();
-        assert_eq!(ep.url.scheme_str(), Some("http"));
-        assert_eq!(ep.url.authority().unwrap().as_str(), "agent.internal:8126");
-        assert_eq!(ep.url.path(), EVP_FLAGEVALUATION_PATH);
+        assert_eq!(ep.url().scheme_str(), Some("http"));
+        assert_eq!(
+            ep.url().authority().unwrap().as_str(),
+            "agent.internal:8126"
+        );
+        assert_eq!(ep.url().path(), EVP_FLAGEVALUATION_PATH);
     }
 
     #[test]
     fn endpoint_rejects_agentless() {
-        let base = Endpoint {
-            url: "https://trace.agent.datadoghq.com/v0.4/traces"
+        let base = Endpoint::from_url(
+            "https://trace.agent.datadoghq.com/v0.4/traces"
                 .parse()
                 .unwrap(),
-            api_key: Some("api-key".into()),
-            ..Endpoint::default()
-        };
+        )
+        .with_api_key("api-key");
         assert!(flagevaluation_agent_proxy_endpoint(&base).is_none());
     }
 

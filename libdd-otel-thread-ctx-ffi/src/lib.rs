@@ -15,10 +15,10 @@ pub use linux::*;
 /// diagnostic message on failure.
 #[cfg(all(target_os = "linux", feature = "sanity-check"))]
 #[unsafe(no_mangle)]
-pub extern "C" fn ddog_otel_thread_ctx_sanity_check() -> libdd_common_ffi::VoidResult {
+pub extern "C" fn ddog_otel_thread_ctx_sanity_check() -> libdd_types_ffi::VoidResult {
     match libdd_otel_thread_ctx::sanity_check::sanity_check() {
-        Ok(()) => libdd_common_ffi::VoidResult::Ok,
-        Err(e) => libdd_common_ffi::VoidResult::Err(libdd_common_ffi::Error::from(e)),
+        Ok(()) => libdd_types_ffi::VoidResult::Ok,
+        Err(e) => libdd_types_ffi::VoidResult::Err(libdd_types_ffi::Error::from(e)),
     }
 }
 

@@ -3,12 +3,12 @@
 
 use super::{Metadata, OsInfo, ProcInfo, SigInfo, Span, ThreadData};
 use function_name::named;
-use libdd_common::Endpoint;
-use libdd_common_ffi::{
+use libdd_crashtracker::{CrashInfo, CrashInfoBuilder, ErrorKind, StackTrace};
+use libdd_types::Endpoint;
+use libdd_types_ffi::{
     CharSlice, Error, Handle, Slice, Timespec, ToInner, VoidResult, slice::AsBytes,
     wrap_with_ffi_result, wrap_with_void_ffi_result,
 };
-use libdd_crashtracker::{CrashInfo, CrashInfoBuilder, ErrorKind, StackTrace};
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 //                                              FFI API                                           //
@@ -45,7 +45,7 @@ pub unsafe extern "C" fn ddog_crasht_CrashInfoBuilder_drop(builder: *mut Handle<
 }
 
 // Name the type so it's prettier for the consumer
-pub type CrashInfoNewResult = libdd_common_ffi::Result<Handle<CrashInfo>>;
+pub type CrashInfoNewResult = libdd_types_ffi::Result<Handle<CrashInfo>>;
 
 /// # Safety
 /// The `builder` can be null, but if non-null it must point to a Builder made by this module,

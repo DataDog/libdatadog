@@ -1,13 +1,12 @@
 // Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-use libdd_common_ffi::CharSlice;
+use libdd_types_ffi::CharSlice;
 use std::borrow::Cow;
 use std::collections::hash_map;
 use std::mem::transmute;
 // Alias to prevent cbindgen panic
 use crate::data::Probe;
-use libdd_common_ffi::slice::AsBytes;
 use libdd_live_debugger::debugger_defs::{
     Capture as DebuggerCaptureAlias, Capture, Captures, DebuggerData, DebuggerPayload, Diagnostics,
     DiagnosticsError, Entry, Fields, ProbeMetadata, ProbeMetadataLocation, ProbeStatus, Snapshot,
@@ -17,6 +16,7 @@ use libdd_live_debugger::sender::generate_new_id;
 use libdd_live_debugger::{
     add_excluded_name, add_redacted_name, add_redacted_type, is_redacted_name, is_redacted_type,
 };
+use libdd_types_ffi::slice::AsBytes;
 
 #[repr(C)]
 pub enum FieldType {

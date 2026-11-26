@@ -22,11 +22,11 @@ mod unix {
     use std::process;
     use std::time::Duration;
 
-    use libdd_common::tag;
     use libdd_crashtracker::{
         self as crashtracker, CrashtrackerConfiguration, CrashtrackerReceiverConfig, Metadata,
         StackFrame, StackTrace,
     };
+    use libdd_types::tag;
 
     const TEST_COLLECTOR_TIMEOUT: Duration = Duration::from_secs(15);
 

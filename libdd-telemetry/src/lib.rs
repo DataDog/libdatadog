@@ -30,4 +30,4 @@ pub mod worker;
 #[cfg(feature = "std")]
 pub use info::build_host;
 #[cfg(feature = "alloc")]
-pub use libdd_common::tag::{Tag, parse_tags};
+pub use libdd_types::tag::{Tag, parse_tags};

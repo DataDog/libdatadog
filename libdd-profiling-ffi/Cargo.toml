@@ -17,7 +17,7 @@ bench = false
 name = "datadog_profiling_ffi"
 
 [features]
-default = ["ddcommon-ffi", "catch_panic"]
+default = ["ddtypes-ffi", "catch_panic"]
 # Panic containment for every aggregated FFI sub-crate that supports it.
 #
 # The sub-crates enable `catch_panic` in their own `default`, but this crate pulls
@@ -40,7 +40,7 @@ catch_panic = [
   "libdd-library-config-ffi?/catch_panic",
   "libdd-shared-runtime-ffi?/catch_panic",
 ]
-cbindgen = ["build_common/cbindgen", "libdd-common-ffi/cbindgen", "libdd-shared-runtime-ffi?/cbindgen", "libdd-otel-thread-ctx-ffi?/cbindgen"]
+cbindgen = ["build_common/cbindgen", "libdd-types-ffi/cbindgen", "libdd-shared-runtime-ffi?/cbindgen", "libdd-otel-thread-ctx-ffi?/cbindgen"]
 ddtelemetry-ffi = ["dep:libdd-telemetry-ffi"]
 datadog-log-ffi = ["dep:libdd-log-ffi"]
 symbolizer = ["symbolizer-ffi"]
@@ -59,7 +59,7 @@ crashtracker-collector = ["crashtracker-ffi", "libdd-crashtracker-ffi/collector"
 crashtracker-receiver = ["crashtracker-ffi", "libdd-crashtracker-ffi/receiver", "libdd-crashtracker-ffi/otel-thread-ctx"]
 demangler = ["crashtracker-ffi", "libdd-crashtracker-ffi/demangler"]
 datadog-library-config-ffi = ["dep:libdd-library-config-ffi", "libdd-library-config-ffi/std"]
-ddcommon-ffi = ["dep:libdd-common-ffi", "libdd-common-ffi/std"]
+ddtypes-ffi = ["dep:libdd-types-ffi", "libdd-types-ffi/std"]
 ddsketch-ffi = ["dep:libdd-ddsketch-ffi"]
 libdd-ffe-ffi = ["dep:libdd-ffe-ffi"]
 shared-runtime = ["dep:libdd-shared-runtime-ffi"]
@@ -76,10 +76,10 @@ libdd-data-pipeline-ffi = { path = "../libdd-data-pipeline-ffi", default-feature
 libdd-crashtracker-ffi = { path = "../libdd-crashtracker-ffi", default-features = false, optional = true}
 libdd-library-config-ffi = {  path = "../libdd-library-config-ffi", default-features = false, optional = true }
 libdd-profiling = { path = "../libdd-profiling" }
-libdd-common = { path = "../libdd-common" }
+libdd-types = { path = "../libdd-types" }
 libdd-networking = { path = "../libdd-networking" }
 libdd-regex = { path = "../libdd-regex" }
-libdd-common-ffi = { path = "../libdd-common-ffi", default-features = false, optional = true, features = ["std"] }
+libdd-types-ffi = { path = "../libdd-types-ffi", default-features = false, optional = true, features = ["std"] }
 libdd-telemetry-ffi = { path = "../libdd-telemetry-ffi", default-features = false, optional = true, features = ["expanded_builder_macros"] }
 libdd-ddsketch-ffi = { path = "../libdd-ddsketch-ffi", default-features = false, optional = true }
 libdd-log-ffi = { path = "../libdd-log-ffi", default-features = false, optional = true }

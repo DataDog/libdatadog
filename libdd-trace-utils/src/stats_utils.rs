@@ -9,9 +9,9 @@ mod mini_agent {
     use bytes::{Buf, Bytes};
     use http_body_util::BodyExt;
     use libdd_capabilities::HttpClientCapability;
-    use libdd_common::Endpoint;
     use libdd_networking::http_common;
     use libdd_trace_protobuf::pb;
+    use libdd_types::Endpoint;
     use std::io::Write;
     use tracing::debug;
 
@@ -71,7 +71,7 @@ mod mini_agent {
         let client = H::new_client();
         let req = http::Request::builder()
             .method(http::Method::POST)
-            .uri(target.url.clone())
+            .uri(target.url().clone())
             .header("Content-Type", "application/msgpack")
             .header("Content-Encoding", "gzip")
             .header("DD-API-KEY", api_key)

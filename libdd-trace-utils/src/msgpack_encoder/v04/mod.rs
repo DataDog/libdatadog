@@ -5,7 +5,7 @@ use crate::span::TraceData;
 use crate::span::trace_utils::get_root_span_index;
 use crate::span::v1::TracerPayload;
 use crate::span::v04::Span;
-use libdd_common::ResultInfallibleExt;
+use libdd_types::ResultInfallibleExt;
 use rmp::encode::{ByteBuf, RmpWrite, ValueWriteError, write_array_len};
 
 const fn msgpack_string_encoding_len(s: &str) -> usize {

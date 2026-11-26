@@ -21,8 +21,6 @@ use flate2::write::GzEncoder;
 use futures::future::join_all;
 use http::uri::PathAndQuery;
 use libdd_capabilities_impl::{HttpClientCapability, NativeCapabilities};
-use libdd_common::Endpoint;
-use libdd_common::MutexExt;
 use libdd_ipc::shm_dsm_backlog::{
     DEFAULT_DSM_BACKLOG_SLOT_COUNT, DEFAULT_DSM_BACKLOG_STRING_POOL_BYTES, DsmBacklog,
     DsmBacklogBucket, ShmDsmBacklogTable,
@@ -35,6 +33,8 @@ use libdd_trace_utils::send_with_retry::{
     CompressionStrategy, RetryBackoffType, RetryStrategy, send_with_retry,
 };
 use libdd_trace_utils::tracer_header_tags::TracerHeaderTags;
+use libdd_types::Endpoint;
+use libdd_types::MutexExt;
 use serde::{Serialize, Serializer};
 use std::collections::{BTreeMap, HashMap};
 use std::ffi::CString;
@@ -58,15 +58,14 @@ const DRAIN_GRACE: Duration = Duration::from_millis(50);
 /// Build the DSM endpoint by appending `/v0.1/pipeline_stats` to the agent base URL.
 /// Returns `None` for agentless mode (API key present): DSM is only sent through the agent.
 pub(crate) fn dsm_endpoint(endpoint: &Endpoint) -> Option<Endpoint> {
-    if endpoint.api_key.is_some() {
+    if endpoint.api_key().is_some() {
         return None;
     }
-    let mut parts = endpoint.url.clone().into_parts();
+    let mut parts = endpoint.url().clone().into_parts();
     parts.path_and_query = Some(PathAndQuery::from_static(PIPELINE_STATS_ENDPOINT_PATH));
-    Some(Endpoint {
-        url: http::Uri::from_parts(parts).ok()?,
-        ..endpoint.clone()
-    })
+    let mut dsm_endpoint = endpoint.clone();
+    dsm_endpoint.set_url(http::Uri::from_parts(parts).ok()?);
+    Some(dsm_endpoint)
 }
 
 /// The subset of session configuration needed to create and flush a key's DSM tables.
@@ -319,7 +318,7 @@ async fn send_buckets(
     .into();
     headers.insert(
         http::header::CONTENT_TYPE,
-        libdd_common::header::APPLICATION_MSGPACK,
+        libdd_types::header::APPLICATION_MSGPACK,
     );
     headers.insert(
         http::header::CONTENT_ENCODING,
@@ -594,14 +593,12 @@ mod tests {
         let agent = Endpoint::from_slice("http://localhost:8126");
         let endpoint = dsm_endpoint(&agent).unwrap();
         assert_eq!(
-            endpoint.url.to_string(),
+            endpoint.url().to_string(),
             "http://localhost:8126/v0.1/pipeline_stats"
         );
 
-        let agentless = Endpoint {
-            api_key: Some("key".into()),
-            ..agent
-        };
+        let mut agentless = agent.clone();
+        agentless.set_api_key(Some("key".into()));
         assert!(dsm_endpoint(&agentless).is_none());
     }
 

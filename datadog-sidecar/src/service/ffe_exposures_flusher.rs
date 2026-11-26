@@ -65,15 +65,12 @@ mod tests {
     use httpmock::MockServer;
     use libdd_capabilities::{Bytes, HttpError, MaybeSend};
     use libdd_capabilities_impl::NativeCapabilities;
-    use libdd_common::Endpoint;
+    use libdd_types::Endpoint;
     use std::future;
     use std::time::Duration;
 
     fn endpoint_for(server: &MockServer) -> Endpoint {
-        Endpoint {
-            url: server.url("/").parse().unwrap(),
-            ..Endpoint::default()
-        }
+        Endpoint::from_url(server.url("/").parse().unwrap())
     }
 
     fn context() -> FfeTelemetryContext {
@@ -194,11 +191,7 @@ mod tests {
     #[cfg_attr(miri, ignore)] // tokio executor park/wake overhead is prohibitively slow under Miri
     #[tokio::test]
     async fn timeout_returns_without_waiting_for_http_response() {
-        let endpoint = Endpoint {
-            url: "http://localhost:8126".parse().unwrap(),
-            timeout_ms: 1,
-            ..Endpoint::default()
-        };
+        let endpoint = Endpoint::from_url("http://localhost:8126".parse().unwrap()).with_timeout(1);
 
         send_batch(
             &HangingCapabilities,

@@ -6,7 +6,6 @@
 use super::config::AgentlessTraceConfig;
 use http::HeaderMap;
 use libdd_capabilities::{HttpClientCapability, SleepCapability};
-use libdd_common::Endpoint;
 use libdd_trace_utils::send_with_retry::{
     CompressionStrategy, RetryBackoffType, RetryStrategy, SendWithRetryError, SendWithRetryResult,
     send_with_retry_and_size,
@@ -15,6 +14,7 @@ use libdd_trace_utils::span::span_pool::PooledChunks;
 use libdd_trace_utils::span::v1::span_pool::PooledTraceChunks;
 use libdd_trace_utils::span::{TraceData, trace_utils::compute_top_level_span, trace_utils_v1};
 use libdd_trace_utils::tracer_metadata::TracerMetadata;
+use libdd_types::Endpoint;
 use thiserror::Error;
 
 const AGENTLESS_MAX_RETRIES: u32 = 2;
@@ -201,13 +201,10 @@ where
         http::HeaderValue::from_str(&config.api_key).map_err(|_| AgentlessError::InvalidApiKey)?;
     headers.insert(http::HeaderName::from_static("dd-api-key"), api_key);
 
-    let url = libdd_common::parse_uri(&config.endpoint_url)
+    let url = libdd_types::parse_uri(&config.endpoint_url)
         .map_err(|error| AgentlessError::InvalidEndpoint(error.to_string()))?;
-    let target = Endpoint {
-        url,
-        timeout_ms: u64::try_from(config.timeout.as_millis()).unwrap_or(u64::MAX),
-        ..Endpoint::default()
-    };
+    let mut target = Endpoint::from_url(url);
+    target.set_timeout_ms(u64::try_from(config.timeout.as_millis()).unwrap_or(u64::MAX));
     let retry_strategy = RetryStrategy::new(
         AGENTLESS_MAX_RETRIES,
         AGENTLESS_RETRY_DELAY_MS,
@@ -239,7 +236,7 @@ fn build_agentless_headers(metadata: &TracerMetadata, trace_count: usize) -> Hea
     let mut headers: HeaderMap = metadata.into();
     headers.insert(
         http::header::CONTENT_TYPE,
-        libdd_common::header::APPLICATION_JSON,
+        libdd_types::header::APPLICATION_JSON,
     );
     headers.insert(
         http::HeaderName::from_static("x-datadog-trace-count"),

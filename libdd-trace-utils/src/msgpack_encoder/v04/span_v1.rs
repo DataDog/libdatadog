@@ -47,7 +47,7 @@ use crate::span::v1::{AttributeValue, Span, SpanEvent, SpanKind, SpanLink};
 use crate::span::vec_map::{DedupedVecMap, VecMap};
 use base64::Engine as _;
 use base64::engine::general_purpose::STANDARD as BASE64_STANDARD;
-use libdd_common::ResultInfallibleExt;
+use libdd_types::ResultInfallibleExt;
 use rmp::encode::{
     ByteBuf, RmpWrite, ValueWriteError, write_array_len, write_bin, write_bool, write_f64,
     write_i64, write_map_len, write_sint, write_str, write_str_len, write_u8, write_u64,

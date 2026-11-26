@@ -8,8 +8,8 @@
 
 use httpmock::prelude::*;
 use libdd_capabilities_impl::NativeCapabilities;
-use libdd_common::Endpoint;
 use libdd_data_pipeline::agent_info::fetch_info;
+use libdd_types::Endpoint;
 
 #[cfg_attr(miri, ignore)]
 #[tokio::test]

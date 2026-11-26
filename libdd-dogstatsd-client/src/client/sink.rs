@@ -5,9 +5,9 @@ use anyhow::anyhow;
 use cadence::UdpMetricSink;
 #[cfg(unix)]
 use cadence::{MetricSink, SinkStats, UnixMetricSink};
-use libdd_common::Endpoint;
 #[cfg(unix)]
 use libdd_networking::connector::uds::socket_path_from_uri;
+use libdd_types::Endpoint;
 use std::net::{ToSocketAddrs, UdpSocket};
 #[cfg(unix)]
 use std::os::unix::net::UnixDatagram;
@@ -40,7 +40,7 @@ pub(super) fn create_unix_sink(endpoint: &Endpoint) -> anyhow::Result<PinnedUnix
     socket
         .set_nonblocking(true)
         .map_err(|e| anyhow!("failed to set socket to nonblocking: {}", e))?;
-    let path = socket_path_from_uri(&endpoint.url)
+    let path = socket_path_from_uri(endpoint.url())
         .map_err(|e| anyhow!("failed to build socket path from uri: {}", e))?;
 
     if libdd_process_utils::unix_utils::worker_file_outputs_restricted() {
@@ -59,8 +59,12 @@ pub(super) fn create_unix_sink(endpoint: &Endpoint) -> anyhow::Result<PinnedUnix
 }
 
 pub(super) fn create_udp_sink(endpoint: &Endpoint) -> anyhow::Result<UdpMetricSink> {
-    let host = endpoint.url.host().ok_or(anyhow!("invalid host"))?;
-    let port = endpoint.url.port().ok_or(anyhow!("invalid port"))?.as_u16();
+    let host = endpoint.url().host().ok_or(anyhow!("invalid host"))?;
+    let port = endpoint
+        .url()
+        .port()
+        .ok_or(anyhow!("invalid port"))?
+        .as_u16();
 
     let server_address = (host, port)
         .to_socket_addrs()?
@@ -83,9 +87,9 @@ mod tests {
     use super::*;
     #[cfg(unix)]
     use http::Uri;
-    use libdd_common::Endpoint;
     #[cfg(unix)]
     use libdd_networking::connector::uds::socket_path_to_uri;
+    use libdd_types::Endpoint;
 
     #[test]
     #[cfg_attr(miri, ignore)]

@@ -5,11 +5,11 @@ use crate::string_storage::{ManagedStringStorage, get_inner_string_storage};
 use crate::{ArcHandle, ProfileError, ProfileStatus, ensure_non_null_out_parameter};
 use anyhow::Context;
 use function_name::named;
-use libdd_common_ffi::slice::{AsBytes, ByteSlice, CharSlice, Slice};
-use libdd_common_ffi::{Error, Handle, Timespec, ToInner, wrap_with_ffi_result};
 use libdd_profiling::api::{self, ManagedStringId};
 use libdd_profiling::profiles::datatypes::{ProfilesDictionary, StringId2};
 use libdd_profiling::{api2, internal};
+use libdd_types_ffi::slice::{AsBytes, ByteSlice, CharSlice, Slice};
+use libdd_types_ffi::{Error, Handle, Timespec, ToInner, wrap_with_ffi_result};
 use std::num::NonZeroI64;
 use std::str::Utf8Error;
 use std::time::SystemTime;
@@ -902,7 +902,7 @@ pub unsafe extern "C" fn ddog_prof_EncodedProfile_from_bytes(
     bytes: ByteSlice<'_>,
     start_time: Timespec,
     end_time: Timespec,
-) -> libdd_common_ffi::Result<Handle<internal::EncodedProfile>> {
+) -> libdd_types_ffi::Result<Handle<internal::EncodedProfile>> {
     wrap_with_ffi_result!({
         anyhow::Ok(Handle::from(internal::EncodedProfile {
             start: start_time.into(),
@@ -940,7 +940,7 @@ pub unsafe extern "C" fn ddog_prof_EncodedProfile_drop(
 #[named]
 pub unsafe extern "C" fn ddog_prof_EncodedProfile_bytes<'a>(
     mut encoded_profile: *mut Handle<internal::EncodedProfile>,
-) -> libdd_common_ffi::Result<ByteSlice<'a>> {
+) -> libdd_types_ffi::Result<ByteSlice<'a>> {
     unsafe {
         wrap_with_ffi_result!({
             let slice = encoded_profile.to_inner_mut()?.buffer.as_slice();
@@ -993,7 +993,7 @@ pub unsafe extern "C" fn ddog_prof_Profile_serialize(
 
 #[must_use]
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn ddog_Vec_U8_as_slice(vec: &libdd_common_ffi::Vec<u8>) -> Slice<'_, u8> {
+pub unsafe extern "C" fn ddog_Vec_U8_as_slice(vec: &libdd_types_ffi::Vec<u8>) -> Slice<'_, u8> {
     vec.as_slice()
 }
 

@@ -3,7 +3,7 @@
 
 use crate::tracer_header_tags::{TracerGenericTags, TracerHeaderTags};
 use http::HeaderMap;
-use libdd_common::mutable_metadata::MutableMetadataHandle;
+use libdd_types::mutable_metadata::MutableMetadataHandle;
 
 #[derive(Clone, Default, Debug)]
 pub struct TracerMetadata {

@@ -3,14 +3,14 @@
 #![cfg(feature = "std")]
 
 use core::ffi::CStr;
-#[cfg(all(feature = "catch_panic", panic = "unwind"))]
-use libdd_common_ffi::wrap_with_ffi_result;
-#[cfg(not(all(feature = "catch_panic", panic = "unwind")))]
-use libdd_common_ffi::wrap_with_ffi_result_no_catch as wrap_with_ffi_result;
-use libdd_common_ffi::{Result, VoidResult};
 #[cfg(target_os = "linux")]
 use libdd_library_config::tracer_metadata::AnonymousFileHandle;
 use libdd_library_config::tracer_metadata::{self, TracerMetadata};
+#[cfg(all(feature = "catch_panic", panic = "unwind"))]
+use libdd_types_ffi::wrap_with_ffi_result;
+#[cfg(not(all(feature = "catch_panic", panic = "unwind")))]
+use libdd_types_ffi::wrap_with_ffi_result_no_catch as wrap_with_ffi_result;
+use libdd_types_ffi::{Result, VoidResult};
 use std::os::raw::{c_char, c_int};
 
 /// C-compatible representation of an anonymous file handle

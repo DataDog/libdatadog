@@ -39,8 +39,8 @@ build_common = { path = "../build-common" }
 anyhow.workspace = true
 # libdd-crashtracker defaults minus otel-thread-ctx, which is opt-in through the feature above.
 libdd-crashtracker = { path = "../libdd-crashtracker", default-features = false, features = ["collector", "receiver", "collector_windows"] }
-libdd-common = { path = "../libdd-common" }
-libdd-common-ffi = { path = "../libdd-common-ffi", default-features = false, features = ["std"] }
+libdd-types = { path = "../libdd-types" }
+libdd-types-ffi = { path = "../libdd-types-ffi", default-features = false, features = ["std"] }
 libdd-regex = { path = "../libdd-regex" }
 symbolic-demangle = { workspace = true, features = ["rust", "cpp", "msvc"], optional = true }
 symbolic-common = { workspace = true, optional = true }

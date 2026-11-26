@@ -14,9 +14,9 @@ use bytes::Bytes;
 use futures::future::{Either, select};
 use http::HeaderMap;
 use libdd_capabilities::{HttpClientCapability, HttpError, SleepCapability};
-use libdd_common::Endpoint;
 use libdd_host_identity::entity_id::EntityHeadersExt;
 use libdd_networking::endpoint::EndpointExt;
+use libdd_types::Endpoint;
 use std::time::Duration;
 use tracing::{debug, error};
 
@@ -79,15 +79,12 @@ impl std::error::Error for SendWithRetryError {}
 /// # Example
 ///
 /// ```rust, no_run
-/// # use libdd_common::Endpoint;
+/// # use libdd_types::Endpoint;
 /// # use libdd_capabilities::{HttpClientCapability, SleepCapability};
 /// # use libdd_trace_utils::send_with_retry::*;
 /// # async fn run() -> SendWithRetryResult {
 /// let payload: Vec<u8> = vec![0, 1, 2, 3];
-/// let target = Endpoint {
-///     url: "localhost:8126/v04/traces".parse::<hyper::Uri>().unwrap(),
-///     ..Endpoint::default()
-/// };
+/// let target = Endpoint::from_url("localhost:8126/v04/traces".parse::<hyper::Uri>().unwrap());
 /// let mut headers = http::HeaderMap::new();
 /// headers.insert(
 ///     http::HeaderName::from_static("content-type"),
@@ -138,10 +135,10 @@ pub async fn send_with_retry_and_size<C: HttpClientCapability + SleepCapability>
     compression_strategy: CompressionStrategy,
 ) -> (SendWithRetryResult, usize) {
     let mut request_attempt = 0;
-    let timeout = Duration::from_millis(target.timeout_ms);
+    let timeout = Duration::from_millis(target.timeout_ms());
 
     debug!(
-        url = %target.url,
+        url = %target.url(),
         payload_size = payload.len(),
         max_retries = retry_strategy.max_retries(),
         "Sending with retry"
@@ -155,7 +152,7 @@ pub async fn send_with_retry_and_size<C: HttpClientCapability + SleepCapability>
         request_attempt += 1;
 
         debug!(
-            url = %target.url,
+            url = %target.url(),
             attempt = request_attempt,
             max_retries = retry_strategy.max_retries(),
             "Attempting request"
@@ -163,7 +160,7 @@ pub async fn send_with_retry_and_size<C: HttpClientCapability + SleepCapability>
 
         let mut builder = http::Request::builder()
             .method(http::Method::POST)
-            .uri(target.url.clone());
+            .uri(target.url().clone());
         builder = target
             .set_standard_headers(builder, TRACE_EXPORTER_USER_AGENT)
             .with_entity_headers();
@@ -192,7 +189,7 @@ pub async fn send_with_retry_and_size<C: HttpClientCapability + SleepCapability>
             Ok(Ok(response)) => {
                 let status = response.status();
                 debug!(
-                    url = %target.url,
+                    url = %target.url(),
                     status = status.as_u16(),
                     attempt = request_attempt,
                     "Received response"
@@ -240,7 +237,7 @@ pub async fn send_with_retry_and_size<C: HttpClientCapability + SleepCapability>
             }
             Ok(Err(e)) => {
                 debug!(
-                    url = %target.url,
+                    url = %target.url(),
                     error = ?e,
                     attempt = request_attempt,
                     max_retries = retry_strategy.max_retries(),
@@ -274,7 +271,7 @@ pub async fn send_with_retry_and_size<C: HttpClientCapability + SleepCapability>
             }
             Err(_) => {
                 debug!(
-                    url = %target.url,
+                    url = %target.url(),
                     attempt = request_attempt,
                     max_retries = retry_strategy.max_retries(),
                     "Request timed out"
@@ -378,11 +375,8 @@ mod tests {
             })
             .await;
 
-        let target_endpoint = Endpoint {
-            url: server.url("").to_owned().parse().unwrap(),
-            api_key: Some("test-key".into()),
-            ..Default::default()
-        };
+        let target_endpoint =
+            Endpoint::from_url(server.url("").to_owned().parse().unwrap()).with_api_key("test-key");
 
         let strategy = RetryStrategy::new(0, 2, RetryBackoffType::Constant, None);
         let capabilities = NativeCapabilities::new_client();
@@ -428,11 +422,8 @@ mod tests {
             })
             .await;
 
-        let target_endpoint = Endpoint {
-            url: server.url("").to_owned().parse().unwrap(),
-            api_key: Some("test-key".into()),
-            ..Default::default()
-        };
+        let target_endpoint =
+            Endpoint::from_url(server.url("").to_owned().parse().unwrap()).with_api_key("test-key");
 
         let strategy = RetryStrategy::new(2, 250, RetryBackoffType::Constant, None);
         let capabilities = NativeCapabilities::new_client();
@@ -474,11 +465,8 @@ mod tests {
             })
             .await;
 
-        let target_endpoint = Endpoint {
-            url: server.url("").to_owned().parse().unwrap(),
-            api_key: Some("test-key".into()),
-            ..Default::default()
-        };
+        let target_endpoint =
+            Endpoint::from_url(server.url("").to_owned().parse().unwrap()).with_api_key("test-key");
 
         let strategy = RetryStrategy::new(max_retries, 10, RetryBackoffType::Constant, None);
         let capabilities = NativeCapabilities::new_client();
@@ -524,11 +512,8 @@ mod tests {
             })
             .await;
 
-        let target_endpoint = Endpoint {
-            url: server.url("").to_owned().parse().unwrap(),
-            api_key: Some("test-key".into()),
-            ..Default::default()
-        };
+        let target_endpoint =
+            Endpoint::from_url(server.url("").to_owned().parse().unwrap()).with_api_key("test-key");
 
         let strategy = RetryStrategy::new(2, 10, RetryBackoffType::Constant, None);
         let capabilities = NativeCapabilities::new_client();

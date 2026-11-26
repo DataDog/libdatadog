@@ -26,11 +26,11 @@
 
 use super::errors::SendError;
 use anyhow::Context;
-use libdd_common::Endpoint;
-use libdd_common::tag;
-use libdd_common::tag::Tag;
 use libdd_host_identity::azure_app_services;
 use libdd_networking::endpoint::EndpointExt;
+use libdd_types::Endpoint;
+use libdd_types::tag;
+use libdd_types::tag::Tag;
 use reqwest::RequestBuilder;
 use serde_json::json;
 use std::io::Write;
@@ -86,7 +86,7 @@ impl ProfileExporter {
         // config with an empty root store so reqwest doesn't attempt to load
         // system CA certificates itself — which fails in minimal container
         // environments. TLS will never be negotiated on those transports anyway.
-        let tls_config = if endpoint.url.scheme_str() == Some("https") {
+        let tls_config = if endpoint.url().scheme_str() == Some("https") {
             super::tls::cached_tls_config()?
         } else {
             super::tls::empty_tls_config()?

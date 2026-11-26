@@ -33,7 +33,7 @@ mkdir -p "$smoke_dir"
 
 # PHP generates telemetry alongside sidecar before deduplication. Its header
 # supplies shared types, including the unconditional Option<u64> declaration.
-"$cbindgen" --config libdd-common-ffi/cbindgen.toml --crate libdd-common-ffi \
+"$cbindgen" --config libdd-types-ffi/cbindgen.toml --crate libdd-types-ffi \
   --output "$smoke_dir/common.h"
 "$cbindgen" --config libdd-telemetry-ffi/cbindgen.toml --crate libdd-telemetry-ffi \
   --output "$smoke_dir/telemetry.h"

@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use function_name::named;
-use libdd_common_ffi::{
+use libdd_types_ffi::{
     CharSlice, Result, VoidResult, wrap_with_ffi_result, wrap_with_void_ffi_result,
 };
 /// Removes all existing additional tags

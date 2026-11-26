@@ -3,8 +3,8 @@
 
 //! Define FFI compatible AgentResponse struct
 
-use libdd_common_ffi::slice::ByteSlice;
 use libdd_data_pipeline::trace_exporter::agent_response::AgentResponse;
+use libdd_types_ffi::slice::ByteSlice;
 
 /// Structure containing the agent response to a trace payload
 /// MUST be freed with `ddog_trace_exporter_response_free`

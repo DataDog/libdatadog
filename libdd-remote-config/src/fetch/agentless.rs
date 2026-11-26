@@ -16,8 +16,8 @@ use http::{
     uri::{Authority, PathAndQuery},
 };
 use libdd_capabilities::{Bytes, HttpClientCapability, SleepCapability};
-use libdd_common::Endpoint;
 use libdd_trace_protobuf::remoteconfig;
+use libdd_types::Endpoint;
 use prost::Message;
 use serde_json::Value;
 use tracing::debug;
@@ -103,22 +103,21 @@ type TUFClient = tuf::client::Client<tuf::interchange::Json, TUFRepo, TUFRepo>;
 // If the endpoint is not suitable (api key not set, not https), returns N
 pub fn make_agentless_configs_endpoint(e: &Endpoint) -> Option<Endpoint> {
     let e = e.clone();
-    if !(e.url.scheme_str().is_some_and(|s| s == "https")
-        && e.url.authority().is_some()
-        && e.api_key.is_some())
+    if !(e.url().scheme_str().is_some_and(|s| s == "https")
+        && e.url().authority().is_some()
+        && e.api_key().is_some())
     {
         return None;
     }
 
-    let mut parts = e.url.into_parts();
+    let mut parts = e.url().clone().into_parts();
     parts.authority =
         Some(Authority::try_from(format!("config.{}", parts.authority?.as_str())).ok()?);
     parts.path_and_query = Some(PathAndQuery::from_static("/api/v0.1/configurations"));
 
-    Some(Endpoint {
-        url: Uri::from_parts(parts).ok()?,
-        ..e
-    })
+    let mut endpoint = e;
+    endpoint.set_url(Uri::from_parts(parts).ok()?);
+    Some(endpoint)
 }
 
 /// Configuration for agentless remote-config fetching.
@@ -372,7 +371,7 @@ impl<C: HttpClientCapability + SleepCapability> AgentlessFetcher<C> {
     ) -> anyhow::Result<Self> {
         // Pick the embedded trust roots based on the endpoint's host, unless overridden.
         let site = endpoint
-            .url
+            .url()
             .host()
             .map(Site::from_host)
             .unwrap_or(Site::Prod);
@@ -1029,17 +1028,17 @@ impl<C: HttpClientCapability + SleepCapability> AgentlessFetcher<C> {
             )
             .with_entity_headers()
             .header(header::CONTENT_TYPE, "application/x-protobuf")
-            .uri(url_with_path(self.endpoint.url.clone(), path)?)
+            .uri(url_with_path(self.endpoint.url().clone(), path)?)
             .method(method)
             .body(body)?;
-        let timeout = Duration::from_millis(self.endpoint.timeout_ms);
+        let timeout = Duration::from_millis(self.endpoint.timeout_ms());
         let response = tokio::select! {
             biased;
             result = self.http.request(req) => result?,
             _ = self.http.sleep(timeout) => {
                 bail!(
                     "Remote config request timed out after {}ms",
-                    self.endpoint.timeout_ms,
+                    self.endpoint.timeout_ms(),
                 )
             }
         };
@@ -1619,8 +1618,8 @@ mod cache {
     };
     use hashbrown::HashMap;
     use libdd_capabilities::{HttpClientCapability, SleepCapability};
-    use libdd_common::MutexExt as _;
     use libdd_trace_protobuf::remoteconfig::{ConfigState, TargetFileHash, TargetFileMeta};
+    use libdd_types::MutexExt as _;
 
     /// Wrapper over the shared [`ConfigFetcherState::target_files_by_path`]
     /// map giving `AgentlessFetcher::apply` a set of small, self-contained
@@ -1921,7 +1920,7 @@ pub fn debug_latest_configs_response(
 
 #[cfg(test)]
 mod tests {
-    use libdd_common::Endpoint;
+    use libdd_types::Endpoint;
 
     use crate::fetch::AgentlessConfig;
     use crate::fetch::NativeAgentlessFetcher;
@@ -2010,7 +2009,7 @@ mod tests {
     #[cfg_attr(miri, ignore)]
     fn agentless_config_new_rejects_non_https_endpoint() {
         let mut endpoint = Endpoint::from_slice("http://datadoghq.com/");
-        endpoint.api_key = Some("abc".to_string().into());
+        endpoint.set_api_key(Some("abc".to_string().into()));
         assert!(matches!(
             AgentlessConfig::new("host".to_string(), &endpoint),
             Err(super::AgentlessConfigError::InvalidEndpoint)
@@ -2026,11 +2025,11 @@ mod tests {
         // Endpoint has been rewritten to `config.<site>` and kept the api key.
         assert!(
             cfg.agentless_endpoint()
-                .url
+                .url()
                 .host()
                 .is_some_and(|h| h.starts_with("config."))
         );
-        assert!(cfg.agentless_endpoint().api_key.is_some());
+        assert!(cfg.agentless_endpoint().api_key().is_some());
     }
 
     #[test]

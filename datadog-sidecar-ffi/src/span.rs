@@ -8,13 +8,13 @@
 //! env / app_version / hostname are set on the builder; the rest is applied at send time (see
 //! [`populate_payload_metadata`]).
 
-use libdd_common_ffi::slice::{AsBytes, CharSlice};
 use libdd_tinybytes::{Bytes, BytesString};
 use libdd_trace_utils::span::v1::{
     AttributeValueBytes, SpanBytes, SpanEventBytes, SpanKind, SpanLinkBytes, TraceChunkBytes,
     TracerPayloadBytes,
 };
 use libdd_trace_utils::span::vec_map::VecMap;
+use libdd_types_ffi::slice::{AsBytes, CharSlice};
 use std::borrow::Cow;
 use std::ffi::{CStr, CString, c_char};
 use std::fmt::Write as _;

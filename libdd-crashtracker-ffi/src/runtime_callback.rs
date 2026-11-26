@@ -12,7 +12,7 @@ use libdd_crashtracker::{
     register_runtime_frame_callback, register_runtime_stacktrace_string_callback,
 };
 
-use libdd_common_ffi::CharSlice;
+use libdd_types_ffi::CharSlice;
 
 /// Result type for runtime callback registration
 #[cfg(unix)]
@@ -58,7 +58,7 @@ static mut STORED_CORE_EMIT: Option<unsafe extern "C" fn(&CoreRuntimeStackFrame)
 
 #[cfg(unix)]
 fn convert_ffi_to_core_frame(ffi_frame: &RuntimeStackFrame) -> CoreRuntimeStackFrame<'_> {
-    use libdd_common_ffi::slice::AsBytes;
+    use libdd_types_ffi::slice::AsBytes;
 
     CoreRuntimeStackFrame {
         line: ffi_frame.line,

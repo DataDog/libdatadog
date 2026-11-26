@@ -11,7 +11,7 @@
 #
 # Iterates every workspace member (libdd-* and the datadog-* / sidecar /
 # remote-config / live-debugger / etc. crates that depend transitively on
-# libdd-common) and runs:
+# libdd-types) and runs:
 #   * default feature set (whatever `cargo` picks)
 #   * `--no-default-features --features fips` if the crate exposes `fips`
 #   * `--no-default-features --features https` if the crate exposes `https`

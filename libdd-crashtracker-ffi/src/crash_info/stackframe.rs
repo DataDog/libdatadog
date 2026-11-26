@@ -2,11 +2,11 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use ::function_name::named;
-use libdd_common_ffi::{
+use libdd_crashtracker::{BuildIdType, FileType, StackFrame};
+use libdd_types_ffi::{
     CharSlice, Error, Handle, ToInner, VoidResult, slice::AsBytes, utils::ToHexStr,
     wrap_with_void_ffi_result,
 };
-use libdd_crashtracker::{BuildIdType, FileType, StackFrame};
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 //                                              FFI API                                           //

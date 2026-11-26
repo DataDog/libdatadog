@@ -4,7 +4,7 @@
 use crate::worker::Worker;
 use futures::stream::{FuturesUnordered, StreamExt};
 use libdd_capabilities::maybe_send::MaybeSync;
-use libdd_common::MutexExt;
+use libdd_types::MutexExt;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use tracing::{debug, error};

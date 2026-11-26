@@ -15,9 +15,6 @@ use crate::span_concentrator::{ChunkSpanView, FlushableConcentrator, SpanConcent
 use async_trait::async_trait;
 use futures::future::join;
 use libdd_capabilities::{HttpClientCapability, MaybeSend, SleepCapability};
-use libdd_common::Endpoint;
-use libdd_common::MutexExt;
-use libdd_common::mutable_metadata::MutableMetadataHandle;
 use libdd_shared_runtime::Worker;
 use libdd_trace_protobuf::pb;
 use libdd_trace_utils::send_with_retry::{
@@ -30,6 +27,9 @@ use libdd_trace_utils::stats_payload_encoder::{
 };
 use libdd_trace_utils::trace_utils::TracerHeaderTags;
 use libdd_trace_utils::tracer_metadata::TracerMetadata;
+use libdd_types::Endpoint;
+use libdd_types::MutexExt;
+use libdd_types::mutable_metadata::MutableMetadataHandle;
 use std::fmt::Debug;
 use tracing::error;
 
@@ -562,7 +562,7 @@ impl<
                 let _ = handle.add_point(
                     flush.collapsed_spans as f64,
                     key,
-                    vec![libdd_common::tag!("collapsed", "whole_key")],
+                    vec![libdd_types::tag!("collapsed", "whole_key")],
                 );
             }
             flush.collapsed_fields_metrics.emit_telemetry(handle, key);
@@ -574,7 +574,7 @@ impl<
                 client.send(vec![libdd_dogstatsd_client::DogStatsDAction::Count(
                     COLLAPSED_SPANS_HEALTH_METRIC,
                     flush.collapsed_spans as i64,
-                    [libdd_common::tag!("collapsed", "whole_key")].iter(),
+                    [libdd_types::tag!("collapsed", "whole_key")].iter(),
                 )]);
             }
             flush.collapsed_fields_metrics.emit_dogstatsd(client);
@@ -600,7 +600,7 @@ fn build_agent_request(
     let mut headers: http::HeaderMap = TracerHeaderTags::from(meta).into();
     headers.insert(
         http::header::CONTENT_TYPE,
-        libdd_common::header::APPLICATION_MSGPACK,
+        libdd_types::header::APPLICATION_MSGPACK,
     );
     #[cfg(feature = "stats-obfuscation")]
     if obfuscated {
@@ -667,7 +667,7 @@ fn build_agentless_request(
     );
     headers.insert(
         http::header::CONTENT_TYPE,
-        libdd_common::header::APPLICATION_MSGPACK,
+        libdd_types::header::APPLICATION_MSGPACK,
     );
 
     #[cfg(feature = "compression")]
@@ -1125,10 +1125,8 @@ mod tests {
             .await;
 
         let target = AgentlessStatsTarget {
-            endpoint: Endpoint {
-                api_key: Some("test-api-key".into()),
-                ..Endpoint::from_slice(&server.url("/api/v0.2/stats"))
-            },
+            endpoint: Endpoint::from_slice(&server.url("/api/v0.2/stats"))
+                .with_api_key("test-api-key"),
             version: "1.2.3-libdatadog".to_string(),
         };
 
@@ -1174,10 +1172,8 @@ mod tests {
             .await;
 
         let target = AgentlessStatsTarget {
-            endpoint: Endpoint {
-                api_key: Some("test-api-key".into()),
-                ..Endpoint::from_slice(&server.url("/api/v0.2/stats"))
-            },
+            endpoint: Endpoint::from_slice(&server.url("/api/v0.2/stats"))
+                .with_api_key("test-api-key"),
             version: "1.2.3-libdatadog".to_string(),
         };
 
@@ -1512,7 +1508,7 @@ mod tests {
         let addr = socket.local_addr().unwrap().to_string();
 
         let dogstatsd_client =
-            libdd_dogstatsd_client::DogStatsDClient::new(libdd_common::Endpoint::from_slice(&addr))
+            libdd_dogstatsd_client::DogStatsDClient::new(libdd_types::Endpoint::from_slice(&addr))
                 .expect("failed to create dogstatsd client");
 
         // get_test_concentrator() has no cardinality collapse: collapsed_spans will be 0.
@@ -1562,7 +1558,7 @@ mod tests {
         let addr = socket.local_addr().unwrap().to_string();
 
         let dogstatsd_client =
-            libdd_dogstatsd_client::DogStatsDClient::new(libdd_common::Endpoint::from_slice(&addr))
+            libdd_dogstatsd_client::DogStatsDClient::new(libdd_types::Endpoint::from_slice(&addr))
                 .expect("failed to create dogstatsd client");
 
         let stats_exporter = StatsExporter::<NativeCapabilities>::new(
@@ -1613,7 +1609,7 @@ mod tests {
         let addr = socket.local_addr().unwrap().to_string();
 
         let dogstatsd_client =
-            libdd_dogstatsd_client::DogStatsDClient::new(libdd_common::Endpoint::from_slice(&addr))
+            libdd_dogstatsd_client::DogStatsDClient::new(libdd_types::Endpoint::from_slice(&addr))
                 .expect("failed to create dogstatsd client");
 
         let stats_exporter = StatsExporter::<NativeCapabilities>::new(

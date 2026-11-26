@@ -7,7 +7,7 @@ use crate::slice::AsBytes;
 use alloc::borrow::Cow;
 use core::str::FromStr;
 use hyper::http::uri::{Authority, Parts};
-use libdd_common::{Endpoint, parse_uri};
+use libdd_types::{Endpoint, parse_uri};
 
 #[unsafe(no_mangle)]
 #[must_use]
@@ -32,11 +32,8 @@ pub extern "C" fn ddog_endpoint_from_api_key(api_key: crate::CharSlice) -> Box<E
     let mut parts = Parts::default();
     parts.authority = Some(Authority::from_static("datadoghq.com"));
     #[allow(clippy::unwrap_used)]
-    Box::new(Endpoint {
-        url: hyper::Uri::from_parts(parts).unwrap(),
-        api_key: Some(api_key.to_utf8_lossy().to_string().into()),
-        ..Default::default()
-    })
+    let url = hyper::Uri::from_parts(parts).unwrap();
+    Box::new(Endpoint::from_url(url).with_api_key(api_key.to_utf8_lossy().to_string()))
 }
 
 // We'll just specify the base site here. If api key provided, different intakes need to use their
@@ -53,27 +50,26 @@ pub extern "C" fn ddog_endpoint_from_api_key_and_site(
         Ok(s) => s,
         Err(e) => return Some(Box::new(Error::from(e.to_string()))),
     });
-    *endpoint = Box::into_raw(Box::new(Endpoint {
-        #[allow(clippy::unwrap_used)]
-        url: hyper::Uri::from_parts(parts).unwrap(),
-        api_key: Some(api_key.to_utf8_lossy().to_string().into()),
-        ..Default::default()
-    }));
+    #[allow(clippy::unwrap_used)]
+    let url = hyper::Uri::from_parts(parts).unwrap();
+    *endpoint = Box::into_raw(Box::new(
+        Endpoint::from_url(url).with_api_key(api_key.to_utf8_lossy().to_string()),
+    ));
     None
 }
 
 #[unsafe(no_mangle)]
 extern "C" fn ddog_endpoint_set_timeout(endpoint: &mut Endpoint, millis: u64) {
-    endpoint.timeout_ms = millis;
+    endpoint.set_timeout_ms(millis);
 }
 
 #[unsafe(no_mangle)]
 extern "C" fn ddog_endpoint_set_test_token(endpoint: &mut Endpoint, token: crate::CharSlice) {
-    endpoint.test_token = if token.is_empty() {
+    endpoint.set_test_token(if token.is_empty() {
         None
     } else {
         Some(Cow::Owned(token.to_utf8_lossy().to_string()))
-    };
+    });
 }
 
 /// Set whether to use the system DNS resolver when building the reqwest client.
@@ -83,7 +79,7 @@ pub extern "C" fn ddog_endpoint_set_use_system_resolver(
     endpoint: &mut Endpoint,
     use_system_resolver: bool,
 ) {
-    endpoint.use_system_resolver = use_system_resolver;
+    endpoint.set_use_system_resolver(use_system_resolver);
 }
 
 #[unsafe(no_mangle)]
@@ -124,17 +120,17 @@ mod tests {
 
         let mut endpoint = ddog_endpoint_from_url(url);
         assert_eq!(
-            endpoint.as_ref().unwrap().timeout_ms,
+            endpoint.as_ref().unwrap().timeout_ms(),
             Endpoint::DEFAULT_TIMEOUT
         );
 
         ddog_endpoint_set_timeout(endpoint.as_mut().unwrap(), 2000);
-        assert_eq!(endpoint.unwrap().timeout_ms, 2000);
+        assert_eq!(endpoint.unwrap().timeout_ms(), 2000);
 
         let mut endpoint_api_key = ddog_endpoint_from_api_key(CharSlice::from("test-key"));
-        assert_eq!(endpoint_api_key.timeout_ms, Endpoint::DEFAULT_TIMEOUT);
+        assert_eq!(endpoint_api_key.timeout_ms(), Endpoint::DEFAULT_TIMEOUT);
 
         ddog_endpoint_set_timeout(&mut endpoint_api_key, 2000);
-        assert_eq!(endpoint_api_key.timeout_ms, 2000);
+        assert_eq!(endpoint_api_key.timeout_ms(), 2000);
     }
 }

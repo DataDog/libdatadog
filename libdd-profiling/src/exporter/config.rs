@@ -1,9 +1,9 @@
 // Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-use libdd_common::Endpoint;
 #[cfg(unix)]
 use libdd_networking::connector::uds;
+use libdd_types::Endpoint;
 
 #[cfg(windows)]
 use libdd_networking::connector::named_pipe;
@@ -63,11 +63,7 @@ pub fn agentless<AsStrRef: AsRef<str>, IntoCow: Into<Cow<'static, str>>>(
 ) -> anyhow::Result<Endpoint> {
     let intake_url: String = format!("https://intake.profile.{}/api/v2/profile", site.as_ref());
 
-    Ok(Endpoint {
-        url: Uri::from_str(intake_url.as_str())?,
-        api_key: Some(api_key.into()),
-        ..Default::default()
-    })
+    Ok(Endpoint::from_url(Uri::from_str(intake_url.as_str())?).with_api_key(api_key))
 }
 
 /// Creates an Endpoint for dumping HTTP requests to a file for testing/debugging.

@@ -57,8 +57,8 @@ pub fn request_builder(c: &Config) -> anyhow::Result<HttpRequestBuilder> {
     match &c.endpoint {
         Some(e) => {
             debug!(
-                endpoint.url = %e.url,
-                endpoint.timeout_ms = e.timeout_ms,
+                endpoint.url = %e.url(),
+                endpoint.timeout_ms = e.timeout_ms(),
                 telemetry.version = env!("CARGO_PKG_VERSION"),
                 "Building telemetry request"
             );

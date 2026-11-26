@@ -3,7 +3,7 @@
 
 /// An opaque handle for a resource. The inner fields must not be dereferenced.
 ///
-/// This is similar to `libdd_common_ffi::Handle` but only allows shared access to internal
+/// This is similar to `libdd_types_ffi::Handle` but only allows shared access to internal
 /// resource, so it's safe to share between thread or access concurrently (if the underlying type
 /// is).
 ///

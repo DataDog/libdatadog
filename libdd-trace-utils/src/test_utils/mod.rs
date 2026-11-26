@@ -20,9 +20,9 @@ use crate::span::{SharedDictBytes, v05};
 use crate::trace_utils::TracerHeaderTags;
 use crate::tracer_payload::TracerPayloadCollection;
 use httpmock::Mock;
-use libdd_common::Endpoint;
 use libdd_tinybytes::BytesString;
 use libdd_trace_protobuf::pb;
+use libdd_types::Endpoint;
 use serde_json::json;
 use tokio::time::sleep;
 
@@ -471,15 +471,12 @@ pub async fn poll_for_mock_hits(
 /// # Examples
 ///
 /// ```
-/// use libdd_common::Endpoint;
 /// use libdd_trace_utils::test_utils::create_send_data;
+/// use libdd_types::Endpoint;
 ///
 /// let size = 512;
-/// let target_endpoint = Endpoint {
-///     url: "http://localhost:8080".to_owned().parse().unwrap(),
-///     api_key: Some("test-key".into()),
-///     ..Default::default()
-/// };
+/// let target_endpoint = Endpoint::from_url("http://localhost:8080".to_owned().parse().unwrap())
+///     .with_api_key("test-key");
 ///
 /// let send_data = create_send_data(size, &target_endpoint);
 /// ```

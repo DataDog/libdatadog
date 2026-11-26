@@ -7,12 +7,12 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use arc_swap::ArcSwapOption;
-use libdd_common::Endpoint;
-use libdd_common::tag::Tag;
 use libdd_dogstatsd_client::DogStatsDClient;
 use libdd_live_debugger::sender::{DebuggerType, PayloadSender};
 use libdd_remote_config::fetch::{ConfigInvariants, ConfigOptions};
 use libdd_telemetry::config::TelemetryEndpoint;
+use libdd_types::Endpoint;
+use libdd_types::tag::Tag;
 use tracing::{debug, error, trace, warn};
 
 use crate::config::get_product_endpoint;
@@ -126,14 +126,16 @@ impl ConnectionSession {
         );
         telemetry_config
             .set_endpoint(TelemetryEndpoint {
-                api_key: endpoint.api_key.as_deref().map(str::to_owned),
-                test_token: endpoint.test_token.as_deref().map(str::to_owned),
-                timeout_ms: endpoint.timeout_ms,
-                use_system_resolver: endpoint.use_system_resolver,
+                api_key: endpoint.api_key().map(str::to_owned),
+                test_token: endpoint.test_token().map(str::to_owned),
+                timeout_ms: endpoint.timeout_ms(),
+                use_system_resolver: endpoint.use_system_resolver(),
                 ..Default::default()
             })
             .ok();
-        telemetry_config.set_endpoint_uri(endpoint.url).ok();
+        telemetry_config
+            .set_endpoint_uri(endpoint.url().clone())
+            .ok();
         telemetry_config.telemetry_heartbeat_interval = config.telemetry_heartbeat_interval;
         telemetry_config.telemetry_extended_heartbeat_interval =
             config.telemetry_extended_heartbeat_interval;
@@ -171,7 +173,7 @@ impl ConnectionSession {
         // no agent info if agentless
         let agent_info = config
             .endpoint
-            .api_key
+            .api_key()
             .is_none()
             .then(|| Arc::new(agent_infos.query_for(config.endpoint.clone())));
 
@@ -286,7 +288,7 @@ impl ConnectionSession {
             return;
         }
 
-        if endpoint.api_key.is_none() {
+        if endpoint.api_key().is_none() {
             match EvpTransport::agent_only(endpoint, intake_subdomain) {
                 Ok(transport) => {
                     if state
@@ -409,14 +411,14 @@ impl ConnectionSession {
         self.telemetry_config.set_endpoint_test_token(token.clone());
         self.tracer_config.set_endpoint_test_token(token.clone());
         if let Some(endpoint) = self.otlp_metrics_endpoint.as_mut() {
-            endpoint.test_token = token.clone();
+            endpoint.set_test_token(token.clone());
         }
         // So that newly created concentrators carry the test token.
         if let Some(stats) = self.stats_config.as_mut() {
-            stats.endpoint.test_token = token.clone();
+            stats.endpoint.set_test_token(token.clone());
         }
         if let Some(dsm) = self.dsm_config.as_mut() {
-            dsm.endpoint.test_token = token;
+            dsm.endpoint.set_test_token(token);
         }
         // TODO(APMSP-1377): the dogstatsd-client doesn't support test_session tokens yet
     }
@@ -581,12 +583,11 @@ mod tests {
         let _guard = tracing::subscriber::set_default(subscriber);
         let mut session = ConnectionSession::for_test(InstanceId::new("session", "runtime"));
         session.set_default_evp_transport(
-            Endpoint {
-                url: "http://agent.internal:8126/private-endpoint-canary"
+            Endpoint::from_url(
+                "http://agent.internal:8126/private-endpoint-canary"
                     .parse()
                     .unwrap(),
-                ..Endpoint::default()
-            },
+            ),
             "invalid.target-canary",
         );
 
@@ -602,17 +603,14 @@ mod tests {
     #[test]
     fn explicit_evp_transport_is_shared_and_not_overwritten_by_legacy_config() {
         let mut session = ConnectionSession::for_test(InstanceId::new("session", "runtime"));
-        let agent_endpoint = Endpoint {
-            url: "http://agent.internal:8126/v0.4/traces".parse().unwrap(),
-            ..Endpoint::default()
-        };
-        let direct_endpoint = Endpoint {
-            url: "https://event-platform-intake.datadoghq.com/"
+        let agent_endpoint =
+            Endpoint::from_url("http://agent.internal:8126/v0.4/traces".parse().unwrap());
+        let direct_endpoint = Endpoint::from_url(
+            "https://event-platform-intake.datadoghq.com/"
                 .parse()
                 .unwrap(),
-            api_key: Some("session-key".into()),
-            ..Endpoint::default()
-        };
+        )
+        .with_api_key("session-key");
 
         session
             .add_evp_transport(
@@ -647,10 +645,8 @@ mod tests {
     #[test]
     fn separately_configured_evp_targets_have_isolated_route_state() {
         let mut session = ConnectionSession::for_test(InstanceId::new("session", "runtime"));
-        let agent_endpoint = Endpoint {
-            url: "http://agent.internal:8126/v0.4/traces".parse().unwrap(),
-            ..Endpoint::default()
-        };
+        let agent_endpoint =
+            Endpoint::from_url("http://agent.internal:8126/v0.4/traces".parse().unwrap());
         for intake_subdomain in [EVENT_PLATFORM_INTAKE_SUBDOMAIN, "errors-intake"] {
             session
                 .add_evp_transport(
@@ -734,10 +730,7 @@ mod tests {
     #[test]
     fn repeated_legacy_configuration_preserves_exposure_deduplication_scope() {
         let mut session = ConnectionSession::for_test(InstanceId::new("session", "runtime"));
-        let endpoint = Endpoint {
-            url: "http://localhost:8126/".parse().unwrap(),
-            ..Endpoint::default()
-        };
+        let endpoint = Endpoint::from_url("http://localhost:8126/".parse().unwrap());
         session.set_default_evp_transport(endpoint.clone(), EVENT_PLATFORM_INTAKE_SUBDOMAIN);
         let before = session
             .get_evp_transport(EVENT_PLATFORM_INTAKE_SUBDOMAIN)
@@ -756,17 +749,15 @@ mod tests {
 
         let config = EvpTransportConfigWithIdentity::new(
             EvpTransportConfig::prefer_local_then_direct(
-                Endpoint {
-                    url: "http://localhost:8126/".parse().unwrap(),
-                    ..Endpoint::default()
-                },
-                Some(Endpoint {
-                    url: "https://event-platform-intake.datadoghq.com/"
-                        .parse()
-                        .unwrap(),
-                    api_key: Some("first-key".into()),
-                    ..Endpoint::default()
-                }),
+                Endpoint::from_url("http://localhost:8126/".parse().unwrap()),
+                Some(
+                    Endpoint::from_url(
+                        "https://event-platform-intake.datadoghq.com/"
+                            .parse()
+                            .unwrap(),
+                    )
+                    .with_api_key("first-key"),
+                ),
                 EVENT_PLATFORM_INTAKE_SUBDOMAIN,
             ),
             EvpProducerIdentity::new("dd-trace-rb", "3.0.0").unwrap(),
@@ -780,21 +771,23 @@ mod tests {
                 .unwrap();
             let mut updated = config.clone();
             match change {
-                0 => {
-                    updated.transport.direct_endpoint.as_mut().unwrap().api_key =
-                        Some("second-key".into())
-                }
-                1 => {
-                    updated.transport.agent_endpoint.url = "http://localhost:9126/".parse().unwrap()
-                }
+                0 => updated
+                    .transport
+                    .direct_endpoint
+                    .as_mut()
+                    .unwrap()
+                    .set_api_key(Some("second-key".into())),
+                1 => updated
+                    .transport
+                    .agent_endpoint
+                    .set_url("http://localhost:9126/".parse().unwrap()),
                 2 => updated.transport.mode = EvpTransportMode::AgentOnly,
                 3 => updated.producer = EvpProducerIdentity::new("dd-trace-rb", "3.1.0").unwrap(),
-                _ => {
-                    updated.transport.direct_endpoint.as_mut().unwrap().url =
-                        "https://event-platform-intake.datadoghq.eu/"
-                            .parse()
-                            .unwrap()
-                }
+                _ => updated.transport.direct_endpoint.as_mut().unwrap().set_url(
+                    "https://event-platform-intake.datadoghq.eu/"
+                        .parse()
+                        .unwrap(),
+                ),
             }
             session.add_evp_transport(updated).unwrap();
             let after = session
@@ -812,10 +805,7 @@ mod tests {
     fn legacy_api_key_endpoint_disables_ffe_transport_including_after_local_config() {
         let mut session = ConnectionSession::for_test(InstanceId::new("session", "runtime"));
         session.set_default_evp_transport(
-            Endpoint {
-                url: "http://localhost:8126/".parse().unwrap(),
-                ..Endpoint::default()
-            },
+            Endpoint::from_url("http://localhost:8126/".parse().unwrap()),
             EVENT_PLATFORM_INTAKE_SUBDOMAIN,
         );
         assert!(
@@ -825,11 +815,8 @@ mod tests {
         );
 
         session.set_default_evp_transport(
-            Endpoint {
-                url: "https://trace.agent.datadoghq.com/".parse().unwrap(),
-                api_key: Some("legacy-agentless-key".into()),
-                ..Endpoint::default()
-            },
+            Endpoint::from_url("https://trace.agent.datadoghq.com/".parse().unwrap())
+                .with_api_key("legacy-agentless-key"),
             EVENT_PLATFORM_INTAKE_SUBDOMAIN,
         );
         assert!(

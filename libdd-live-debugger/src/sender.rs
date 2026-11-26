@@ -9,11 +9,11 @@ use http::uri::PathAndQuery;
 use http::{Method, Uri};
 use libdd_capabilities::{BodySender, HttpClientCapability, ResponseFuture};
 use libdd_capabilities_impl::NativeHttpClient;
-use libdd_common::Endpoint;
-use libdd_common::tag::Tag;
 use libdd_data_pipeline::agent_info::schema::AgentInfoStruct;
 use libdd_host_identity::entity_id::EntityHeadersExt;
 use libdd_networking::endpoint::EndpointExt;
+use libdd_types::Endpoint;
+use libdd_types::tag::Tag;
 use percent_encoding::{CONTROLS, percent_encode};
 use serde::{Deserialize, Serialize};
 use smallvec::SmallVec;
@@ -55,13 +55,10 @@ pub fn debugger_intake_endpoint(
     site: &str,
     api_key: impl Into<Cow<'static, str>>,
 ) -> anyhow::Result<Endpoint> {
-    Ok(Endpoint {
-        url: Uri::from_str(&format!(
-            "https://{PROD_DIAGNOSTICS_INTAKE_SUBDOMAIN}.{site}"
-        ))?,
-        api_key: Some(api_key.into()),
-        ..Default::default()
-    })
+    Ok(Endpoint::from_url(Uri::from_str(&format!(
+        "https://{PROD_DIAGNOSTICS_INTAKE_SUBDOMAIN}.{site}"
+    ))?)
+    .with_api_key(api_key))
 }
 
 /// Derives the per-track intake path for an endpoint, returning a clone with
@@ -74,8 +71,8 @@ fn derive_endpoint_path(
     agent_path: &'static str,
 ) -> anyhow::Result<Endpoint> {
     let mut endpoint = endpoint.clone();
-    let has_api_key = endpoint.api_key.is_some();
-    let mut parts = endpoint.url.into_parts();
+    let has_api_key = endpoint.api_key().is_some();
+    let mut parts = endpoint.url().clone().into_parts();
     let is_remote = parts
         .scheme
         .as_ref()
@@ -85,7 +82,7 @@ fn derive_endpoint_path(
         let path = if has_api_key { direct_path } else { agent_path };
         parts.path_and_query = Some(PathAndQuery::from_static(path));
     }
-    endpoint.url = Uri::from_parts(parts)?;
+    endpoint.set_url(Uri::from_parts(parts)?);
     Ok(endpoint)
 }
 
@@ -397,7 +394,7 @@ impl PayloadSender {
         percent_encoded_tags: &str,
         http_client: C,
     ) -> anyhow::Result<Self> {
-        let mut url = endpoint.url.clone();
+        let mut url = endpoint.url().clone();
         let mut parts = url.into_parts();
 
         #[allow(clippy::unwrap_used)]
@@ -415,7 +412,7 @@ impl PayloadSender {
             .method(Method::POST)
             .uri(url);
 
-        if endpoint.api_key.is_some() {
+        if endpoint.api_key().is_some() {
             req = req.header("DD-EVP-ORIGIN", "agent-debugger");
         }
 
@@ -435,7 +432,7 @@ impl PayloadSender {
             sender,
             needs_boundary,
             payloads: 0,
-            timeout_ms: endpoint.timeout_ms,
+            timeout_ms: endpoint.timeout_ms(),
         })
     }
 
@@ -653,13 +650,13 @@ async fn send_symdb_to_endpoint<C: HttpClientCapability>(
     // The EVP origin only matters on the direct intake (agentless). In agent
     // mode the agent sets it when proxying, so gate it on the API key to match
     // the debugger tracks.
-    if endpoint.api_key.is_some() {
+    if endpoint.api_key().is_some() {
         req = req.header("DD-EVP-ORIGIN", "agent-symdb");
     }
 
     let body = Bytes::from(payload.to_vec());
     let (status, body_bytes) =
-        tokio::time::timeout(Duration::from_millis(endpoint.timeout_ms), async {
+        tokio::time::timeout(Duration::from_millis(endpoint.timeout_ms()), async {
             let response = http_client
                 .request(req.body(body)?)
                 .await
@@ -670,7 +667,7 @@ async fn send_symdb_to_endpoint<C: HttpClientCapability>(
             Ok::<_, anyhow::Error>((status, body_bytes))
         })
         .await
-        .map_err(|_| anyhow::anyhow!("symdb payload request to {} timed out", endpoint.url))??;
+        .map_err(|_| anyhow::anyhow!("symdb payload request to {} timed out", endpoint.url()))??;
 
     if status >= 400 {
         let response_body = String::from_utf8(body_bytes.to_vec()).unwrap_or_default();
@@ -691,7 +688,6 @@ pub fn generate_new_id() -> Uuid {
 mod tests {
     use super::*;
     use libdd_capabilities::{ChunkFuture, HttpError, MaybeSend, StreamingBodySender};
-    use std::borrow::Cow;
     use std::sync::Arc;
     use std::sync::atomic::{AtomicBool, Ordering};
 
@@ -700,18 +696,15 @@ mod tests {
     }
 
     fn direct_endpoint() -> Endpoint {
-        Endpoint {
-            url: Uri::from_static("https://debugger-intake.datadoghq.com"),
-            api_key: Some(Cow::Borrowed("test-api-key")),
-            ..Default::default()
-        }
+        Endpoint::from_url(Uri::from_static("https://debugger-intake.datadoghq.com"))
+            .with_api_key("test-api-key")
     }
 
     fn endpoint_path(endpoint: &Option<Endpoint>) -> &str {
         endpoint
             .as_ref()
             .unwrap()
-            .url
+            .url()
             .path_and_query()
             .unwrap()
             .as_str()
@@ -772,9 +765,9 @@ mod tests {
     #[test]
     fn test_debugger_intake_endpoint() {
         let endpoint = debugger_intake_endpoint("datadoghq.com", "test-api-key").unwrap();
-        assert_eq!(endpoint.url.host(), Some("debugger-intake.datadoghq.com"));
-        assert_eq!(endpoint.url.scheme_str(), Some("https"));
-        assert_eq!(endpoint.api_key.as_deref(), Some("test-api-key"));
+        assert_eq!(endpoint.url().host(), Some("debugger-intake.datadoghq.com"));
+        assert_eq!(endpoint.url().scheme_str(), Some("https"));
+        assert_eq!(endpoint.api_key(), Some("test-api-key"));
     }
 
     #[test]
@@ -802,7 +795,7 @@ mod tests {
         let diagnostics = config.debugger_endpoints_for(DebuggerType::Diagnostics);
         assert_eq!(diagnostics.len(), 2);
         for endpoint in diagnostics {
-            assert_eq!(endpoint.url.path(), "/api/v2/debugger");
+            assert_eq!(endpoint.url().path(), "/api/v2/debugger");
         }
     }
 

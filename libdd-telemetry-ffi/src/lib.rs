@@ -98,7 +98,7 @@ macro_rules! try_c {
     ($failable:expr) => {
         match $failable {
             Ok(o) => o,
-            Err(e) => return ffi::MaybeError::Some(libdd_common_ffi::Error::from(format!("{e:?}"))),
+            Err(e) => return ffi::MaybeError::Some(libdd_types_ffi::Error::from(format!("{e:?}"))),
         }
     };
 }
@@ -109,7 +109,7 @@ macro_rules! try_c {
 /// Differs from the `catch_panic!` in `libdd-data-pipeline-ffi`, which takes an explicit error
 /// value, only logs the panic message through `tracing`, and is a no-op without its
 /// `catch_panic` feature. This one always catches, and returns the panic message to the caller in
-/// the `MaybeError`. `wrap_with_void_ffi_result!` from `libdd-common-ffi` isn't used because it
+/// the `MaybeError`. `wrap_with_void_ffi_result!` from `libdd-types-ffi` isn't used because it
 /// returns a `VoidResult`, while the telemetry handle API returns `MaybeError`.
 macro_rules! catch_panic {
     ($body:block) => {
@@ -125,7 +125,7 @@ macro_rules! catch_panic {
                 } else {
                     "unable to retrieve panic context"
                 };
-                ffi::MaybeError::Some(libdd_common_ffi::Error::from(format!(
+                ffi::MaybeError::Some(libdd_types_ffi::Error::from(format!(
                     "{} panicked: {msg}",
                     function_name!()
                 )))
@@ -144,11 +144,11 @@ mod tests {
     use ffi::MaybeError;
     use ffi::tags::{PushTagResult, ddog_Vec_Tag_new, ddog_Vec_Tag_push};
     use libdd_capabilities_impl::NativeCapabilities;
-    use libdd_common_ffi as ffi;
     use libdd_telemetry::{
         data::metrics::{MetricNamespace, MetricType},
         worker::TelemetryWorkerBuilder,
     };
+    use libdd_types_ffi as ffi;
     use std::{mem::MaybeUninit, ptr::NonNull};
 
     /// Test-side alias: matches the FFI surface, which pins `C` to

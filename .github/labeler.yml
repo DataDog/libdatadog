@@ -8,8 +8,8 @@ profiling:
 common:
 - changed-files:
   - any-glob-to-any-file: [
-      'libdd-common/**/*',
-      'libdd-common-ffi/**/*',
+      'libdd-types/**/*',
+      'libdd-types-ffi/**/*',
       'libdd-regex/**/*',
       'libdd-env/**/*',
       'libdd-weak-waker/**/*',

@@ -8,7 +8,7 @@ use crate::fetch::{
 };
 use crate::{RemoteConfigPath, Target};
 use libdd_capabilities::{HttpClientCapability, SleepCapability};
-use libdd_common::MutexExt;
+use libdd_types::MutexExt;
 use serde::{Deserialize, Serialize};
 use std::ops::Add;
 use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
@@ -700,7 +700,7 @@ pub mod tests {
                 ConfigInvariants {
                     language: "php".into(),
                     tracer_version: "test".into(),
-                    endpoint: libdd_common::Endpoint::from_slice("http://localhost:8126"),
+                    endpoint: libdd_types::Endpoint::from_slice("http://localhost:8126"),
                     agentless: None,
                 },
                 NativeCapabilities::new_periodic(),

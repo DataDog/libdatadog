@@ -7,8 +7,8 @@ use crate::response::ExporterResponse;
 use crate::trace_exporter::{ddog_trace_exporter_free, ddog_trace_exporter_send};
 use httpmock::MockServer;
 use httpmock::prelude::*;
-use libdd_common_ffi::slice::ByteSlice;
 use libdd_shared_runtime::SharedRuntime;
+use libdd_types_ffi::slice::ByteSlice;
 use std::mem::MaybeUninit;
 
 type StringSetter = unsafe extern "C" fn(

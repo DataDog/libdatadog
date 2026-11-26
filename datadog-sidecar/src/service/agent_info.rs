@@ -15,13 +15,13 @@ use futures::FutureExt;
 use futures::future::Shared;
 use http::uri::PathAndQuery;
 use libdd_capabilities_impl::NativeCapabilities;
-use libdd_common::Endpoint;
-use libdd_common::MutexExt;
 use libdd_data_pipeline::agent_info::schema::AgentInfoStruct;
 use libdd_data_pipeline::agent_info::{FetchInfoStatus, fetch_info_with_state};
 use libdd_ipc::one_way_shared_memory::{OneWayShmReader, OneWayShmWriter, open_named_shm};
 use libdd_ipc::platform::NamedShmHandle;
 use libdd_live_debugger::sender::agent_info_supports_debugger_v2_endpoint;
+use libdd_types::Endpoint;
+use libdd_types::MutexExt;
 use manual_future::{ManualFuture, ManualFutureCompleter};
 use std::ffi::CString;
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
@@ -202,9 +202,9 @@ impl AgentInfoFetcher {
             let mut writer = None;
             let mut completer = Some(completer);
             let mut fetch_endpoint = endpoint.clone();
-            let mut parts = fetch_endpoint.url.into_parts();
+            let mut parts = fetch_endpoint.url().clone().into_parts();
             parts.path_and_query = Some(PathAndQuery::from_static("/info"));
-            fetch_endpoint.url = http::Uri::from_parts(parts).unwrap();
+            fetch_endpoint.set_url(http::Uri::from_parts(parts).unwrap());
             loop {
                 let fetched =
                     fetch_info_with_state::<NativeCapabilities>(&fetch_endpoint, state.as_deref())
@@ -256,7 +256,8 @@ impl AgentInfoFetcher {
                         // unreachable.
                         warn!(
                             "The agent info for {} could not be fetched: {}",
-                            fetch_endpoint.url, e
+                            fetch_endpoint.url(),
+                            e
                         );
                     }
                 }

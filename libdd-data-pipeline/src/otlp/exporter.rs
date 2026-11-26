@@ -7,11 +7,11 @@ use super::config::OtlpTraceConfig;
 use crate::trace_exporter::error::{InternalErrorKind, RequestError, TraceExporterError};
 use http::HeaderMap;
 use libdd_capabilities::{HttpClientCapability, SleepCapability};
-use libdd_common::Endpoint;
 use libdd_trace_utils::send_with_retry::{
     CompressionStrategy, RetryBackoffType, RetryStrategy, SendWithRetryError, SendWithRetryResult,
     send_with_retry,
 };
+use libdd_types::Endpoint;
 use std::time::Duration;
 
 /// Max retries for OTLP export on transient failures.
@@ -69,7 +69,7 @@ pub(crate) async fn send_otlp_http_with_observer<
     max_retries: u32,
     observer: F,
 ) -> Result<(), TraceExporterError> {
-    let url = libdd_common::parse_uri(endpoint_url)
+    let url = libdd_types::parse_uri(endpoint_url)
         .and_then(|url| {
             if url.scheme_str() != Some("unix") {
                 return Ok(url);
@@ -85,11 +85,8 @@ pub(crate) async fn send_otlp_http_with_observer<
             )))
         })?;
 
-    let target = Endpoint {
-        url,
-        timeout_ms: timeout.as_millis() as u64,
-        ..Endpoint::default()
-    };
+    let mut target = Endpoint::from_url(url);
+    target.set_timeout_ms(u64::try_from(timeout.as_millis()).unwrap_or(u64::MAX));
 
     let mut headers = config_headers.clone();
     headers.insert(http::header::CONTENT_TYPE, content_type);

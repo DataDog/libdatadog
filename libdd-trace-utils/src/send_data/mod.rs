@@ -16,11 +16,11 @@ use futures::StreamExt;
 use futures::stream::FuturesUnordered;
 use http::{HeaderMap, HeaderValue, header::CONTENT_TYPE};
 use libdd_capabilities::{HttpClientCapability, SleepCapability};
-use libdd_common::Endpoint;
-use libdd_common::header::{
+use libdd_trace_protobuf::pb::{AgentPayload, TracerPayload, idx};
+use libdd_types::Endpoint;
+use libdd_types::header::{
     APPLICATION_MSGPACK, APPLICATION_PROTOBUF, DATADOG_SEND_REAL_HTTP_STATUS, DATADOG_TRACE_COUNT,
 };
-use libdd_trace_protobuf::pb::{AgentPayload, TracerPayload, idx};
 use send_data_result::SendDataResult;
 use std::collections::HashMap;
 
@@ -36,7 +36,7 @@ use std::collections::HashMap;
 /// use libdd_trace_utils::send_data::{
 ///     SendData,
 /// };
-/// use libdd_common::Endpoint;
+/// use libdd_types::Endpoint;
 /// use libdd_trace_utils::send_with_retry::{RetryBackoffType, RetryStrategy};
 /// use libdd_trace_utils::trace_utils::TracerHeaderTags;
 /// use libdd_trace_utils::tracer_payload::TracerPayloadCollection;
@@ -105,7 +105,7 @@ impl SendDataBuilder {
     }
 
     pub fn with_api_key(mut self, api_key: &str) -> SendDataBuilder {
-        self.target.api_key = Some(api_key.to_string().into());
+        self.target.set_api_key(Some(api_key.to_string().into()));
         self
     }
 
@@ -258,7 +258,7 @@ impl SendData {
     }
 
     fn use_protobuf(&self) -> bool {
-        self.target.api_key.is_some()
+        self.target.api_key().is_some()
     }
 
     async fn send_with_protobuf<C: HttpClientCapability + SleepCapability>(
@@ -460,8 +460,8 @@ mod tests {
     use httpmock::prelude::*;
     use libdd_capabilities::HttpClientCapability;
     use libdd_capabilities_impl::NativeCapabilities;
-    use libdd_common::Endpoint;
     use libdd_trace_protobuf::pb::Span;
+    use libdd_types::Endpoint;
     use std::collections::HashMap;
     use std::time::Duration;
 
@@ -549,18 +549,15 @@ mod tests {
             100,
             TracerPayloadCollection::V07(vec![payload]),
             HEADER_TAGS,
-            &Endpoint {
-                api_key: Some(std::borrow::Cow::Borrowed("TEST-KEY")),
-                url: "/foo/bar?baz".parse::<hyper::Uri>().unwrap(),
-                timeout_ms: ONE_SECOND,
-                ..Endpoint::default()
-            },
+            &Endpoint::from_url("/foo/bar?baz".parse::<hyper::Uri>().unwrap())
+                .with_api_key("TEST-KEY")
+                .with_timeout(ONE_SECOND),
         );
 
         assert_eq!(data.size, 100);
 
-        assert_eq!(data.target.api_key.unwrap(), "TEST-KEY");
-        assert_eq!(data.target.url.path(), "/foo/bar");
+        assert_eq!(data.target.api_key().unwrap(), "TEST-KEY");
+        assert_eq!(data.target.url().path(), "/foo/bar");
     }
 
     #[test]
@@ -572,18 +569,14 @@ mod tests {
             100,
             TracerPayloadCollection::V07(vec![payload]),
             header_tags.clone(),
-            &Endpoint {
-                api_key: None,
-                url: "/foo/bar?baz".parse::<hyper::Uri>().unwrap(),
-                timeout_ms: ONE_SECOND,
-                ..Endpoint::default()
-            },
+            &Endpoint::from_url("/foo/bar?baz".parse::<hyper::Uri>().unwrap())
+                .with_timeout(ONE_SECOND),
         );
 
         assert_eq!(data.size, 100);
 
-        assert_eq!(data.target.api_key, None);
-        assert_eq!(data.target.url.path(), "/foo/bar");
+        assert_eq!(data.target.api_key(), None);
+        assert_eq!(data.target.url().path(), "/foo/bar");
 
         for (key, value) in &HeaderMap::from(header_tags) {
             assert_eq!(data.headers.get(key), Some(value));
@@ -612,12 +605,9 @@ mod tests {
             100,
             TracerPayloadCollection::V07(vec![payload.clone()]),
             header_tags,
-            &Endpoint {
-                api_key: Some(std::borrow::Cow::Borrowed("TEST-KEY")),
-                url: server.url("/").parse::<hyper::Uri>().unwrap(),
-                timeout_ms: ONE_SECOND,
-                ..Endpoint::default()
-            },
+            &Endpoint::from_url(server.url("/").parse::<hyper::Uri>().unwrap())
+                .with_api_key("TEST-KEY")
+                .with_timeout(ONE_SECOND),
         );
 
         let data_payload_len = compute_payload_len(&data.tracer_payloads);
@@ -703,12 +693,9 @@ mod tests {
             100,
             TracerPayloadCollection::V1(Box::new(payload)),
             TracerHeaderTags::default(),
-            &Endpoint {
-                api_key: Some(std::borrow::Cow::Borrowed("TEST-KEY")),
-                url: server.url("/").parse::<hyper::Uri>().unwrap(),
-                timeout_ms: ONE_SECOND,
-                ..Endpoint::default()
-            },
+            &Endpoint::from_url(server.url("/").parse::<hyper::Uri>().unwrap())
+                .with_api_key("TEST-KEY")
+                .with_timeout(ONE_SECOND),
         );
 
         let res = data.send(&NativeCapabilities::new_client()).await;
@@ -745,12 +732,9 @@ mod tests {
             100,
             TracerPayloadCollection::V07(vec![payload.clone(), payload.clone()]),
             header_tags,
-            &Endpoint {
-                api_key: Some(std::borrow::Cow::Borrowed("TEST-KEY")),
-                url: server.url("/").parse::<hyper::Uri>().unwrap(),
-                timeout_ms: ONE_SECOND,
-                ..Endpoint::default()
-            },
+            &Endpoint::from_url(server.url("/").parse::<hyper::Uri>().unwrap())
+                .with_api_key("TEST-KEY")
+                .with_timeout(ONE_SECOND),
         );
 
         let data_payload_len = compute_payload_len(&data.tracer_payloads);
@@ -807,12 +791,8 @@ mod tests {
             100,
             TracerPayloadCollection::V07(vec![payload.clone()]),
             header_tags,
-            &Endpoint {
-                api_key: None,
-                url: server.url("/").parse::<hyper::Uri>().unwrap(),
-                timeout_ms: ONE_SECOND,
-                ..Endpoint::default()
-            },
+            &Endpoint::from_url(server.url("/").parse::<hyper::Uri>().unwrap())
+                .with_timeout(ONE_SECOND),
         );
 
         let data_payload_len = rmp_compute_payload_len(&data.tracer_payloads);
@@ -865,12 +845,8 @@ mod tests {
             100,
             TracerPayloadCollection::V04(vec![trace.clone()]),
             header_tags,
-            &Endpoint {
-                api_key: None,
-                url: server.url("/").parse::<hyper::Uri>().unwrap(),
-                timeout_ms: ONE_SECOND,
-                ..Endpoint::default()
-            },
+            &Endpoint::from_url(server.url("/").parse::<hyper::Uri>().unwrap())
+                .with_timeout(ONE_SECOND),
         );
 
         let data_payload_len = rmp_compute_payload_len(&data.tracer_payloads);
@@ -909,12 +885,8 @@ mod tests {
             100,
             TracerPayloadCollection::V07(vec![payload.clone(), payload.clone()]),
             header_tags,
-            &Endpoint {
-                api_key: None,
-                url: server.url("/").parse::<hyper::Uri>().unwrap(),
-                timeout_ms: ONE_SECOND,
-                ..Endpoint::default()
-            },
+            &Endpoint::from_url(server.url("/").parse::<hyper::Uri>().unwrap())
+                .with_timeout(ONE_SECOND),
         );
 
         let data_payload_len = rmp_compute_payload_len(&data.tracer_payloads);
@@ -951,12 +923,8 @@ mod tests {
             100,
             TracerPayloadCollection::V07(vec![payload]),
             HEADER_TAGS,
-            &Endpoint {
-                api_key: None,
-                url: server.url("/").parse::<hyper::Uri>().unwrap(),
-                timeout_ms: ONE_SECOND,
-                ..Endpoint::default()
-            },
+            &Endpoint::from_url(server.url("/").parse::<hyper::Uri>().unwrap())
+                .with_timeout(ONE_SECOND),
         );
 
         let res = data.send(&NativeCapabilities::new_client()).await;
@@ -986,12 +954,8 @@ mod tests {
             100,
             TracerPayloadCollection::V07(vec![payload]),
             HEADER_TAGS,
-            &Endpoint {
-                api_key: None,
-                url: "http://127.0.0.1:4321/".parse::<hyper::Uri>().unwrap(),
-                timeout_ms: ONE_SECOND,
-                ..Endpoint::default()
-            },
+            &Endpoint::from_url("http://127.0.0.1:4321/".parse::<hyper::Uri>().unwrap())
+                .with_timeout(ONE_SECOND),
         );
 
         let res = data.send(&NativeCapabilities::new_client()).await;
@@ -1055,12 +1019,7 @@ mod tests {
             100,
             TracerPayloadCollection::V04(vec![trace.clone(), trace.clone()]),
             header_tags,
-            &Endpoint {
-                api_key: None,
-                url: server.url("/").parse::<hyper::Uri>().unwrap(),
-                timeout_ms: 500,
-                ..Endpoint::default()
-            },
+            &Endpoint::from_url(server.url("/").parse::<hyper::Uri>().unwrap()).with_timeout(500),
         );
 
         // Setting constant time in order to reduce wall time in CI tests in case there is too much
@@ -1103,12 +1062,7 @@ mod tests {
             100,
             TracerPayloadCollection::V07(vec![payload.clone(), payload.clone()]),
             header_tags,
-            &Endpoint {
-                api_key: None,
-                url: server.url("/").parse::<hyper::Uri>().unwrap(),
-                timeout_ms: 500,
-                ..Endpoint::default()
-            },
+            &Endpoint::from_url(server.url("/").parse::<hyper::Uri>().unwrap()).with_timeout(500),
         );
 
         // Setting constant time in order to reduce wall time in CI tests in case there is too much
@@ -1146,10 +1100,7 @@ mod tests {
         .with_retry_strategy(retry_strategy.clone())
         .build();
 
-        assert_eq!(
-            send_data.target.api_key,
-            Some(std::borrow::Cow::Borrowed("TEST-KEY"))
-        );
+        assert_eq!(send_data.target.api_key(), Some("TEST-KEY"));
         assert_eq!(send_data.retry_strategy, retry_strategy);
     }
 }

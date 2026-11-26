@@ -8,9 +8,9 @@
 //! touches the pool lock. The pool refers to the clients only weakly: the sidecar is long-lived,
 //! so a client, with its worker and socket, ends with the last connection using its endpoint.
 
-use libdd_common::Endpoint;
-use libdd_common::MutexExt;
 use libdd_dogstatsd_client::DogStatsDClient;
+use libdd_types::Endpoint;
+use libdd_types::MutexExt;
 use std::sync::{Arc, Mutex, Weak};
 use zwohash::HashMap;
 
@@ -20,7 +20,7 @@ pub(crate) struct DogStatsDPool(Arc<Mutex<HashMap<String, Weak<DogStatsDClient>>
 impl DogStatsDPool {
     pub(crate) fn client_for(&self, endpoint: &Endpoint) -> Option<Arc<DogStatsDClient>> {
         // The client does not support test tokens, so these must not split the pool.
-        let key = endpoint.url.to_string();
+        let key = endpoint.url().to_string();
         let mut pool = self.0.lock_or_panic();
         if let Some(client) = pool.get(&key).and_then(Weak::upgrade) {
             return Some(client);
@@ -41,7 +41,7 @@ mod tests {
         let pool = DogStatsDPool::default();
         let endpoint = Endpoint::from_slice("udp://localhost:8125");
         let mut token_endpoint = endpoint.clone();
-        token_endpoint.test_token = Some("token".into());
+        token_endpoint.set_test_token(Some("token".into()));
         let client = pool.client_for(&endpoint).unwrap();
         assert!(Arc::ptr_eq(
             &client,

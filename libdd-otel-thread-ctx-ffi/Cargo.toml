@@ -15,13 +15,13 @@ crate-type = ["staticlib", "cdylib", "lib"]
 bench = false
 
 [dependencies]
-libdd-common-ffi = { path = "../libdd-common-ffi", default-features = false, optional = true, features = ["std"] }
+libdd-types-ffi = { path = "../libdd-types-ffi", default-features = false, optional = true, features = ["std"] }
 libdd-otel-thread-ctx = { path = "../libdd-otel-thread-ctx" }
 
 [features]
 default = ["cbindgen"]
-cbindgen = ["build_common/cbindgen", "libdd-common-ffi/cbindgen"]
-sanity-check = ["dep:libdd-common-ffi", "libdd-otel-thread-ctx/sanity-check"]
+cbindgen = ["build_common/cbindgen", "libdd-types-ffi/cbindgen"]
+sanity-check = ["dep:libdd-types-ffi", "libdd-otel-thread-ctx/sanity-check"]
 # Autoclean contexts on thread exit, forwarding the same feature from
 # `libdd-otel-thread-ctx`: any context left attached when the thread exits is freed by Rust's
 # TLS destructor mechanism, with nothing required from the host. Do NOT combine with

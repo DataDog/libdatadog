@@ -3,8 +3,8 @@
 
 use crate::RemoteConfigNotification;
 use datadog_sidecar::windows::remote_config_notification::RemoteConfigNotification as Notification;
-use libdd_common_ffi::{self as ffi, MaybeError};
 use libdd_telemetry_ffi::try_c;
+use libdd_types_ffi::{self as ffi, MaybeError};
 use std::ffi::c_void;
 
 // Release artifacts use panic=abort, so these FFI boundaries need no unwind guards.

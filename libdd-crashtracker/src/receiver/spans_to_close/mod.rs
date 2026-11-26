@@ -26,7 +26,6 @@ use chrono::{DateTime, Utc};
 use http::uri::PathAndQuery;
 use libdd_capabilities::HttpClientCapability;
 use libdd_capabilities_impl::NativeCapabilities;
-use libdd_common::{Endpoint, parse_uri};
 use libdd_trace_model::{AttributesMut, SpanMut, TraceChunkMut, ValueTypes};
 use libdd_trace_utils::msgpack_encoder::v1 as encode_v1;
 use libdd_trace_utils::send_data::{SendData, SendDataBuilder};
@@ -37,6 +36,7 @@ use libdd_trace_utils::span::v1::{
 };
 use libdd_trace_utils::tracer_header_tags::{TracerGenericTags, TracerHeaderTags};
 use libdd_trace_utils::tracer_payload::TracerPayloadCollection;
+use libdd_types::{Endpoint, parse_uri};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -302,18 +302,17 @@ fn traces_endpoint(
         anyhow::bail!("no agent URL, and the crash tracker has no endpoint");
     };
     anyhow::ensure!(
-        crash_endpoint.api_key.is_none(),
+        crash_endpoint.api_key().is_none(),
         "no agent URL, and the crash tracker sends to the intake, not an agent"
     );
     anyhow::ensure!(
-        crash_endpoint.url.scheme_str() != Some("file"),
+        crash_endpoint.url().scheme_str() != Some("file"),
         "no agent URL, and the crash tracker writes to a file, not an agent"
     );
-    ensure_agent_scheme(&crash_endpoint.url)?;
-    Ok(Endpoint {
-        url: traces_uri(crash_endpoint.url.clone(), V1_TRACES_PATH)?,
-        ..crash_endpoint.clone()
-    })
+    ensure_agent_scheme(crash_endpoint.url())?;
+    let mut endpoint = crash_endpoint.clone();
+    endpoint.set_url(traces_uri(crash_endpoint.url().clone(), V1_TRACES_PATH)?);
+    Ok(endpoint)
 }
 
 /// The block's agent URL, refused here, while the report can still say why,
@@ -463,7 +462,7 @@ mod tests {
         let submission = prepare(&block(), &crash, None).unwrap();
         assert_eq!(submission.send.get_payloads().size(), 1);
         assert_eq!(
-            submission.send.get_target().url.to_string(),
+            submission.send.get_target().url().to_string(),
             "http://agent:8126/v1.0/traces"
         );
 
@@ -610,7 +609,7 @@ mod tests {
     fn url_of(agent_url: Option<&str>, crash_endpoint: Option<&Endpoint>) -> String {
         traces_endpoint(agent_url, crash_endpoint)
             .unwrap()
-            .url
+            .url()
             .to_string()
     }
 
@@ -622,26 +621,26 @@ mod tests {
             "http://agent:8126/v1.0/traces"
         );
         let based = traces_endpoint(Some("http://agent:8126/some/base"), None).unwrap();
-        assert_eq!(based.url.path(), V1_TRACES_PATH);
+        assert_eq!(based.url().path(), V1_TRACES_PATH);
         let unix = traces_endpoint(Some("unix:///var/run/datadog/apm.socket"), None).unwrap();
-        assert_eq!(unix.url.scheme_str(), Some("unix"));
-        assert_eq!(unix.url.path(), V1_TRACES_PATH);
+        assert_eq!(unix.url().scheme_str(), Some("unix"));
+        assert_eq!(unix.url().path(), V1_TRACES_PATH);
     }
 
     #[test]
     fn traces_without_an_agent_url_go_to_the_crash_trackers_agent() {
         let mut crash =
             Endpoint::from_slice("http://agent:8126/telemetry/proxy/api/v2/apmtelemetry");
-        crash.timeout_ms = 1234;
-        crash.test_token = Some("token".into());
+        crash.set_timeout_ms(1234);
+        crash.set_test_token(Some("token".into()));
         let endpoint = traces_endpoint(None, Some(&crash)).unwrap();
-        assert_eq!(endpoint.url.to_string(), "http://agent:8126/v1.0/traces");
-        assert_eq!(endpoint.timeout_ms, 1234);
-        assert_eq!(endpoint.test_token.as_deref(), Some("token"));
+        assert_eq!(endpoint.url().to_string(), "http://agent:8126/v1.0/traces");
+        assert_eq!(endpoint.timeout_ms(), 1234);
+        assert_eq!(endpoint.test_token(), Some("token"));
         let unix = Endpoint::from_slice("unix:///var/run/datadog/apm.socket");
         assert_eq!(
             url_of(None, Some(&unix)),
-            traces_uri(unix.url.clone(), V1_TRACES_PATH)
+            traces_uri(unix.url().clone(), V1_TRACES_PATH)
                 .unwrap()
                 .to_string()
         );
@@ -650,7 +649,7 @@ mod tests {
     #[test]
     fn traces_without_an_agent_url_need_an_agent_endpoint() {
         let mut intake = Endpoint::from_slice("https://intake.datadoghq.com");
-        intake.api_key = Some("key".into());
+        intake.set_api_key(Some("key".into()));
         let file = Endpoint::from_slice("file:///tmp/crash.json");
         for (crash_endpoint, why) in [
             (None, "no endpoint"),

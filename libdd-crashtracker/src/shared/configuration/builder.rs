@@ -3,7 +3,7 @@
 use crate::{default_signals, shared::constants, signal_from_signum};
 use alloc::borrow::Cow;
 use core::time::Duration;
-use libdd_common::Endpoint;
+use libdd_types::Endpoint;
 
 use super::{CrashtrackerConfiguration, StacktraceCollection, default_max_threads};
 
@@ -152,15 +152,15 @@ impl CrashtrackerConfigurationBuilder {
         let endpoint = self
             .endpoint_url
             .map(|url| {
-                Ok::<Endpoint, anyhow::Error>(Endpoint {
-                    url: libdd_common::parse_uri(&url)?,
-                    api_key: self.endpoint_api_key.map(Cow::Owned),
-                    timeout_ms: self
-                        .endpoint_timeout_ms
+                let mut endpoint = Endpoint::from_url(libdd_types::parse_uri(&url)?);
+                endpoint.set_api_key(self.endpoint_api_key.map(Cow::Owned));
+                endpoint.set_timeout_ms(
+                    self.endpoint_timeout_ms
                         .unwrap_or(Endpoint::DEFAULT_TIMEOUT),
-                    test_token: self.endpoint_test_token.map(Cow::Owned),
-                    use_system_resolver: self.endpoint_use_system_resolver,
-                })
+                );
+                endpoint.set_test_token(self.endpoint_test_token.map(Cow::Owned));
+                endpoint.set_use_system_resolver(self.endpoint_use_system_resolver);
+                Ok::<Endpoint, anyhow::Error>(endpoint)
             })
             .transpose()?;
 
@@ -331,7 +331,7 @@ mod tests {
             .endpoint_url("file:///tmp/crashreport.json")
             .build()?;
         let endpoint = config.endpoint().as_ref().expect("endpoint should be set");
-        assert_eq!(endpoint.url.scheme_str(), Some("file"));
+        assert_eq!(endpoint.url().scheme_str(), Some("file"));
         Ok(())
     }
 
@@ -341,9 +341,9 @@ mod tests {
             .endpoint_url("http://localhost:8126/api/v2/profile")
             .build()?;
         let endpoint = config.endpoint().as_ref().expect("endpoint should be set");
-        assert_eq!(endpoint.url.scheme_str(), Some("http"));
-        assert_eq!(endpoint.url.port().unwrap().as_u16(), 8126);
-        assert_eq!(endpoint.url.host(), Some("localhost"));
+        assert_eq!(endpoint.url().scheme_str(), Some("http"));
+        assert_eq!(endpoint.url().port().unwrap().as_u16(), 8126);
+        assert_eq!(endpoint.url().host(), Some("localhost"));
         Ok(())
     }
 
@@ -353,8 +353,8 @@ mod tests {
             .endpoint_url("http://localhost:8126")
             .build()?;
         let endpoint = config.endpoint().as_ref().expect("endpoint should be set");
-        assert_eq!(endpoint.url.port().unwrap().as_u16(), 8126);
-        assert_eq!(endpoint.timeout_ms, Endpoint::DEFAULT_TIMEOUT);
+        assert_eq!(endpoint.url().port().unwrap().as_u16(), 8126);
+        assert_eq!(endpoint.timeout_ms(), Endpoint::DEFAULT_TIMEOUT);
         Ok(())
     }
 
@@ -365,7 +365,7 @@ mod tests {
             .endpoint_timeout_ms(1234)
             .build()?;
         let endpoint = config.endpoint().as_ref().expect("endpoint should be set");
-        assert_eq!(endpoint.timeout_ms, 1234);
+        assert_eq!(endpoint.timeout_ms(), 1234);
         Ok(())
     }
 
@@ -376,7 +376,7 @@ mod tests {
             .endpoint_api_key("my-api-key")
             .build()?;
         let endpoint = config.endpoint().as_ref().expect("endpoint should be set");
-        assert_eq!(endpoint.api_key.as_deref(), Some("my-api-key"));
+        assert_eq!(endpoint.api_key(), Some("my-api-key"));
         Ok(())
     }
 
@@ -387,7 +387,7 @@ mod tests {
             .endpoint_test_token("test-token")
             .build()?;
         let endpoint = config.endpoint().as_ref().expect("endpoint should be set");
-        assert_eq!(endpoint.test_token.as_deref(), Some("test-token"));
+        assert_eq!(endpoint.test_token(), Some("test-token"));
         Ok(())
     }
 
@@ -398,7 +398,7 @@ mod tests {
             .endpoint_use_system_resolver(true)
             .build()?;
         let endpoint = config.endpoint().as_ref().expect("endpoint should be set");
-        assert!(endpoint.use_system_resolver);
+        assert!(endpoint.use_system_resolver());
         Ok(())
     }
 

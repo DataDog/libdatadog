@@ -1,9 +1,9 @@
 // Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-use libdd_common::Endpoint;
 use libdd_ipc::one_way_shared_memory::{OneWayShmReader, OneWayShmWriter, open_named_shm};
 use libdd_ipc::platform::{FileBackedHandle, MappedMem, NamedShmHandle, ShmHandle};
+use libdd_types::Endpoint;
 use std::ffi::CString;
 use std::hash::{Hash, Hasher};
 use std::io;
@@ -18,8 +18,8 @@ fn path_for_endpoint(endpoint: &Endpoint) -> CString {
     let mut hasher = ZwoHasher::default();
 
     #[allow(clippy::unwrap_used)]
-    endpoint.url.authority().unwrap().hash(&mut hasher);
-    endpoint.test_token.hash(&mut hasher);
+    endpoint.url().authority().unwrap().hash(&mut hasher);
+    endpoint.test_token().hash(&mut hasher);
 
     let mut path = format!("/ddcfg-{}-{}", crate::shm_namespace(), hasher.finish());
     if cfg!(unix) {

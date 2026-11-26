@@ -21,7 +21,7 @@
 //!
 //! This integration test sets environment variables, so its binary contains a
 //! single test, run before any HTTP client is built. The equivalent check for
-//! the hyper backend is covered by `libdd-common`'s `tests/tls_distrust.rs`.
+//! the hyper backend is covered by `libdd-types`'s `tests/tls_distrust.rs`.
 
 #![cfg(all(
     unix,

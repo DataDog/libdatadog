@@ -61,8 +61,8 @@ ${arg#--exclude=}"
             echo "  - ^Merge pull request "
             echo ""
             echo "Examples:"
-            echo "  ./publication-order.sh --format=json libdd-common | ./commits-since-release.sh"
-            echo "  ./commits-since-release.sh '[{\"name\":\"libdd-common\",\"version\":\"1.0.0\"}]'"
+            echo "  ./publication-order.sh --format=json libdd-types | ./commits-since-release.sh"
+            echo "  ./commits-since-release.sh '[{\"name\":\"libdd-types\",\"version\":\"1.0.0\"}]'"
             echo "  ./commits-since-release.sh --format=summary \"\$(./publication-order.sh --format=json)\""
             echo "  ./commits-since-release.sh --exclude='^chore:' --exclude='^ci:' \"\$JSON\""
             echo ""
@@ -175,8 +175,8 @@ while read -r crate; do
     # Highest release tag that exists for this crate, which is not necessarily $TAG: the
     # manifest version can lag behind the tags when a release was cut elsewhere (a hotfix
     # branch, or a release already merged to main). Empty when the crate was never released.
-    # The `-v` in the glob keeps sibling crates out: libdd-common-v* cannot match
-    # libdd-common-ffi-v1.0.0.
+    # The `-v` in the glob keeps sibling crates out: libdd-types-v* cannot match
+    # libdd-types-ffi-v1.0.0.
     LATEST_TAG=$(git tag -l "${NAME}-v*" --sort=-v:refname | head -1)
     log_verbose "  Latest tag: ${LATEST_TAG:-<none>}"
 

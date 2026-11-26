@@ -15,7 +15,7 @@ bench = false
 
 [features]
 default = ["cbindgen"]
-cbindgen = ["build_common/cbindgen", "libdd-common-ffi/cbindgen"]
+cbindgen = ["build_common/cbindgen", "libdd-types-ffi/cbindgen"]
 # See libdd-profiling-heap-gotter's test-support feature. Not for production use.
 test-support = ["libdd-profiling-heap-gotter/test-support"]
 # Forward live-heap (retained-heap) tracking down to the sampler
@@ -27,7 +27,7 @@ build_common = { path = "../build-common" }
 [dependencies]
 anyhow = { workspace = true, default-features = true }
 function_name.workspace = true
-libdd-common-ffi = { path = "../libdd-common-ffi", default-features = false, features = ["std"] }
+libdd-types-ffi = { path = "../libdd-types-ffi", default-features = false, features = ["std"] }
 # libdd-profiling-heap-gotter exposes the same public surface on every target
 # (no-ops on non-Linux), so this dependency is unconditional and the
 # FFI layer is portable too.

@@ -41,10 +41,6 @@ use datadog_sidecar::shm_remote_config::{
     RemoteConfigInvariants, RemoteConfigReader, path_for_remote_config,
 };
 use libc::c_char;
-use libdd_common::Endpoint;
-use libdd_common::tag::Tag;
-use libdd_common_ffi::slice::{AsBytes, CharSlice, Slice};
-use libdd_common_ffi::{self as ffi, MaybeError};
 #[cfg(windows)]
 use libdd_crashtracker_ffi::Metadata;
 use libdd_dogstatsd_client::DogStatsDActionOwned;
@@ -60,6 +56,10 @@ use libdd_telemetry_ffi::try_c;
 use libdd_trace_utils::msgpack_encoder;
 use libdd_trace_utils::span::v1::TracerPayloadBytes;
 use libdd_trace_utils::trace_utils::TracerGenericTags;
+use libdd_types::Endpoint;
+use libdd_types::tag::Tag;
+use libdd_types_ffi::slice::{AsBytes, CharSlice, Slice};
+use libdd_types_ffi::{self as ffi, MaybeError};
 use std::ffi::{CStr, CString, c_void};
 use std::fs::File;
 #[cfg(unix)]
@@ -77,9 +77,13 @@ fn otlp_metrics_endpoint_with_agent_test_token(
     agent_endpoint: &Endpoint,
 ) -> Option<Endpoint> {
     if let Some(endpoint) = &mut otlp_metrics_endpoint
-        && endpoint.test_token.is_none()
+        && endpoint.test_token().is_none()
     {
-        endpoint.test_token = agent_endpoint.test_token.clone();
+        endpoint.set_test_token(
+            agent_endpoint
+                .test_token()
+                .map(|token| token.to_string().into()),
+        );
     }
 
     otlp_metrics_endpoint
@@ -268,7 +272,7 @@ pub unsafe extern "C" fn ddog_remote_config_reader_for_endpoint<'a>(
     service_name: ffi::CharSlice,
     env_name: ffi::CharSlice,
     app_version: ffi::CharSlice,
-    tags: &libdd_common_ffi::Vec<Tag>,
+    tags: &libdd_types_ffi::Vec<Tag>,
 ) -> Box<RemoteConfigReader> {
     Box::new(RemoteConfigReader::new(
         &ConfigInvariants {
@@ -665,7 +669,7 @@ pub unsafe extern "C" fn ddog_sidecar_set_connection_config(
     remote_config_capabilities: *const RemoteConfigCapabilities,
     remote_config_capabilities_count: usize,
     remote_config_enabled: bool,
-    process_tags: &libdd_common_ffi::Vec<Tag>,
+    process_tags: &libdd_types_ffi::Vec<Tag>,
     default_service_name: ffi::CharSlice,
     hostname: ffi::CharSlice,
     root_service: ffi::CharSlice,
@@ -765,7 +769,7 @@ pub unsafe extern "C" fn ddog_sidecar_set_connection_config(
 #[allow(clippy::missing_safety_doc)]
 pub unsafe extern "C" fn ddog_sidecar_set_process_tags(
     transport: &mut Box<SidecarTransport>,
-    process_tags: &libdd_common_ffi::Vec<Tag>,
+    process_tags: &libdd_types_ffi::Vec<Tag>,
 ) -> MaybeError {
     try_c!(blocking::set_process_tags(transport, process_tags.to_vec()));
 
@@ -1129,7 +1133,7 @@ pub unsafe extern "C" fn ddog_sidecar_send_ffe_exposure_batch(
         ddog_sidecar_send_ffe_exposure_batch_impl(transport, context, exposures)
     }))
     .unwrap_or_else(|panic| {
-        MaybeError::Some(libdd_common_ffi::utils::handle_panic_error(
+        MaybeError::Some(libdd_types_ffi::utils::handle_panic_error(
             panic,
             "ddog_sidecar_send_ffe_exposure_batch",
         ))
@@ -1203,7 +1207,7 @@ pub unsafe extern "C" fn ddog_sidecar_send_ffe_flag_evaluation_batch(
         ddog_sidecar_send_ffe_flag_evaluation_batch_impl(transport, context, flag_evaluations)
     }))
     .unwrap_or_else(|panic| {
-        MaybeError::Some(libdd_common_ffi::utils::handle_panic_error(
+        MaybeError::Some(libdd_types_ffi::utils::handle_panic_error(
             panic,
             "ddog_sidecar_send_ffe_flag_evaluation_batch",
         ))
@@ -1453,7 +1457,7 @@ pub unsafe extern "C" fn ddog_sidecar_set_application(
     service_name: ffi::CharSlice,
     env_name: ffi::CharSlice,
     app_version: ffi::CharSlice,
-    global_tags: &libdd_common_ffi::Vec<Tag>,
+    global_tags: &libdd_types_ffi::Vec<Tag>,
     dynamic_instrumentation_state: DynamicInstrumentationConfigState,
     remote_config_generation: u64,
 ) -> MaybeError {
@@ -1532,7 +1536,7 @@ pub unsafe extern "C" fn ddog_sidecar_dogstatsd_count(
     transport: &mut Box<SidecarTransport>,
     metric: ffi::CharSlice,
     value: i64,
-    tags: Option<&libdd_common_ffi::Vec<Tag>>,
+    tags: Option<&libdd_types_ffi::Vec<Tag>>,
 ) -> MaybeError {
     try_c!(blocking::send_dogstatsd_actions(
         transport,
@@ -1554,7 +1558,7 @@ pub unsafe extern "C" fn ddog_sidecar_dogstatsd_distribution(
     transport: &mut Box<SidecarTransport>,
     metric: ffi::CharSlice,
     value: f64,
-    tags: Option<&libdd_common_ffi::Vec<Tag>>,
+    tags: Option<&libdd_types_ffi::Vec<Tag>>,
 ) -> MaybeError {
     try_c!(blocking::send_dogstatsd_actions(
         transport,
@@ -1576,7 +1580,7 @@ pub unsafe extern "C" fn ddog_sidecar_dogstatsd_gauge(
     transport: &mut Box<SidecarTransport>,
     metric: ffi::CharSlice,
     value: f64,
-    tags: Option<&libdd_common_ffi::Vec<Tag>>,
+    tags: Option<&libdd_types_ffi::Vec<Tag>>,
 ) -> MaybeError {
     try_c!(blocking::send_dogstatsd_actions(
         transport,
@@ -1598,7 +1602,7 @@ pub unsafe extern "C" fn ddog_sidecar_dogstatsd_histogram(
     transport: &mut Box<SidecarTransport>,
     metric: ffi::CharSlice,
     value: f64,
-    tags: Option<&libdd_common_ffi::Vec<Tag>>,
+    tags: Option<&libdd_types_ffi::Vec<Tag>>,
 ) -> MaybeError {
     try_c!(blocking::send_dogstatsd_actions(
         transport,
@@ -1620,7 +1624,7 @@ pub unsafe extern "C" fn ddog_sidecar_dogstatsd_set(
     transport: &mut Box<SidecarTransport>,
     metric: ffi::CharSlice,
     value: i64,
-    tags: Option<&libdd_common_ffi::Vec<Tag>>,
+    tags: Option<&libdd_types_ffi::Vec<Tag>>,
 ) -> MaybeError {
     try_c!(blocking::send_dogstatsd_actions(
         transport,
@@ -2110,7 +2114,6 @@ pub extern "C" fn ddog_sidecar_appsec_response_drop(response: AppsecCResponse) {
 mod tests {
     use super::*;
     use datadog_sidecar::service::{MAX_CONTEXT_FIELDS, MAX_FIELD_LENGTH};
-    use std::borrow::Cow;
 
     fn ffi_producer_identity<'a>(origin: &'a str, version: &'a str) -> EvpProducerIdentity<'a> {
         EvpProducerIdentity {
@@ -2232,28 +2235,19 @@ mod tests {
 
     #[test]
     fn otlp_metrics_endpoint_inherits_agent_test_token_when_missing() {
-        let agent_endpoint = Endpoint {
-            test_token: Some(Cow::Borrowed("agent-token")),
-            ..Endpoint::default()
-        };
+        let agent_endpoint = Endpoint::default().with_test_token("agent-token");
 
         let endpoint =
             otlp_metrics_endpoint_with_agent_test_token(Some(Endpoint::default()), &agent_endpoint)
                 .expect("expected OTLP metrics endpoint");
 
-        assert_eq!(endpoint.test_token.as_deref(), Some("agent-token"));
+        assert_eq!(endpoint.test_token(), Some("agent-token"));
     }
 
     #[test]
     fn otlp_metrics_endpoint_keeps_explicit_test_token() {
-        let agent_endpoint = Endpoint {
-            test_token: Some(Cow::Borrowed("agent-token")),
-            ..Endpoint::default()
-        };
-        let otlp_metrics_endpoint = Endpoint {
-            test_token: Some(Cow::Borrowed("metrics-token")),
-            ..Endpoint::default()
-        };
+        let agent_endpoint = Endpoint::default().with_test_token("agent-token");
+        let otlp_metrics_endpoint = Endpoint::default().with_test_token("metrics-token");
 
         let endpoint = otlp_metrics_endpoint_with_agent_test_token(
             Some(otlp_metrics_endpoint),
@@ -2261,7 +2255,7 @@ mod tests {
         )
         .expect("expected OTLP metrics endpoint");
 
-        assert_eq!(endpoint.test_token.as_deref(), Some("metrics-token"));
+        assert_eq!(endpoint.test_token(), Some("metrics-token"));
     }
 
     fn ffi_exposure<'a>(serial_id: i32, has_serial_id: bool) -> FfeExposure<'a> {

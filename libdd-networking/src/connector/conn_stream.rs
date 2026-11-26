@@ -302,7 +302,7 @@ mod windows_named_pipe_tests {
     #[tokio::test]
     async fn from_named_pipe_uri_connects_with_anonymous_qos() {
         let pipe_name = format!(
-            r"\\.\pipe\libdd_common_conn_stream_test_{}_{}",
+            r"\\.\pipe\libdd_types_conn_stream_test_{}_{}",
             std::process::id(),
             rand::random::<u64>()
         );

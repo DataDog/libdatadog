@@ -5,7 +5,7 @@ use super::ProfileExporter;
 use crate::{exporter::File, internal::EncodedProfile};
 use anyhow::Context;
 use crossbeam_channel::{Receiver, Sender};
-use libdd_common::tag::Tag;
+use libdd_types::tag::Tag;
 use reqwest::RequestBuilder;
 use std::thread::JoinHandle;
 use tokio_util::sync::CancellationToken;

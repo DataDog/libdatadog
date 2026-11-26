@@ -7,12 +7,12 @@ use crate::service::{
     ApplicationConfig, EvpTransportConfigWithIdentity, InstanceId, SerializedTracerHeaderTags,
     SessionConfig, SidecarAction,
 };
-use libdd_common::tag::Tag;
 use libdd_dogstatsd_client::DogStatsDActionOwned;
 use libdd_ipc::platform::ShmHandle;
 use libdd_live_debugger::sender::DebuggerType;
 use libdd_telemetry::metrics::MetricContext;
 use libdd_trace_utils::trace_utils::TracerGenericTags;
+use libdd_types::tag::Tag;
 use serde::{Deserialize, Serialize};
 use std::time::Duration;
 
@@ -378,7 +378,7 @@ mod tests {
     use crate::service::{
         EvpProducerIdentity, EvpTransportConfig, EvpTransportConfigWithIdentity, EvpTransportMode,
     };
-    use libdd_common::Endpoint;
+    use libdd_types::Endpoint;
 
     #[test]
     fn appsec_client_request_decodes_as_server_request() {
@@ -402,17 +402,13 @@ mod tests {
 
     #[test]
     fn evp_transport_config_decodes_across_the_ipc_boundary() {
-        let agent_endpoint = Endpoint {
-            url: "http://localhost:8126/".parse().unwrap(),
-            ..Endpoint::default()
-        };
-        let direct_endpoint = Endpoint {
-            url: "https://event-platform-intake.datadoghq.com/"
+        let agent_endpoint = Endpoint::from_url("http://localhost:8126/".parse().unwrap());
+        let direct_endpoint = Endpoint::from_url(
+            "https://event-platform-intake.datadoghq.com/"
                 .parse()
                 .unwrap(),
-            api_key: Some("test-api-key".into()),
-            ..Endpoint::default()
-        };
+        )
+        .with_api_key("test-api-key");
 
         let agentless_config = EvpTransportConfigWithIdentity::new(
             EvpTransportConfig {

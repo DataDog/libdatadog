@@ -21,7 +21,7 @@ fn registration(url: &str) -> CdnRegistration {
             request_timeout: Duration::from_secs(1),
             service: None,
         },
-        agent_endpoint: libdd_common::Endpoint::default(),
+        agent_endpoint: libdd_types::Endpoint::default(),
         target: Arc::new(Target::new(
             format!("test-{}", rand::random::<u64>()),
             "test".into(),
@@ -244,7 +244,7 @@ fn cdn_notifications_share_the_published_view_and_require_an_active_opted_in_app
         assert_eq!(SIGNALS.load(Ordering::SeqCst), 0);
         let mut reader = RemoteConfigReader::new(&r.invariants().unwrap(), &r.target);
         assert_eq!(VIEWS.lock().unwrap().last().unwrap(), reader.read().1);
-        handler.set_connection_config(InstanceId::new("notify", "runtime"), SessionConfig { remote_config_enabled: true, endpoint: libdd_common::Endpoint { url: "http://127.0.0.1:1".parse().unwrap(), ..Default::default() }, ..SessionConfig::for_test() }).await;
+        handler.set_connection_config(InstanceId::new("notify", "runtime"), SessionConfig { remote_config_enabled: true, endpoint: libdd_types::Endpoint::from_url("http://127.0.0.1:1".parse().unwrap()), ..SessionConfig::for_test() }).await;
         assert_eq!(SIGNALS.load(Ordering::SeqCst), 0, "session replacement must await application registration");
         let application = ApplicationConfig { service_name: "notify".into(), env_name: "test".into(), app_version: "".into(), global_tags: vec![], dynamic_instrumentation_state: DynamicInstrumentationConfigState::NotSet };
         handler.set_application(Some(application.clone()), 0).await;
@@ -269,7 +269,7 @@ fn cdn_notifications_share_the_published_view_and_require_an_active_opted_in_app
         publisher.apply(config("four")).unwrap();
         tokio::time::sleep(Duration::from_millis(20)).await;
         assert_eq!(SIGNALS.load(Ordering::SeqCst), 2, "RC-disabled active app received a signal");
-        handler.set_connection_config(InstanceId::new("notify", "runtime"), SessionConfig { remote_config_enabled: true, endpoint: libdd_common::Endpoint { url: "http://127.0.0.1:1".parse().unwrap(), ..Default::default() }, ..SessionConfig::for_test() }).await;
+        handler.set_connection_config(InstanceId::new("notify", "runtime"), SessionConfig { remote_config_enabled: true, endpoint: libdd_types::Endpoint::from_url("http://127.0.0.1:1".parse().unwrap()), ..SessionConfig::for_test() }).await;
         handler.set_application(Some(application), 0).await;
         tokio::time::sleep(Duration::from_millis(20)).await;
         assert_eq!(SIGNALS.load(Ordering::SeqCst), 3, "RC-enabled active app missed signal");

@@ -4,7 +4,7 @@
 use crate::config;
 use arc_swap::ArcSwap;
 use chrono::{DateTime, Utc};
-use libdd_common::MutexExt;
+use libdd_types::MutexExt;
 use priority_queue::PriorityQueue;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;

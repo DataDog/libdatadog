@@ -6,7 +6,7 @@ Shared networking utilities for Datadog libraries.
 
 `libdd-networking` provides the HTTP transport layer shared across Datadog Rust libraries: URI
 helpers for Datadog-specific transports, HTTP/HTTPS connectors, and a hyper-based HTTP client. The
-`Endpoint` type itself lives in `libdd-common`, so crates that only describe endpoints do not
+`Endpoint` type itself lives in `libdd-types`, so crates that only describe endpoints do not
 depend on this crate.
 
 ## Features

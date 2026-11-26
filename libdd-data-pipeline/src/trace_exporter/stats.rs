@@ -10,14 +10,13 @@
 pub use libdd_trace_stats::span_concentrator::CardinalityLimitConfig;
 use libdd_trace_utils::span::span_pool::PooledChunks;
 use libdd_trace_utils::span::trace_utils::compute_top_level_span;
+use std::borrow::Cow;
 
 use super::TracerMetadata;
 use super::add_path;
 use crate::agent_info::schema::AgentInfo;
 use arc_swap::ArcSwap;
 use libdd_capabilities::{HttpClientCapability, MaybeSend, SleepCapability};
-use libdd_common::Endpoint;
-use libdd_common::MutexExt;
 use libdd_shared_runtime::{SharedRuntime, WorkerHandle};
 #[cfg(feature = "stats-obfuscation")]
 use libdd_trace_obfuscation::obfuscation_config::SqlConfig;
@@ -31,6 +30,8 @@ use libdd_trace_stats::stats_exporter::{
     FlushableStatsExport, SharedStatsExporter, StatsExporter, StatsMetadata,
 };
 use libdd_trace_utils::trace_filter::TraceFilterer;
+use libdd_types::Endpoint;
+use libdd_types::MutexExt;
 use std::fmt::Debug;
 use std::sync::{Arc, Mutex, Weak};
 use std::time::Duration;
@@ -184,14 +185,17 @@ fn create_and_start_stats_worker<
     client_side_stats: &StatsComputationConfig,
 ) -> anyhow::Result<()> {
     let bucket_size = stats_concentrator.lock_or_panic().get_bucket_size();
+    let mut stats_endpoint = Endpoint::from_url(add_path(ctx.endpoint.url(), STATS_ENDPOINT));
+    stats_endpoint.set_test_token(
+        ctx.endpoint
+            .test_token()
+            .map(|token| Cow::Owned(token.to_string())),
+    );
     let stats_exporter = StatsExporter::<C>::new(
         bucket_size,
         stats_concentrator.clone(),
         StatsMetadata::from(ctx.metadata.clone()),
-        Endpoint {
-            test_token: ctx.endpoint.test_token.clone(),
-            ..Endpoint::from_url(add_path(&ctx.endpoint.url, STATS_ENDPOINT))
-        },
+        stats_endpoint,
         capabilities.clone(),
         #[cfg(feature = "stats-obfuscation")]
         SUPPORTED_OBFUSCATION_VERSION_STR,

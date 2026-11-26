@@ -189,10 +189,7 @@ async fn matching_ipc_enforces_privacy_in_http_and_keeps_connection_healthy() {
         let mut session = ConnectionSession::for_test(InstanceId::new("privacy", "runtime"));
         session
             .tracer_config
-            .set_endpoint(Endpoint {
-                url: http.url("/").parse().unwrap(),
-                ..Endpoint::default()
-            })
+            .set_endpoint(Endpoint::from_url(http.url("/").parse().unwrap()))
             .unwrap();
         session.tracer_config.language = "php".into();
         session.tracer_config.tracer_version = "1.25.1".into();
@@ -378,10 +375,7 @@ async fn bounded_ffe_submission_preserves_http_privacy_and_survives_rejection() 
         let mut session = ConnectionSession::for_test(InstanceId::new("privacy", "runtime"));
         session
             .tracer_config
-            .set_endpoint(Endpoint {
-                url: http.url("/").parse().unwrap(),
-                ..Endpoint::default()
-            })
+            .set_endpoint(Endpoint::from_url(http.url("/").parse().unwrap()))
             .unwrap();
         session.tracer_config.language = "php".into();
         session

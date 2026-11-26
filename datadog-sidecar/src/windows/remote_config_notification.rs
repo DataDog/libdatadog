@@ -4,8 +4,8 @@
 //! Windows client-owned remote configuration notifications.
 
 use crate::service::RemoteConfigNotifyTarget;
-use libdd_common::MutexExt;
 use libdd_ipc::platform::PlatformHandle;
+use libdd_types::MutexExt;
 use std::ffi::c_void;
 use std::io;
 use std::os::windows::io::{AsRawHandle, FromRawHandle, OwnedHandle};

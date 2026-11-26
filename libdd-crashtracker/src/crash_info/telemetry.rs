@@ -10,12 +10,12 @@ use anyhow::Context;
 use chrono::{DateTime, Utc};
 use libdd_capabilities::HttpClientCapability;
 use libdd_capabilities_impl::NativeCapabilities;
-use libdd_common::Endpoint;
 use libdd_telemetry::{
     build_host,
     data::{self, Application, LogLevel},
     worker::http_client::request_builder,
 };
+use libdd_types::Endpoint;
 use serde::Serialize;
 use uuid::Uuid;
 
@@ -184,10 +184,10 @@ impl TelemetryCrashUploader {
             // But do we want to support direct submission to the intake?
 
             // ignore result because what are we going to do?
-            if endpoint.url.scheme_str() == Some("file") {
+            if endpoint.url().scheme_str() == Some("file") {
                 // Write telemetry alongside the crash file. Rebuild from the
                 // decoded path so the file path is re-encoded exactly once.
-                let path = libdd_common::decode_uri_path_in_authority(&endpoint.url)
+                let path = libdd_types::decode_uri_path_in_authority(endpoint.url())
                     .context("file path is not valid")?;
                 let _ = cfg.set_endpoint(libdd_telemetry::config::TelemetryEndpoint {
                     url: Some(format!("file://{}.telemetry", path.display())),
@@ -195,13 +195,13 @@ impl TelemetryCrashUploader {
                 });
             } else {
                 let _ = cfg.set_endpoint(libdd_telemetry::config::TelemetryEndpoint {
-                    api_key: endpoint.api_key.as_deref().map(str::to_owned),
-                    test_token: endpoint.test_token.as_deref().map(str::to_owned),
-                    timeout_ms: endpoint.timeout_ms,
-                    use_system_resolver: endpoint.use_system_resolver,
+                    api_key: endpoint.api_key().map(str::to_owned),
+                    test_token: endpoint.test_token().map(str::to_owned),
+                    timeout_ms: endpoint.timeout_ms(),
+                    use_system_resolver: endpoint.use_system_resolver(),
                     ..Default::default()
                 });
-                let _ = cfg.set_endpoint_uri(endpoint.url.clone());
+                let _ = cfg.set_endpoint_uri(endpoint.url().clone());
             }
         }
 
@@ -348,7 +348,7 @@ impl TelemetryCrashUploader {
             .method(http::Method::POST)
             .header(
                 http::header::CONTENT_TYPE,
-                libdd_common::header::APPLICATION_JSON,
+                libdd_types::header::APPLICATION_JSON,
             )
             .header(
                 libdd_telemetry::worker::http_client::header::API_VERSION,
@@ -364,7 +364,7 @@ impl TelemetryCrashUploader {
 
         let timeout = core::time::Duration::from_millis({
             if let Some(endp) = self.cfg.endpoint() {
-                endp.timeout_ms
+                endp.timeout_ms()
             } else {
                 Endpoint::DEFAULT_TIMEOUT
             }
@@ -421,8 +421,8 @@ mod tests {
         ErrorKind,
         crash_info::{CrashInfo, CrashInfoBuilder, Metadata, test_utils::TestInstance},
     };
-    use libdd_common::Endpoint;
     use libdd_telemetry::data::LogLevel;
+    use libdd_types::Endpoint;
     use std::{collections::HashSet, fs};
     use uuid::Uuid;
 
@@ -460,7 +460,7 @@ mod tests {
         assert_eq!(metadata.runtime_id, "xyz");
         let cfg = t.cfg;
         assert_eq!(
-            cfg.endpoint().unwrap().url.to_string(),
+            cfg.endpoint().unwrap().url().to_string(),
             "http://localhost:8126/telemetry/proxy/api/v2/apmtelemetry"
         );
     }

@@ -11,7 +11,6 @@ pub use crate::service::sidecar_interface::CdnSubscriptionError;
 use crate::service::sidecar_interface::{
     SidecarInterfaceChannel, SidecarInterfaceClientRequest, SidecarInterfaceRequest,
 };
-use libdd_common::tag::Tag;
 use libdd_dogstatsd_client::DogStatsDActionOwned;
 use libdd_ipc::SeqpacketConn;
 use libdd_ipc::codec::DecodeError;
@@ -20,6 +19,7 @@ use libdd_live_debugger::debugger_defs::DebuggerPayload;
 use libdd_live_debugger::sender::DebuggerType;
 use libdd_telemetry::metrics::MetricContext;
 use libdd_trace_utils::trace_utils::TracerGenericTags;
+use libdd_types::tag::Tag;
 use serde::Serialize;
 use std::cell::Cell;
 use std::{
@@ -681,10 +681,10 @@ mod tests {
         ApplicationConfig, EvpProducerIdentity, EvpTransportConfig, EvpTransportConfigWithIdentity,
         InstanceId,
     };
-    use libdd_common::Endpoint;
     use libdd_ipc::{SeqpacketConn, SeqpacketListener};
     use libdd_telemetry::data;
     use libdd_telemetry::worker::TelemetryActions;
+    use libdd_types::Endpoint;
     use std::cell::RefCell;
     use std::time::Duration;
 
@@ -694,11 +694,10 @@ mod tests {
         EvpTransportConfigWithIdentity::new(
             EvpTransportConfig::prefer_local_then_direct(
                 Endpoint::default(),
-                Some(Endpoint {
-                    url: format!("https://{target}.datadoghq.com").parse().unwrap(),
-                    api_key: Some("test-api-key".into()),
-                    ..Endpoint::default()
-                }),
+                Some(
+                    Endpoint::from_url(format!("https://{target}.datadoghq.com").parse().unwrap())
+                        .with_api_key("test-api-key"),
+                ),
                 target,
             ),
             EvpProducerIdentity::new("dd-trace-rb", version).unwrap(),

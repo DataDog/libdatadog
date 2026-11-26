@@ -5,8 +5,8 @@
 //! V1 builder for the in-process (`coms.c`) sender (the tracer builds V1 directly, see
 //! [`crate::span`]).
 
-use libdd_common_ffi::slice::CharSlice;
 use libdd_trace_utils::span::v04::SpanBytes;
+use libdd_types_ffi::slice::CharSlice;
 use std::ffi::c_char;
 
 // ------------------ TracesBytes ------------------

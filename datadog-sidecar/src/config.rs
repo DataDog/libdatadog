@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use http::uri::{PathAndQuery, Scheme};
-use libdd_common::Endpoint;
+use libdd_types::Endpoint;
 use serde::{Deserialize, Serialize};
 use spawn_worker::LibDependency;
 use std::sync::LazyLock;
@@ -264,8 +264,8 @@ impl FromEnv {
 }
 
 pub fn get_product_endpoint(subdomain: &str, endpoint: &Endpoint) -> Endpoint {
-    if let Some(ref api_key) = endpoint.api_key {
-        let mut parts = endpoint.url.clone().into_parts();
+    if endpoint.api_key().is_some() {
+        let mut parts = endpoint.url().clone().into_parts();
 
         #[allow(clippy::unwrap_used)]
         if parts.scheme.is_none() {
@@ -278,13 +278,11 @@ pub fn get_product_endpoint(subdomain: &str, endpoint: &Endpoint) -> Endpoint {
         }
         parts.path_and_query = Some(PathAndQuery::from_static("/"));
 
+        // api_key and test_token carry over from `endpoint`; only the URL is rebuilt.
+        let mut product_endpoint = endpoint.clone();
         #[allow(clippy::unwrap_used)]
-        Endpoint {
-            url: http::Uri::from_parts(parts).unwrap(),
-            api_key: Some(api_key.clone()),
-            test_token: endpoint.test_token.clone(),
-            ..*endpoint
-        }
+        product_endpoint.set_url(http::Uri::from_parts(parts).unwrap());
+        product_endpoint
     } else {
         endpoint.clone()
     }

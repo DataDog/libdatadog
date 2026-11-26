@@ -7,10 +7,10 @@
 use crate::service::{FfeEvaluationMetric, FfeTelemetryContext};
 use http::Method;
 use libdd_capabilities::{Bytes, HttpClientCapability, SleepCapability};
-use libdd_common::Endpoint;
 use libdd_ffe::telemetry::evaluation_metrics::encode_metrics_payload;
 use libdd_host_identity::entity_id::EntityHeadersExt;
 use libdd_networking::endpoint::EndpointExt;
+use libdd_types::Endpoint;
 use std::time::Duration;
 use tracing::{debug, warn};
 
@@ -56,7 +56,7 @@ async fn send_payload<C: HttpClientCapability + SleepCapability>(
         }
     };
 
-    let timeout = Duration::from_millis(endpoint.timeout_ms);
+    let timeout = Duration::from_millis(endpoint.timeout_ms());
     let response = tokio::select! {
         biased;
         result = client.request(req) => result,
@@ -127,10 +127,7 @@ mod tests {
             })
             .await;
 
-        let ep = Endpoint {
-            url: server.url("/v1/metrics").parse().unwrap(),
-            ..Endpoint::default()
-        };
+        let ep = Endpoint::from_url(server.url("/v1/metrics").parse().unwrap());
         let client = NativeCapabilities::new_client();
 
         send_metrics(
@@ -157,10 +154,7 @@ mod tests {
             })
             .await;
 
-        let ep = Endpoint {
-            url: server.url("/v1/metrics").parse().unwrap(),
-            ..Endpoint::default()
-        };
+        let ep = Endpoint::from_url(server.url("/v1/metrics").parse().unwrap());
         let client = NativeCapabilities::new_client();
         send_metrics(
             &client,
@@ -174,11 +168,8 @@ mod tests {
     #[cfg_attr(miri, ignore)] // tokio executor park/wake overhead is prohibitively slow under Miri
     #[tokio::test]
     async fn timeout_returns_without_waiting_for_http_response() {
-        let ep = Endpoint {
-            url: "http://localhost:4318/v1/metrics".parse().unwrap(),
-            timeout_ms: 1,
-            ..Endpoint::default()
-        };
+        let ep =
+            Endpoint::from_url("http://localhost:4318/v1/metrics".parse().unwrap()).with_timeout(1);
 
         send_metrics(
             &HangingCapabilities,

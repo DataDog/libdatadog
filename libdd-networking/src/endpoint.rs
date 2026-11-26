@@ -1,11 +1,11 @@
 // Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-//! Request-building extensions for [`libdd_common::Endpoint`].
+//! Request-building extensions for [`libdd_types::Endpoint`].
 
 #[cfg(feature = "reqwest")]
 use anyhow::Context;
-use libdd_common::Endpoint;
+use libdd_types::Endpoint;
 
 /// Extension trait holding the request-handling logic for an [`Endpoint`]: standard headers,
 /// request builders and (with the `reqwest` feature) a configured reqwest client builder.
@@ -40,8 +40,8 @@ pub trait EndpointExt {
     ///
     /// The default in-process resolver is used for DNS (fork-safe). To use the system DNS resolver
     /// instead (less fork-safe), set
-    /// [`Endpoint::use_system_resolver`](libdd_common::Endpoint::use_system_resolver) to true via
-    /// [`Endpoint::with_system_resolver`](libdd_common::Endpoint::with_system_resolver).
+    /// [`Endpoint::use_system_resolver`](libdd_types::Endpoint::use_system_resolver) to true via
+    /// [`Endpoint::with_system_resolver`](libdd_types::Endpoint::with_system_resolver).
     ///
     /// # Returns
     /// A tuple of (ClientBuilder, request_url) where:
@@ -72,7 +72,7 @@ impl EndpointExt for Endpoint {
 
     fn to_request_builder(&self, user_agent: &str) -> anyhow::Result<http::request::Builder> {
         let mut builder = http::Request::builder()
-            .uri(self.url.clone())
+            .uri(self.url().clone())
             .header(http::header::USER_AGENT, user_agent);
 
         // Add optional endpoint headers (api-key, test-token)
@@ -90,11 +90,11 @@ impl EndpointExt for Endpoint {
         // configuration will mutate the system environment (it doesn't pass
         // it as part of the SAPI env, it changes the actual system env).
         let mut builder = reqwest::Client::builder()
-            .timeout(core::time::Duration::from_millis(self.timeout_ms))
-            .hickory_dns(!self.use_system_resolver)
+            .timeout(core::time::Duration::from_millis(self.timeout_ms()))
+            .hickory_dns(!self.use_system_resolver())
             .no_proxy();
 
-        let request_url = match self.url.scheme_str() {
+        let request_url = match self.url().scheme_str() {
             // HTTPS endpoints: route reqwest through the same TLS configuration
             // as the hyper connector, so the compromised-key distrust check and
             // the selected crypto provider apply to both clients. Without this,
@@ -106,17 +106,17 @@ impl EndpointExt for Endpoint {
                     builder = builder
                         .tls_backend_preconfigured(crate::connector::https::build_tls_config()?);
                 }
-                self.url.to_string()
+                self.url().to_string()
             }
             // Plain-HTTP endpoints never negotiate TLS, so don't preconfigure a
             // TLS backend: building the configuration eagerly loads the system
             // CA roots, which fails in minimal container environments that have
             // no CA certificates installed.
-            Some("http") => self.url.to_string(),
+            Some("http") => self.url().to_string(),
 
             // File dump endpoint (debugging) - uses platform-specific local transport
             Some("file") => {
-                let output_path = libdd_common::decode_uri_path_in_authority(&self.url)
+                let output_path = libdd_types::decode_uri_path_in_authority(self.url())
                     .context("Failed to decode file path from URI")?;
                 let socket_or_pipe_path = crate::dump_server::spawn_dump_server(output_path)?;
 
@@ -138,18 +138,18 @@ impl EndpointExt for Endpoint {
             #[cfg(unix)]
             Some("unix") => {
                 use crate::connector::uds::socket_path_from_uri;
-                let socket_path = socket_path_from_uri(&self.url)?;
+                let socket_path = socket_path_from_uri(self.url())?;
                 builder = builder.unix_socket(socket_path);
-                format!("http://localhost{}", self.url.path())
+                format!("http://localhost{}", self.url().path())
             }
 
             // Windows named pipes
             #[cfg(windows)]
             Some("windows") => {
                 use crate::connector::named_pipe::named_pipe_path_from_uri;
-                let pipe_path = named_pipe_path_from_uri(&self.url)?;
+                let pipe_path = named_pipe_path_from_uri(self.url())?;
                 builder = builder.windows_named_pipe(pipe_path.to_string_lossy().to_string());
-                format!("http://localhost{}", self.url.path())
+                format!("http://localhost{}", self.url().path())
             }
 
             // Unsupported schemes

@@ -14,16 +14,16 @@ use crate::shm_path::keyed_shm_path;
 use futures::{TryFutureExt, future::join_all};
 use http::uri::PathAndQuery;
 use libdd_capabilities_impl::{HttpClientCapability, NativeCapabilities};
-use libdd_common::Endpoint;
-use libdd_common::MutexExt;
 use libdd_ipc::shm_stats::{
     DEFAULT_SLOT_COUNT, DEFAULT_STRING_POOL_BYTES, RELOAD_FILL_RATIO, ShmSpanConcentrator,
 };
+use libdd_types::Endpoint;
+use libdd_types::MutexExt;
 /// Sidecar's telemetry worker is native-only, so its handle is pinned to
 /// [`NativeCapabilities`].
 type TelemetryWorkerHandle = libdd_telemetry::worker::TelemetryWorkerHandle<NativeCapabilities>;
-use libdd_common::mutable_metadata::MutableMetadata;
 use libdd_trace_stats::stats_exporter::{StatsExporter, StatsMetadata};
+use libdd_types::mutable_metadata::MutableMetadata;
 use std::collections::HashMap;
 use std::ffi::CString;
 use std::hash::Hash;
@@ -34,17 +34,16 @@ use tracing::{debug, error, info, warn};
 /// Build the stats endpoint by appending `/v0.6/stats` to the agent base URL.
 /// Returns `None` for agentless mode (API key present) — stats are not supported agentless.
 pub(crate) fn stats_endpoint(endpoint: &Endpoint) -> Option<Endpoint> {
-    if endpoint.api_key.is_some() {
+    if endpoint.api_key().is_some() {
         return None;
     }
-    let mut parts = endpoint.url.clone().into_parts();
+    let mut parts = endpoint.url().clone().into_parts();
     parts.path_and_query = Some(PathAndQuery::from_static(
         libdd_trace_stats::stats_exporter::STATS_ENDPOINT_PATH,
     ));
-    Some(Endpoint {
-        url: http::Uri::from_parts(parts).ok()?,
-        ..endpoint.clone()
-    })
+    let mut stats_endpoint = endpoint.clone();
+    stats_endpoint.set_url(http::Uri::from_parts(parts).ok()?);
+    Some(stats_endpoint)
 }
 
 /// The subset of session configuration needed to create and flush a span stats concentrator.
@@ -207,7 +206,7 @@ pub(crate) fn get_or_create_concentrator(
 ) -> Option<Arc<SpanConcentratorState>> {
     let config = session.stats_config.clone()?;
 
-    if config.endpoint.api_key.is_some() {
+    if config.endpoint.api_key().is_some() {
         return None; // agentless — no stats
     }
 

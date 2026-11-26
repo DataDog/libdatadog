@@ -2,10 +2,10 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use crate::profile_status::{ProfileStatus, string_try_shrink_to_fit};
-use libdd_common::error::FfiSafeErrorMessage;
-use libdd_common_ffi::slice::SliceConversionError;
 use libdd_profiling::profiles::FallibleStringWriter;
 use libdd_profiling::profiles::collections::{ArcOverflow, SetError};
+use libdd_types::error::FfiSafeErrorMessage;
+use libdd_types_ffi::slice::SliceConversionError;
 use std::borrow::Cow;
 use std::ffi::{CStr, CString};
 use std::fmt;

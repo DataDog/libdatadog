@@ -22,7 +22,7 @@ stats-obfuscation = ["libdd-trace-stats/stats-obfuscation", "libdd-data-pipeline
 anyhow = { workspace = true, default-features = true }
 arc-swap.workspace = true
 priority-queue = { workspace = true, default-features = true }
-libdd-common = { path = "../libdd-common" }
+libdd-types = { path = "../libdd-types" }
 libdd-host-identity = { path = "../libdd-host-identity" }
 libdd-networking = { path = "../libdd-networking", default-features = false }
 libdd-process-utils = { path = "../libdd-process-utils" }
@@ -92,7 +92,7 @@ libdd-capabilities-impl = { path = "../libdd-capabilities-impl" }
 nix = { workspace = true, features = ["socket", "mman"] }
 
 [target.'cfg(windows)'.dependencies]
-libdd-common-ffi = { path = "../libdd-common-ffi", default-features = false, features = ["std"] }
+libdd-types-ffi = { path = "../libdd-types-ffi", default-features = false, features = ["std"] }
 libdd-crashtracker-ffi = { path = "../libdd-crashtracker-ffi", default-features = false, features = ["collector", "collector_windows"] }
 windows-sys = { workspace = true, features = ["Win32_Foundation", "Win32_Security", "Win32_Security_Authorization", "Win32_System_Threading"] }
 

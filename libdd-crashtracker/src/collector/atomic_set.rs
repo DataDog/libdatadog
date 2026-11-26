@@ -5,7 +5,7 @@
 //! including inside a crash signal handler.
 //! This is useful to allow clients to register metadata about program execution, and then the
 //! handler can emit that information into the crash-report.
-//! If this is useful for other cases, we can consider moving it to ddcommon.
+//! If this is useful for other cases, we can consider moving it to libdd-types.
 
 use core::fmt::Debug;
 use core::num::NonZeroU128;

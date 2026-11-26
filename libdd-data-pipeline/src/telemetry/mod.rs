@@ -7,8 +7,6 @@ pub mod metrics;
 use crate::telemetry::error::TelemetryError;
 use crate::telemetry::metrics::Metrics;
 use libdd_capabilities::{HttpClientCapability, MaybeSend, SleepCapability};
-use libdd_common::mutable_metadata::MutableMetadataHandle;
-use libdd_common::tag::Tag;
 use libdd_telemetry::worker::{
     LifecycleAction, TelemetryActions, TelemetryWorker, TelemetryWorkerBuilder,
     TelemetryWorkerFlavor, TelemetryWorkerHandle,
@@ -17,6 +15,8 @@ use libdd_trace_utils::{
     send_with_retry::{SendWithRetryError, SendWithRetryResult},
     trace_utils::SendDataResult,
 };
+use libdd_types::mutable_metadata::MutableMetadataHandle;
+use libdd_types::tag::Tag;
 use std::{collections::HashMap, time::Duration};
 
 /// Structure to build a Telemetry client.
@@ -428,9 +428,9 @@ mod tests {
     use libdd_capabilities::HttpError;
     use libdd_capabilities_impl::NativeCapabilities;
 
-    use libdd_common::mutable_metadata::MutableMetadata;
     use libdd_shared_runtime::{BlockingRuntime, ForkSafeRuntime, SharedRuntime, WorkerHandle};
     use libdd_trace_utils::test_utils::poll_for_mock_hits;
+    use libdd_types::mutable_metadata::MutableMetadata;
     // Use `regex::Regex` directly here because `httpmock`'s `body_matches`
     // requires `Into<HttpMockRegex>`, which is only implemented for
     // `regex::Regex`, not `regex_lite::Regex`.
@@ -482,7 +482,7 @@ mod tests {
         assert_eq!(&builder.tracer_version.unwrap(), "test_tracer_version");
         assert!(builder.config.debug_enabled);
         assert_eq!(
-            <String as AsRef<str>>::as_ref(&builder.config.endpoint().unwrap().url.to_string()),
+            <String as AsRef<str>>::as_ref(&builder.config.endpoint().unwrap().url().to_string()),
             "http://localhost/telemetry/proxy/api/v2/apmtelemetry"
         );
         assert_eq!(

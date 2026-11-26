@@ -8,7 +8,7 @@ Native implementations of `libdd-capabilities` traits.
 
 ## Capabilities
 
-- **`NativeHttpClient`**: HTTP client backed by hyper and the `libdd-common` connector infrastructure (supports Unix sockets, HTTPS with rustls, Windows named pipes).
+- **`NativeHttpClient`**: HTTP client backed by hyper and the `libdd-types` connector infrastructure (supports Unix sockets, HTTPS with rustls, Windows named pipes).
 - **`NativeSleepCapability`**: Sleep backed by `tokio::time::sleep`.
 
 Task spawning is handled internally by `SharedRuntime` and is not exposed as a capability trait.

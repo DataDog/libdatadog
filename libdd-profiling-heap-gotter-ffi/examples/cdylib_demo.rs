@@ -37,7 +37,7 @@ fn main() -> Result<(), String> {
 
 #[cfg(target_os = "linux")]
 mod linux {
-    use libdd_common_ffi::VoidResult;
+    use libdd_types_ffi::VoidResult;
     use std::ffi::{CStr, CString};
     use std::path::{Path, PathBuf};
     use std::thread::sleep;

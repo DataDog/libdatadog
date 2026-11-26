@@ -126,8 +126,8 @@ mod tests {
         ddog_trace_exporter_config_set_url, ddog_trace_exporter_free, ddog_trace_exporter_new,
     };
     use httpmock::prelude::*;
-    use libdd_common_ffi::CharSlice;
     use libdd_trace_utils::span::v04::SpanBytes;
+    use libdd_types_ffi::CharSlice;
     use std::mem::MaybeUninit;
 
     /// Build an exporter with observations enabled, pointing at `url`.

@@ -13,8 +13,8 @@
 // ```
 
 use ffi::slice::AsBytes;
-use libdd_common_ffi as ffi;
 use libdd_telemetry::worker::TelemetryWorkerBuilder;
+use libdd_types_ffi as ffi;
 
 crate::c_setters!(
     object_name => telemetry_builder,

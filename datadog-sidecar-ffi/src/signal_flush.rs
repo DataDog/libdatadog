@@ -4,7 +4,7 @@
 use datadog_sidecar::service::{
     SidecarFlushOptions, blocking::SidecarTransport, signal_flush::SignalFlush,
 };
-use libdd_common_ffi::{Error, MaybeError};
+use libdd_types_ffi::{Error, MaybeError};
 
 /// Prepare a flush on this transport with a private completion pipe.
 /// Normal thread context only. The returned object owns a duplicate of the transport fd;

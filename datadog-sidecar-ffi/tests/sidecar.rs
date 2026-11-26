@@ -5,15 +5,15 @@ use datadog_sidecar_ffi::*;
 macro_rules! assert_maybe_no_error {
     ($maybe_erroring:expr) => {
         match $maybe_erroring {
-            libdd_common_ffi::Option::Some(err) => panic!("{}", err.to_string()),
-            libdd_common_ffi::Option::None => {}
+            libdd_types_ffi::Option::Some(err) => panic!("{}", err.to_string()),
+            libdd_types_ffi::Option::None => {}
         }
     };
 }
 
 use datadog_sidecar::service::blocking::SidecarTransport;
 use datadog_sidecar::service::{DynamicInstrumentationConfigState, InstanceId};
-use libdd_common::Endpoint;
+use libdd_types::Endpoint;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -44,7 +44,7 @@ fn generated_header_exposes_native_evp_transport_abi() {
     // Copy the headers the `-ffi` build scripts already generated into the
     // target directory. Those build scripts only rerun when their
     // cbindgen.toml changes, and cbindgen parses the wrapper crates'
-    // dependencies (`parse_deps = true`), so a change in e.g. `libdd-common`
+    // dependencies (`parse_deps = true`), so a change in e.g. `libdd-types`
     // leaves the cached header stale without touching the `-ffi` crate —
     // check freshness against every source file in the workspace, not just
     // the wrapper. `sidecar.h`'s build script does not generate a header, so
@@ -54,7 +54,7 @@ fn generated_header_exposes_native_evp_transport_abi() {
         .unwrap_or_else(|| workspace.join("target"))
         .join(build_common::HEADER_PATH);
     let header_sources = [
-        ("libdd-common-ffi", "common.h"),
+        ("libdd-types-ffi", "common.h"),
         // Seed shared option types with telemetry's unconditional definitions
         // before deduplicating platform-specific sidecar declarations, as in
         // release builds.
@@ -231,16 +231,11 @@ fn test_ddog_sidecar_register_app() {
         .unwrap();
 
     unsafe {
-        let process_tags = libdd_common_ffi::Vec::default();
-        let agent_endpoint = Endpoint {
-            url: http::Uri::from_static("http://localhost:8082/"),
-            test_token: Some("agent-token".into()),
-            ..Default::default()
-        };
-        let otlp_metrics_endpoint = Endpoint {
-            url: http::Uri::from_static("http://localhost:4318/v1/metrics"),
-            ..Default::default()
-        };
+        let process_tags = libdd_types_ffi::Vec::default();
+        let agent_endpoint = Endpoint::from_url(http::Uri::from_static("http://localhost:8082/"))
+            .with_test_token("agent-token");
+        let otlp_metrics_endpoint =
+            Endpoint::from_url(http::Uri::from_static("http://localhost:4318/v1/metrics"));
         let instance_id = ddog_sidecar_instanceId_build("session_id".into(), "runtime_id".into());
 
         ddog_sidecar_set_connection_config(
@@ -277,11 +272,10 @@ fn test_ddog_sidecar_register_app() {
         )
         .unwrap_none();
 
-        let direct_endpoint = Endpoint {
-            url: http::Uri::from_static("https://event-platform-intake.datadoghq.com/"),
-            api_key: Some("test-api-key".into()),
-            ..Endpoint::default()
-        };
+        let direct_endpoint = Endpoint::from_url(http::Uri::from_static(
+            "https://event-platform-intake.datadoghq.com/",
+        ))
+        .with_api_key("test-api-key");
 
         let producer = EvpProducerIdentity {
             origin: "dd-trace-rb".into(),
@@ -297,12 +291,12 @@ fn test_ddog_sidecar_register_app() {
             "errors-intake".into(),
             &producer,
         ) {
-            libdd_common_ffi::Option::Some(error) => assert!(
+            libdd_types_ffi::Option::Some(error) => assert!(
                 error
                     .to_string()
                     .contains("host must be errors-intake.<site>")
             ),
-            libdd_common_ffi::Option::None => {
+            libdd_types_ffi::Option::None => {
                 panic!("EVP transport accepted a mismatched direct intake")
             }
         }
@@ -336,7 +330,7 @@ fn test_ddog_sidecar_register_app() {
             "service".into(),
             "env".into(),
             "version".into(),
-            &libdd_common_ffi::Vec::default(),
+            &libdd_types_ffi::Vec::default(),
             DynamicInstrumentationConfigState::NotSet,
             0,
         )
@@ -356,10 +350,7 @@ fn test_ddog_sidecar_register_app() {
         ddog_sidecar_set_connection_config(
             &mut transport,
             &instance_id,
-            &Endpoint {
-                url: http::Uri::from_static("http://localhost:8083/"),
-                ..Default::default()
-            },
+            &Endpoint::from_url(http::Uri::from_static("http://localhost:8083/")),
             &Endpoint::default(),
             null(),
             "".into(),
@@ -429,11 +420,8 @@ impl FfeSidecar {
             .set_write_timeout(Some(Duration::from_secs(5)))
             .unwrap();
 
-        let agent_endpoint = Endpoint {
-            url: http.url("/").parse().unwrap(),
-            ..Default::default()
-        };
-        let process_tags = libdd_common_ffi::Vec::default();
+        let agent_endpoint = Endpoint::from_url(http.url("/").parse().unwrap());
+        let process_tags = libdd_types_ffi::Vec::default();
         let instance_id =
             unsafe { ddog_sidecar_instanceId_build(session.into(), "runtime_id".into()) };
         unsafe {
@@ -508,7 +496,7 @@ impl Drop for FfeSidecar {
 )]
 fn test_ddog_sidecar_ffe_exposure_features_reach_the_intake() {
     use httpmock::{Method::POST, MockServer};
-    use libdd_common_ffi::CharSlice;
+    use libdd_types_ffi::CharSlice;
 
     // The sidecar deduplicator outlives this test; a unique flag keeps runs independent.
     let flag_key = format!("ffe-features-{}", std::process::id());
@@ -621,10 +609,7 @@ fn test_ddog_sidecar_ffe_large_batches_reach_the_intake() {
         origin: "dd-trace-php".into(),
         version: "1.0.0".into(),
     };
-    let agent_endpoint = Endpoint {
-        url: http.url("/").parse().unwrap(),
-        ..Default::default()
-    };
+    let agent_endpoint = Endpoint::from_url(http.url("/").parse().unwrap());
     assert_maybe_no_error!(unsafe {
         ddog_sidecar_session_set_evp_transport(
             sidecar.transport(),

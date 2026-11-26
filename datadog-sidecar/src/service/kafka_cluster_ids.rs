@@ -11,9 +11,9 @@
 //! segment that all of its processes read, so a new process can tag its first produce with the id
 //! another process learned.
 
-use libdd_common::MutexExt;
 use libdd_ipc::one_way_shared_memory::{OneWayShmReader, OneWayShmWriter, open_named_shm};
 use libdd_ipc::platform::NamedShmHandle;
+use libdd_types::MutexExt;
 use std::collections::BTreeMap;
 use std::ffi::CString;
 use std::sync::{Arc, Mutex};

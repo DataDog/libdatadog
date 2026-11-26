@@ -26,13 +26,13 @@ use crate::error::FlareError;
 #[cfg(feature = "listener")]
 use {
     libdd_capabilities_impl::{HttpClientCapability, NativeCapabilities},
-    libdd_common::Endpoint,
     libdd_remote_config::{
         RemoteConfigParsed, RemoteConfigProduct, Target,
         fetch::{ConfigInvariants, ConfigOptions, SingleChangesFetcher},
         file_change_tracker::Change,
         file_storage::{ParsedFileStorage, RawFile},
     },
+    libdd_types::Endpoint,
     std::ops::Deref,
     std::str::FromStr,
 };
@@ -173,10 +173,7 @@ impl TracerFlareManager {
                 )));
             }
         };
-        let remote_config_endpoint = Endpoint {
-            url: agent_url,
-            ..Default::default()
-        };
+        let remote_config_endpoint = Endpoint::from_url(agent_url);
         let config_to_fetch = ConfigOptions {
             invariants: ConfigInvariants {
                 language,

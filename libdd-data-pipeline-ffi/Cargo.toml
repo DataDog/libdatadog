@@ -18,7 +18,7 @@ bench = false
 [features]
 default = ["cbindgen", "catch_panic"]
 catch_panic = []
-cbindgen = ["build_common/cbindgen", "libdd-common-ffi/cbindgen"]
+cbindgen = ["build_common/cbindgen", "libdd-types-ffi/cbindgen"]
 regex-lite = ["libdd-regex/regex-lite"]
 # Enable zstd compression for the agentless trace intake sender.
 compression = ["libdd-data-pipeline/compression"]
@@ -41,9 +41,9 @@ libdd-trace-utils = { path = "../libdd-trace-utils" }
 libdd-capabilities-impl = { version = "9.0.0", path = "../libdd-capabilities-impl" }
 libdd-data-pipeline = { path = "../libdd-data-pipeline" }
 libdd-shared-runtime = { version = "8.0.0", path = "../libdd-shared-runtime" }
-libdd-common = { path = "../libdd-common", default-features = false, features = ["std"] }
+libdd-types = { path = "../libdd-types", default-features = false, features = ["std"] }
 libdd-regex = { path = "../libdd-regex" }
-libdd-common-ffi = { path = "../libdd-common-ffi", default-features = false, features = ["std"] }
+libdd-types-ffi = { path = "../libdd-types-ffi", default-features = false, features = ["std"] }
 libdd-tinybytes = { path = "../libdd-tinybytes" }
 libdd-trace-utils = { path = "../libdd-trace-utils" }
 rmp.workspace = true

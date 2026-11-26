@@ -3,7 +3,7 @@
 
 use std::sync::{Arc, RwLock};
 
-use libdd_common::RwLockExt;
+use libdd_types::RwLockExt;
 
 use super::sampling_rule::SamplingRule;
 

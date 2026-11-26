@@ -27,7 +27,7 @@ jobs:
         CHANGED_CRATES_STATUS: ${{ steps.changed-crates.outputs.status }}
         AFFECTED_CRATES: ${{ steps.changed-crates.outputs.affected_crates }}
       run: |
-        ALL_FUZZ='["libdd-alloc", "libdd-profiling", "libdd-common-ffi", "libdd-trace-utils"]'
+        ALL_FUZZ='["libdd-alloc", "libdd-profiling", "libdd-types-ffi", "libdd-trace-utils"]'
         if [[ "$CHANGED_CRATES_STATUS" == "success" ]]; then
           FILTERED=$(echo "$AFFECTED_CRATES" | jq -c --argjson affected "$ALL_FUZZ" '[.[] | select(IN($affected[]))]')
           COUNT=$(echo "$FILTERED" | jq 'length')

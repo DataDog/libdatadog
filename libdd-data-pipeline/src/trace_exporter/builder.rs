@@ -25,9 +25,6 @@ use arc_swap::ArcSwap;
 #[cfg(feature = "telemetry")]
 use arc_swap::ArcSwapOption;
 use libdd_capabilities::{HttpClientCapability, LogWriterCapability, MaybeSend, SleepCapability};
-use libdd_common::mutable_metadata::{MutableMetadata, MutableMetadataHandle};
-use libdd_common::tag;
-use libdd_common::{Endpoint, parse_uri};
 use libdd_dogstatsd_client::DogStatsDClient;
 use libdd_shared_runtime::SharedRuntime;
 #[cfg(not(target_arch = "wasm32"))]
@@ -37,6 +34,9 @@ use libdd_trace_stats::span_concentrator::CardinalityLimitConfig;
 #[cfg(feature = "stats-obfuscation")]
 use libdd_trace_stats::stats_exporter::AgentlessStatsTarget;
 use libdd_trace_utils::trace_filter::TraceFilterer;
+use libdd_types::mutable_metadata::{MutableMetadata, MutableMetadataHandle};
+use libdd_types::tag;
+use libdd_types::{Endpoint, parse_uri};
 use std::sync::Arc;
 use std::time::Duration;
 use tracing::debug;
@@ -1021,15 +1021,15 @@ impl<R: SharedRuntime> TraceExporterBuilder<R> {
             let stats_uri = parse_uri(stats_url).map_err(|e: anyhow::Error| {
                 TraceExporterError::Builder(BuilderErrorKind::InvalidUri(e.to_string()))
             })?;
-            let stats_endpoint = Endpoint {
-                url: stats_uri,
-                api_key: Some(api_key.into()),
-                timeout_ms: self
-                    .agentless_timeout
-                    .unwrap_or(DEFAULT_AGENTLESS_TIMEOUT)
-                    .as_millis() as u64,
-                ..Endpoint::default()
-            };
+            let mut stats_endpoint = Endpoint::from_url(stats_uri).with_api_key(api_key);
+            stats_endpoint.set_timeout_ms(
+                u64::try_from(
+                    self.agentless_timeout
+                        .unwrap_or(DEFAULT_AGENTLESS_TIMEOUT)
+                        .as_millis(),
+                )
+                .unwrap_or(u64::MAX),
+            );
             let target = AgentlessStatsTarget {
                 endpoint: stats_endpoint,
                 version: crate::agentless::stats::agentless_stats_version(
@@ -1114,13 +1114,12 @@ impl<R: SharedRuntime> TraceExporterBuilder<R> {
         Ok(TraceExporter {
             #[cfg(feature = "external-observations")]
             observations: self.observations,
-            endpoint: Endpoint {
-                url: agent_url,
-                test_token: self.test_session_token.map(|token| token.into()),
-                timeout_ms: self
-                    .connection_timeout
-                    .unwrap_or(Endpoint::default().timeout_ms),
-                ..Default::default()
+            endpoint: {
+                let mut endpoint = Endpoint::from_url(agent_url);
+                endpoint.set_test_token(self.test_session_token.map(|token| token.into()));
+                endpoint
+                    .set_timeout_ms(self.connection_timeout.unwrap_or(Endpoint::DEFAULT_TIMEOUT));
+                endpoint
             },
             metadata,
             input_format: self.input_format,
@@ -1352,7 +1351,7 @@ mod tests {
         assert_eq!(
             exporter
                 .output_format
-                .add_path(&exporter.endpoint.url)
+                .add_path(exporter.endpoint.url())
                 .to_string(),
             "http://192.168.1.1:8127/v0.4/traces"
         );
@@ -1427,7 +1426,7 @@ mod tests {
         assert_eq!(
             exporter
                 .output_format
-                .add_path(&exporter.endpoint.url)
+                .add_path(exporter.endpoint.url())
                 .to_string(),
             "http://127.0.0.1:8126/v0.4/traces"
         );
@@ -1791,7 +1790,7 @@ mod tests {
         assert_eq!(
             exporter
                 .effective_output_format()
-                .add_path(&exporter.endpoint.url)
+                .add_path(exporter.endpoint.url())
                 .to_string(),
             "http://127.0.0.1:8126/v0.4/traces"
         );

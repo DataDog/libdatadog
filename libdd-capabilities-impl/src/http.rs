@@ -24,11 +24,11 @@ mod native {
         StreamingBodySender,
     };
     use libdd_capabilities::maybe_send::MaybeSend;
-    use libdd_common::MutexExt;
     use libdd_networking::connector::Connector;
     use libdd_networking::http_common::{
         Body, GenericHttpClient, new_client_periodic, new_default_client,
     };
+    use libdd_types::MutexExt;
 
     use http_body_util::{BodyExt, Limited};
 
@@ -80,7 +80,7 @@ mod native {
         uri: &http::Uri,
         body: bytes::Bytes,
     ) -> Result<http::Response<bytes::Bytes>, HttpError> {
-        let path = libdd_common::decode_uri_path_in_authority(uri)
+        let path = libdd_types::decode_uri_path_in_authority(uri)
             .map_err(|e| HttpError::Other(anyhow::anyhow!("invalid file:// URI: {e}")))?;
 
         // Worker endpoints need constrained file opens. Directory mode also creates and renames
