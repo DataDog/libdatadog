@@ -9,6 +9,12 @@ on:
       - "v[0-9]+.[0-9]+.[0-9]+.[0-9]+"
       - release
 
+concurrency:
+  # Only pushes cancel in flight: an 'edited' run must not kill the
+  # predecessor that writes the cache it reads.
+  group: ci-${{ github.ref }}-semver
+  cancel-in-progress: ${{ github.event.action == 'synchronize' }}
+
 env:
   CARGO_TERM_COLOR: always
 
@@ -107,8 +113,14 @@ jobs:
             RELATIVE_PATH=$(echo "$crate_info" | jq -r '.relative_path')
             CRATE_DIR=$(dirname "$RELATIVE_PATH")
 
-            # Check if any files in this crate directory changed
-            if echo "$CHANGED_FILES" | grep -q "^${CRATE_DIR}/"; then
+            # Denylist, not a src/ allowlist: build scripts read non-.rs
+            # inputs (e.g. libdd-trace-semantics' root mappings.json) that an
+            # allowlist would miss.
+            if echo "$CHANGED_FILES" \
+              | grep -vE "^${CRATE_DIR}/(tests|benches|examples|docs)/" \
+              | grep -vE "^${CRATE_DIR}/(README|CHANGELOG|LICENSE|NOTICE)[^/]*$" \
+              | grep -vE "^${CRATE_DIR}/[^/]+\.md$" \
+              | grep -q "^${CRATE_DIR}/"; then
               echo "Detected change in published crate: $CRATE_NAME ($CRATE_DIR)"
               CHANGED_CRATES+=("$CRATE_NAME")
             elif grep -qxF "$CRATE_NAME" <<< "$MANIFEST_AFFECTED"; then
@@ -131,7 +143,9 @@ jobs:
 
   semver-check:
     needs: [check-skip, detect-changes]
-    if: ${{ needs.check-skip.outputs.skip != 'true' && (needs.detect-changes.outputs.has_rust_changes == 'true' || needs.detect-changes.outputs.stable_toolchain_changed == 'true') }}
+    # A base retarget (github.event.changes.base set) re-runs the job;
+    # title/body edits and reopens skip it and validate uses the cache.
+    if: ${{ needs.check-skip.outputs.skip != 'true' && (needs.detect-changes.outputs.has_rust_changes == 'true' || needs.detect-changes.outputs.stable_toolchain_changed == 'true') && github.event.action != 'reopened' && !(github.event.action == 'edited' && !github.event.changes.base) }}
     runs-on: ubuntu-latest
     permissions:
       id-token: write
@@ -252,16 +266,50 @@ jobs:
             echo "EOF"
           } >> "$GITHUB_OUTPUT"
 
+          printf '%s' "$RESULT_JSON" > semver-result.json
+
+      - name: Persist semver result for title-only revalidation
+        if: steps.semver.outcome == 'success'
+        uses: actions/cache/save@d4323d4df104b026a6aa633fdb11d772146be0bf # 4.2.2
+        with:
+          path: semver-result.json
+          key: semver-result-${{ github.event.pull_request.head.sha }}
+
   validate:
     needs: [check-skip, detect-changes, semver-check]
-    if: ${{ needs.check-skip.outputs.skip != 'true' && needs.detect-changes.outputs.has_rust_changes == 'true' }}
+    if: ${{ always() && needs.check-skip.outputs.skip != 'true' && needs.detect-changes.outputs.has_rust_changes == 'true' && (needs.semver-check.result == 'success' || needs.semver-check.result == 'skipped') }}
     runs-on: ubuntu-latest
     steps:
+      - name: Restore semver result (title-only revalidation)
+        if: needs.semver-check.result == 'skipped'
+        uses: actions/cache/restore@d4323d4df104b026a6aa633fdb11d772146be0bf # 4.2.2
+        with:
+          path: semver-result.json
+          key: semver-result-${{ github.event.pull_request.head.sha }}
+
+      - name: Select semver result
+        env:
+          SEMVER_RESULT_FROM_JOB: ${{ needs.semver-check.outputs.result_json }}
+        run: |
+          set -euo pipefail
+          if [[ -n "$SEMVER_RESULT_FROM_JOB" ]]; then
+            printf '%s' "$SEMVER_RESULT_FROM_JOB" > semver-result.json
+          elif [[ -s semver-result.json ]]; then
+            echo "semver-check skipped for this event; validating against the result cached for this head SHA."
+          else
+            echo "::error::No semver result for this head SHA: semver-check was skipped and no cached result exists. Re-run the semver-check workflow from the PR's Actions page, or push a commit."
+            exit 1
+          fi
+          {
+            echo "SEMVER_RESULT_JSON<<EOF"
+            cat semver-result.json
+            echo "EOF"
+          } >> "$GITHUB_ENV"
+
       - name: Validate PR title against semver changes
         env:
           PR_TITLE: ${{ github.event.pull_request.title }}
           PR_BODY: ${{ github.event.pull_request.body }}
-          SEMVER_RESULT_JSON: ${{ needs.semver-check.outputs.result_json }}
         run: |
           set -euo pipefail
 
