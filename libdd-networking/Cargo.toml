@@ -45,6 +45,7 @@ http-body-util = { workspace = true, optional = true }
 # native callers using host-managed capabilities do not pull in an HTTP runtime.
 hyper = { workspace = true, features = ["client", "http1"], optional = true }
 hyper-util = { workspace = true, features = ["client", "client-legacy", "http1"], optional = true }
+libdd-weak-waker = { version = "0.1.0", path = "../libdd-weak-waker", optional = true }
 tokio = { workspace = true, features = ["fs", "io-util", "macros", "net", "rt", "rt-multi-thread", "time"], optional = true }
 tower-service = { workspace = true, optional = true }
 
@@ -53,6 +54,7 @@ tower-service = { workspace = true, optional = true }
 libdd-process-utils = { version = "0.1.0", path = "../libdd-process-utils", optional = true }
 
 [dev-dependencies]
+httpmock.workspace = true
 rand = { workspace = true, default-features = true }
 rcgen.workspace = true
 tempfile.workspace = true
@@ -72,6 +74,7 @@ http-client = [
   "dep:hyper",
   "dep:hyper-util",
   "dep:libdd-process-utils",
+  "dep:libdd-weak-waker",
   "dep:pin-project",
   "dep:thiserror",
   "dep:tokio",

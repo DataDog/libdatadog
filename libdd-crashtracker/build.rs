@@ -21,10 +21,14 @@ fn build_cxx_bridge(target_os: &str) {
     println!("cargo:rerun-if-changed=src/crash_info/cxx.rs");
 }
 
+/// The fixtures go to `OUT_DIR`, never the source tree: a file this script
+/// writes and also watches (or that another profile's run of this script
+/// rewrites) dirties the crate on the next cargo invocation.
 #[cfg(feature = "generate-unit-test-files")]
 fn build_shared_libs() {
-    build_c_file();
-    build_cpp_file();
+    let out_dir = PathBuf::from(std::env::var_os("OUT_DIR").expect("OUT_DIR is not set"));
+    build_c_file(&out_dir);
+    build_cpp_file(&out_dir);
 }
 
 #[cfg(feature = "generate-unit-test-files")]
@@ -48,10 +52,15 @@ fn compile_shared_lib(src: &Path, dst: &Path, cpp: bool, flags: &[&str]) {
     for flag in flags {
         build.flag(flag);
     }
+    // Keep cc's profile-derived -O/-g flags out: each fixture passes its own,
+    // and the compiler records the full command line in the debug info, so
+    // otherwise the bytes would differ between `cargo test` and `cargo bench`.
     build
         .warnings(true)
         .warnings_into_errors(true)
-        .emit_rerun_if_env_changed(true);
+        .emit_rerun_if_env_changed(true)
+        .opt_level(0)
+        .debug(false);
 
     println!("cargo:rerun-if-changed={}", src.display());
     let compiler = build.try_get_compiler().expect("no C/C++ compiler found");
@@ -71,46 +80,16 @@ fn compile_shared_lib(src: &Path, dst: &Path, cpp: bool, flags: &[&str]) {
     assert!(status.success(), "compilation failed for {}", dst.display());
 }
 
-/// Installs the fixture only when its bytes differ: rewriting an unchanged file
-/// bumps its mtime, which dirties this crate on the next cargo invocation.
 #[cfg(feature = "generate-unit-test-files")]
-fn install_fixture_if_changed(staged: &Path, dst: &Path) {
-    let staged_bytes = std::fs::read(staged)
-        .unwrap_or_else(|e| panic!("failed to read staged fixture {}: {e}", staged.display()));
-    if std::fs::read(dst)
-        .map(|existing| existing == staged_bytes)
-        .unwrap_or(false)
-    {
-        return;
-    }
-    std::fs::copy(staged, dst)
-        .unwrap_or_else(|e| panic!("failed to install fixture {}: {e}", dst.display()));
-}
-
-#[cfg(feature = "generate-unit-test-files")]
-fn staged_fixture(dst: &Path) -> PathBuf {
-    let out_dir = std::env::var("OUT_DIR").expect("OUT_DIR is not set");
-    Path::new(&out_dir).join(
-        dst.file_name()
-            .expect("fixture destination has no file name"),
-    )
-}
-
-#[cfg(feature = "generate-unit-test-files")]
-fn build_c_file() {
-    let base_path = get_tests_folder_path();
-
-    let src = base_path.join("libtest.c");
-    let dst = base_path.join("libtest.so");
-    let staged = staged_fixture(&dst);
-
-    println!("cargo:rerun-if-changed={}", dst.display());
+fn build_c_file(out_dir: &Path) {
+    let src = get_tests_folder_path().join("libtest.c");
+    let dst = out_dir.join("libtest.so");
 
     // this is needed for the cross compile (cargo cross)
     // Fix build id to ease in testing.
     compile_shared_lib(
         &src,
-        &staged,
+        &dst,
         false,
         &[
             "-std=c99",
@@ -126,34 +105,30 @@ fn build_c_file() {
     // This will help to identify regressions in blazesym.
     // Note: we could have picked any other debug_xx sections. As long as it's a
     // debug ELF sections.
-    let mut modify_alignment = Command::new("objcopy")
+    let status = Command::new("objcopy")
         .args(["--set-section-alignment", ".debug_abbrev=1"])
-        .arg(&staged)
-        .arg(&staged)
+        .arg(&dst)
+        .arg(&dst)
         .spawn()
-        .expect("failed to spawn objcopy");
-
-    modify_alignment
+        .expect("failed to spawn objcopy")
         .wait()
-        .expect("Failed to change alignement of debug_abbrev ELF section");
-
-    install_fixture_if_changed(&staged, &dst);
+        .expect("failed to wait for objcopy");
+    assert!(
+        status.success(),
+        "objcopy failed to misalign .debug_abbrev in {} (requires binutils >= 2.33)",
+        dst.display()
+    );
 }
 
 #[cfg(feature = "generate-unit-test-files")]
-fn build_cpp_file() {
-    let base_path = get_tests_folder_path();
-
-    let src = base_path.join("libtest_cpp.cpp");
-    let dst = base_path.join("libtest_cpp.so");
-    let staged = staged_fixture(&dst);
-
-    println!("cargo:rerun-if-changed={}", dst.display());
+fn build_cpp_file(out_dir: &Path) {
+    let src = get_tests_folder_path().join("libtest_cpp.cpp");
+    let dst = out_dir.join("libtest_cpp.so");
 
     // Fix build id to ease in testing.
     compile_shared_lib(
         &src,
-        &staged,
+        &dst,
         true,
         &[
             "-std=c++11",
@@ -162,8 +137,6 @@ fn build_cpp_file() {
             "-gdwarf-4",
         ],
     );
-
-    install_fixture_if_changed(&staged, &dst);
 }
 
 fn main() {
@@ -183,6 +156,7 @@ fn main() {
         return;
     }
 
+    println!("cargo:rerun-if-changed=src/crash_info/emit_sicodes.c");
     cc::Build::new()
         .file("src/crash_info/emit_sicodes.c")
         .compile("emit_sicodes");

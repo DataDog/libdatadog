@@ -1,7 +1,11 @@
 // Copyright 2026-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-//! Attaches OTel thread contexts on three threads before crashing
+//! Attaches OTel thread contexts on three threads before crashing.
+//!
+//! The main thread waits on a barrier until both worker threads have attached their contexts, and
+//! the workers then stay parked with their contexts attached, so all three contexts are guaranteed
+//! to be present when the main thread crashes.
 
 use crate::modes::behavior::Behavior;
 use libdd_crashtracker::CrashtrackerConfiguration;
@@ -34,7 +38,8 @@ impl Behavior for Test {
         {
             use libdd_otel_thread_ctx::linux::OwnedThreadContext;
 
-            // Spawn two worker threads with their own contexts, blocked on a barrier.
+            // Spawn two worker threads that attach their own contexts, then meet the main thread
+            // on a barrier.
             let barrier = std::sync::Arc::new(std::sync::Barrier::new(3));
 
             let b = barrier.clone();
@@ -50,6 +55,11 @@ impl Behavior for Test {
                     );
                     let _prev = ctx.attach();
                     b.wait();
+                    // Keep the context attached until the process crashes; exiting the thread
+                    // would detach it.
+                    loop {
+                        std::thread::park();
+                    }
                 })?;
 
             let b = barrier.clone();
@@ -65,7 +75,15 @@ impl Behavior for Test {
                     );
                     let _prev = ctx.attach();
                     b.wait();
+                    // Keep the context attached until the process crashes; exiting the thread
+                    // would detach it.
+                    loop {
+                        std::thread::park();
+                    }
                 })?;
+
+            // Wait until both workers have attached their contexts, so they are in the report.
+            barrier.wait();
 
             // Attach context on the main (crashing) thread.
             let ctx = OwnedThreadContext::new(
