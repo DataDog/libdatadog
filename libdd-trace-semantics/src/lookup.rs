@@ -3,12 +3,14 @@
 
 //! Lookups over [`Attributes`].
 //!
-//! Each lookup walks the entries of a concept in precedence order, skips the ones whose
-//! conditions don't hold, and returns the first value it can read with the entry's type. Empty
-//! strings are skipped. In [`lookup_i64`] and [`lookup_f64`], strings are parsed as decimal
-//! numbers, and strings that don't parse to a finite value fall through to the next entry. Numeric
-//! attributes are returned as stored, except that [`lookup_i64`] skips values that are fractional,
-//! not finite, or out of range, and [`lookup_str`] formats them with `Display`.
+//! Each lookup walks the entries of a concept in precedence order and returns the first value it
+//! can read with the entry's type whose entry's conditions hold. The value is read first, so
+//! conditions are only checked for entries that hold a value. Empty strings are skipped. In
+//! [`lookup_i64`] and [`lookup_f64`], strings are parsed as decimal numbers, and strings that don't
+//! parse to a finite value fall through to the next entry. Numeric attributes are returned as
+//! stored, except that [`lookup_i64`] skips values that are fractional, not finite, or out of
+//! range, and [`lookup_str`] formats them with `Display`. [`lookup_value`] returns the value with
+//! the type it was read as, without allocating.
 //!
 //! Known differences with the Agent's Go lookups: hex floats and `_` digit separators are not
 //! parsed, `"NaN"` and `"Inf"` strings fall through in [`lookup_f64`], and floats are formatted as
@@ -25,6 +27,30 @@ use alloc::string::ToString;
 use libdd_trace_model::{Attributes, f64_to_exact_i64};
 
 use crate::{Concept, Condition, Entry, Predicate, ValueType};
+
+/// A value read by [`lookup_value`], with the type of the entry it was read from.
+#[non_exhaustive]
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum Value<'a> {
+    /// The value of a `string` entry, never empty
+    String(&'a str),
+    /// The value of an `int64` entry
+    Int(i64),
+    /// The value of a `float64` entry
+    Float(f64),
+}
+
+/// The first value of `concept`, typed by its entry, `None` if no entry holds a value.
+///
+/// Like [`lookup_str`] without formatting numbers: string values are borrowed and empty strings
+/// are skipped, `int64` entries read [`Attributes::attribute_i64`] and `float64` entries read
+/// [`Attributes::attribute_f64`]. It never allocates.
+///
+/// Promoted tags can't be read with lookups: use the `Span` and `TraceChunk` getters instead.
+#[must_use]
+pub fn lookup_value<A: Attributes + ?Sized>(attrs: &A, concept: Concept) -> Option<Value<'_>> {
+    value_in(attrs, concept.entries())
+}
 
 /// The first value of `concept` as a string, `None` if no entry holds a value.
 ///
@@ -60,52 +86,62 @@ pub fn lookup_f64<A: Attributes + ?Sized>(attrs: &A, concept: Concept) -> Option
     f64_in(attrs, concept.entries())
 }
 
+fn value_in<'a, A: Attributes + ?Sized>(attrs: &'a A, entries: &[Entry]) -> Option<Value<'a>> {
+    entries.iter().find_map(|entry| {
+        let value = match entry.value_type {
+            ValueType::Int64 => attrs.attribute_i64(entry.name).map(Value::Int),
+            ValueType::Float64 => attrs.attribute_f64(entry.name).map(Value::Float),
+            ValueType::String => non_empty_str(attrs, entry.name).map(Value::String),
+        }?;
+        conditions_hold(attrs, entry).then_some(value)
+    })
+}
+
 fn str_in<'a, A: Attributes + ?Sized>(attrs: &'a A, entries: &[Entry]) -> Option<Cow<'a, str>> {
-    matching(attrs, entries).find_map(|entry| match entry.value_type {
-        ValueType::Int64 => attrs
-            .attribute_i64(entry.name)
-            .map(|v| Cow::Owned(v.to_string())),
-        ValueType::Float64 => attrs
-            .attribute_f64(entry.name)
-            .map(|v| Cow::Owned(v.to_string())),
-        ValueType::String => non_empty_str(attrs, entry.name).map(Cow::Borrowed),
+    Some(match value_in(attrs, entries)? {
+        Value::String(v) => Cow::Borrowed(v),
+        Value::Int(v) => Cow::Owned(v.to_string()),
+        Value::Float(v) => Cow::Owned(v.to_string()),
     })
 }
 
 fn i64_in<A: Attributes + ?Sized>(attrs: &A, entries: &[Entry]) -> Option<i64> {
-    matching(attrs, entries).find_map(|entry| match entry.value_type {
-        // `attribute_i64` is `attribute_f64` + `f64_to_exact_i64`, except that it stays exact for
-        // integers above 2^53.
-        ValueType::Int64 | ValueType::Float64 => attrs.attribute_i64(entry.name),
-        ValueType::String => {
-            let v = non_empty_str(attrs, entry.name)?;
-            v.parse::<i64>()
-                .ok()
-                .or_else(|| v.parse::<f64>().ok().and_then(f64_to_exact_i64))
-        }
+    entries.iter().find_map(|entry| {
+        let value = match entry.value_type {
+            // `attribute_i64` is `attribute_f64` + `f64_to_exact_i64`, except that it stays exact
+            // for integers above 2^53.
+            ValueType::Int64 | ValueType::Float64 => attrs.attribute_i64(entry.name),
+            ValueType::String => {
+                let v = non_empty_str(attrs, entry.name)?;
+                v.parse::<i64>()
+                    .ok()
+                    .or_else(|| v.parse::<f64>().ok().and_then(f64_to_exact_i64))
+            }
+        }?;
+        conditions_hold(attrs, entry).then_some(value)
     })
 }
 
 fn f64_in<A: Attributes + ?Sized>(attrs: &A, entries: &[Entry]) -> Option<f64> {
-    matching(attrs, entries).find_map(|entry| match entry.value_type {
-        ValueType::Float64 => attrs.attribute_f64(entry.name),
-        // Lossy above 2^53, like the Agent's `float64(v)`.
-        #[allow(clippy::cast_precision_loss)]
-        ValueType::Int64 => attrs.attribute_i64(entry.name).map(|v| v as f64),
-        ValueType::String => non_empty_str(attrs, entry.name)?
-            .parse::<f64>()
-            .ok()
-            .filter(|v| v.is_finite()),
+    entries.iter().find_map(|entry| {
+        let value = match entry.value_type {
+            ValueType::Float64 => attrs.attribute_f64(entry.name),
+            // Lossy above 2^53, like the Agent's `float64(v)`.
+            #[allow(clippy::cast_precision_loss)]
+            ValueType::Int64 => attrs.attribute_i64(entry.name).map(|v| v as f64),
+            ValueType::String => non_empty_str(attrs, entry.name)?
+                .parse::<f64>()
+                .ok()
+                .filter(|v| v.is_finite()),
+        }?;
+        conditions_hold(attrs, entry).then_some(value)
     })
 }
 
-fn matching<'e, A: Attributes + ?Sized>(
-    attrs: &A,
-    entries: &'e [Entry],
-) -> impl Iterator<Item = &'e Entry> {
-    entries
-        .iter()
-        .filter(move |entry| entry.when.iter().all(|c| condition_holds(attrs, c)))
+/// Whether all conditions of `entry` hold. Only checked for entries that hold a value: this avoids
+/// condition reads when the value is absent, and replaces them with a value read when it is not.
+fn conditions_hold<A: Attributes + ?Sized>(attrs: &A, entry: &Entry) -> bool {
+    entry.when.iter().all(|c| condition_holds(attrs, c))
 }
 
 fn non_empty_str<'a, A: Attributes + ?Sized>(attrs: &'a A, key: &str) -> Option<&'a str> {
