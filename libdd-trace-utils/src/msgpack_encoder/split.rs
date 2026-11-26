@@ -62,9 +62,43 @@ pub struct Payloads<'a, T: TraceData> {
     source: &'a TracerPayload<T>,
     format: Format,
     limit: usize,
+    ranges: ChunkRanges,
+}
+
+/// Whole-chunk bisection shared by the native and cross-format encoders.
+pub struct ChunkRanges {
     // The fitting fast path needn't allocate a stack of pending ranges.
     first: Option<Range<usize>>,
     pending: Vec<Range<usize>>,
+}
+
+impl ChunkRanges {
+    /// Start at the supplied range (which can be an empty control envelope).
+    pub fn new(chunks: Range<usize>) -> Self {
+        Self {
+            first: Some(chunks),
+            pending: Vec::new(),
+        }
+    }
+
+    /// Visit candidates in input order. Bisect a rejected candidate only if it
+    /// contains multiple chunks. No previously returned range is revisited.
+    pub fn next_with<T>(
+        &mut self,
+        mut encode: impl FnMut(Range<usize>) -> T,
+        split: impl Fn(&T) -> bool,
+    ) -> Option<(Range<usize>, T)> {
+        let mut chunks = self.first.take().or_else(|| self.pending.pop())?;
+        loop {
+            let result = encode(chunks.clone());
+            if chunks.len() <= 1 || !split(&result) {
+                return Some((chunks, result));
+            }
+            let middle = chunks.start + chunks.len() / 2;
+            self.pending.push(middle..chunks.end);
+            chunks.end = middle;
+        }
+    }
 }
 
 /// Encode once when the payload fits. On overflow, bisect the chunk range until each candidate
@@ -101,8 +135,7 @@ pub fn encode<T: TraceData>(
         source,
         format,
         limit,
-        first: Some(0..source.chunks.len()),
-        pending: Vec::new(),
+        ranges: ChunkRanges::new(0..source.chunks.len()),
     }
 }
 
@@ -110,22 +143,18 @@ impl<T: TraceData> Iterator for Payloads<'_, T> {
     type Item = Outcome;
 
     fn next(&mut self) -> Option<Self::Item> {
-        let mut chunks = self.first.take().or_else(|| self.pending.pop())?;
-        loop {
-            let bytes = self.format.encode(self.source, chunks.clone());
-            if bytes.len() <= self.limit {
-                return Some(Outcome::Encoded { chunks, bytes });
+        let (chunks, bytes) = self.ranges.next_with(
+            |r| self.format.encode(self.source, r),
+            |b| b.len() > self.limit,
+        )?;
+        Some(if bytes.len() <= self.limit {
+            Outcome::Encoded { chunks, bytes }
+        } else {
+            Outcome::Oversized {
+                chunks,
+                encoded_size: bytes.len(),
             }
-            if chunks.len() <= 1 {
-                return Some(Outcome::Oversized {
-                    chunks,
-                    encoded_size: bytes.len(),
-                });
-            }
-            let middle = chunks.start + chunks.len() / 2;
-            self.pending.push(middle..chunks.end);
-            chunks.end = middle;
-        }
+        })
     }
 }
 

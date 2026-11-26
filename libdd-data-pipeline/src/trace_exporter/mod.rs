@@ -1,12 +1,16 @@
 // Copyright 2024-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 pub mod agent_response;
+#[cfg(all(feature = "external-observations", not(target_arch = "wasm32")))]
+pub mod batch;
 pub mod builder;
 pub mod error;
 mod log_writer;
 pub mod metrics;
 #[cfg(feature = "external-observations")]
 pub mod observations;
+#[cfg(all(feature = "external-observations", not(target_arch = "wasm32")))]
+mod payloads;
 pub mod stats;
 mod trace_serializer;
 
@@ -40,7 +44,7 @@ use crate::trace_exporter::error::{
 };
 use crate::trace_exporter::stats::StatsComputationConfig;
 use crate::{
-    agent_info::{self, schema::AgentInfo},
+    agent_info::schema::AgentInfo,
     health_metrics,
     health_metrics::{HealthMetric, SendResult, TransportErrorType},
 };
@@ -577,7 +581,7 @@ impl<
     /// Reconcile in-process stats state with the latest agent info.
     /// Async so the `Enabled` arm can await a stats-worker shutdown without `block_on`.
     async fn check_agent_info(&self) {
-        let Some(agent_info) = agent_info::get_agent_info() else {
+        let Some(agent_info) = self.info_response_observer.agent_info() else {
             return;
         };
         if !self.has_agent_info_state_changed(&agent_info) {
@@ -699,7 +703,7 @@ impl<
             if std::time::Instant::now().duration_since(start) > timeout {
                 anyhow::bail!("Timeout waiting for agent info to be ready",);
             }
-            if agent_info::get_agent_info().is_some() {
+            if self.info_response_observer.agent_info().is_some() {
                 return Ok(());
             }
             tokio::time::sleep(Duration::from_millis(10)).await;
@@ -1175,27 +1179,16 @@ impl<
         Ok(AgentResponse::Unchanged)
     }
 
-    async fn process_and_send_trace_chunks<T: TraceData>(
-        &self,
-        mut traces: PooledChunks<'_, T>,
-    ) -> Result<AgentResponse, TraceExporterError> {
-        // `traces` is a `PooledChunks`: keeping it owned (rather than moving its inner `Vec`
-        // into the consuming code paths) is what lets its spans be recycled into the pool when
-        // it is dropped at the end of this function. Paths that must consume the spans use
-        // `into_chunks()` and forgo pooling.
-        //
-        // TODO(APMSP-3608): log-output silently takes precedence over OTLP/agent here.
-        // The builder should reject conflicting destinations at build time instead.
-        if let Some(max_line_size) = self.log_output {
-            return self.send_trace_chunks_to_log(&traces, max_line_size);
-        }
-
+    fn prepare_trace_chunks<'a, T: TraceData>(
+        &'a self,
+        traces: &mut PooledChunks<'_, T>,
+    ) -> (TracerHeaderTags<'a>, bool) {
         let mut header_tags: TracerHeaderTags = self.metadata.borrow().into();
 
         // Process stats computation and drop non-sampled (p0) chunks.
         // This must run before the OTLP path so that unsampled spans are not exported.
         let client_side_stats = stats::process_traces_for_stats(
-            &mut traces,
+            traces,
             &mut header_tags,
             &self.client_side_stats.status,
             self.client_computed_top_level,
@@ -1214,6 +1207,18 @@ impl<
                 span.dedup();
             }
         }
+
+        (header_tags, client_side_stats)
+    }
+
+    async fn process_and_send_trace_chunks<T: TraceData>(
+        &self,
+        mut traces: PooledChunks<'_, T>,
+    ) -> Result<AgentResponse, TraceExporterError> {
+        if let Some(max_line_size) = self.log_output {
+            return self.send_trace_chunks_to_log(&traces, max_line_size);
+        }
+        let (header_tags, client_side_stats) = self.prepare_trace_chunks(&mut traces);
 
         if let Some(ref config) = self.agentless_config {
             if traces.is_empty() {
@@ -1750,6 +1755,7 @@ fn add_native_export_marker<T: TraceData>(span: &mut Span<T>) {
 mod tests {
     use self::error::AgentErrorKind;
     use super::*;
+    use crate::agent_info;
     use httpmock::MockServer;
     use httpmock::prelude::*;
     use libdd_capabilities_impl::NativeCapabilities;

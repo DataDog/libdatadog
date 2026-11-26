@@ -12,6 +12,41 @@ use core::future::Future;
 use core::pin::Pin;
 use futures_util::StreamExt;
 
+/// Opt-in response collection bound. A capability should stop reading at this limit.
+#[derive(Clone, Copy, Debug)]
+pub struct ResponseBodyLimit(pub usize);
+
+/// Keep received status/headers with an empty body if bounded collection fails.
+/// Useful when the status acknowledges delivery independently of optional feedback.
+#[derive(Clone, Copy, Debug)]
+pub struct PreserveResponseStatus;
+
+/// Record the status before reading the body, so a caller interrupted during
+/// collection can distinguish a received response from an unconfirmed dispatch.
+/// This is per request, never shared across retries.
+#[derive(Clone, Debug, Default)]
+pub struct ObservedResponseStatus(
+    std::sync::Arc<std::sync::OnceLock<(http::StatusCode, Option<http::HeaderValue>)>>,
+);
+
+impl ObservedResponseStatus {
+    pub fn record(&self, status: http::StatusCode) {
+        self.record_headers(status, None);
+    }
+
+    pub fn record_headers(&self, status: http::StatusCode, state: Option<&http::HeaderValue>) {
+        let _ = self.0.set((status, state.cloned()));
+    }
+
+    pub fn agent_state(&self) -> Option<&http::HeaderValue> {
+        self.0.get()?.1.as_ref()
+    }
+
+    pub fn get(&self) -> Option<http::StatusCode> {
+        self.0.get().map(|entry| entry.0)
+    }
+}
+
 #[derive(Debug, thiserror::Error)]
 pub enum HttpError {
     #[error("Network error: {0}")]

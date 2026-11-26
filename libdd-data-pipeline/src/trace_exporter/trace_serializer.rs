@@ -46,6 +46,16 @@ impl TraceSerializer {
         }
     }
 
+    #[cfg(all(feature = "external-observations", not(target_arch = "wasm32")))]
+    pub(super) fn batch_hint(&self) -> usize {
+        self.previous_serialised_len.load(Ordering::Relaxed)
+    }
+
+    #[cfg(all(feature = "external-observations", not(target_arch = "wasm32")))]
+    pub(super) fn remember_batch_size(&self, n: usize) {
+        self.previous_serialised_len.store(n, Ordering::Relaxed);
+    }
+
     /// Prepare traces payload and HTTP headers for sending to agent
     pub(super) fn prepare_traces_payload<T: TraceData>(
         &self,
@@ -104,6 +114,18 @@ impl TraceSerializer {
             .previous_serialised_len
             .load(Ordering::Relaxed)
             .max(MIN_BUFFER_CAPACITY);
+        let buff = Self::encode_range(traces, metadata, output_format, capacity)?;
+        self.previous_serialised_len
+            .store(buff.len(), Ordering::Relaxed);
+        Ok(buff)
+    }
+
+    pub(super) fn encode_range<T: TraceData>(
+        traces: &[Vec<Span<T>>],
+        metadata: &TracerMetadata,
+        output_format: TraceExporterOutputFormat,
+        capacity: usize,
+    ) -> Result<Vec<u8>, TraceExporterError> {
         let buff = match output_format {
             TraceExporterOutputFormat::V04 => {
                 msgpack_encoder::v04::to_vec_with_capacity_from_v04(traces, capacity as u32)
@@ -139,8 +161,6 @@ impl TraceSerializer {
                 }
             }
         };
-        self.previous_serialised_len
-            .store(buff.len(), Ordering::Relaxed);
         Ok(buff)
     }
 }

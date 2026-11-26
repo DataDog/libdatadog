@@ -6,6 +6,8 @@
 #![cfg_attr(not(test), deny(clippy::todo))]
 #![cfg_attr(not(test), deny(clippy::unimplemented))]
 
+#[cfg(feature = "external-observations")]
+mod batch;
 mod error;
 #[cfg(feature = "external-observations")]
 mod observations;
