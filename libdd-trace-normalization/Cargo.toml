@@ -22,6 +22,9 @@ arbitrary = { workspace = true, features = ["derive"], optional = true }
 fuzzing = ["arbitrary"]
 
 [dev-dependencies]
+# The fuzz module is also built for the tests, which run its targets on random inputs.
+arbitrary = { workspace = true, features = ["derive"] }
+proptest = { workspace = true, default-features = true }
 rand = { workspace = true, default-features = true }
 duplicate = { workspace = true, default-features = true }
 criterion.workspace = true

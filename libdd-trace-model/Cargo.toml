@@ -12,5 +12,8 @@ edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 
+[dev-dependencies]
+proptest = { workspace = true, default-features = true }
+
 [lints]
 workspace = true

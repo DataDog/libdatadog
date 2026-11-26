@@ -102,11 +102,16 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2874a2af47a2325c2001a6e6fad9b16a53b802102b528163885171cf92b15976"
 
 [[package]]
+name = "libdd-trace-model"
+version = "1.0.0"
+
+[[package]]
 name = "libdd-trace-normalization"
-version = "4.3.0"
+version = "4.3.1"
 dependencies = [
  "anyhow",
  "arbitrary",
+ "libdd-trace-model",
  "libdd-trace-protobuf",
 ]
 

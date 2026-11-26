@@ -973,4 +973,35 @@ mod tests {
         assert_eq!(ValueMapMut::remove(&mut map, "a"), Some(V::Int(3)));
         assert!(ValueMap::is_empty(&map));
     }
+
+    /// Arbitrary values, with arrays and maps nested up to 3 levels.
+    fn arbitrary_value() -> impl proptest::strategy::Strategy<Value = V> {
+        use proptest::prelude::{Strategy, any, prop, prop_oneof};
+        let leaf = prop_oneof![
+            "\\PC{0,20}".prop_map(V::String),
+            any::<bool>().prop_map(V::Bool),
+            any::<i64>().prop_map(V::Int),
+            any::<f64>().prop_map(V::Float),
+            prop::collection::vec(any::<u8>(), 0..20).prop_map(V::Bytes),
+        ];
+        leaf.prop_recursive(3, 32, 4, |inner| {
+            prop_oneof![
+                prop::collection::vec(inner.clone(), 0..4).prop_map(V::Array),
+                prop::collection::hash_map("\\PC{0,4}", inner, 0..4).prop_map(V::KeyValueList),
+            ]
+        })
+    }
+
+    proptest::proptest! {
+        #[test]
+        fn format_as_string_truncated_is_a_bounded_prefix(
+            value in arbitrary_value(),
+            max_len in 0usize..128,
+        ) {
+            let full = value.format_as_string();
+            let truncated = AttributeRef::from(&value).format_as_string_truncated(max_len);
+            proptest::prop_assert!(truncated.len() <= max_len);
+            proptest::prop_assert_eq!(&*truncated, &full[..full.floor_char_boundary(max_len)]);
+        }
+    }
 }

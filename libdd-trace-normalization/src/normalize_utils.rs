@@ -7,7 +7,7 @@ use std::time::SystemTime;
 pub(crate) const MAX_TYPE_LEN: usize = 100;
 /// an arbitrary cutoff to spot weird-looking values
 /// nanoseconds since epoch on Jan 1, 2000
-const YEAR_2000_NANOSEC_TS: i64 = 946684800000000000;
+pub(crate) const YEAR_2000_NANOSEC_TS: i64 = 946684800000000000;
 /// DEFAULT_SPAN_NAME is the default name we assign a span if it's missing and we have no reasonable
 /// fallback
 pub(crate) const DEFAULT_SPAN_NAME: &str = "unnamed_operation";
@@ -19,7 +19,7 @@ pub(crate) const MAX_NAME_LEN: usize = 100;
 /// MAX_SERVICE_LEN the maximum length a service can have
 pub(crate) const MAX_SERVICE_LEN: usize = 100;
 /// MAX_TAG_LEN the maximum length a tag can have
-const MAX_TAG_LEN: usize = 200;
+pub(crate) const MAX_TAG_LEN: usize = 200;
 
 // normalize_service normalizes a span service
 pub fn normalize_service(svc: &mut String) {
@@ -495,5 +495,89 @@ mod tests {
         let mut v = input.to_owned();
         normalize_tag_value(&mut v);
         assert_eq!(v, expected)
+    }
+}
+
+/// Property tests: each normalizer keeps the guarantees checked in [`crate::invariants`], on
+/// inputs mixing ASCII, characters whose lowercase has another width, and strings long enough to
+/// reach the length limits.
+#[cfg(test)]
+mod proptests {
+    use super::*;
+    use crate::invariants;
+    use proptest::prelude::{Just, Strategy, any, prop, prop_oneof, proptest};
+
+    /// Characters that the normalizers treat specially. The last three have a narrower lowercase:
+    /// `i`, `ω` and `k`.
+    const TRICKY_CHARS: &[char] = &[
+        '_', '.', ':', '/', '-', ' ', '\0', 'é', 'É', 'ß', 'ſ', 'Σ', 'ǅ', '٣', '²', '\u{FFFD}',
+        '😀', 'İ', '\u{2126}', '\u{212A}',
+    ];
+
+    fn tricky_char() -> impl Strategy<Value = char> {
+        prop_oneof![
+            4 => proptest::char::range('\0', '\x7f'),
+            2 => prop::sample::select(TRICKY_CHARS),
+            1 => any::<char>(),
+        ]
+    }
+
+    /// Strings of up to 600 characters, past the limits of 200 characters and 400 bytes.
+    fn tricky_string() -> impl Strategy<Value = String> {
+        prop_oneof![
+            prop::collection::vec(tricky_char(), 0..600).prop_map(String::from_iter),
+            "[a-zA-Z0-9._:/-]{150,450}",
+            "\\PC{0,300}",
+        ]
+    }
+
+    proptest! {
+        #[test]
+        fn tag(s in tricky_string()) {
+            invariants::check_normalize_tag(&s);
+        }
+
+        #[test]
+        fn tag_value(s in tricky_string()) {
+            invariants::check_normalize_tag_value(&s);
+        }
+
+        #[test]
+        fn name(s in tricky_string()) {
+            invariants::check_normalize_name(&s);
+        }
+
+        #[test]
+        fn peer_service(s in tricky_string()) {
+            invariants::check_normalize_peer_service(&s);
+        }
+
+        #[test]
+        fn service(s in tricky_string(), lang in prop_oneof![Just(String::new()), "\\PC{0,10}"]) {
+            invariants::check_normalize_service(&s, &lang);
+        }
+
+        #[test]
+        fn span_type(s in tricky_string()) {
+            invariants::check_normalize_span_type(&s);
+        }
+
+        #[test]
+        fn truncate(s in tricky_string(), limit in 0usize..700) {
+            invariants::check_truncate_utf8(&s, limit);
+        }
+
+        #[test]
+        fn start_duration(
+            start in prop_oneof![
+                any::<i64>(),
+                Just(YEAR_2000_NANOSEC_TS - 1),
+                Just(YEAR_2000_NANOSEC_TS),
+                Just(i64::MAX),
+            ],
+            duration in prop_oneof![any::<i64>(), Just(0), Just(i64::MAX)],
+        ) {
+            invariants::check_normalize_span_start_duration(start, duration);
+        }
     }
 }
