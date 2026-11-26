@@ -18,6 +18,7 @@ bench = false
 arc-swap = { workspace = true }
 async-trait = { workspace = true }
 bytes = { workspace = true, features = ["std"] }
+dd-sensitive-data-scanner = { git = "https://github.com/DataDog/dd-sensitive-data-scanner", rev = "d0c6f2e9f907083bb964326a973a053273944b1f", default-features = false, features = ["dd-sds"] }
 fastrand = { workspace = true }
 futures = { workspace = true, features = ["std"] }
 http = { workspace = true, features = ["std"] }

@@ -1,6 +1,7 @@
 // Copyright 2026-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
+use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -30,6 +31,7 @@ use tracing::{debug, info, warn};
 use crate::eval::{Decision, PolicyStore};
 use crate::handler::{ReceivedPayload, run_dispatch_loop_with_policy};
 use crate::register::{HostApplication, RegisterRequest, register_connection};
+use crate::vault::{DetokenizeResult, TokenizeResult};
 
 const IO_QUEUE_CAPACITY: usize = 100;
 const DIAL_TIMEOUT: Duration = Duration::from_secs(15);
@@ -548,6 +550,23 @@ impl AiGuardX509 {
 
     pub fn evaluate(&self, content: &str, tool_name: Option<&str>) -> Decision {
         self.policy_store.evaluate(content, tool_name)
+    }
+
+    pub fn sds_active(&self) -> bool {
+        self.policy_store.sds_active()
+    }
+
+    pub fn tokenize(&self, texts: &[&str]) -> TokenizeResult {
+        self.policy_store.tokenize(texts)
+    }
+
+    pub fn detokenize(
+        &self,
+        text: &str,
+        vault: &HashMap<String, String>,
+        tool_name: Option<&str>,
+    ) -> DetokenizeResult {
+        self.policy_store.detokenize(text, vault, tool_name)
     }
 
     pub fn apply_policy_json(&self, raw: &[u8]) -> Result<(), String> {

@@ -5,6 +5,7 @@ pub mod eval;
 pub mod handler;
 pub mod register;
 pub mod transport;
+pub mod vault;
 
 pub use eval::{Decision, DecisionAction, PolicyStore};
 pub use handler::{
@@ -13,3 +14,4 @@ pub use handler::{
 };
 pub use register::{HostApplication, RegisterRequest, register_connection};
 pub use transport::{AiGuardX509, AiGuardX509Config, AiGuardX509Error};
+pub use vault::{DetokenizeResult, SdsMode, SdsPolicyUpdate, SdsRuleConfig, TokenizeResult};

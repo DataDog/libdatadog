@@ -9,6 +9,8 @@ use regex::Regex;
 use serde::{Deserialize, Serialize};
 use tracing::{debug, info, warn};
 
+use crate::vault::{CompiledSdsVault, DetokenizeResult, SdsPolicyUpdate, TokenizeResult};
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
 pub enum DecisionAction {
@@ -75,6 +77,7 @@ struct PolicyUpdate {
     blocking: Option<bool>,
     rules: Option<Vec<StaticRuleConfig>>,
     tool_policies: Option<HashMap<String, PolicyAction>>,
+    sds: Option<SdsPolicyUpdate>,
 }
 
 #[derive(Debug)]
@@ -90,6 +93,7 @@ struct CompiledPolicy {
     blocking: bool,
     rules: Vec<CompiledRule>,
     tool_policies: HashMap<String, PolicyAction>,
+    sds: Option<CompiledSdsVault>,
 }
 
 #[derive(Debug, Default, Clone)]
@@ -116,6 +120,7 @@ impl PolicyStore {
             && update.blocking.is_none()
             && update.rules.is_none()
             && update.tool_policies.is_none()
+            && update.sds.is_none()
         {
             return Err("empty policy update".to_string());
         }
@@ -170,11 +175,21 @@ impl PolicyStore {
                 .unwrap_or_default(),
         };
 
+        let sds = match update.sds {
+            Some(sds_update) => Some(CompiledSdsVault::from_update(
+                sds_update,
+                prev_ref.and_then(|p| p.sds.as_ref()),
+            )?),
+            None => prev_ref.and_then(|p| p.sds.clone()),
+        };
+
         info!(
             enabled,
             blocking,
             rules_count = rules.len(),
             tool_policies_count = tool_policies.len(),
+            sds_rules_count = sds.as_ref().map_or(0, CompiledSdsVault::rules_count),
+            sds_active = sds.as_ref().is_some_and(CompiledSdsVault::is_active),
             "swapped active local AI Guard policy"
         );
 
@@ -183,6 +198,7 @@ impl PolicyStore {
             blocking,
             rules,
             tool_policies,
+            sds,
         })));
         Ok(())
     }
@@ -252,6 +268,56 @@ impl PolicyStore {
             action: DecisionAction::FallbackRemote,
             rule_id: None,
             blocking: policy.blocking,
+        }
+    }
+
+    pub fn sds_active(&self) -> bool {
+        let guard = self.active.load();
+        guard
+            .as_ref()
+            .as_ref()
+            .is_some_and(|p| p.enabled && p.sds.as_ref().is_some_and(CompiledSdsVault::is_active))
+    }
+
+    pub fn tokenize(&self, texts: &[&str]) -> TokenizeResult {
+        let guard = self.active.load();
+        let Some(policy) = guard.as_ref().as_ref() else {
+            return TokenizeResult {
+                texts: texts.iter().map(|s| (*s).to_string()).collect(),
+                vault: HashMap::new(),
+                matched_rule_ids: Vec::new(),
+            };
+        };
+        if !policy.enabled {
+            return TokenizeResult {
+                texts: texts.iter().map(|s| (*s).to_string()).collect(),
+                vault: HashMap::new(),
+                matched_rule_ids: Vec::new(),
+            };
+        }
+        match policy.sds.as_ref() {
+            Some(sds) => sds.tokenize(texts),
+            None => TokenizeResult {
+                texts: texts.iter().map(|s| (*s).to_string()).collect(),
+                vault: HashMap::new(),
+                matched_rule_ids: Vec::new(),
+            },
+        }
+    }
+
+    pub fn detokenize(
+        &self,
+        text: &str,
+        vault: &HashMap<String, String>,
+        tool_name: Option<&str>,
+    ) -> DetokenizeResult {
+        let guard = self.active.load();
+        if let Some(sds) = guard.as_ref().as_ref().and_then(|p| p.sds.as_ref()) {
+            return sds.detokenize(text, vault, tool_name);
+        }
+        DetokenizeResult {
+            text: text.to_string(),
+            blocked_tokens: Vec::new(),
         }
     }
 }
