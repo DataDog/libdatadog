@@ -23,6 +23,7 @@ pub struct Selection {
     pub ffe: bool,
     pub shared_runtime: bool,
     pub otel_thread_ctx: bool,
+    pub http_client: bool,
     /// Return panics at the FFI boundary as errors instead of aborting the process. A
     /// `builder` default; projects opting out of those defaults must ask for it explicitly.
     pub catch_panic: bool,
@@ -47,6 +48,7 @@ impl Selection {
             ffe: cfg!(feature = "ffe"),
             shared_runtime: cfg!(feature = "shared-runtime"),
             otel_thread_ctx: cfg!(feature = "otel-thread-ctx"),
+            http_client: cfg!(feature = "http-client"),
             catch_panic: cfg!(feature = "catch_panic"),
         }
     }
@@ -112,6 +114,9 @@ pub fn profiling_features(selection: &Selection) -> Vec<String> {
     if selection.otel_thread_ctx {
         features.push("otel-thread-ctx-ffi");
     }
+    if selection.http_client {
+        features.push("http-client-ffi");
+    }
 
     features.into_iter().map(str::to_string).collect()
 }
@@ -139,6 +144,7 @@ mod tests {
         |s| s.ffe = true,
         |s| s.shared_runtime = true,
         |s| s.otel_thread_ctx = true,
+        |s| s.http_client = true,
     ];
 
     fn selection_from_bits(bits: u32) -> Selection {
@@ -197,6 +203,7 @@ mod tests {
             ffe: true,
             shared_runtime: true,
             otel_thread_ctx: true,
+            http_client: true,
             catch_panic: true,
         };
 
@@ -222,6 +229,7 @@ mod tests {
                 "libdd-ffe-ffi",
                 "shared-runtime",
                 "otel-thread-ctx-ffi",
+                "http-client-ffi",
             ]
         );
     }
