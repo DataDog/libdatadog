@@ -1,6 +1,93 @@
 version: 2
+
+# Every ecosystem waits 7 days after a release before proposing it (`cooldown`),
+# giving the ecosystem time to catch yanked or compromised releases. Cooldown
+# only applies to version updates; security updates are still opened right away.
+#
+# Commit messages follow Conventional Commits (`chore(deps): ...`), as required
+# by the PR title check.
+#
+# Not managed here on purpose:
+# - `rust-toolchain.toml` is the workspace MSRV and must be bumped deliberately.
+# - `ci-toolchain.toml` is a custom file Dependabot does not understand.
+# - `windows/libdatadog.csproj` has no NuGet package references.
+# - Images referenced from `.gitlab-ci.yml` are not supported by Dependabot.
+
 updates:
+  - package-ecosystem: "cargo"
+    directories:
+      - "/"
+      - "/.github/actions"
+      - "/libdd-trace-normalization/fuzz"
+    schedule:
+      interval: "weekly"
+    cooldown:
+      default-days: 7
+    commit-message:
+      prefix: "chore"
+      include: "scope"
+    open-pull-requests-limit: 10
+    groups:
+      cargo-minor-and-patch:
+        update-types:
+          - "minor"
+          - "patch"
+
+  - package-ecosystem: "github-actions"
+    directories:
+      - "/"
+      - "/.github/actions/*"
+    schedule:
+      interval: "weekly"
+    cooldown:
+      default-days: 7
+    commit-message:
+      prefix: "chore"
+      include: "scope"
+    groups:
+      github-actions:
+        patterns:
+          - "*"
+
+  - package-ecosystem: "docker"
+    directories:
+      - "/"
+      - "/scripts"
+      - "/tools/docker"
+    schedule:
+      interval: "weekly"
+    cooldown:
+      default-days: 7
+    commit-message:
+      prefix: "chore"
+      include: "scope"
+
+  - package-ecosystem: "devcontainers"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    cooldown:
+      default-days: 7
+    commit-message:
+      prefix: "chore"
+      include: "scope"
+
+  - package-ecosystem: "nix"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    cooldown:
+      default-days: 7
+    commit-message:
+      prefix: "chore"
+      include: "scope"
+
   - package-ecosystem: "gitsubmodule"
     directory: "/"
     schedule:
       interval: "weekly"
+    cooldown:
+      default-days: 7
+    commit-message:
+      prefix: "chore"
+      include: "scope"
