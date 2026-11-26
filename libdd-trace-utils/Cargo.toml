@@ -103,7 +103,6 @@ tempfile.workspace = true
 
 [features]
 default = ["https"]
-# Enables the dependencies needed by the async send implementation.
 send = ["dep:futures", "dep:libdd-capabilities", "dep:libdd-networking"]
 https = ["libdd-networking?/https"]
 mini_agent = [

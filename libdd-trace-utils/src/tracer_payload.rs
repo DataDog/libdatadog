@@ -10,9 +10,7 @@ use libdd_tinybytes::BytesString;
 use libdd_trace_protobuf::pb;
 use std::cmp::Ordering;
 #[cfg(feature = "send")]
-use std::collections::hash_map::RandomState;
-#[cfg(feature = "send")]
-use std::hash::{BuildHasher, Hash, Hasher};
+use std::{hash::{BuildHasher, Hash, Hasher}, collections::hash_map::RandomState};
 use std::iter::Iterator;
 use tracing::debug;
 
