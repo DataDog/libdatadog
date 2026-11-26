@@ -1,7 +1,7 @@
 // Copyright 2024-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-/// TraceExporter impl for methods sending the v01::Span model
+//! TraceExporter methods for the v1 span model.
 
 use super::agent_response::AgentResponse;
 use super::error::{InternalErrorKind, TraceExporterError};
@@ -56,6 +56,76 @@ impl<
     R: SharedRuntime,
 > TraceExporter<C, R>
 {
+    /// Send a list of v1 trace chunks to the agent (or OTLP endpoint when configured).
+    ///
+    /// Sync facade over [`Self::send_trace_chunks_async_v1`]; panics inside an existing tokio
+    /// context.
+    ///
+    /// `trace_chunks` accepts [`PooledTraceChunks`] so a caller can back it with a real
+    /// [`libdd_trace_utils::span::v1::span_pool::SpanPoolV1`] to recycle span allocations; no
+    /// caller in this codebase does so yet (today's production callers all go through msgpack),
+    /// wiring one up is left to a future change.
+    ///
+    /// # Arguments
+    /// * trace_chunks: A list of native v1 trace chunks.
+    /// * cancellation_token: When provided, cancelling the token aborts the send while it is in
+    ///   progress. The send only observes a token that is cancelled while the request is in-flight;
+    ///   a token cancelled before this call returns immediately, and a token cancelled after the
+    ///   send has already finished has no effect. Cancelling an in-flight send may cause the trace
+    ///   chunks being sent to be lost.
+    ///
+    /// # Returns
+    /// * Ok(AgentResponse): The response from the agent (or Unchanged for OTLP)
+    /// * Err(TraceExporterError): An error detailing what went wrong in the process
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn send_trace_chunks_v1<T: TraceData>(
+        &self,
+        trace_chunks: PooledTraceChunks<'_, T>,
+        cancellation_token: Option<&CancellationToken>,
+    ) -> Result<AgentResponse, TraceExporterError>
+    where
+        R: BlockingRuntime,
+    {
+        self.shared_runtime
+            .block_on(self.send_trace_chunks_cancellable_v1(trace_chunks, cancellation_token))?
+    }
+
+    /// Send chunks, giving up with an `Interrupted` error once the token is cancelled.
+    #[cfg(not(target_arch = "wasm32"))]
+    async fn send_trace_chunks_cancellable_v1<T: TraceData>(
+        &self,
+        trace_chunks: PooledTraceChunks<'_, T>,
+        cancellation_token: Option<&CancellationToken>,
+    ) -> Result<AgentResponse, TraceExporterError> {
+        match cancellation_token {
+            Some(token) => {
+                tokio::select! {
+                    res = self.send_trace_chunks_async_v1(trace_chunks) => res,
+                    _ = token.cancelled() => Err(TraceExporterError::Io(std::io::Error::new(
+                        std::io::ErrorKind::Interrupted,
+                        "send cancelled via cancellation token",
+                    ))),
+                }
+            }
+            None => self.send_trace_chunks_async_v1(trace_chunks).await,
+        }
+    }
+
+    /// V1-native counterpart of [`Self::send_trace_chunks_async`]. There is no byte-decode path
+    /// for v1: tracer identity always comes from this exporter's own metadata (the v0.4 path has
+    /// no such identity to carry either: v0.4 chunks are plain span lists with no tracer-level
+    /// metadata of their own).
+    pub async fn send_trace_chunks_async_v1<T: TraceData>(
+        &self,
+        trace_chunks: PooledTraceChunks<'_, T>,
+    ) -> Result<AgentResponse, TraceExporterError> {
+        // There is no agent to negotiate with, skip the poll.
+        if self.log_output.is_none() && self.agentless_config.is_none() {
+            self.check_agent_info().await;
+        }
+        self.process_and_send_trace_chunks_v1(trace_chunks).await
+    }
+
     /// Sends v1 trace chunks to the Datadog agentless intake (`/v1/input`) as JSON.
     ///
     /// V1-native counterpart of [`Self::send_agentless_traces_inner`]. See
@@ -117,6 +187,7 @@ impl<
                     "failed to encode OTLP request: {e}"
                 )))
             })?;
+        // Also set the header: resource attributes survive Collector hops, headers don't.
         let effective_config;
         let config_to_use = if self.metadata.client_computed_stats || self.otlp_stats_enabled {
             effective_config = {
@@ -203,116 +274,39 @@ impl<
         Ok(AgentResponse::Unchanged)
     }
 
-    /// Send a list of v1 trace chunks to the agent (or OTLP endpoint when configured).
-    ///
-    /// Sync facade over [`Self::send_trace_chunks_async_v1`]; panics inside an existing tokio
-    /// context.
-    ///
-    /// `trace_chunks` accepts [`PooledTraceChunks`] so a caller can back it with a real
-    /// [`libdd_trace_utils::span::v1::span_pool::SpanPoolV1`] to recycle span allocations; no
-    /// caller in this codebase does so yet (today's production callers all go through msgpack),
-    /// wiring one up is left to a future change.
-    ///
-    /// # Arguments
-    /// * trace_chunks: A list of native v1 trace chunks.
-    /// * cancellation_token: When provided, cancelling the token aborts the send while it is in
-    ///   progress. The send only observes a token that is cancelled while the request is in-flight;
-    ///   a token cancelled before this call returns immediately, and a token cancelled after the
-    ///   send has already finished has no effect. Cancelling an in-flight send may cause the trace
-    ///   chunks being sent to be lost.
-    ///
-    /// # Returns
-    /// * Ok(AgentResponse): The response from the agent (or Unchanged for OTLP)
-    /// * Err(TraceExporterError): An error detailing what went wrong in the process
-    #[cfg(not(target_arch = "wasm32"))]
-    pub fn send_trace_chunks_v1<T: TraceData>(
-        &self,
-        trace_chunks: PooledTraceChunks<'_, T>,
-        cancellation_token: Option<&CancellationToken>,
-    ) -> Result<AgentResponse, TraceExporterError>
-    where
-        R: BlockingRuntime,
-    {
-        self.shared_runtime.block_on(async {
-            match cancellation_token {
-                Some(token) => {
-                    tokio::select! {
-                        res = self.send_trace_chunks_async_v1(trace_chunks) => res,
-                        _ = token.cancelled() => Err(TraceExporterError::Io(std::io::Error::new(
-                            std::io::ErrorKind::Interrupted,
-                            "send cancelled via cancellation token",
-                        ))),
-                    }
-                }
-                None => self.send_trace_chunks_async_v1(trace_chunks).await,
-            }
-        })?
-    }
-
-    /// V1-native counterpart of [`Self::send_trace_chunks_async`]. There is no byte-decode path
-    /// for v1: tracer identity always comes from this exporter's own metadata (the v0.4 path has
-    /// no such identity to carry either: v0.4 chunks are plain span lists with no tracer-level
-    /// metadata of their own).
-    pub async fn send_trace_chunks_async_v1<T: TraceData>(
-        &self,
-        trace_chunks: PooledTraceChunks<'_, T>,
-    ) -> Result<AgentResponse, TraceExporterError> {
-        if self.log_output.is_none() && self.agentless_config.is_none() {
-            self.check_agent_info().await;
-        }
-        self.process_and_send_trace_chunks_v1(trace_chunks).await
-    }
-
-    /// Move `traces`' chunks into a fresh [`libdd_trace_utils::span::v1::TracerPayload`] carrying
-    /// this exporter's metadata, taking them via `std::mem::take` rather than `into_chunks()` so
-    /// the caller can move them back into `traces` after encoding, letting `traces`' `Drop`
-    /// recycle them into the pool (if any) instead of dropping them outright.
-    fn take_into_v1_payload<T: TraceData>(
+    /// Synchronous log-export path. Like [`Self::send_trace_chunks_to_log`], this emits every
+    /// span as-is, without agent negotiation, stats, OTLP, or telemetry.
+    fn send_trace_chunks_to_log_v1<T: TraceData>(
         &self,
         traces: &mut PooledTraceChunks<'_, T>,
-    ) -> libdd_trace_utils::span::v1::TracerPayload<T> {
-        libdd_trace_utils::span::v1::TracerPayload {
-            container_id: T::Text::from_owned(self.metadata.container_id.clone()),
-            language_name: T::Text::from_owned(self.metadata.language.clone()),
-            language_version: T::Text::from_owned(self.metadata.language_version.clone()),
-            tracer_version: T::Text::from_owned(self.metadata.tracer_version.clone()),
-            runtime_id: T::Text::from_owned(
-                self.metadata.mutable_metadata.load().runtime_id.clone(),
-            ),
-            env: T::Text::from_owned(self.metadata.env.clone()),
-            hostname: T::Text::from_owned(self.metadata.hostname.clone()),
-            app_version: T::Text::from_owned(self.metadata.app_version.clone()),
-            attributes: Default::default(),
-            chunks: std::mem::take(&mut **traces),
-        }
+        max_line_size: usize,
+    ) -> Result<AgentResponse, TraceExporterError> {
+        let mut payload = self.take_into_v1_payload(traces);
+        let result = write_log_traces_v1(&self.capabilities, &payload, max_line_size)
+            .map_err(TraceExporterError::Io);
+        // Restore the chunks even on error so their allocations can be recycled into the pool.
+        **traces = std::mem::take(&mut payload.chunks);
+        let stats = result?;
+        debug!(
+            spans_written = stats.spans_written,
+            spans_dropped = stats.spans_dropped,
+            "Wrote traces to log exporter"
+        );
+        Ok(AgentResponse::Unchanged)
     }
 
-    /// Only the wire format negotiates, via `v1_active`: while the agent hasn't advertised
-    /// `/v1.0/traces` (or has stopped advertising it), the v1-native chunks are downgraded to
-    /// v0.4 msgpack (via [`msgpack_encoder::v04::to_vec_from_v1`]) and sent to `/v0.4/traces`
-    /// instead of failing outright. This is a one-way downgrade for the wire format only — it
-    /// does not turn this function into a general v0.4↔v1 conversion path.
     async fn process_and_send_trace_chunks_v1<T: TraceData>(
         &self,
         mut traces: PooledTraceChunks<'_, T>,
     ) -> Result<AgentResponse, TraceExporterError> {
-        // TODO(APMSP-3608): log-output silently takes precedence over OTLP/agent here,
-        // mirroring `process_and_send_trace_chunks`. The builder should reject conflicting
-        // destinations at build time instead.
+        // Keep `traces` owned so its spans can be recycled into the pool when it is dropped.
+        // Paths that borrow a TracerPayload temporarily take and restore its chunks; consuming
+        // paths use `into_chunks()` and forgo pooling.
+        //
+        // TODO(APMSP-3608): log-output silently takes precedence over OTLP/agent here.
+        // The builder should reject conflicting destinations at build time instead.
         if let Some(max_line_size) = self.log_output {
-            let mut payload = self.take_into_v1_payload(&mut traces);
-            let result = write_log_traces_v1(&self.capabilities, &payload, max_line_size)
-                .map_err(TraceExporterError::Io);
-            // `write_log_traces_v1` only needs a `&TracerPayload`, so give the chunks back to
-            // `traces` right away, letting its `Drop` recycle them into the pool (if any).
-            *traces = std::mem::take(&mut payload.chunks);
-            let stats = result?;
-            debug!(
-                spans_written = stats.spans_written,
-                spans_dropped = stats.spans_dropped,
-                "Wrote traces to log exporter"
-            );
-            return Ok(AgentResponse::Unchanged);
+            return self.send_trace_chunks_to_log_v1(&mut traces, max_line_size);
         }
 
         let mut header_tags: TracerHeaderTags = self.metadata.borrow().into();
@@ -374,9 +368,21 @@ impl<
             };
         }
 
-        // Snapshot whether v1 is negotiated once so the serializer and the URL agree even if
-        // `v1_active` flips mid-send (the background `/info` fetcher can race us otherwise) —
-        // mirrors `effective_output_format` in `process_and_send_trace_chunks`.
+        self.send_trace_chunks_to_agent_v1(&mut traces, header_tags)
+            .await
+    }
+
+    /// Serialize processed chunks in the negotiated wire format and send them to the agent.
+    ///
+    /// Only the wire format negotiates: when v1 is unavailable, native v1 chunks are downgraded
+    /// to v0.4 msgpack. This does not turn the pipeline into a general v0.4↔v1 conversion path.
+    async fn send_trace_chunks_to_agent_v1<T: TraceData>(
+        &self,
+        traces: &mut PooledTraceChunks<'_, T>,
+        header_tags: TracerHeaderTags<'_>,
+    ) -> Result<AgentResponse, TraceExporterError> {
+        // Snapshot the effective format once so the serializer and the URL agree even if
+        // `v1_active` flips mid-send (the background `/info` fetcher can race us otherwise).
         let v1_supported = self.v1_active.load(Ordering::Relaxed);
         let effective_format = if v1_supported {
             TraceExporterOutputFormat::V1
@@ -384,14 +390,13 @@ impl<
             TraceExporterOutputFormat::V04
         };
 
-        let counts = PayloadCounts::from_v1_chunks(&traces);
-        let chunk_count = traces.len();
+        let counts = PayloadCounts::from_v1_chunks(traces);
         let headers = self.serializer.build_traces_headers(
             header_tags,
-            chunk_count,
+            counts.chunks,
             self.agent_payload_response_version.as_ref(),
         );
-        let mut out_payload = self.take_into_v1_payload(&mut traces);
+        let mut out_payload = self.take_into_v1_payload(traces);
         add_native_export_marker_v1(&mut out_payload.attributes);
 
         let mp_payload = if v1_supported {
@@ -401,11 +406,7 @@ impl<
         };
         // Give the chunks back to `traces` now that encoding is done, letting its `Drop` recycle
         // them into the pool (if any) instead of dropping them outright.
-        *traces = std::mem::take(&mut out_payload.chunks);
-        let counts = PayloadCounts {
-            chunks: chunk_count,
-            ..counts
-        };
+        **traces = std::mem::take(&mut out_payload.chunks);
 
         let endpoint = Endpoint {
             url: effective_format.add_path(&self.endpoint.url),
@@ -416,9 +417,11 @@ impl<
             .send_traces_with_telemetry(&endpoint, mp_payload, headers, counts)
             .await;
 
-        // Same rationale as `process_and_send_trace_chunks`: on a 404 to `/v1.0/traces`, fail
-        // closed immediately and force an `/info` refresh so the next send downgrades to v0.4
-        // without waiting for the fetcher's next poll.
+        // The agent does not return a `Datadog-Agent-State` header on 404, so without this hook
+        // we'd stay pinned to V1 until the next `/info` poll (up to the fetcher's refresh
+        // interval). On a 404 to `/v1.0/traces`, fail closed immediately and force an `/info`
+        // refresh so the next send uses V0.4 and V1 support is re-detected as soon as the agent
+        // advertises it again.
         if effective_format == TraceExporterOutputFormat::V1
             && let Err(TraceExporterError::Request(ref e)) = result
             && e.status() == http::StatusCode::NOT_FOUND
@@ -431,6 +434,30 @@ impl<
         }
 
         result
+    }
+
+    /// Move `traces`' chunks into a fresh [`libdd_trace_utils::span::v1::TracerPayload`] carrying
+    /// this exporter's metadata, taking them via `std::mem::take` rather than `into_chunks()` so
+    /// the caller can move them back into `traces` after encoding, letting `traces`' `Drop`
+    /// recycle them into the pool (if any) instead of dropping them outright.
+    fn take_into_v1_payload<T: TraceData>(
+        &self,
+        traces: &mut PooledTraceChunks<'_, T>,
+    ) -> libdd_trace_utils::span::v1::TracerPayload<T> {
+        libdd_trace_utils::span::v1::TracerPayload {
+            container_id: T::Text::from_owned(self.metadata.container_id.clone()),
+            language_name: T::Text::from_owned(self.metadata.language.clone()),
+            language_version: T::Text::from_owned(self.metadata.language_version.clone()),
+            tracer_version: T::Text::from_owned(self.metadata.tracer_version.clone()),
+            runtime_id: T::Text::from_owned(
+                self.metadata.mutable_metadata.load().runtime_id.clone(),
+            ),
+            env: T::Text::from_owned(self.metadata.env.clone()),
+            hostname: T::Text::from_owned(self.metadata.hostname.clone()),
+            app_version: T::Text::from_owned(self.metadata.app_version.clone()),
+            attributes: Default::default(),
+            chunks: std::mem::take(&mut **traces),
+        }
     }
 }
 
@@ -479,10 +506,12 @@ mod tests {
             ..Default::default()
         }];
 
+        let pool = libdd_trace_utils::span::v1::span_pool::SpanPoolV1::with_capacity(100);
         let resp = exporter
-            .send_trace_chunks_v1(PooledTraceChunks::unpooled(chunks), None)
+            .send_trace_chunks_v1(pool.wrap_chunks(chunks), None)
             .unwrap();
         assert!(matches!(resp, AgentResponse::Unchanged));
+        assert!(!pool.is_empty(), "log export must recycle the sent chunks");
 
         let text = String::from_utf8(captured_log()).unwrap();
         assert!(text.ends_with('\n'), "line must be newline-terminated");

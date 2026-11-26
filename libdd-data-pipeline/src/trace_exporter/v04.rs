@@ -1,7 +1,7 @@
 // Copyright 2024-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-/// TraceExporter impl for methods sending the v04::Span model
+//! TraceExporter methods for the v0.4 span model.
 
 use super::agent_response::AgentResponse;
 use super::error::{self, InternalErrorKind, TraceExporterError};
@@ -425,13 +425,22 @@ impl<
             };
         }
 
+        self.send_trace_chunks_to_agent(&traces, header_tags).await
+    }
+
+    /// Serialize processed chunks in the negotiated wire format and send them to the agent.
+    async fn send_trace_chunks_to_agent<T: TraceData>(
+        &self,
+        traces: &[Vec<Span<T>>],
+        header_tags: TracerHeaderTags<'_>,
+    ) -> Result<AgentResponse, TraceExporterError> {
         // Snapshot the effective format once so the serializer and the URL agree even if
         // `v1_active` flips mid-send (the background `/info` fetcher can race us otherwise).
         let effective_format = self.effective_output_format();
-        let counts = PayloadCounts::from_traces(&traces);
+        let counts = PayloadCounts::from_traces(traces);
 
         let prepared = match self.serializer.prepare_traces_payload(
-            &traces,
+            traces,
             header_tags,
             &self.metadata,
             self.agent_payload_response_version.as_ref(),
