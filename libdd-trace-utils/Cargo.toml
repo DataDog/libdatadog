@@ -1,6 +1,9 @@
+# Copyright 2026-Present Datadog, Inc. https://www.datadoghq.com/
+# SPDX-License-Identifier: Apache-2.0
+
 [package]
 name = "libdd-trace-utils"
-version = "15.0.0"
+version = "16.0.0"
 description = "Trace utilities including span processing, MessagePack encoding/decoding, payload handling, and HTTP transport with retry logic for Datadog APM"
 homepage = "https://github.com/DataDog/libdatadog/tree/main/libdd-trace-utils"
 repository = "https://github.com/DataDog/libdatadog/tree/main/libdd-trace-utils"
@@ -43,7 +46,7 @@ rmp-serde.workspace = true
 tracing.workspace = true
 serde_json = { workspace = true, features = ["std"] }
 serde-transcode.workspace = true
-futures.workspace = true
+futures = { workspace = true, optional = true }
 rand = { workspace = true, default-features = true, features = ["small_rng"] }
 bytes = { workspace = true, features = ["std"] }
 rmpv.workspace = true
@@ -52,11 +55,12 @@ rustc-hash = { workspace = true, default-features = true }
 crossbeam-channel = { workspace = true, features = ["std"] }
 thread_local.workspace = true 
 
-libdd-capabilities = { path = "../libdd-capabilities", version = "4.0.1" }
-libdd-common = { version = "9.0.0", path = "../libdd-common", default-features = false, features = ["std"] }
-libdd-host-identity = { version = "1.0.0", path = "../libdd-host-identity" }
+libdd-capabilities = { path = "../libdd-capabilities", version = "4.0.1", optional = true }
+libdd-common = { version = "10.0.0", path = "../libdd-common", default-features = false, features = ["std"] }
+libdd-host-identity = { version = "0.1.0", path = "../libdd-host-identity" }
+libdd-networking = { path = "../libdd-networking", version = "0.1.0", default-features = false, optional = true }
 libdd-regex = { version = "0.1.0", path = "../libdd-regex" }
-libdd-trace-normalization = { version = "4.3.0", path = "../libdd-trace-normalization" }
+libdd-trace-normalization = { version = "4.3.1", path = "../libdd-trace-normalization" }
 libdd-trace-protobuf = { version = "5.1.1", path = "../libdd-trace-protobuf", features = ["trace-model"] }
 libdd-trace-model = { version = "1.0.0", path = "../libdd-trace-model" }
 libdd-tinybytes = { version = "1.2.0", path = "../libdd-tinybytes", features = [
@@ -76,10 +80,8 @@ cargo_metadata = { workspace = true, optional = true }
 cargo-platform = { workspace = true, optional = true }
 httpmock = { workspace = true, optional = true }
 urlencoding = { workspace = true, optional = true }
-libdd-networking = { path = "../libdd-networking", version = "1.0.0", default-features = false }
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
-libdd-capabilities-impl = { version = "8.0.0", path = "../libdd-capabilities-impl", default-features = false, optional = true }
 tokio = { workspace = true, features = ["time"], optional = true }
 # zstd >= 0.14.3 required for RUSTSEC-2026-0391
 zstd = {workspace = true, optional = true }
@@ -89,7 +91,7 @@ getrandom = { workspace = true, features = ["js"] }
 zrip = { workspace = true, features = ["frame"], optional = true }
 
 [dev-dependencies]
-libdd-capabilities-impl = { version = "8.0.0", path = "../libdd-capabilities-impl" }
+libdd-capabilities-impl = { version = "9.0.0", path = "../libdd-capabilities-impl" }
 tools = { path = "../tools", default-features = false, features = ["bench-utils"] }
 bolero = { workspace = true, features = ["std"] }
 criterion.workspace = true
@@ -101,14 +103,17 @@ tempfile.workspace = true
 
 [features]
 default = ["https"]
-https = ["libdd-networking/https", "dep:libdd-capabilities-impl", "libdd-capabilities-impl/https"]
+send = ["dep:futures", "dep:libdd-capabilities", "dep:libdd-networking"]
+https = ["libdd-networking?/https"]
 mini_agent = [
     "compression",
+    "dep:libdd-capabilities",
     "libdd-networking/http-client",
     "libdd-networking/use_webpki_roots",
     "dep:flate2",
 ]
 test-utils = [
+    "send",
     "dep:tokio",
     "libdd-networking/http-client",
     "hyper/server",
@@ -125,4 +130,4 @@ compression = ["zstd"]
 # target: zstd on native platforms and zrip on WASM.
 zstd = ["dep:zstd", "dep:zrip"]
 # FIPS mode uses the FIPS-compliant cryptographic provider (Unix only)
-fips = ["libdd-networking/fips", "dep:libdd-capabilities-impl", "libdd-capabilities-impl/fips"]
+fips = ["libdd-networking?/fips"]

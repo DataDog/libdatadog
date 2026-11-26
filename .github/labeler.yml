@@ -12,6 +12,7 @@ common:
       'libdd-common-ffi/**/*',
       'libdd-regex/**/*',
       'libdd-env/**/*',
+      'libdd-weak-waker/**/*',
     ]
 
 ci-build:
@@ -57,6 +58,7 @@ data-pipeline:
   - any-glob-to-any-file: [
       'libdd-data-pipeline/**/*',
       'libdd-data-pipeline-ffi/**/*',
+      'libdd-trace-semantics/**/*',
     ]
 
 crashtracker:

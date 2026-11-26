@@ -107,6 +107,8 @@ pub(crate) enum StdinState {
     RuntimeStackFrame(Vec<StackFrame>),
     RuntimeStackString(Vec<String>),
     Message,
+    /// A single OTel thread context record. The tid comes from the begin
+    /// marker; the hex-encoded 640-byte record is on the next line.
     OtelThreadCtx(i32),
 }
 
@@ -270,23 +272,6 @@ fn process_line(
             StdinState::Message
         }
 
-        StdinState::OtelThreadCtx(tid) if line.starts_with(DD_CRASHTRACK_END_OTEL_THREAD_CTX) => {
-            // No hex data arrived for this tid; just close the block.
-            let _ = tid;
-            StdinState::Waiting
-        }
-        StdinState::OtelThreadCtx(tid) => {
-            #[cfg(all(target_os = "linux", feature = "otel-thread-ctx"))]
-            if let Some(ctx) = decode_hex_otel_record(tid, line) {
-                let mut contexts = builder.otel_thread_contexts.take().unwrap_or_default();
-                contexts.push(ctx);
-                builder.with_otel_thread_contexts(contexts)?;
-            }
-            #[cfg(not(all(target_os = "linux", feature = "otel-thread-ctx")))]
-            let _ = tid;
-            StdinState::OtelThreadCtx(tid)
-        }
-
         StdinState::SpanIds if line.starts_with(DD_CRASHTRACK_END_SPAN_IDS) => StdinState::Waiting,
         StdinState::SpanIds => {
             let span_ids: Vec<Span> = serde_json::from_str(line)?;
@@ -392,10 +377,28 @@ fn process_line(
             StdinState::WholeStackTrace
         }
         StdinState::Waiting if line.starts_with(DD_CRASHTRACK_BEGIN_OTEL_THREAD_CTX) => {
+            // "DD_CRASHTRACK_BEGIN_OTEL_THREAD_CTX <tid>"
             let tid = line
-                .split_once(' ')
-                .and_then(|(_, tid_str)| tid_str.parse::<i32>().ok())
+                .strip_prefix(DD_CRASHTRACK_BEGIN_OTEL_THREAD_CTX)
+                .unwrap_or("")
+                .trim()
+                .parse::<i32>()
                 .unwrap_or(0);
+            StdinState::OtelThreadCtx(tid)
+        }
+        StdinState::OtelThreadCtx(_) if line.starts_with(DD_CRASHTRACK_END_OTEL_THREAD_CTX) => {
+            StdinState::Waiting
+        }
+        StdinState::OtelThreadCtx(tid) => {
+            #[cfg(all(target_os = "linux", feature = "otel-thread-ctx"))]
+            if let Some(ctx) = decode_hex_otel_record(tid, line.trim()) {
+                builder
+                    .otel_thread_contexts
+                    .get_or_insert_with(Vec::new)
+                    .push(ctx);
+            }
+            #[cfg(not(all(target_os = "linux", feature = "otel-thread-ctx")))]
+            let _ = tid;
             StdinState::OtelThreadCtx(tid)
         }
         StdinState::Waiting if line.starts_with(DD_CRASHTRACK_DONE) => {
@@ -443,9 +446,10 @@ pub(crate) async fn receive_report_from_stream(
     let mut crash_ping_sent = false;
 
     let mut lines = stream.lines();
-    let mut deadline = None;
-    // Start the timeout counter when the deadline when the first crash message is recieved
-    let mut remaining_timeout = Duration::MAX;
+    // Start the absolute deadline immediately so a collector that never writes
+    // cannot make the receiver wait forever
+    let absolute_deadline = Instant::now() + timeout;
+    let mut per_report_deadline: Option<Instant> = None;
 
     //TODO: This assumes that the input is valid UTF-8.
     loop {
@@ -477,6 +481,15 @@ pub(crate) async fn receive_report_from_stream(
                 eprintln!("No config found, skipping crash ping");
             }
         }
+        // Use the tighter of the two deadlines: the absolute deadline (from
+        // connection accept) prevents infinite waits when the collector never
+        // writes; the per-report deadline (from first data) bounds report
+        // processing time.
+        let effective_deadline = match per_report_deadline {
+            Some(d) => d.min(absolute_deadline),
+            None => absolute_deadline,
+        };
+        let remaining_timeout = effective_deadline.saturating_duration_since(Instant::now());
         let next_line = tokio::time::timeout(remaining_timeout, lines.next_line()).await;
         let Ok(next_line) = next_line else {
             builder.with_log_message(format!("Timeout: {next_line:?}"), true)?;
@@ -532,13 +545,10 @@ pub(crate) async fn receive_report_from_stream(
             }
         }
 
-        if let Some(deadline) = deadline {
-            // The clock was already ticking, update the remaining time
-            remaining_timeout = deadline - Instant::now()
-        } else {
-            // We've recieved the first message from the collector, start the clock ticking.
-            deadline = Some(Instant::now() + timeout);
-            remaining_timeout = timeout;
+        if per_report_deadline.is_none() {
+            // We've received the first message from the collector. Start the
+            // per-report clock so that slow report processing is also bounded.
+            per_report_deadline = Some(Instant::now() + timeout);
         }
     }
 
@@ -582,7 +592,14 @@ pub(crate) async fn receive_report_from_stream(
     enrich_thread_name(&mut builder)?;
 
     #[cfg(all(target_os = "linux", feature = "otel-thread-ctx"))]
-    enrich_otel_thread_names(&mut builder);
+    if let Some(ref mut contexts) = builder.otel_thread_contexts
+        && let Some(proc_info) = builder.proc_info.as_ref()
+    {
+        let pid = proc_info.pid;
+        for ctx in contexts.iter_mut() {
+            ctx.thread_name = crate::otel_tls_reader::read_thread_name(pid, ctx.tid);
+        }
+    }
 
     builder.with_os_info_this_machine()?;
 
@@ -604,11 +621,11 @@ pub(crate) async fn receive_report_from_stream(
     {
         let parent_pid = proc_info.pid;
         let crashing_tid = proc_info.tid;
-        // If we never received a first line (deadline is None) use zero so
-        // collection is skipped; there is nothing to attach to anyway.
-        let remaining_budget = deadline
-            .map(|d| d.saturating_duration_since(Instant::now()))
-            .unwrap_or(Duration::ZERO);
+        // If we never received a first line (per_report_deadline is None)
+        // use the absolute deadline; fall back to zero if that also passed.
+        let remaining_budget = per_report_deadline
+            .unwrap_or(absolute_deadline)
+            .saturating_duration_since(Instant::now());
         if let Err(e) = collect_and_add_thread_contexts(
             &mut builder,
             &config,
@@ -741,6 +758,25 @@ fn collect_and_add_thread_contexts(
     Ok(())
 }
 
+/// Decode a hex-encoded 640-byte OTel record into an `OtelThreadContext`.
+#[cfg(all(target_os = "linux", feature = "otel-thread-ctx"))]
+fn decode_hex_otel_record(tid: i32, hex: &str) -> Option<crate::crash_info::OtelThreadContext> {
+    use crate::otel_tls_reader::RECORD_HEADER_SIZE;
+
+    let hex_len = hex.len();
+    // At least the 28-byte header (56 hex chars), at most 640 bytes (1280 hex chars), even.
+    if !(RECORD_HEADER_SIZE * 2..=1280).contains(&hex_len) || !hex_len.is_multiple_of(2) {
+        return None;
+    }
+
+    let byte_len = hex_len / 2;
+    let mut buf = [0u8; 640];
+    for i in 0..byte_len {
+        buf[i] = u8::from_str_radix(&hex[i * 2..i * 2 + 2], 16).ok()?;
+    }
+    crate::otel_tls_reader::decode_record(tid, &buf[..byte_len])
+}
+
 /// Recover callers before a collector-emitted stack replaces the one that has them.
 #[cfg(target_os = "linux")]
 fn recover_received_stack(
@@ -849,44 +885,6 @@ fn enrich_thread_name(builder: &mut CrashInfoBuilder) -> anyhow::Result<()> {
 #[cfg(not(target_os = "linux"))]
 fn enrich_thread_name(_builder: &mut CrashInfoBuilder) -> anyhow::Result<()> {
     Ok(())
-}
-
-/// Decode a hex-encoded OTel thread-context record emitted by the collector.
-///
-/// The collector writes each record as a single line of hex digits (2 hex chars per byte).
-/// This decodes it and delegates to `otel_tls_reader::decode_record`.
-#[cfg(all(target_os = "linux", feature = "otel-thread-ctx"))]
-fn decode_hex_otel_record(
-    tid: i32,
-    hex_line: &str,
-) -> Option<crate::crash_info::OtelThreadContext> {
-    let hex_line = hex_line.trim();
-    if hex_line.len() < 2 || !hex_line.len().is_multiple_of(2) {
-        return None;
-    }
-    let bytes: Vec<u8> = (0..hex_line.len())
-        .step_by(2)
-        .map(|i| u8::from_str_radix(&hex_line[i..i + 2], 16))
-        .collect::<Result<Vec<_>, _>>()
-        .ok()?;
-    // Thread name enrichment happens later in receive_report_from_stream
-    // after we know the crashing process's PID from proc_info.
-    crate::otel_tls_reader::decode_record(tid, &bytes)
-}
-
-#[cfg(all(target_os = "linux", feature = "otel-thread-ctx"))]
-fn enrich_otel_thread_names(builder: &mut CrashInfoBuilder) {
-    let pid = match builder.proc_info.as_ref() {
-        Some(p) => p.pid,
-        None => return,
-    };
-    if let Some(ref mut contexts) = builder.otel_thread_contexts {
-        for ctx in contexts.iter_mut() {
-            if ctx.thread_name.is_none() {
-                ctx.thread_name = crate::otel_tls_reader::read_thread_name(pid, ctx.tid);
-            }
-        }
-    }
 }
 
 #[cfg(test)]

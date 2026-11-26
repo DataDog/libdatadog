@@ -2,6 +2,19 @@
 
 
 
+## [16.0.0](https://github.com/datadog/libdatadog/compare/libdd-trace-utils-v15.0.0..libdd-trace-utils-v16.0.0) - 2026-10-28
+
+### Changed
+
+- Preparatory cleanup for restructure ([#2722](https://github.com/datadog/libdatadog/issues/2722)) - ([87970b5](https://github.com/datadog/libdatadog/commit/87970b50f5b7c6cf4379ad5c461811336513d300))
+- Bump MSRV from 1.87.0 to 1.91.1 ([#2734](https://github.com/datadog/libdatadog/issues/2734)) - ([1c6b398](https://github.com/datadog/libdatadog/commit/1c6b398b6caf0cfa2deaf1f493c08248719f2dc4))
+
+### Fixed
+
+- Bump zstd to 0.14.3 for RUSTSEC-2026-0391 ([#2731](https://github.com/datadog/libdatadog/issues/2731)) - ([8ff2e32](https://github.com/datadog/libdatadog/commit/8ff2e32bd1e2e00bf2f1807f7388c84f040ea214))
+
+
+
 ## [15.0.0](https://github.com/datadog/libdatadog/compare/libdd-trace-utils-v14.0.0..libdd-trace-utils-v15.0.0) - 2026-10-23
 
 ### Added

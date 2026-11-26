@@ -12,6 +12,7 @@ mod trace_serializer;
 
 // Re-export the builder
 pub use builder::TraceExporterBuilder;
+use libdd_trace_utils::span::v04::VecMap;
 use libdd_trace_utils::trace_filter::TraceFilterer;
 
 use self::agent_response::AgentResponse;
@@ -67,6 +68,7 @@ use libdd_trace_utils::send_with_retry::{
 };
 use libdd_trace_utils::span::span_pool::PooledChunks;
 use libdd_trace_utils::span::trace_utils::SDK_OTLP_EXPORT_KEY;
+use libdd_trace_utils::span::v1::AttributeValue;
 use libdd_trace_utils::span::v1::TraceChunk;
 use libdd_trace_utils::span::v1::span_pool::PooledTraceChunks;
 use libdd_trace_utils::span::{SpanText, TraceData, trace_utils_v1, v04::Span, v04::SpanSlice};
@@ -1445,6 +1447,17 @@ impl<
         );
 
         for chunk in traces.iter_mut() {
+            // TODO(paullgdc): this needs to be refactored. We need to have a single enum containing
+            // the exporter we use and it's config, and have a more streamlined "pipeline" rather
+            // than pepering exporter specific logic...
+            //
+            // For otlp we don't tag, for the V1 DD exporter this added as a tracer level attribute
+            // lower in this function. This is done here before dedup.
+            if self.agentless_config.is_some()
+                && let Some(span) = chunk.spans.first_mut()
+            {
+                add_native_export_marker_v1(&mut span.attributes);
+            }
             chunk.dedup();
         }
 
@@ -1496,6 +1509,8 @@ impl<
             self.agent_payload_response_version.as_ref(),
         );
         let mut out_payload = self.take_into_v1_payload(&mut traces);
+        add_native_export_marker_v1(&mut out_payload.attributes);
+
         let mp_payload = if v1_supported {
             msgpack_encoder::v1::to_vec_from_v1(&out_payload)
         } else {
@@ -1761,6 +1776,14 @@ fn add_native_export_marker<T: TraceData>(span: &mut Span<T>) {
     span.meta.insert(
         T::Text::from_static_str(SDK_OTLP_EXPORT_KEY),
         T::Text::from_static_str("false"),
+    );
+}
+
+/// V1 counterpart of [`add_native_export_marker`]
+fn add_native_export_marker_v1<T: TraceData>(attributes: &mut VecMap<T::Text, AttributeValue<T>>) {
+    attributes.insert(
+        T::Text::from_static_str(SDK_OTLP_EXPORT_KEY),
+        AttributeValue::String(T::Text::from_static_str("false")),
     );
 }
 

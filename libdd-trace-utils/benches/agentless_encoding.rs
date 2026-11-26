@@ -101,6 +101,7 @@ fn traces(with_span_links: bool) -> Vec<Vec<Span<BytesData>>> {
 fn agentless_encoding_benches(c: &mut Criterion) {
     let metadata = metadata();
     let mut group = c.benchmark_group("agentless_encoding");
+    group.sample_size(100);
     let span_count =
         u64::try_from(NUM_TRACES * SPANS_PER_TRACE).expect("benchmark span count must fit in u64");
     group.throughput(Throughput::Elements(span_count));

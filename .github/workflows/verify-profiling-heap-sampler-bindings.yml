@@ -18,13 +18,15 @@ jobs:
     steps:
       - name: Checkout sources
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # 4.2.2
-      - name: Install libclang-dev
+      - name: Install libclang-dev and clang
         # Only this verification job needs libclang; the normal build
         # path for libdd-profiling-heap-sampler consumes the checked-in bindings
         # under `src/generated/` and does not depend on bindgen at all.
+        # `clang-21` is needed alongside `libclang-21-dev` so libclang can find
+        # clang's builtin headers (e.g. <stdatomic.h>) on ubuntu-latest.
         run: |
           sudo apt-get update
-          sudo apt-get install -y libclang-dev
+          sudo apt-get install -y libclang-21-dev clang-21
       - name: Read Rust version from rust-toolchain.toml
         id: rust-version
         run: echo "version=$(grep -Po '^channel = "\K[^"]+' rust-toolchain.toml)" >> $GITHUB_OUTPUT
@@ -40,7 +42,17 @@ jobs:
         # them. We use an env var (rather than a cargo feature) so that
         # unrelated `--all-features` CI jobs cannot accidentally invoke
         # bindgen — see libdd-profiling-heap-sampler/Cargo.toml for the rationale.
-        run: LIBDD_PROFILING_HEAP_SAMPLER_REGEN=1 cargo build -p libdd-profiling-heap-sampler
+        #
+        # Pin libclang to the same LLVM as the installed clang and point
+        # bindgen at that clang's resource dir, which holds the builtin
+        # headers (<stdatomic.h>, ...). Without this, libclang may be
+        # loaded from a different LLVM whose resource dir is missing, and
+        # `atomic_load_explicit` ends up undeclared.
+        run: |
+          export LIBCLANG_PATH=/usr/lib/llvm-21/lib
+          resource_dir="$(clang-21 -print-resource-dir)"
+          export BINDGEN_EXTRA_CLANG_ARGS="-isystem ${resource_dir}/include"
+          LIBDD_PROFILING_HEAP_SAMPLER_REGEN=1 cargo build -p libdd-profiling-heap-sampler
       - name: Verify committed bindings match regenerated output
         run: |
           if ! git diff --exit-code libdd-profiling-heap-sampler/src/generated/; then

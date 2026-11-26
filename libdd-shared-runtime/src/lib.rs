@@ -37,7 +37,6 @@
 //! 4. child: [`ForkSafeRuntime::after_fork_child`] — restarts workers on a fresh runtime
 
 pub mod shared_runtime;
-mod weak_waker;
 pub mod worker;
 
 // Top-level re-exports for convenience

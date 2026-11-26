@@ -59,6 +59,7 @@ libdd-ddsketch*/                     @DataDog/apm-common-components-core
 libdd-dogstatsd-client               @DataDog/apm-common-components-core
 libdd-gotter/                        @DataDog/libdatadog-profiling @DataDog/libdatadog-crashtracking-reviewers
 libdd-http-client                    @DataDog/apm-common-components-core
+libdd-http-client-ffi/               @DataDog/apm-common-components-core
 libdd-library-config*/               @DataDog/apm-sdk-capabilities
 libdd-log*/                          @DataDog/apm-common-components-core
 libdd-networking/                    @DataDog/apm-common-components-core @DataDog/libdatadog-guild-reviewers
@@ -75,9 +76,11 @@ libdd-trace-model                    @DataDog/apm-common-components-core
 libdd-trace-normalization            @DataDog/apm-common-components-core
 libdd-trace-obfuscation              @DataDog/apm-common-components-core
 libdd-trace-protobuf                 @DataDog/serverless @DataDog/apm-common-components-core-reviewers
+libdd-trace-semantics/               @DataDog/agent-apm @DataDog/apm-common-components-core
 libdd-trace-stats                    @DataDog/apm-common-components-core
 libdd-trace-utils                    @DataDog/apm-common-components-core
 libdd-tracer-flare                   @DataDog/apm-common-components-core
+libdd-weak-waker/                    @DataDog/apm-common-components-core
 LICENSE*                             @DataDog/apm-common-components-core @DataDog/libdatadog-guild-reviewers
 license-tool.toml                    @DataDog/apm-common-components-core @DataDog/libdatadog-guild-reviewers
 local-linux.Dockerfile               @DataDog/apm-common-components-core @DataDog/libdatadog-guild-reviewers
@@ -134,6 +137,7 @@ libdd-data-pipeline/src/otlp/                           @DataDog/apm-sdk-capabil
 libdd-data-pipeline/tests/test_trace_exporter_otlp_export.rs @DataDog/apm-sdk-capabilities @DataDog/apm-common-components-core
 libdd-data-pipeline/tests/test_trace_exporter_otlp_grpc.rs @DataDog/apm-sdk-capabilities @DataDog/apm-common-components-core
 libdd-trace-utils/src/otlp_encoder/                     @DataDog/apm-sdk-capabilities @DataDog/apm-common-components-core
+libdd-trace-semantics/mappings.json                     @DataDog/semantic-core @DataDog/agent-apm
 datadog-sidecar/src/service/ffe_exposures_flusher.rs    @DataDog/libdatadog-php @DataDog/feature-flagging-and-experimentation-sdk @DataDog/apm-common-components-core-reviewers
 datadog-sidecar/src/service/ffe_metrics_flusher.rs      @DataDog/libdatadog-php @DataDog/feature-flagging-and-experimentation-sdk @DataDog/apm-common-components-core-reviewers
 .github/workflows/nix.yml                               @DataDog/nix-guild @DataDog/apm-common-components-core
@@ -148,7 +152,9 @@ datadog-sidecar/src/service/ffe_metrics_flusher.rs      @DataDog/libdatadog-php 
 
 libdd-agent-client/Cargo.toml                @DataDog/apm-common-components-core @DataDog/libdatadog-release
 libdd-ai-usage/Cargo.toml                    @DataDog/agent-console @DataDog/trajectory @DataDog/libdatadog-release
+libdd-ai-usage/CHANGELOG.md                  @DataDog/agent-console @DataDog/trajectory @DataDog/libdatadog-release
 libdd-ai-usage-ffi/Cargo.toml                @DataDog/agent-console @DataDog/trajectory @DataDog/libdatadog-release
+libdd-ai-usage-ffi/CHANGELOG.md              @DataDog/agent-console @DataDog/trajectory @DataDog/libdatadog-release
 libdd-capabilities-impl/CHANGELOG.md         @DataDog/apm-common-components-core @DataDog/libdatadog-release
 libdd-capabilities-impl/Cargo.toml           @DataDog/apm-common-components-core @DataDog/libdatadog-release
 libdd-capabilities/CHANGELOG.md              @DataDog/apm-common-components-core @DataDog/libdatadog-release
@@ -160,6 +166,7 @@ libdd-data-pipeline/CHANGELOG.md             @DataDog/apm-common-components-core
 libdd-data-pipeline/Cargo.toml               @DataDog/apm-common-components-core @DataDog/libdatadog-release
 libdd-dogstatsd-client/CHANGELOG.md          @DataDog/apm-common-components-core @DataDog/libdatadog-release
 libdd-dogstatsd-client/Cargo.toml            @DataDog/apm-common-components-core @DataDog/libdatadog-release
+libdd-http-client-ffi/Cargo.toml             @DataDog/apm-common-components-core @DataDog/libdatadog-release
 libdd-http-client/CHANGELOG.md               @DataDog/apm-common-components-core @DataDog/libdatadog-release
 libdd-http-client/Cargo.toml                 @DataDog/apm-common-components-core @DataDog/libdatadog-release
 libdd-log-ffi/Cargo.toml                     @DataDog/apm-common-components-core @DataDog/libdatadog-release
@@ -174,6 +181,7 @@ libdd-sampling/Cargo.toml                    @DataDog/apm-common-components-core
 libdd-shared-runtime-ffi/Cargo.toml          @DataDog/apm-common-components-core @DataDog/libdatadog-release
 libdd-shared-runtime/CHANGELOG.md            @DataDog/apm-common-components-core @DataDog/libdatadog-release
 libdd-shared-runtime/Cargo.toml              @DataDog/apm-common-components-core @DataDog/libdatadog-release
+libdd-weak-waker/Cargo.toml                  @DataDog/apm-common-components-core @DataDog/libdatadog-release
 libdd-telemetry-ffi/Cargo.toml               @DataDog/apm-common-components-core @DataDog/libdatadog-release
 libdd-telemetry/CHANGELOG.md                 @DataDog/apm-common-components-core @DataDog/libdatadog-release
 libdd-telemetry/Cargo.toml                   @DataDog/apm-common-components-core @DataDog/libdatadog-release
@@ -235,6 +243,7 @@ datadog-profiling-replayer/Cargo.toml        @DataDog/libdatadog-profiling @Data
 libdd-alloc/CHANGELOG.md                     @DataDog/libdatadog-profiling @DataDog/libdatadog-release
 libdd-alloc/Cargo.toml                       @DataDog/libdatadog-profiling @DataDog/libdatadog-release
 libdd-profiling-ffi/Cargo.toml               @DataDog/libdatadog-profiling @DataDog/libdatadog-release
+libdd-profiling-ffi/src/lib.rs               @DataDog/libdatadog-profiling @DataDog/libdatadog-release
 libdd-profiling-heap-allocator/CHANGELOG.md  @DataDog/libdatadog-profiling @DataDog/libdatadog-release
 libdd-profiling-heap-allocator/Cargo.toml    @DataDog/libdatadog-profiling @DataDog/libdatadog-release
 libdd-profiling-heap-gotter-ffi/Cargo.toml   @DataDog/libdatadog-profiling @DataDog/libdatadog-release
@@ -260,6 +269,7 @@ libdd-trace-obfuscation/CHANGELOG.md         @DataDog/apm-common-components-core
 libdd-trace-obfuscation/Cargo.toml           @DataDog/apm-common-components-core @DataDog/libdatadog-release
 libdd-trace-protobuf/CHANGELOG.md            @DataDog/serverless @DataDog/libdatadog-release @DataDog/apm-common-components-core-reviewers
 libdd-trace-protobuf/Cargo.toml              @DataDog/serverless @DataDog/libdatadog-release @DataDog/apm-common-components-core-reviewers
+libdd-trace-semantics/Cargo.toml             @DataDog/agent-apm @DataDog/apm-common-components-core @DataDog/libdatadog-release
 libdd-trace-utils/CHANGELOG.md               @DataDog/apm-common-components-core @DataDog/libdatadog-release
 libdd-trace-utils/Cargo.toml                 @DataDog/apm-common-components-core @DataDog/libdatadog-release
 

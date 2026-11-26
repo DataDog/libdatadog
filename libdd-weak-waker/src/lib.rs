@@ -1,6 +1,7 @@
 // Copyright 2026-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
-
+//! Future wrapper that holds the task waker weakly.
+//!
 //! # Goal
 //!
 //! This module solves a very specific problem.
@@ -32,10 +33,19 @@
 //! will free the original waker, allowing the async runtime's scheduler to be dropped
 //! too.
 
-use std::future::Future;
-use std::pin::Pin;
-use std::sync::Arc;
-use std::task::Context;
+#![cfg_attr(not(test), no_std)]
+#![cfg_attr(not(test), deny(clippy::panic))]
+#![cfg_attr(not(test), deny(clippy::unwrap_used))]
+#![cfg_attr(not(test), deny(clippy::expect_used))]
+#![cfg_attr(not(test), deny(clippy::todo))]
+#![cfg_attr(not(test), deny(clippy::unimplemented))]
+
+extern crate alloc;
+
+use alloc::sync::Arc;
+use core::future::Future;
+use core::pin::Pin;
+use core::task::{Context, Poll};
 
 use futures_util::task::{ArcWake, AtomicWaker, waker_ref};
 
@@ -65,6 +75,9 @@ impl Drop for WeakWaker {
     }
 }
 
+/// Future wrapper that passes a weak waker to the inner future.
+///
+/// See the [crate-level documentation](crate) for details.
 pub struct WeakWakerFuture<F: Future> {
     fut: F,
     weak_waker: WeakWaker,
@@ -73,7 +86,7 @@ pub struct WeakWakerFuture<F: Future> {
 impl<F: Future> WeakWakerFuture<F> {
     /// Wrap a future so that the waker passed to it is held only weakly.
     ///
-    /// See the [module-level documentation](self) for details.
+    /// See the [crate-level documentation](crate) for details.
     #[must_use = "futures do nothing unless you `.await` or poll them"]
     pub fn new(fut: F) -> WeakWakerFuture<F> {
         WeakWakerFuture {
@@ -90,9 +103,10 @@ impl<F: Future> WeakWakerFuture<F> {
 impl<F: Future> Future for WeakWakerFuture<F> {
     type Output = F::Output;
 
-    fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> std::task::Poll<Self::Output> {
-        // SAFETY:
-        // Neither `weak_waker` nor `fut` are going to be moved out of `self`.
+    fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
+        // SAFETY: `WeakWakerFuture` is never moved out of the pin. Neither `weak_waker` nor `fut`
+        // are moved out of `self` below: `fut` is only re-pinned in place, and `weak_waker` is
+        // only borrowed.
         let m = unsafe { self.get_unchecked_mut() };
 
         // Update the stored waker in-place via
@@ -110,11 +124,11 @@ impl<F: Future> Future for WeakWakerFuture<F> {
 
 #[cfg(test)]
 mod tests {
-    use std::future::Future;
-    use std::pin::pin;
-    use std::sync::Arc;
-    use std::sync::atomic::{AtomicBool, Ordering};
-    use std::task::Context;
+    use alloc::sync::Arc;
+    use core::future::Future;
+    use core::pin::{Pin, pin};
+    use core::sync::atomic::{AtomicBool, Ordering};
+    use core::task::Context;
 
     use super::*;
     use futures::task::waker;
@@ -173,5 +187,35 @@ mod tests {
                 .poll(&mut Context::from_waker(&waker(base_waker.clone())))
                 .is_ready()
         );
+    }
+
+    #[test]
+    fn test_weak_waker_wakes_latest_registered_waker() {
+        let (tx, mut rx) = futures::channel::mpsc::unbounded::<()>();
+
+        let mut pinned_fut = pin!(WeakWakerFuture::new(futures::StreamExt::next(&mut rx)));
+        let first = Arc::new(TestWaker {
+            waked: AtomicBool::new(false),
+        });
+        let second = Arc::new(TestWaker {
+            waked: AtomicBool::new(false),
+        });
+        assert!(
+            pinned_fut
+                .as_mut()
+                .poll(&mut Context::from_waker(&waker(first.clone())))
+                .is_pending()
+        );
+        assert!(
+            pinned_fut
+                .as_mut()
+                .poll(&mut Context::from_waker(&waker(second.clone())))
+                .is_pending()
+        );
+        // The first waker is replaced, so the future no longer holds it.
+        assert_eq!(Arc::strong_count(&first), 1);
+        tx.unbounded_send(()).unwrap();
+        assert!(!first.waked.load(Ordering::SeqCst));
+        assert!(second.waked.load(Ordering::SeqCst));
     }
 }

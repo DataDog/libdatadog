@@ -108,3 +108,73 @@ pub fn get_entity_headers() -> impl Iterator<Item = (&'static str, &'static str)
     .into_iter()
     .flatten()
 }
+
+/// Extension trait for request builders carrying entity-related headers, so callers can opt
+/// into them without their HTTP layer depending on this crate.
+pub trait EntityHeadersExt {
+    /// Appends the entity-related headers (`datadog-container-id`, `datadog-entity-id`,
+    /// `datadog-external-env`) to the builder, for each value that is available.
+    fn with_entity_headers(self) -> Self;
+}
+
+impl EntityHeadersExt for http::request::Builder {
+    fn with_entity_headers(self) -> Self {
+        append_headers(self, get_entity_headers())
+    }
+}
+
+fn append_headers(
+    builder: http::request::Builder,
+    headers: impl IntoIterator<Item = (&'static str, &'static str)>,
+) -> http::request::Builder {
+    headers.into_iter().fold(builder, |builder, (name, value)| {
+        builder.header(name, value)
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn builder_carries_available_entity_headers() {
+        let request = http::Request::builder()
+            .with_entity_headers()
+            .body(())
+            .expect("building a bodyless request cannot fail");
+
+        assert_eq!(
+            request.headers().len(),
+            get_entity_headers().count(),
+            "with_entity_headers should set every available header, no more, no less"
+        );
+        for (name, value) in get_entity_headers() {
+            assert_eq!(
+                request.headers().get(name),
+                Some(&http::HeaderValue::from_static(value)),
+                "header {name} should be set by with_entity_headers"
+            );
+        }
+    }
+
+    #[test]
+    fn append_headers_sets_every_entity_header() {
+        let headers = [
+            ("datadog-container-id", "abc"),
+            ("datadog-entity-id", "cid-abc"),
+            ("datadog-external-env", "it-false,cn-app,pu-123"),
+        ];
+        let request = append_headers(http::Request::builder(), headers)
+            .body(())
+            .expect("building a bodyless request cannot fail");
+
+        assert_eq!(request.headers().len(), headers.len());
+        for (name, value) in headers {
+            assert_eq!(
+                request.headers().get(name).unwrap(),
+                value,
+                "header {name} should be set to {value}"
+            );
+        }
+    }
+}

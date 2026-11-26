@@ -5,6 +5,7 @@ use bytes::Bytes;
 use http::Method;
 use libdd_common::Endpoint;
 use libdd_common::MutexExt;
+use libdd_host_identity::entity_id::EntityHeadersExt;
 use libdd_networking::endpoint::EndpointExt;
 use libdd_networking::http_common;
 use libdd_remote_config::config::agent_task::AgentTaskFile;
@@ -423,6 +424,7 @@ impl TracerFlareManager {
         let mut req = target
             .to_request_builder(concat!("Tracer/", env!("CARGO_PKG_VERSION")))
             .map_err(|_| FlareError::SendError("Unable to create the request".to_owned()))?
+            .with_entity_headers()
             .method(Method::POST);
         for (key, value) in headers {
             req = req.header(key, value);

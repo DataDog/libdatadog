@@ -3,7 +3,7 @@
 
 [package]
 name = "libdd-host-identity"
-version = "1.0.0"
+version = "0.1.0"
 rust-version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -25,6 +25,7 @@ features = [
 ]
 
 [dependencies]
+http = { workspace = true, features = ["std"] }
 libdd-regex = { version = "0.1.0", path = "../libdd-regex" }
 libdd-env = { version = "0.1.0", path = "../libdd-env" }
 

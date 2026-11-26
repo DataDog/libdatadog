@@ -65,12 +65,15 @@ members = [
   "libdd-tinybytes",
   "libdd-dogstatsd-client",
   "libdd-http-client",
+  "libdd-http-client-ffi",
   "libdd-agent-client",
   "libdd-log",
   "libdd-log-ffi",
   "libdd-sampling",
   "libdd-trace-model",
+  "libdd-trace-semantics",
   "libdd-networking",
+  "libdd-weak-waker",
 ]
 
 # https://doc.rust-lang.org/cargo/reference/resolver.html
@@ -323,7 +326,7 @@ tokio = { version = "1.49", default-features = false }
 # Test-only: TLS acceptor for local TLS servers in integration tests.
 # allow(workspace-deps-features): `tls12` matches the TLS clients under test, which enable rustls/tls12.
 tokio-rustls = { version = "0.26", default-features = false, features = ["tls12"] }
-tokio-util = { version = "0.7.11", default-features = false }
+tokio-util = { version = "0.7.12", default-features = false }
 toml = { version = "0.8.19", default-features = false }
 tonic = { version = "0.14", default-features = false }
 tower-service = { version = "0.3", default-features = false }
@@ -347,7 +350,7 @@ windows-sys = { version = "0.52", default-features = false }
 winresource = { version = "0.1", default-features = false }
 winver = { version = "1.0.0", default-features = false }
 zip = { version = "4.0.0", default-features = false }
-zrip = { version = "=0.6.0", default-features = false }
+zrip = { version = "=0.8.21", default-features = false }
 zstd = { version = "0.14.3", default-features = false }
 zwohash = { version = "0.1.2", default-features = false }
 

@@ -14,7 +14,9 @@ pub mod json_log_encoder;
 pub mod msgpack_decoder;
 pub mod msgpack_encoder;
 pub mod otlp_encoder;
+#[cfg(feature = "send")]
 pub mod send_data;
+#[cfg(feature = "send")]
 pub mod send_with_retry;
 mod stack_alloc;
 pub mod stats_payload_encoder;

@@ -54,6 +54,7 @@ The build command creates executables in the `examples/ffi/build` folder:
 
 ```bash
 ./examples/ffi/build/ddsketch
+./examples/ffi/build/http_client
 ./examples/ffi/build/telemetry
 ./examples/ffi/build/profiles
 ./examples/ffi/build/trace_exporter

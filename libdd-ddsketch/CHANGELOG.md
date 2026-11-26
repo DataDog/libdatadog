@@ -2,6 +2,18 @@
 
 
 
+## [1.2.0](https://github.com/datadog/libdatadog/compare/libdd-ddsketch-v1.1.4..libdd-ddsketch-v1.2.0) - 2026-11-23
+
+### Added
+
+- Add shared memory Data Streams Monitoring tables for the PHP tracer ([#2766](https://github.com/datadog/libdatadog/issues/2766)) - ([6b5c8cd](https://github.com/datadog/libdatadog/commit/6b5c8cd3fe9e72b82c6b9f9f470ec6f4bd93bbf3))
+
+### Changed
+
+- Make benchmarks and tests faster ([#2861](https://github.com/datadog/libdatadog/issues/2861)) - ([b53eaef](https://github.com/datadog/libdatadog/commit/b53eaefa4f61ce2e2950f9834a7b61c86e0b8d40))
+
+
+
 ## [1.1.4](https://github.com/datadog/libdatadog/compare/libdd-ddsketch-v1.1.3..libdd-ddsketch-v1.1.4) - 2026-10-23
 
 ### Fixed

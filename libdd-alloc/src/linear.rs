@@ -22,7 +22,10 @@ pub struct LinearAllocator<A: Allocator> {
     allocator: A,
 }
 
-unsafe impl<A: Allocator> Send for LinearAllocator<A> {}
+// SAFETY: the allocator (and the memory region it manages) may be moved to
+// and used on another thread, which requires the inner allocator `A` to be
+// `Send` as well.
+unsafe impl<A: Allocator + Send> Send for LinearAllocator<A> {}
 
 impl<A: Allocator> LinearAllocator<A> {
     /// Creates a new [LinearAllocator] by requesting the `layout` from the

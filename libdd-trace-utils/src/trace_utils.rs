@@ -1,7 +1,9 @@
 // Copyright 2023-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
+#[cfg(feature = "send")]
 pub use crate::send_data::SendData;
+#[cfg(feature = "send")]
 pub use crate::send_data::send_data_result::SendDataResult;
 use crate::span::v05::dict::SharedDict;
 use crate::span::{TraceData, v05};
@@ -20,6 +22,7 @@ use rmpv::decode::read_value;
 use rmpv::{Integer, Value};
 use std::cmp::Ordering;
 use std::collections::HashMap;
+#[cfg(feature = "send")]
 use std::collections::hash_map::RandomState;
 use std::env;
 use tracing::error;
@@ -342,6 +345,7 @@ pub(crate) fn cmp_send_data_payloads(a: &pb::TracerPayload, b: &pb::TracerPayloa
         .then(a.container_debug.cmp(&b.container_debug))
 }
 
+#[cfg(feature = "send")]
 pub fn coalesce_send_data(mut data: Vec<SendData>) -> Vec<SendData> {
     let hashers = [RandomState::new(), RandomState::new()];
     data.sort_by_cached_key(|data| {

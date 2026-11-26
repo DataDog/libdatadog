@@ -107,6 +107,10 @@ add_executable(ffe ffe.c)
 target_link_libraries(ffe PRIVATE Datadog::Profiling)
 set_vcruntime_link_type(ffe ${VCRUNTIME_LINK_TYPE})
 
+add_executable(http_client http_client.c)
+target_link_libraries(http_client PRIVATE Datadog::Profiling)
+set_vcruntime_link_type(http_client ${VCRUNTIME_LINK_TYPE})
+
 if(MSVC)
   target_compile_definitions(ffe PRIVATE _CRT_SECURE_NO_WARNINGS)
 endif()
