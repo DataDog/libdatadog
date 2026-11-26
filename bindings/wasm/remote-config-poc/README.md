@@ -34,6 +34,17 @@ The generator does not infer remote-configuration semantics. The Rust facade imp
 
 Two wasm packages are built from the same cargo output: `artifacts/remote-config.wasm` (wasm-opt `-Oz --converge`, the smallest binary) is the canonical output for Node and .NET, and `artifacts/remote-config-java.wasm` (wasm-opt `-O1`) is AOT-compiled into the Java host. The Java artifact is optimized less because the Endive compiler maps every wasm function to one JVM method: aggressive inlining can grow a function past the JVM's 64 KiB method limit, which would push it to the interpreter, so the Gradle build treats any interpreter fallback as an error. Every host program accepts the wasm path as their first argument; Node and .NET load the file, while the Java host keeps the argument only for CLI uniformity and executes the module compiled into its jar at build time. The manifest records the canonical hash, and the Java jar's manifest is stamped with the sha256 of the wasm it embeds. The conformance runner loads the same file in all engines and uses a controlled HTTP service with independently constructed protocol responses. Set the `LANGUAGES` environment variable (for example `LANGUAGES=nodejs,java`) to run a subset of the host matrix.
 
+## Publishing the Java AOT artifact
+
+`scripts/publish-java-aot.mjs` publishes the AOT-compiled Java artifact as a Maven-layout static repository so Java builds resolve finished JVM classes instead of running the wasm toolchain. Gradle builds the jar — AOT machine classes, `RemoteConfig.meta`, the generated wrapper, the host library (no `Main` CLI demo), and a `remote-config-aot.json` provenance record — and the script pushes the layout to the `gh-pages` branch of the distribution repository:
+
+```sh
+node scripts/publish-java-aot.mjs --repo <git-url>             # verify inputs, publish, push
+node scripts/publish-java-aot.mjs --repo <git-url> --dry-run  # stage only, no commit
+```
+
+The script refuses to publish when `artifacts/` is stale relative to `HEAD` or when the wasm hash no longer matches `manifest.json`, and it treats published versions as immutable (`--base-version` bumps `0.1.<n>` in `<version>+<libdatadog-short-sha>`). Consumers add one content-filtered repository line and a dependency on `io.github.bantonsson:remote-config-wasm-aot`; the jar's POM carries the Endive runtime and org.json dependencies, so no toolchain is needed on the consuming build.
+
 ## Ownership and asynchronous work
 
 Buffers and clients have checked integer handles. An input buffer remains caller-owned and must be freed after the consuming call. Reading an output through either generated helper copies and frees it. No host retains a view into guest memory across a guest call. Buffer allocation has per-buffer and aggregate limits.

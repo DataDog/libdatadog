@@ -45,6 +45,7 @@ execFileSync(wasmOpt, [source, '-O1', '--enable-mutable-globals',
   '--enable-nontrapping-float-to-int', '--enable-bulk-memory', '--enable-sign-ext',
   '--enable-reference-types', '--enable-multivalue', '--disable-gc', '-o', javaArtifact], { stdio: 'inherit' })
 const bytes = readFileSync(artifact)
+const javaBytes = readFileSync(javaArtifact)
 const manifest = {
   abiVersion: JSON.parse(readFileSync(`${root}/abi.json`)).version,
   sourceBase: execFileSync('git', ['rev-parse', 'HEAD'], { cwd: root, encoding: 'utf8' }).trim(),
@@ -52,12 +53,16 @@ const manifest = {
   rustToolchain: toolchain,
   optimizer: optimizerVersion,
   sha256: createHash('sha256').update(bytes).digest('hex'),
-  bytes: bytes.length
+  bytes: bytes.length,
+  // The AOT input shipped to the Java host; its hash is the reproducibility claim of the
+  // published AOT jar (see scripts/publish-java-aot.mjs).
+  javaSha256: createHash('sha256').update(javaBytes).digest('hex'),
+  javaBytes: javaBytes.length,
+  javaOptimization: '-O1'
 }
 writeFileSync(`${root}/artifacts/manifest.json`, JSON.stringify(manifest, null, 2) + '\n')
 process.stdout.write(`Shared artifact: ${manifest.sha256} (${manifest.bytes} bytes)\n`)
-const javaBytes = readFileSync(javaArtifact)
-process.stdout.write(`Java AOT artifact: ${createHash('sha256').update(javaBytes).digest('hex')} (${javaBytes.length} bytes)\n`)
+process.stdout.write(`Java AOT artifact: ${manifest.javaSha256} (${manifest.javaBytes} bytes)\n`)
 execFileSync('dotnet', ['build', 'hosts/dotnet/RemoteConfigPoc.csproj', '-c', 'Release', '--nologo', '-p:RestoreLockedMode=true'], {
   cwd: root, stdio: 'inherit'
 })
