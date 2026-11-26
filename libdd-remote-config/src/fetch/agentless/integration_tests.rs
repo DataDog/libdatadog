@@ -731,6 +731,94 @@ async fn test_same_chain_rejoins_without_org_uuid_pin() {
     assert_eq!(f.next_backoff(), None);
 }
 
+/// Regression test for the removed SameChain key comparison. Production
+/// datacenters share the root signing keys of both repositories, so the old
+/// comparison classified every real DC switch as a replay of the current
+/// chain and kept the fetcher locked out: the recovery poll re-verified the
+/// new DC's payload successfully, the key check returned SameChain, and the
+/// fetcher stayed failed forever. Now a valid fresh-join payload is accepted
+/// even when it is signed by the latched keys (as a real-DC switch or a
+/// same-chain rejoin after a transient failure is), and a genuine DC switch
+/// with shared root keys recovers.
+#[tokio::test]
+#[cfg_attr(miri, ignore)]
+async fn test_dc_switch_with_shared_root_keys_recovers() {
+    let shared_config_key = new_key();
+    let shared_director_key = new_key();
+    let embedded_cfg = build_v1(&shared_config_key).await;
+    let embedded_dir = build_v1(&shared_director_key).await;
+
+    // Both DCs rotated once to their own local role keys, cross-signed from
+    // the shared embedded root, and the shared root key stays the root
+    // signing key of every reached root (root key IDs are therefore equal
+    // across DCs, like in production; only the online role keys differ).
+    let dc_a = new_dc_keys();
+    let dc_b = new_dc_keys();
+    let cfg_a = dc_rotate(&shared_config_key, &dc_a, &embedded_cfg).await;
+    let dir_a = dc_rotate(&shared_director_key, &dc_a, &embedded_dir).await;
+    let cfg_b = dc_rotate(&shared_config_key, &dc_b, &embedded_cfg).await;
+    let dir_b = dc_rotate(&shared_director_key, &dc_b, &embedded_dir).await;
+
+    let (b_snap_bytes, b_ts_bytes) = config_snapshot_with_org_uuid_keys(
+        &cfg_b,
+        &dc_b.snapshot,
+        &dc_b.timestamp,
+        "ORG-A",
+    );
+    let b_fresh_join = {
+        let mut r = fresh_join(&cfg_b, &dir_b);
+        let metas = r.config_metas.as_mut().unwrap();
+        metas.snapshot = Some(top(&b_snap_bytes));
+        metas.timestamp = Some(top(&b_ts_bytes));
+        r
+    };
+
+    let http = MockHttp::new();
+    http.set_org_uuid("ORG-A");
+    // Poll 1: fresh join into DC A.
+    http.push(&fresh_join(&cfg_a, &dir_a));
+    // Poll 2: the org moved to DC B. No roots are sent, so DC B's metadata
+    // cannot verify against DC A's trusted online keys: the permanent
+    // failure loop before the fix.
+    http.push(&dc_update(&cfg_b, &dir_b));
+    // Poll 3: the recovery poll re-verifies DC B from the embedded root.
+    http.push(&b_fresh_join);
+    // Poll 4: back on DC B incrementally.
+    http.push(&dc_update(&cfg_b, &dir_b));
+
+    let mut f = fetcher(
+        http.clone(),
+        embedded_cfg.root().unwrap().as_bytes().to_vec(),
+        embedded_dir.root().unwrap().as_bytes().to_vec(),
+    )
+    .await;
+    let state = test_state();
+    let storage = NoopStorage;
+    let cache = TargetCache::new(&state, &storage);
+
+    // Poll 1: latches DC A.
+    f.fetch_config(dummy_client(), &cache).await.unwrap();
+    assert_eq!(config_root_version(&f), 2);
+    assert_eq!(config_snapshot_version(&f), Some(2));
+
+    // Poll 2: DC B's metadata fails verification against DC A's keys.
+    assert!(f.fetch_config(dummy_client(), &cache).await.is_err());
+    assert_eq!(f.consecutive_failures(), 1);
+
+    // Poll 3: recovers into DC B even though the payload is signed by the
+    // same root keys as the latched state.
+    f.fetch_config(dummy_client(), &cache).await.unwrap();
+    assert_eq!(config_root_version(&f), 2);
+    assert_eq!(config_snapshot_version(&f), Some(2));
+    assert_eq!(f.consecutive_failures(), 0);
+
+    // Poll 4: keeps working on DC B.
+    f.fetch_config(dummy_client(), &cache).await.unwrap();
+    assert_eq!(config_root_version(&f), 2);
+    assert_eq!(config_snapshot_version(&f), Some(2));
+    assert_eq!(f.consecutive_failures(), 0);
+}
+
 #[tokio::test]
 #[cfg_attr(miri, ignore)]
 async fn test_dc_switch_recovers_from_embedded_root() {
@@ -1006,7 +1094,7 @@ async fn test_dc_switch_replay_of_abandoned_chain_rejected() {
     // recovery poll.
     http.push(&a_replay);
     // Poll 6: a healthy fresh join for DC B again (the recovery is still
-    // armed, so the poll is a fresh join and DC B's chain is SameChain).
+    // armed, so the poll is a fresh join verified from the embedded root).
     http.push(&b_fresh_join);
 
     let mut f = fetcher(

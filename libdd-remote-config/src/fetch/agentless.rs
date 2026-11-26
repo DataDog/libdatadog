@@ -536,31 +536,21 @@ impl<C: HttpClientCapability + SleepCapability> AgentlessFetcher<C> {
     /// and targets metadata are verified with the keys of the reached root,
     /// and the director targets are checked against the config delegations.
     ///
-    /// The same-chain check runs first: a payload signed by the latched keys
-    /// is routed through the normal `apply()` path WITHOUT the org UUID pin
-    /// below. The pin is a DC-switch-only requirement (the normal path skips
-    /// it when the snapshot does not carry one, see `verify_org_uuid`), so a
-    /// DC that does not pin it must still be able to rejoin after a transient
-    /// failure instead of failing every poll at the org check.
-    ///
-    /// The scratch state only replaces the live one when the payload is proven
-    /// to be a DC switch:
-    /// - its root keys differ from the latched ones on both repositories (each DC signs with its
-    ///   own keys; the same keys mean a replay of the current chain, which the version checks of
-    ///   the normal update path already rejected, and re-accepting it from the embedded root would
-    ///   erase the TUF rollback protection);
+    /// The scratch state replaces the live one when the payload is proven to
+    /// be a valid re-anchoring:
+    /// - it verifies from the embedded root (above), and
     /// - the org UUID in its snapshot matches the org UUID the backend reports for the API key (it
-    ///   is the same org, on a new DC).
+    ///   is the same org, possibly on a new DC).
     ///
-    /// No comparison against the LIVE chain's versions: each DC keeps its own,
-    /// independent version counters, so the new DC's chain can legitimately
-    /// sit at lower versions than the latched ones. A rollback of the live
-    /// chain cannot reach this path: it would be signed by the same keys and
-    /// is caught by the key check above. A rollback of a chain trusted BEFORE
-    /// (for example the old DC after a move back, or the pre-rotation keys of
-    /// a DC that rotated its root) is caught by the per-chain
-    /// version floors (`chain_floors`): within one chain versions never go
-    /// backwards, so those floors survive resets and DC switches.
+    /// There is deliberately no comparison against the latched state, neither
+    /// on keys nor on versions. The key comparison was removed: production
+    /// datacenters share the root signing keys of both repositories, so it
+    /// classified every real DC switch as a replay of the current chain and
+    /// left the agent locked out. Rollback protection is instead provided by
+    /// the per-chain version floors (`chain_floors`): within one chain
+    /// versions never go backwards, so a replay of any previously trusted
+    /// chain (the latched one, or one abandoned at a DC switch or root
+    /// rotation) cannot go below the versions it was last trusted at.
     ///
     /// On failure the live clients and their rollback protection stay
     /// untouched and the recovery is retried on the next poll.
@@ -633,27 +623,38 @@ impl<C: HttpClientCapability + SleepCapability> AgentlessFetcher<C> {
 
         verify_director_against_config(&config_client, &director_client)?;
 
-        // A genuine DC switch changes the root keys of both repositories. The
-        // same keys on either one mean a replay of the current chain: not a
-        // DC switch, keep the live state and route the payload through the
-        // normal `apply()` path (the earlier failure was transient). The root
-        // versions are deliberately not compared: each DC keeps independent
-        // version counters, so the new DC's chain can legitimately sit at
-        // lower root versions than the latched ones.
-        //
-        // This check deliberately runs before the org UUID one: the org pin
-        // is a DC-switch-only requirement (the normal path skips it when the
-        // snapshot does not carry one, see `verify_org_uuid`), so a same-chain
-        // fresh join must not be rejected for a missing pin.
-        if root_key_ids(&config_client) == root_key_ids(&self.config_client)
-            || root_key_ids(&director_client) == root_key_ids(&self.director_client)
-        {
-            return Ok(DcSwitch::SameChain);
-        }
+        // The key comparison that used to live here (refusing a payload
+        // signed by the latched root keys as a SameChain replay) is gone:
+        // production datacenters share the root signing keys of both
+        // repositories, so it classified every real DC switch as a replay and
+        // left the agent locked out. The chain identity checks below keep the
+        // recovery safe: the scratch verification anchors at the embedded
+        // root, and a previously trusted chain is held at its recorded
+        // version floor, so a replay of the latched (or of an abandoned)
+        // chain cannot go below versions already trusted.
+        // The org UUID check still runs on every recovered payload, even one
+        // signed by the latched keys: the org pin is a DC-switch-only
+        // requirement (the normal path skips it when the snapshot does not
+        // carry one, see `verify_org_uuid`), and it is checked per config
+        // root version, so a pinless same-chain fresh join still passes.
 
-        // A different chain: a genuine DC switch, which must prove it belongs
-        // to the same org. The new DC's snapshot must carry an org UUID and it
-        // must match the org UUID the backend reports for the API key.
+        // A payload for the chain we are latched on must not be held to the
+        // org pin: the pin is a DC-switch-only requirement (the normal path
+        // skips it when the snapshot does not carry one, see
+        // `verify_org_uuid`), so a DC that does not pin it must still be able
+        // to rejoin after a transient failure instead of failing every poll
+        // at the org check.
+        let is_latched_chain = config_client.database().trusted_root().version()
+            == self.config_client.database().trusted_root().version()
+            && root_key_ids(&config_client) == root_key_ids(&self.config_client)
+            && director_client.database().trusted_root().version()
+                == self.director_client.database().trusted_root().version()
+            && root_key_ids(&director_client) == root_key_ids(&self.director_client);
+
+        // A different chain (or a moved-away org): a genuine DC switch, which
+        // must prove it belongs to the same org. The new DC's snapshot must
+        // carry an org UUID and it must match the org UUID the backend
+        // reports for the API key.
         let snapshot_org_uuid = config_client
             .database()
             .trusted_snapshot()
@@ -661,18 +662,20 @@ impl<C: HttpClientCapability + SleepCapability> AgentlessFetcher<C> {
             .additional_fields()
             .get("custom")
             .and_then(|c| c.get("org_uuid"))
-            .and_then(Value::as_str)
-            .ok_or_else(|| {
+            .and_then(Value::as_str);
+        if !is_latched_chain {
+            let snapshot_org_uuid = snapshot_org_uuid.ok_or_else(|| {
                 format_err!("the fresh-join payload does not carry an org UUID in its snapshot")
             })?;
-        let api_key_org_uuid = match prefetched_org_uuid {
-            Some(u) => u,
-            None => self.get_org_data().await?.uuid,
-        };
-        anyhow::ensure!(
-            snapshot_org_uuid == api_key_org_uuid,
-            "the fresh-join payload belongs to another org: snapshot org UUID {snapshot_org_uuid}, API key org UUID {api_key_org_uuid}"
-        );
+            let api_key_org_uuid = match prefetched_org_uuid {
+                Some(u) => u,
+                None => self.get_org_data().await?.uuid,
+            };
+            anyhow::ensure!(
+                snapshot_org_uuid == api_key_org_uuid,
+                "the fresh-join payload belongs to another org: snapshot org UUID {snapshot_org_uuid}, API key org UUID {api_key_org_uuid}"
+            );
+        }
 
         // The payload's chain may be one we trusted before: either a genuine
         // move back to a previous DC (which advanced while we were away, so
@@ -680,6 +683,16 @@ impl<C: HttpClientCapability + SleepCapability> AgentlessFetcher<C> {
         // metadata. The scratch verification above walks from the embedded
         // roots and has no other rollback floor, so enforce the one recorded
         // when that chain was abandoned.
+        if is_latched_chain {
+            // Rejoin of the current DC on the current chain: the version
+            // checks of the normal `apply()` path that follows provide the
+            // rollback protection for the live chain, so nothing else to
+            // enforce here.
+            self.config_client = config_client;
+            self.director_client = director_client;
+            return Ok(DcSwitch::Switched);
+        }
+
         let chain = ChainId::of(&config_client, &director_client);
         if let Some(floor) = self.chain_floors.get(&chain) {
             let versions = ChainFloor {
@@ -1254,23 +1267,17 @@ fn url_with_path(base: http::Uri, path: PathAndQuery) -> anyhow::Result<http::Ur
     Ok(http::Uri::from_parts(parts)?)
 }
 
-/// Whether a fresh-join payload, verified from the embedded roots in scratch
-/// clients, belongs to the same trusted chain as the live clients (`SameChain`)
-/// or to a genuinely different chain, as a DC switch always is (`Switched`).
+/// Whether the DC-switch recovery replaced the live clients with the verified
+/// scratch ones (`Switched`).
 #[derive(Debug, PartialEq, Eq)]
 enum DcSwitch {
-    /// The payload is signed by the same root keys as the live state: not a
-    /// DC switch (for example a replay of the current chain), it must go
-    /// through the normal `apply()` so TUF rollback protection is preserved.
-    SameChain,
-    /// The payload is signed by different root keys on both repositories:
-    /// a DC switch, the scratch clients replace the live ones.
+    /// The payload verified from the embedded roots and passed the org UUID
+    /// check: the scratch clients replace the live ones.
     Switched,
 }
 
 /// The key IDs of the root role of the trusted root: the identity of the
-/// trusted chain, used to tell a DC switch (different keys) from a replay of
-/// the current chain (same keys).
+/// trusted chain.
 fn root_key_ids(client: &TUFClient) -> std::collections::HashSet<&tuf::crypto::KeyId> {
     client
         .database()
@@ -1280,10 +1287,12 @@ fn root_key_ids(client: &TUFClient) -> std::collections::HashSet<&tuf::crypto::K
         .collect()
 }
 
-/// The identity of a TUF chain: the root key IDs of both repositories. Every
-/// DC signs with its own keys, so the pair identifies the chain the fetcher is
-/// latched on, and it survives root rotations within the DC (the new root
-/// cross-signs with, and delegates to, the same DC keys).
+/// The identity of a TUF chain: the root key IDs of both repositories. The
+/// pair identifies the chain the fetcher is latched on, and it survives root
+/// rotations within the DC (the new root cross-signs with, and delegates to,
+/// the same DC keys). Note that root signing keys are shared across DCs in
+/// production, so this does not distinguish DCs; only the online role keys
+/// do, and the floors below key on the chain, not on the DC.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 struct ChainId {
     config_root_keys: std::collections::BTreeSet<String>,
