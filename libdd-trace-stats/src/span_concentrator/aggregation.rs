@@ -17,7 +17,7 @@ use tracing::warn;
 
 use crate::span_concentrator::cardinality_limit_telemetry::CollapsedFieldSet;
 use libdd_trace_model::{Attributes as _, ChunkSpanView, Span, TraceChunk};
-use libdd_trace_semantics::{Concept, lookup_i64, lookup_str};
+use libdd_trace_semantics::{Concept, Value, lookup_i64, lookup_str, lookup_value};
 
 use super::{
     CardinalityLimitConfig,
@@ -172,11 +172,19 @@ fn get_http_status_code(span: &impl Span) -> u32 {
 
 /// The gRPC status code from the trace semantics registry.
 ///
-/// The first non-empty value found wins; an unparseable value yields `None` without falling
-/// through.
+/// The first non-empty value found wins. Non-integer numbers are skipped like missing values, as
+/// `int64` entries read [`libdd_trace_model::Attributes::attribute_i64`]. Strings are parsed as a
+/// number or a status name; an unparseable string or an integer outside the `u8` range yields
+/// `None` without falling through.
 fn get_grpc_status_code(span: &impl Span) -> Option<u8> {
-    let val = lookup_str(span, Concept::RpcGrpcStatusCode)?;
-    grpc_status_str_to_int_value(&val)
+    match lookup_value(span, Concept::RpcGrpcStatusCode)? {
+        Value::String(s) => grpc_status_str_to_int_value(s),
+        Value::Int(i) => u8::try_from(i).ok(),
+        Value::Float(f) => {
+            libdd_trace_model::f64_to_exact_i64(f).and_then(|i| u8::try_from(i).ok())
+        }
+        _ => None,
+    }
 }
 
 fn grpc_status_str_to_int_value(v: &str) -> Option<u8> {
@@ -2603,6 +2611,17 @@ mod tests {
             Some(2)
         );
 
+        // v0.4: Out-of-range numeric metric gives None without falling through.
+        let metric_out_of_range = SpanBytes {
+            metrics: vec![("rpc.grpc.status_code".into(), 300.0)].into(),
+            meta: vec![("grpc.code".into(), "OK".into())].into(),
+            ..Default::default()
+        };
+        assert_eq!(
+            v04_key_of(&metric_out_of_range, &[]).fixed.grpc_status_code,
+            None
+        );
+
         // v0.4: rpc.response.status_code as numeric metric when rpc.system.name == "grpc".
         let metric_otel = SpanBytes {
             metrics: vec![("rpc.response.status_code".into(), 13.0)].into(),
@@ -2624,6 +2643,15 @@ mod tests {
             .fixed
             .grpc_status_code,
             Some(2)
+        );
+        assert_eq!(
+            v1_key_of(vec![
+                ("rpc.grpc.status_code", AttributeValue::Int(-1)),
+                ("grpc.code", AttributeValue::String("OK".into())),
+            ])
+            .fixed
+            .grpc_status_code,
+            None
         );
         assert_eq!(
             v1_key_of(vec![
