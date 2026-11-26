@@ -9,9 +9,12 @@ use crate::{msgpack_decoder, trace_utils::cmp_send_data_payloads};
 use libdd_tinybytes::BytesString;
 use libdd_trace_protobuf::pb;
 use std::cmp::Ordering;
-#[cfg(feature = "send")]
-use std::{hash::{BuildHasher, Hash, Hasher}, collections::hash_map::RandomState};
 use std::iter::Iterator;
+#[cfg(feature = "send")]
+use std::{
+    collections::hash_map::RandomState,
+    hash::{BuildHasher, Hash, Hasher},
+};
 use tracing::debug;
 
 pub type TracerPayloadV04 = Vec<v04::SpanBytes>;
