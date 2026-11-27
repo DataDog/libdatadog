@@ -6,20 +6,14 @@ use crate::slice::{AsBytes, CharSlice};
 use crate::vec::Vec;
 use core::fmt::{Debug, Display, Formatter};
 
-/// You probably don't want to use this directly. This constant is used by `handle_panic_error` to
-/// signal that something went wrong, but avoid needing any allocations to represent it.
-///
-/// Note: This vec is 0-sized and thus does not allocate any memory (or need to be dropped).
-pub(crate) const CANNOT_ALLOCATE_ERROR: Error = Error {
-    message: Vec::new(),
-};
-
-// This error message is used as a placeholder for errors without message -- corresponding to an
-// error where we couldn't even _allocate_ the message (or some other even weirder error).
-const CANNOT_ALLOCATE: &core::ffi::CStr =
-    c"libdatadog failed: (panic) Cannot allocate error message";
-const CANNOT_ALLOCATE_CHAR_SLICE: CharSlice = unsafe {
-    crate::Slice::from_raw_parts(CANNOT_ALLOCATE.as_ptr(), CANNOT_ALLOCATE.to_bytes().len())
+// An empty message is the allocation-free out-of-memory sentinel. The static text is returned by
+// ddog_Error_message, but is never stored in Error and therefore is never freed by Error_drop.
+const OUT_OF_MEMORY_MESSAGE: &core::ffi::CStr = c"memory allocation failed";
+const OUT_OF_MEMORY_CHAR_SLICE: CharSlice = unsafe {
+    crate::Slice::from_raw_parts(
+        OUT_OF_MEMORY_MESSAGE.as_ptr(),
+        OUT_OF_MEMORY_MESSAGE.to_bytes().len(),
+    )
 };
 
 /// Please treat this as opaque; do not reach into it, and especially don't
@@ -31,6 +25,56 @@ const CANNOT_ALLOCATE_CHAR_SLICE: CharSlice = unsafe {
 pub struct Error {
     /// This is a String stuffed into the vec.
     message: Vec<u8>,
+}
+
+impl Error {
+    /// Returns an out-of-memory error without allocating.
+    pub const fn out_of_memory() -> Self {
+        Self {
+            message: Vec::new(),
+        }
+    }
+
+    /// Formats an error into fallibly allocated storage. If formatting cannot allocate, returns the
+    /// allocation-free out-of-memory error instead.
+    pub fn from_display(value: impl Display) -> Self {
+        Self::from_format_args(format_args!("{value}"))
+    }
+
+    fn is_out_of_memory(&self) -> bool {
+        self.message.is_empty() && self.message.capacity() == 0
+    }
+
+    pub(crate) fn from_format_args(args: core::fmt::Arguments<'_>) -> Self {
+        use core::fmt::Write;
+
+        let mut writer = FallibleStringWriter::default();
+        match writer.write_fmt(args) {
+            Ok(()) => Self::from(writer.into_string()),
+            Err(_) => Self::out_of_memory(),
+        }
+    }
+}
+
+#[derive(Default)]
+struct FallibleStringWriter {
+    buffer: String,
+}
+
+impl FallibleStringWriter {
+    fn into_string(self) -> String {
+        self.buffer
+    }
+}
+
+impl core::fmt::Write for FallibleStringWriter {
+    fn write_str(&mut self, value: &str) -> core::fmt::Result {
+        self.buffer
+            .try_reserve(value.len())
+            .map_err(|_| core::fmt::Error)?;
+        self.buffer.push_str(value);
+        Ok(())
+    }
 }
 
 impl AsRef<str> for Error {
@@ -72,7 +116,7 @@ impl From<Error> for String {
 
 impl From<&str> for Error {
     fn from(value: &str) -> Self {
-        Self::from(value.to_string())
+        Self::from_display(value)
     }
 }
 
@@ -80,13 +124,13 @@ impl From<anyhow::Error> for Error {
     fn from(value: anyhow::Error) -> Self {
         // {:#} is the "alternate" format, see:
         // https://docs.rs/anyhow/latest/anyhow/struct.Error.html#display-representations
-        Self::from(format!("{value:#}"))
+        Self::from_format_args(format_args!("{value:#}"))
     }
 }
 
 impl From<Box<&dyn core::error::Error>> for Error {
     fn from(value: Box<&dyn core::error::Error>) -> Self {
-        Self::from(value.to_string())
+        Self::from_display(value)
     }
 }
 
@@ -99,13 +143,14 @@ pub fn clear_error(err: &mut Error) {
     *err = Error { message };
 }
 
-/// Drops the error. It should not be used after this, though the
-/// implementation tries to limit the damage in the case of use-after-free and
-/// double-free scenarios.
+/// Clears the error. Heap-backed messages are freed; the allocation-free out-of-memory sentinel
+/// owns no message storage. The error must not be read afterward. Clearing an already-cleared
+/// error is a no-op.
 ///
 /// # Safety
 ///
 /// Only pass null or a pointer to a valid, mutable `ddog_Error`.
+// allow(ffi-panic-boundary): clearing only drops an owned Vec and installs an empty sentinel.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ddog_Error_drop(error: Option<&mut Error>) {
     if let Some(err) = error {
@@ -121,21 +166,20 @@ pub extern "C" fn ddog_Error_free(error: Option<Box<Error>>) {
     drop(error);
 }
 
-/// Returns a CharSlice of the error's message that is valid until the error
-/// is dropped.
+/// Borrows the error message. The returned slice is valid until the error is cleared or dropped.
+/// For an allocation-free out-of-memory error, the slice points to static storage.
+///
 /// # Safety
 /// Only pass null or a valid reference to a `ddog_Error`.
+// allow(ffi-panic-boundary): valid errors contain UTF-8 or the static OOM sentinel.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ddog_Error_message(error: Option<&Error>) -> CharSlice<'_> {
     match error {
         None => CharSlice::empty(),
-        // When the error is empty (CANNOT_ALLOCATE_ERROR) we assume we failed to allocate an actual
-        // error and return this placeholder message instead.
-        // In particular this means we'll use the CANNOT_ALLOCATE_CHAR_SLICE error message for
-        // **every** empty error, and no other kinds of errors are expected to be empty.
+        // The empty, zero-capacity error is the allocation-free out-of-memory sentinel.
         Some(err) => {
-            if *err == CANNOT_ALLOCATE_ERROR {
-                CANNOT_ALLOCATE_CHAR_SLICE
+            if err.is_out_of_memory() {
+                OUT_OF_MEMORY_CHAR_SLICE
             } else {
                 CharSlice::from(err.as_ref())
             }
@@ -147,3 +191,32 @@ pub type MaybeError = crate::Option<Error>;
 
 #[unsafe(no_mangle)]
 pub extern "C" fn ddog_MaybeError_drop(_: MaybeError) {}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use assert_no_alloc::assert_no_alloc;
+
+    #[test]
+    fn out_of_memory_message_and_repeated_clear_do_not_allocate_or_deallocate() {
+        let mut error = Error::out_of_memory();
+
+        assert_no_alloc(|| {
+            for _ in 0..2 {
+                let message = unsafe { ddog_Error_message(Some(&error)) };
+                assert_eq!(message.as_bytes(), OUT_OF_MEMORY_MESSAGE.to_bytes());
+                unsafe { ddog_Error_drop(Some(&mut error)) };
+            }
+        });
+    }
+
+    #[test]
+    fn clearing_an_ordinary_error_releases_its_message() {
+        let mut error = Error::from(String::from("heap-backed message"));
+        assert!(!error.message.is_empty());
+
+        unsafe { ddog_Error_drop(Some(&mut error)) };
+
+        assert_eq!(error, Error::out_of_memory());
+    }
+}

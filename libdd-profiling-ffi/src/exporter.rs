@@ -185,17 +185,13 @@ pub unsafe extern "C" fn ddog_prof_Exporter_new(
     })
 }
 
+/// Drops the exporter and leaves its handle empty. A null pointer or empty handle is a no-op.
+///
 /// # Safety
-/// The `exporter` may be null, but if non-null the pointer must point to a
-/// valid `ddog_prof_Exporter_Request` object made by the Rust Global
-/// allocator that has not already been dropped.
+/// A non-null `exporter` must point to a handle created by this library.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ddog_prof_Exporter_drop(mut exporter: *mut Handle<ProfileExporter>) {
-    unsafe {
-        // Technically, this function has been designed so if it's double-dropped
-        // then it's okay, but it's not something that should be relied on.
-        drop(exporter.take())
-    }
+    unsafe { drop(exporter.take()) }
 }
 
 unsafe fn try_into_vec_files<'a>(
@@ -386,9 +382,11 @@ pub unsafe extern "C" fn ddog_CancellationToken_cancel(
     }
 }
 
+/// Drops the cancellation token and leaves its handle empty. A null pointer or empty handle is a
+/// no-op.
+///
 /// # Safety
-/// The `token` can be null, but non-null values must be created by the Rust
-/// Global allocator and must have not been dropped already.
+/// A non-null `token` must point to a handle created by this library.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ddog_CancellationToken_drop(
     mut token: *mut Handle<TokioCancellationToken>,
@@ -549,10 +547,11 @@ pub unsafe extern "C" fn ddog_prof_ExporterManager_postfork_parent(
     unsafe { wrap_with_void_ffi_result!({ suspended.to_inner_mut()?.postfork_parent()? }) }
 }
 
+/// Drops the exporter manager and leaves its handle empty. A null pointer or empty handle is a
+/// no-op.
+///
 /// # Safety
-/// The `manager` may be null, but if non-null the pointer must point to a
-/// valid `ExporterManager` object made by the Rust Global allocator that
-/// has not already been dropped.
+/// A non-null `manager` must point to a handle created by this library.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ddog_prof_ExporterManager_drop(mut manager: *mut Handle<ExporterManager>) {
     unsafe { drop(manager.take()) }

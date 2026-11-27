@@ -269,7 +269,8 @@ impl ProfileStatus {
     }
 }
 
-/// Frees any error associated with the status, and replaces it with an OK.
+/// Clears any error and replaces the status with OK. Heap-backed messages are freed; static
+/// messages, including the out-of-memory message, are not. Clearing an OK status is a no-op.
 ///
 /// # Safety
 ///

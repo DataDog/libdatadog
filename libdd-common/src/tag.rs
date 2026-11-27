@@ -50,6 +50,26 @@ impl Display for TagValidationError {
 
 impl core::error::Error for TagValidationError {}
 
+/// An error returned while building an owned tag without infallible allocations.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum TagBuildError {
+    /// The key and value did not form a valid tag.
+    Validation(TagValidationError),
+    /// The tag's owned storage could not be allocated.
+    OutOfMemory,
+}
+
+impl Display for TagBuildError {
+    fn fmt(&self, f: &mut Formatter<'_>) -> core::fmt::Result {
+        match self {
+            Self::Validation(error) => Display::fmt(error, f),
+            Self::OutOfMemory => f.write_str("memory allocation failed"),
+        }
+    }
+}
+
+impl core::error::Error for TagBuildError {}
+
 /// A tag rejected while validating a tag.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct InvalidTag<'a> {
@@ -195,6 +215,28 @@ impl Tag {
     #[inline]
     pub fn validate_value(value: &str) -> Result<(), TagValidationError> {
         validate_serialized(value)
+    }
+
+    /// Creates an owned tag while reporting allocation failure instead of aborting.
+    pub fn try_new(key: &str, value: &str) -> Result<Self, TagBuildError> {
+        Self::validate(key, value).map_err(TagBuildError::Validation)?;
+
+        let capacity = key
+            .len()
+            .checked_add(':'.len_utf8())
+            .and_then(|len| len.checked_add(value.len()))
+            .ok_or(TagBuildError::OutOfMemory)?;
+        let mut serialized = String::new();
+        serialized
+            .try_reserve_exact(capacity)
+            .map_err(|_| TagBuildError::OutOfMemory)?;
+        serialized.push_str(key);
+        serialized.push(':');
+        serialized.push_str(value);
+
+        Ok(Self {
+            value: Cow::Owned(serialized),
+        })
     }
 
     /// Validates a tag.
@@ -424,6 +466,21 @@ mod alloc_tests {
         assert_eq!(
             Tag::validate("key", "value:"),
             Err(TagValidationError::EndsWithColon)
+        );
+    }
+
+    #[test]
+    fn test_try_new() {
+        assert_eq!(Tag::try_new("key", "value").unwrap().as_ref(), "key:value");
+        assert_eq!(
+            Tag::try_new("", "value"),
+            Err(TagBuildError::Validation(
+                TagValidationError::BeginsWithColon
+            ))
+        );
+        assert_eq!(
+            Tag::try_new("key", ""),
+            Err(TagBuildError::Validation(TagValidationError::EndsWithColon))
         );
     }
 
