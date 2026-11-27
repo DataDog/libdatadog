@@ -1,0 +1,25 @@
+# Copyright 2026-Present Datadog, Inc. https://www.datadoghq.com/
+# SPDX-License-Identifier: Apache-2.0
+
+[package]
+name = "libdd-config-core"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+homepage = "https://github.com/DataDog/libdatadog/tree/main/libdd-config-core"
+repository = "https://github.com/DataDog/libdatadog/tree/main/libdd-config-core"
+description = "Compile tracer configuration manifests and resolve startup settings"
+
+[lib]
+bench = false
+
+[dependencies]
+indexmap = { workspace = true, features = ["serde", "std"] }
+libdd-regex = { path = "../libdd-regex", version = "0.1.0", features = ["require-regex-full"] }
+serde = { workspace = true, features = ["derive", "std"] }
+serde_json = { workspace = true, features = ["float_roundtrip", "raw_value", "std"] }
+thiserror = { workspace = true, features = ["std"] }
+
+[lints]
+workspace = true

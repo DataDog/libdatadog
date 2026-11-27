@@ -1,0 +1,24 @@
+{
+  "version": "2",
+  "supportedConfigurations": {
+    "DD_MODE": [
+      {
+        "type": "string",
+        "default": "info",
+        "allowed": {
+          "pattern": "info|debug",
+          "ignoreCase": true,
+          "validateDefault": true
+        },
+        "transform": "toLowerCase"
+      }
+    ],
+    "DD_CONTENT": [
+      {
+        "type": "string",
+        "default": null,
+        "transform": "fixture.read"
+      }
+    ]
+  }
+}

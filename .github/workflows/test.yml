@@ -545,8 +545,8 @@ jobs:
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # 4.2.2
         with:
           submodules: recursive
-      - name: Install wasm32 target
-        run: rustup target add wasm32-unknown-unknown
+      - name: Install wasm32 targets
+        run: rustup target add wasm32-unknown-unknown wasm32-wasip1
       - name: sccache
         id: sccache
         uses: ./.github/actions/setup-sccache
@@ -564,6 +564,10 @@ jobs:
         run: cargo test -p libdd-wasm-tests --target wasm32-unknown-unknown
         env:
           CARGO_TARGET_WASM32_UNKNOWN_UNKNOWN_RUNNER: wasm-bindgen-test-runner
+      - name: Run WASI configuration tests
+        run: |
+          cargo build --locked --target wasm32-wasip1 -p libdd-config-core-wasi
+          node libdd-config-core/wasi/test/resolve.mjs target/wasm32-wasip1/debug/libdd_config_core_wasi.wasm
       - name: "cargo check -p libdd-remote-config --target wasm32-unknown-unknown --features client,agentless"
         run: cargo check -p libdd-remote-config --target wasm32-unknown-unknown --no-default-features --features client,agentless
         env:

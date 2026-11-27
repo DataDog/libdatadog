@@ -19,6 +19,8 @@ members = [
   "libdd-ffe-ffi",
   "libdd-ipc",
   "libdd-ipc-macros",
+  "libdd-config-core",
+  "libdd-config-core/wasi",
   "libdd-library-config",
   "libdd-library-config-ffi",
   "libdd-live-debugger",

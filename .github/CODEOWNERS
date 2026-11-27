@@ -60,6 +60,7 @@ libdd-dogstatsd-client               @DataDog/apm-common-components-core
 libdd-gotter/                        @DataDog/libdatadog-profiling @DataDog/libdatadog-crashtracking-reviewers
 libdd-http-client                    @DataDog/apm-common-components-core
 libdd-http-client-ffi/               @DataDog/apm-common-components-core
+libdd-config-core/                   @DataDog/apm-sdk-capabilities
 libdd-library-config*/               @DataDog/apm-sdk-capabilities
 libdd-log*/                          @DataDog/apm-common-components-core
 libdd-networking/                    @DataDog/apm-common-components-core @DataDog/libdatadog-guild-reviewers
@@ -149,6 +150,8 @@ datadog-sidecar/src/service/ffe_metrics_flusher.rs      @DataDog/libdatadog-php 
 # These lines are last in the file so they win (last match wins) for these specific files.
 # libdatadog-release is registered in DataDog/ci-checks reviewer_teams.yml, so it is not counted as a code
 # owner for Green CI / test-failure reporting.
+
+libdd-config-core/Cargo.toml                @DataDog/apm-sdk-capabilities @DataDog/libdatadog-release
 
 libdd-agent-client/Cargo.toml                @DataDog/apm-common-components-core @DataDog/libdatadog-release
 libdd-ai-usage/Cargo.toml                    @DataDog/agent-console @DataDog/trajectory @DataDog/libdatadog-release
