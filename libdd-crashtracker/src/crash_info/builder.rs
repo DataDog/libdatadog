@@ -120,6 +120,12 @@ pub struct CrashInfoBuilder {
     pub metadata: Option<Metadata>,
     pub os_info: Option<OsInfo>,
     pub otel_thread_contexts: Option<Vec<OtelThreadContext>>,
+    #[cfg(all(
+        target_os = "linux",
+        feature = "otel-thread-ctx",
+        any(feature = "collector", feature = "receiver")
+    ))]
+    pub otel_tls_resolution: Option<crate::otel_tls_reader::OtelTlsResolution>,
     pub proc_info: Option<ProcInfo>,
     pub sig_info: Option<SigInfo>,
     pub spans_to_close: Vec<SpansToClose>,
@@ -144,6 +150,12 @@ impl Default for CrashInfoBuilder {
             metadata: None,
             os_info: None,
             otel_thread_contexts: None,
+            #[cfg(all(
+                target_os = "linux",
+                feature = "otel-thread-ctx",
+                any(feature = "collector", feature = "receiver")
+            ))]
+            otel_tls_resolution: None,
             proc_info: None,
             sig_info: None,
             span_ids: None,

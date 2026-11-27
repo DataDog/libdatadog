@@ -26,6 +26,7 @@ pub enum TestMode {
     SidecarMultiThreadCollection,
     UnhandledExceptionMultiThread,
     OtelThreadCtx,
+    SidecarOtelThreadCtx,
 }
 
 impl TestMode {
@@ -53,6 +54,7 @@ impl TestMode {
             Self::SidecarMultiThreadCollection => "sidecar_multi_thread_collection",
             Self::UnhandledExceptionMultiThread => "unhandled_exception_multi_thread",
             Self::OtelThreadCtx => "otel_thread_ctx",
+            Self::SidecarOtelThreadCtx => "sidecar_otel_thread_ctx",
         }
     }
 
@@ -80,6 +82,7 @@ impl TestMode {
             Self::SidecarMultiThreadCollection,
             Self::UnhandledExceptionMultiThread,
             Self::OtelThreadCtx,
+            Self::SidecarOtelThreadCtx,
         ]
     }
 }
@@ -116,6 +119,7 @@ impl std::str::FromStr for TestMode {
             "sidecar_multi_thread_collection" => Ok(Self::SidecarMultiThreadCollection),
             "unhandled_exception_multi_thread" => Ok(Self::UnhandledExceptionMultiThread),
             "otel_thread_ctx" => Ok(Self::OtelThreadCtx),
+            "sidecar_otel_thread_ctx" => Ok(Self::SidecarOtelThreadCtx),
             _ => Err(format!("Unknown test mode: {}", s)),
         }
     }

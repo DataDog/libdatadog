@@ -146,6 +146,10 @@ impl CrashtrackerConfigurationBuilder {
                 || self.resolve_frames == StacktraceCollection::EnabledWithSymbolsInReceiver,
             "trim_signal_delivery_frames and name_unresolved_frames require EnabledWithSymbolsInReceiver"
         );
+        anyhow::ensure!(
+            !self.collect_otel_thread_contexts || self.collect_all_threads,
+            "collect_otel_thread_contexts requires collect_all_threads"
+        );
         let timeout = self
             .timeout
             .unwrap_or(constants::DD_CRASHTRACK_DEFAULT_TIMEOUT);

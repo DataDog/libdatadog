@@ -25,6 +25,7 @@ pub enum CollectorSpawnError {
 }
 
 impl Collector {
+    #[allow(clippy::too_many_arguments)]
     pub(crate) fn spawn(
         receiver: &Receiver,
         config: &CrashtrackerConfiguration,
@@ -33,6 +34,7 @@ impl Collector {
         message: Option<&str>,
         crash: CrashKindData,
         threads_deadline: Instant,
+        collector_threads: bool,
     ) -> Result<Self, CollectorSpawnError> {
         // When we spawn the child, our pid becomes the ppid.
         // SAFETY: This function has no safety requirements.
@@ -41,15 +43,13 @@ impl Collector {
         // Get the current tid to identify thread info
         let tid = current_tid();
 
-        // Thread collection and OTel TLS reading both need the collector to
-        // ptrace us. Yama permits that only once we name it as our tracer —
-        // which we cannot do before the fork tells us its pid. The child
-        // therefore blocks on this pipe until we have granted it.
+        // The collector needs ptrace only when it is responsible for thread
+        // collection. OTel TLS reading is handled in a single pass during
+        // thread collection.
         #[cfg(target_os = "linux")]
-        let needs_ptrace = config.collect_all_threads()
-            || (cfg!(feature = "otel-thread-ctx") && config.collect_otel_thread_contexts());
+        let collector_needs_ptrace = collector_threads;
         #[cfg(target_os = "linux")]
-        let ptrace_gate = if needs_ptrace {
+        let ptrace_gate = if collector_needs_ptrace {
             make_ptrace_gate()
         } else {
             None
@@ -72,6 +72,7 @@ impl Collector {
                     tid,
                     ptrace_gate,
                     threads_deadline,
+                    collector_threads,
                 );
             }
             pid if pid > 0 => {
@@ -139,6 +140,7 @@ pub(crate) fn run_collector_child(
     crashing_tid: libc::pid_t,
     ptrace_gate: Option<(RawFd, RawFd)>,
     threads_deadline: Instant,
+    collector_threads: bool,
 ) -> ! {
     // Close stdio
     let _ = unsafe { libc::close(0) };
@@ -181,6 +183,7 @@ pub(crate) fn run_collector_child(
         ppid,
         crashing_tid,
         threads_deadline,
+        collector_threads,
     );
     if let Err(e) = report {
         eprintln!("Failed to flush crash report: {e}");

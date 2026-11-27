@@ -110,6 +110,8 @@ pub(crate) enum StdinState {
     /// A single OTel thread context record. The tid comes from the begin
     /// marker; the hex-encoded 640-byte record is on the next line.
     OtelThreadCtx(i32),
+    /// OTel TLS resolution data (DTV walk parameters and/or TP-relative offset).
+    OtelTlsResolution,
 }
 
 /// A state machine that processes data from the crash-tracker collector line by
@@ -375,6 +377,23 @@ fn process_line(
         }
         StdinState::Waiting if line.starts_with(DD_CRASHTRACK_BEGIN_WHOLE_STACKTRACE) => {
             StdinState::WholeStackTrace
+        }
+        StdinState::OtelTlsResolution
+            if line.starts_with(DD_CRASHTRACK_END_OTEL_TLS_RESOLUTION) =>
+        {
+            StdinState::Waiting
+        }
+        StdinState::OtelTlsResolution => {
+            #[cfg(all(target_os = "linux", feature = "otel-thread-ctx"))]
+            if let Ok(resolution) =
+                serde_json::from_str::<crate::otel_tls_reader::OtelTlsResolution>(line)
+            {
+                builder.otel_tls_resolution = Some(resolution);
+            }
+            StdinState::OtelTlsResolution
+        }
+        StdinState::Waiting if line.starts_with(DD_CRASHTRACK_BEGIN_OTEL_TLS_RESOLUTION) => {
+            StdinState::OtelTlsResolution
         }
         StdinState::Waiting if line.starts_with(DD_CRASHTRACK_BEGIN_OTEL_THREAD_CTX) => {
             // "DD_CRASHTRACK_BEGIN_OTEL_THREAD_CTX <tid>"
@@ -700,6 +719,39 @@ fn attach_additional_files(
     Ok(())
 }
 
+/// Try to read a single thread's OTel context using the saved thread pointer and
+/// resolution data, via `/proc/<pid>/mem`. Returns `None` on any failure.
+#[cfg(all(target_os = "linux", feature = "otel-thread-ctx"))]
+/// Read an OTel TLS record while the thread is ptrace-stopped.
+/// Reads the thread pointer register directly (requires ptrace-stop).
+fn try_read_otel_context(
+    tid: libc::pid_t,
+    resolution: Option<&crate::otel_tls_reader::OtelTlsResolution>,
+    mem: &mut Option<crate::otel_tls_reader::ProcMemReader>,
+    pid: u32,
+    record_buf: &mut [u8; 640],
+) -> Option<crate::crash_info::OtelThreadContext> {
+    let tp = crate::ptrace_collector::read_thread_pointer(tid).ok()?;
+    let resolution = resolution?;
+    let mem = match mem.as_mut() {
+        Some(m) => m,
+        None => mem.insert(crate::otel_tls_reader::ProcMemReader::open(pid).ok()?),
+    };
+    let slot_addr = if let Some(ref dtv) = resolution.dtv {
+        mem.resolve_tls_addr(tp, dtv.dtv_offset, dtv.modid, dtv.offset)
+            .ok()?
+    } else {
+        let off = resolution.tp_offset?;
+        (tp as i64).wrapping_add(off) as u64
+    };
+    let record_ptr = mem.read_tls_slot(slot_addr).ok()?;
+    if record_ptr == 0 {
+        return None;
+    }
+    let len = mem.read_record(record_ptr, record_buf).ok()??;
+    crate::otel_tls_reader::decode_record(tid, &record_buf[..len])
+}
+
 #[cfg(target_os = "linux")]
 fn collect_and_add_thread_contexts(
     builder: &mut CrashInfoBuilder,
@@ -722,12 +774,48 @@ fn collect_and_add_thread_contexts(
     let mut crashing_stack = None;
     let collector_stack = builder.error.stack.as_ref();
 
+    // OTel TLS collection: read each thread's OTel record while it is ptrace-
+    // stopped, via the `while_stopped` callback.  This guarantees the thread
+    // can't update or free its record between reads.
+    #[cfg(feature = "otel-thread-ctx")]
+    let otel_resolution = builder.otel_tls_resolution.as_ref();
+    #[cfg(feature = "otel-thread-ctx")]
+    let mut otel_mem: Option<crate::otel_tls_reader::ProcMemReader> = None;
+    #[cfg(feature = "otel-thread-ctx")]
+    let mut otel_record_buf = [0u8; 640];
+    #[cfg(feature = "otel-thread-ctx")]
+    let mut otel_contexts: Vec<crate::crash_info::OtelThreadContext> = Vec::new();
+    #[cfg(feature = "otel-thread-ctx")]
+    let collect_otel = config.collect_otel_thread_contexts() && otel_resolution.is_some();
+
+    // Called while each thread is ptrace-stopped: read OTel TLS record.
+    let mut while_stopped = |tid: libc::pid_t| {
+        #[cfg(feature = "otel-thread-ctx")]
+        if collect_otel {
+            let ctx = try_read_otel_context(
+                tid,
+                otel_resolution,
+                &mut otel_mem,
+                parent_pid as u32,
+                &mut otel_record_buf,
+            );
+            if let Some(mut ctx) = ctx {
+                ctx.thread_name = crate::otel_tls_reader::read_thread_name(parent_pid as u32, tid);
+                otel_contexts.push(ctx);
+            }
+        }
+        #[cfg(not(feature = "otel-thread-ctx"))]
+        let _ = tid;
+    };
+
     let incomplete = stream_thread_contexts(
         parent_pid,
         crashing_tid,
         config.max_threads(),
         budget,
         crashing_context.as_ref(),
+        false, // skip_crashing_ptrace: receiver ptraces all threads including crashing
+        &mut while_stopped,
         |tid, captured| {
             let used_saved_context = captured.as_ref().is_some_and(|ctx| ctx.used_saved_context);
             let mut thread =
@@ -755,6 +843,15 @@ fn collect_and_add_thread_contexts(
         builder.with_stack(stack)?;
     }
     let _ = builder.with_threads(threads);
+
+    #[cfg(feature = "otel-thread-ctx")]
+    if !otel_contexts.is_empty() {
+        builder
+            .otel_thread_contexts
+            .get_or_insert_with(Vec::new)
+            .extend(otel_contexts);
+    }
+
     Ok(())
 }
 
