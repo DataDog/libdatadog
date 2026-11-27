@@ -24,9 +24,9 @@ regex-lite = ["libdd-regex/regex-lite"]
 compression = ["libdd-data-pipeline/compression"]
 # Expose exporter observations to hosts that run their own telemetry client.
 external-observations = ["libdd-data-pipeline/external-observations"]
-# Forward `stats-obfuscation` to the underlying crate. This has no FFI surface of
-# its own yet (client-side stats obfuscation is not configurable over the C API);
-# it only compiles the capability into the linked data-pipeline crate.
+# Forward `stats-obfuscation` to the underlying crate. Client-side stats
+# obfuscation is not configurable over the C API yet, so this has no FFI surface
+# of its own. It only compiles the capability into the linked data-pipeline crate.
 stats-obfuscation = ["libdd-data-pipeline/stats-obfuscation"]
 
 [build-dependencies]
@@ -41,6 +41,7 @@ libdd-trace-utils = { path = "../libdd-trace-utils" }
 libdd-capabilities-impl = { version = "9.0.0", path = "../libdd-capabilities-impl" }
 libdd-data-pipeline = { path = "../libdd-data-pipeline" }
 libdd-shared-runtime = { version = "8.0.0", path = "../libdd-shared-runtime" }
+libdd-telemetry = { version = "12.0.0", path = "../libdd-telemetry", default-features = false, features = ["std"] }
 libdd-common = { path = "../libdd-common", default-features = false, features = ["std"] }
 libdd-regex = { path = "../libdd-regex" }
 libdd-common-ffi = { path = "../libdd-common-ffi", default-features = false, features = ["std"] }
