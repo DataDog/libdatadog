@@ -728,15 +728,32 @@ fn wait_or_kill(child: &mut process::Child, timeout: std::time::Duration) -> pro
     }
 }
 
-/// Tests that a basic crash report is generated correctly when using a sidecar-style
-/// Unix socket receiver. The receiver is a separate long-lived process that the
-/// crash handler connects to through a Unix socket.
-#[test]
+#[cfg(target_os = "linux")]
+struct ReapOnDrop(process::Child);
+
+#[cfg(target_os = "linux")]
+impl Drop for ReapOnDrop {
+    fn drop(&mut self) {
+        if let Err(error) = self.0.kill() {
+            eprintln!("Could not kill test child: {error}");
+        }
+        if let Err(error) = self.0.wait() {
+            eprintln!("Could not reap test child: {error}");
+        }
+    }
+}
+
+#[tokio::test]
 #[cfg(target_os = "linux")]
 #[cfg_attr(miri, ignore)]
-fn test_crash_tracking_sidecar_basic() {
+async fn test_unix_socket_receiver_finishes_upload_after_collector_exit() -> anyhow::Result<()> {
+    use std::os::unix::process::ExitStatusExt;
+    use std::time::Duration;
+
     const RECEIVER_TIMEOUT_MS: &str = "15000";
-    const RECEIVER_WAIT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
+    const RECEIVER_WAIT_TIMEOUT: Duration = Duration::from_secs(5);
+    const COLLECTOR_EXIT_TIMEOUT: Duration = Duration::from_secs(1);
+    const HTTP_OK: &[u8] = b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\nConnection: close\r\n\r\n";
 
     let profile = BuildProfile::Release;
     let socket_receiver = artifacts::crashtracker_unix_socket_receiver(profile);
@@ -746,27 +763,29 @@ fn test_crash_tracking_sidecar_basic() {
         &artifacts.crashtracker_receiver,
         &socket_receiver,
     ];
-    let artifacts_map = fetch_built_artifacts(&all_artifacts).unwrap();
+    let artifacts_map = fetch_built_artifacts(&all_artifacts)?;
 
-    let fixtures = bin_tests::test_runner::TestFixtures::new().unwrap();
+    let fixtures = bin_tests::test_runner::TestFixtures::new()?;
     let socket_path = fixtures.output_dir.join("crashtracker.sock");
     let socket_path_str = socket_path.to_str().unwrap();
+    let agent_path = fixtures.output_dir.join("agent.sock");
+    let agent = tokio::net::UnixListener::bind(&agent_path)?;
 
-    // Spawn the sidecar receiver listening on the Unix socket
-    let mut receiver_proc = process::Command::new(&artifacts_map[&socket_receiver])
-        .arg(socket_path_str)
-        .env("DD_CRASHTRACKER_RECEIVER_TIMEOUT_MS", RECEIVER_TIMEOUT_MS)
-        .spawn()
-        .unwrap();
+    let mut receiver_proc = ReapOnDrop(
+        process::Command::new(&artifacts_map[&socket_receiver])
+            .arg(socket_path_str)
+            .env("DD_CRASHTRACKER_RECEIVER_TIMEOUT_MS", RECEIVER_TIMEOUT_MS)
+            .env("DD_CRASHTRACKING_ERRORS_INTAKE_ENABLED", "false")
+            .spawn()?,
+    );
 
-    // Wait for the receiver to bind the socket before launching the crash app
     assert!(
-        wait_for_socket(socket_path_str, std::time::Duration::from_secs(5)),
-        "Sidecar receiver did not bind socket within timeout"
+        wait_for_socket(socket_path_str, RECEIVER_WAIT_TIMEOUT),
+        "Receiver did not bind socket within timeout"
     );
 
     let mut cmd = process::Command::new(&artifacts_map[&artifacts.crashtracker_bin]);
-    cmd.arg(format!("file://{}", fixtures.crash_profile_path.display()))
+    cmd.arg(format!("unix://{}", agent_path.display()))
         .arg(&artifacts_map[&artifacts.crashtracker_receiver])
         .arg(&fixtures.output_dir)
         .arg(TestMode::SidecarDoNothing.as_str())
@@ -774,33 +793,53 @@ fn test_crash_tracking_sidecar_basic() {
         .env("DD_TEST_UNIX_SOCKET_PATH", socket_path_str)
         .env("DD_CRASHTRACKER_RECEIVER_TIMEOUT_MS", RECEIVER_TIMEOUT_MS);
 
-    let mut child = cmd.spawn().unwrap();
-    let exit_status = child.wait().unwrap();
+    let mut collector = ReapOnDrop(cmd.spawn()?);
+    let (mut stream, crash_payload) = tokio::time::timeout(RECEIVER_WAIT_TIMEOUT, async {
+        loop {
+            let (stream, _) = agent.accept().await?;
+            let mut stream = stream.into_std()?;
+            stream.set_nonblocking(false)?;
+            stream.set_read_timeout(Some(COLLECTOR_EXIT_TIMEOUT))?;
+            let body: Value = serde_json::from_str(&read_http_request_body(&mut stream))?;
+            let log = &body["payload"]["logs"][0];
+            if log["tags"]
+                .as_str()
+                .is_some_and(|tags| tags.split(',').any(|tag| tag == "is_crash:true"))
+            {
+                let payload = log["message"].as_str().context("missing crash report")?;
+                let report: Value = serde_json::from_str(payload)?;
+                return Ok::<_, anyhow::Error>((stream, report));
+            }
+            stream.write_all(HTTP_OK)?;
+        }
+    })
+    .await
+    .context("waiting for the crash report upload")??;
 
-    assert!(
-        !exit_status.success(),
-        "Expected crash test to exit with failure (signal), got: {exit_status:?}"
+    let collector_status = wait_or_kill(&mut collector.0, COLLECTOR_EXIT_TIMEOUT);
+    assert_eq!(
+        collector_status.signal(),
+        Some(libc::SIGSEGV),
+        "Collector did not exit before the upload response: {collector_status:?}"
     );
-
-    // Wait for the receiver with a timeout to avoid hanging if it never got a connection
-    let receiver_status = wait_or_kill(&mut receiver_proc, RECEIVER_WAIT_TIMEOUT);
+    assert!(
+        receiver_proc.0.try_wait()?.is_none(),
+        "Receiver exited before the upload response"
+    );
+    stream.write_all(HTTP_OK)?;
+    let receiver_status = wait_or_kill(&mut receiver_proc.0, RECEIVER_WAIT_TIMEOUT);
     assert!(
         receiver_status.success(),
-        "Sidecar receiver exited with error: {receiver_status:?}"
+        "Receiver exited with error: {receiver_status:?}"
     );
 
-    // Validate the crash report
-    let crash_payload =
-        bin_tests::validation::read_and_parse_crash_payload(&fixtures.crash_profile_path).unwrap();
-
-    PayloadValidator::new(&crash_payload)
-        .validate_counters()
-        .unwrap();
+    PayloadValidator::new(&crash_payload).validate_counters()?;
 
     assert!(
         crash_payload["error"]["message"].is_string(),
-        "error.message should be present in sidecar crash report"
+        "error.message should be present in the crash report"
     );
+    Ok(())
 }
 
 /// Tests that collect_all_threads works with a sidecar (Unix socket) receiver.
@@ -2642,38 +2681,30 @@ fn test_receiver_emits_debug_logs_on_receiver_issue() -> anyhow::Result<()> {
 }
 
 fn read_http_request_body(stream: &mut impl Read) -> String {
-    // The read call is not guaranteed to collect all available data.  On OSX it appears to grab
-    // data in 8192 byte chunks.  This was not an issue when the size of a crashreport was below
-    // there, but is a problem when the size is greater.
-    // The obvious thing would be to use `read_to_end` or even `read_to_string`.
-    // The problem with that is that we then block waiting for the client to close the channel,
-    // which it doesn't do till it gets the response from us. Deadlock.  OOPS.
-    // This is resolved by the timeout killing the receiver, but then we just fall back to the
-    // 404 write failing.  See comment below.
-    // This loop is a best effort attempt to fix the problem.
-    // It can fail in two ways.
-    // 1: There are exactly n*8192 bytes available.  We issue a read when there are 0 bytes
-    //    available and deadlock.
-    // 2: The read call decides not to return some but not all of the available bytes.  We exit
-    //    early with a malformed string.
-    // Since this is for testing, the risk of those are low, but if tests spuriously fails, that
-    // is a good place to look.
-    let mut out = vec![0; 65536];
-    let blocksize = 8192;
-    let mut left = 0;
-    let mut right = blocksize;
-    let mut total_read = 0;
-    let mut done = false;
-    while !(done) {
-        let read = stream.read(&mut out[left..right]).unwrap();
-        total_read += read;
-        done = read != blocksize;
-        left += blocksize;
-        right += blocksize;
+    use std::io::{BufRead, BufReader};
+
+    let mut reader = BufReader::new(stream);
+    let mut line = String::new();
+    let mut length = None;
+    loop {
+        line.clear();
+        assert_ne!(
+            reader.read_line(&mut line).unwrap(),
+            0,
+            "incomplete HTTP headers"
+        );
+        if line == "\r\n" {
+            break;
+        }
+        if let Some((name, value)) = line.split_once(':')
+            && name.eq_ignore_ascii_case("content-length")
+        {
+            length = Some(value.trim().parse().unwrap());
+        }
     }
-    let resp = String::from_utf8_lossy(&out[..total_read]);
-    let pos = resp.find("\r\n\r\n").unwrap();
-    resp[pos + 4..].to_string()
+    let mut body = vec![0; length.expect("missing Content-Length")];
+    reader.read_exact(&mut body).unwrap();
+    String::from_utf8(body).unwrap()
 }
 
 fn assert_crash_ping_message(body: &str) {
