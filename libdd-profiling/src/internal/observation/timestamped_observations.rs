@@ -110,13 +110,3 @@ impl<C: ObservationCodec> TimestampedObservationsIterImpl<C> {
         ))
     }
 }
-
-impl<C: ObservationCodec> Iterator for TimestampedObservationsIterImpl<C> {
-    type Item = (Sample, Timestamp, Vec<i64>);
-
-    fn next(&mut self) -> Option<Self::Item> {
-        let mut values = Vec::with_capacity(self.sample_types_len);
-        let (sample, ts) = self.next_into(&mut values)?;
-        Some((sample, ts, values))
-    }
-}

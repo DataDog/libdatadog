@@ -102,33 +102,6 @@ impl Observations {
             .unwrap_or(0)
     }
 
-    pub fn try_into_iter(self) -> io::Result<ObservationsIntoIter> {
-        match self.inner {
-            None => Ok(ObservationsIntoIter {
-                it: Box::new(std::iter::empty()),
-            }),
-            Some(NonEmptyObservations {
-                mut aggregated_data,
-                timestamped_data,
-                obs_len,
-                ..
-            }) => {
-                let ts_it = timestamped_data
-                    .try_into_iter()?
-                    .map(|(s, t, o)| (s, Some(t), o));
-
-                let agg_it = AggregatedObservationsIter {
-                    iter: std::mem::take(&mut aggregated_data.data).into_iter(),
-                    obs_len,
-                };
-
-                Ok(ObservationsIntoIter {
-                    it: Box::new(ts_it.chain(agg_it)),
-                })
-            }
-        }
-    }
-
     /// Iterates over all observations (timestamped then aggregated), reusing a single
     /// scratch buffer for timestamped values and borrowing aggregated slices in-place.
     pub fn try_for_each<F>(self, mut f: F) -> anyhow::Result<()>
@@ -232,46 +205,6 @@ impl Drop for AggregatedObservations {
     }
 }
 
-/// This iterator does only exist to make the drop work as in: consume the rest of the iterator on
-/// drop to clean up and not leak memory
-struct AggregatedObservationsIter {
-    iter: std::collections::hash_map::IntoIter<Sample, TrimmedObservation>,
-    obs_len: ObservationLength,
-}
-
-impl Iterator for AggregatedObservationsIter {
-    type Item = (Sample, Option<Timestamp>, Vec<i64>);
-
-    fn next(&mut self) -> Option<Self::Item> {
-        let (sample, observation) = self.iter.next()?;
-        // SAFETY: The only way to build one of these is through
-        // [Observations::add], which already checked that the length was correct.
-        let vec = unsafe { observation.into_vec(self.obs_len) };
-        Some((sample, None, vec))
-    }
-}
-
-impl Drop for AggregatedObservationsIter {
-    fn drop(&mut self) {
-        for (_, observation) in &mut self.iter {
-            // SAFETY: The only way to build one of these is through
-            // [Observations::add], which already checked that the length was correct.
-            unsafe { observation.consume(self.obs_len) };
-        }
-    }
-}
-
-pub struct ObservationsIntoIter {
-    it: Box<dyn Iterator<Item = <ObservationsIntoIter as Iterator>::Item>>,
-}
-
-impl Iterator for ObservationsIntoIter {
-    type Item = (Sample, Option<Timestamp>, Vec<i64>);
-    fn next(&mut self) -> Option<Self::Item> {
-        self.it.next()
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -311,27 +244,29 @@ mod tests {
 
         assert_eq!(2, o.timestamped_samples_count());
 
-        o.try_into_iter().unwrap().for_each(|(k, ts, v)| {
+        o.try_for_each(|k, ts, v| {
             if k == s1 {
                 // Observations without timestamp, these are aggregated together
-                assert_eq!(v, vec![5, 7, 9]);
+                assert_eq!(v, [5, 7, 9]);
             } else if k == s2 {
                 // Same stack with and without timestamp
                 if ts.is_some() {
-                    assert_eq!(v, vec![13, 14, 15]);
+                    assert_eq!(v, [13, 14, 15]);
                     assert_eq!(ts, t2);
                 } else {
-                    assert_eq!(v, vec![7, 8, 9]);
+                    assert_eq!(v, [7, 8, 9]);
                     assert!(ts.is_none());
                 }
             } else if k == s3 {
                 // Observation with timestamp
-                assert_eq!(v, vec![10, 11, 12]);
+                assert_eq!(v, [10, 11, 12]);
                 assert_eq!(ts, t1);
             } else {
                 panic!("Unexpected key");
             }
-        });
+            Ok(())
+        })
+        .unwrap();
     }
 
     #[test]
@@ -455,21 +390,23 @@ mod tests {
         o.add(s3, t1, &[1, 1, 2]).unwrap();
 
         let mut count = 0;
-        o.try_into_iter().unwrap().for_each(|(k, ts, v)| {
+        o.try_for_each(|k, ts, v| {
             count += 1;
             if k == s1 {
                 assert!(ts.is_none());
-                assert_eq!(v, vec![5, 7, 9]);
+                assert_eq!(v, [5, 7, 9]);
             } else if k == s2 {
                 assert!(ts.is_none());
-                assert_eq!(v, vec![7, 8, 9]);
+                assert_eq!(v, [7, 8, 9]);
             } else if k == s3 {
                 assert_eq!(ts, t1);
-                assert_eq!(v, vec![1, 1, 2]);
+                assert_eq!(v, [1, 1, 2]);
             } else {
                 panic!("Unexpected key");
             }
-        });
+            Ok(())
+        })
+        .unwrap();
         // Two of the samples were aggregated, so three total samples at the end
         assert_eq!(count, 3);
     }
@@ -509,26 +446,27 @@ mod tests {
 
         assert_eq!(o.aggregated_samples_count(), aggregated_observations.len());
 
-        let mut iter = o.try_into_iter().unwrap();
-        for (expected_sample, expected_ts, expected_values) in ts_samples.iter() {
-            if expected_values.len() != *observations_len {
-                continue;
+        let mut expected_ts_iter = ts_samples
+            .iter()
+            .filter(|(_, _, v)| v.len() == *observations_len);
+        o.try_for_each(|sample, ts, values| {
+            if let Some((expected_sample, expected_ts, expected_values)) = expected_ts_iter.next() {
+                assert_eq!(*expected_sample, sample);
+                assert_eq!(*expected_ts, ts.unwrap());
+                assert_eq!(expected_values.as_slice(), values);
+            } else {
+                assert!(ts.is_none());
+                assert!(aggregated_observations.contains_key(&sample));
+                let expected_values = aggregated_observations.remove(&sample).unwrap();
+                unsafe {
+                    let b = expected_values.into_vec(obs_len);
+                    assert_eq!(b.as_slice(), values);
+                }
             }
-            let (sample, ts, values) = iter.next().unwrap();
-            assert_eq!(*expected_sample, sample);
-            assert_eq!(*expected_ts, ts.unwrap());
-            assert_eq!(*expected_values, values);
-        }
-
-        for (sample, ts, values) in iter {
-            assert!(ts.is_none());
-            assert!(aggregated_observations.contains_key(&sample));
-            let expected_values = aggregated_observations.remove(&sample).unwrap();
-            unsafe {
-                let b = expected_values.into_vec(obs_len);
-                assert_eq!(*b, values);
-            }
-        }
+            Ok(())
+        })
+        .unwrap();
+        assert!(expected_ts_iter.next().is_none());
         assert!(aggregated_observations.is_empty());
     }
 
