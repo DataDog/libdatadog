@@ -46,6 +46,7 @@ fn mismatches(actual: &Value, expected: &Value) -> Vec<String> {
         .collect()
 }
 
+#[cfg_attr(miri, ignore = "no unsafe in path; pure provider parsing logic")]
 #[test]
 fn provider_usage_cases() {
     let files = cases();
@@ -87,6 +88,7 @@ fn provider_usage_cases() {
     assert!(failures.is_empty(), "{}", failures.join("\n"));
 }
 
+#[cfg_attr(miri, ignore = "no unsafe in path; pure provider parsing logic")]
 #[test]
 fn reasoning_basis_follows_the_total_so_output_is_billed_once() {
     // Vertex AI's OpenAI-compatible API (completion leaves reasoning out)
@@ -131,6 +133,7 @@ fn reasoning_basis_follows_the_total_so_output_is_billed_once() {
     assert_eq!(usage.output_basis, Some("includes_reasoning"));
 }
 
+#[cfg_attr(miri, ignore = "no unsafe in path; pure provider parsing logic")]
 #[test]
 fn a_dropped_service_tier_is_reported_until_a_tier_is_kept() {
     let mut stream = UsageStream::new(UsageFormat::OpenAiChat, false);
@@ -145,6 +148,7 @@ fn a_dropped_service_tier_is_reported_until_a_tier_is_kept() {
     assert!(response.issues.is_empty());
 }
 
+#[cfg_attr(miri, ignore = "no unsafe in path; pure provider parsing logic")]
 #[test]
 fn provider_errors_carry_a_safe_message_and_code() {
     // The Responses error event holds its code and message beside its type.
@@ -191,6 +195,7 @@ fn provider_errors_carry_a_safe_message_and_code() {
     );
 }
 
+#[cfg_attr(miri, ignore = "no unsafe in path; pure provider parsing logic")]
 #[test]
 fn parsed_usage_projects() {
     // An Anthropic response as the observation of one attempt: the crate
@@ -412,6 +417,7 @@ fn split_events_read_as_the_stream_does() {
     assert_eq!(usage.output_basis, None);
 }
 
+#[cfg_attr(miri, ignore = "no unsafe in path; pure provider parsing logic")]
 #[test]
 fn stream_basis_follows_the_merged_counts() {
     // Google's OpenAI-compatible endpoint: an early event without thinking
@@ -434,6 +440,7 @@ fn stream_basis_follows_the_merged_counts() {
     assert_eq!(usage.output_basis, Some("excludes_reasoning"));
 }
 
+#[cfg_attr(miri, ignore = "no unsafe in path; pure provider parsing logic")]
 #[test]
 fn provider_names() {
     for (name, expected) in [
@@ -459,6 +466,7 @@ fn provider_names() {
     }
 }
 
+#[cfg_attr(miri, ignore = "no unsafe in path; pure provider parsing logic")]
 #[test]
 fn error_types() {
     for (status, expected) in [
@@ -560,6 +568,7 @@ fn error_types() {
     );
 }
 
+#[cfg_attr(miri, ignore = "no unsafe in path; pure provider parsing logic")]
 #[test]
 fn provider_ids() {
     let headers = [
@@ -632,6 +641,7 @@ fn provider_ids() {
     }
 }
 
+#[cfg_attr(miri, ignore = "no unsafe in path; pure provider parsing logic")]
 #[test]
 fn identity_and_tiers() {
     assert!(is_person_identifier("ada@example.com"));
@@ -655,6 +665,7 @@ fn identity_and_tiers() {
     assert!(!is_service_tier(&"x".repeat(33)));
 }
 
+#[cfg_attr(miri, ignore = "no unsafe in path; pure provider parsing logic")]
 #[test]
 fn dogstatsd_packing() {
     assert_eq!(
@@ -745,6 +756,7 @@ fn dogstatsd_packing() {
     }
 }
 
+#[cfg_attr(miri, ignore = "no unsafe in path; pure provider parsing logic")]
 #[test]
 fn content_chunks_are_skipped_without_losing_what_they_carry() {
     let chunk = |extra: &str| {
@@ -784,6 +796,7 @@ fn content_chunks_are_skipped_without_losing_what_they_carry() {
     assert_eq!(stream.response().usage, None);
 }
 
+#[cfg_attr(miri, ignore = "no unsafe in path; pure provider parsing logic")]
 #[test]
 fn served_models_google_errors_names_and_vertex_projects() {
     use libdd_ai_usage::{RESPONSE_MODEL_DROPPED, error_type_for_name, vertex_project_id};

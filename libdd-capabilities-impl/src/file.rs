@@ -100,6 +100,7 @@ mod tests {
         TempDir::new().expect("tempdir")
     }
 
+    #[cfg_attr(miri, ignore = "safe tokio::fs wrapper; crate has no unsafe")]
     #[tokio::test]
     async fn read_write_roundtrip() {
         let dir = tmp();
@@ -113,6 +114,7 @@ mod tests {
         assert_eq!(&got[..], b"hello");
     }
 
+    #[cfg_attr(miri, ignore = "safe tokio::fs wrapper; crate has no unsafe")]
     #[tokio::test]
     async fn read_missing_yields_not_found() {
         let dir = tmp();
@@ -122,6 +124,7 @@ mod tests {
         assert!(matches!(err, FileError::NotFound(_)), "got: {err:?}");
     }
 
+    #[cfg_attr(miri, ignore = "safe tokio::fs wrapper; crate has no unsafe")]
     #[tokio::test]
     async fn metadata_reports_size_and_kind() {
         let dir = tmp();
@@ -140,6 +143,7 @@ mod tests {
         assert!(m.inode.is_none());
     }
 
+    #[cfg_attr(miri, ignore = "safe tokio::fs wrapper; crate has no unsafe")]
     #[tokio::test]
     async fn exists_true_and_false() {
         let dir = tmp();

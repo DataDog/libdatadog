@@ -186,6 +186,7 @@ mod single_threaded_tests {
         assert_eq!(q, 3);
     }
 
+    #[cfg_attr(miri, ignore = "builder validation error; no unsafe in path")]
     #[test]
     fn test_altstack_paradox() {
         let time = Utc::now().to_rfc3339();

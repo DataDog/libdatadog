@@ -126,6 +126,7 @@ mod tests {
         handle
     }
 
+    #[cfg_attr(miri, ignore = "arc-swap snapshot logic; no crate unsafe in path")]
     #[test]
     fn handle_propagates_updates_to_all_clones() {
         let handle = initial_handle();
@@ -148,6 +149,7 @@ mod tests {
         assert_eq!(snapshot.process_tags, "k2:v2");
     }
 
+    #[cfg_attr(miri, ignore = "arc-swap snapshot logic; no crate unsafe in path")]
     #[test]
     fn field_updates_keep_the_other_field() {
         let handle = initial_handle();
@@ -164,6 +166,7 @@ mod tests {
         assert_eq!(snapshot.process_tags, "k2:v2");
     }
 
+    #[cfg_attr(miri, ignore = "arc-swap snapshot logic; no crate unsafe in path")]
     #[test]
     fn default_handle_yields_empty_values() {
         let handle = MutableMetadataHandle::default();
@@ -172,6 +175,7 @@ mod tests {
         assert!(snapshot.process_tags.is_empty());
     }
 
+    #[cfg_attr(miri, ignore = "arc-swap snapshot logic; no crate unsafe in path")]
     #[test]
     fn update_modifies_the_current_snapshot() {
         let handle = initial_handle();
@@ -185,6 +189,7 @@ mod tests {
         assert_eq!(snapshot.process_tags, "k1:v1");
     }
 
+    #[cfg_attr(miri, ignore = "arc-swap snapshot logic; no crate unsafe in path")]
     #[test]
     fn update_retries_without_losing_concurrent_changes() {
         use core::sync::atomic::{AtomicBool, Ordering};
@@ -217,6 +222,7 @@ mod tests {
         assert_eq!(snapshot.process_tags, "k2:v2");
     }
 
+    #[cfg_attr(miri, ignore = "arc-swap snapshot logic; no crate unsafe in path")]
     #[test]
     fn load_full_returns_an_owning_arc() {
         let handle = initial_handle();
@@ -225,6 +231,7 @@ mod tests {
         assert_eq!(snapshot.process_tags, "k1:v1");
     }
 
+    #[cfg_attr(miri, ignore = "arc-swap snapshot logic; no crate unsafe in path")]
     #[test]
     fn identity_is_published_as_one_snapshot() {
         let handle = initial_handle();

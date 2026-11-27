@@ -28,6 +28,7 @@ impl EnvCapability for NativeEnvCapability {
 mod tests {
     use super::*;
 
+    #[cfg_attr(miri, ignore = "safe std::env wrapper; crate has no unsafe")]
     #[test]
     fn get_absent_returns_none() {
         let cap = NativeEnvCapability;

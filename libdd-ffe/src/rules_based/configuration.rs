@@ -60,6 +60,7 @@ impl Configuration {
 mod tests {
     use super::*;
 
+    #[cfg_attr(miri, ignore = "no unsafe in path; pure configuration parsing logic")]
     #[test]
     fn observe_full_evaluation_data_is_exposed_from_server_response() {
         let json = br#"
@@ -76,6 +77,7 @@ mod tests {
         assert!(config.observe_full_evaluation_data());
     }
 
+    #[cfg_attr(miri, ignore = "no unsafe in path; pure configuration parsing logic")]
     #[test]
     fn observe_full_evaluation_data_defaults_to_false_from_server_response() {
         let json = br#"

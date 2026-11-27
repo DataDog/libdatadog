@@ -230,6 +230,7 @@ mod tests {
     use super::*;
     use crate::crash_info::test_utils::TestInstance;
 
+    #[cfg_attr(miri, ignore = "pure serde_json serialization; no unsafe in path")]
     #[test]
     fn error_data_without_threads_omits_threads_field() {
         let error = ErrorData {
@@ -245,6 +246,7 @@ mod tests {
         assert!(json.get("threads").is_none());
     }
 
+    #[cfg_attr(miri, ignore = "pure serde_json serialization; no unsafe in path")]
     #[test]
     fn error_data_threads_serializes_as_thread_array() {
         let thread = ThreadData {

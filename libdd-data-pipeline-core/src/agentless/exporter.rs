@@ -342,6 +342,7 @@ mod tests {
         body
     }
 
+    #[cfg_attr(miri, ignore = "tinybytes unsafe covered by its own miri tests")]
     #[test]
     fn sends_decoded_traces_with_top_level_tags() {
         let capabilities = TestCapabilities::default();
@@ -366,6 +367,7 @@ mod tests {
         );
     }
 
+    #[cfg_attr(miri, ignore = "tinybytes unsafe covered by its own miri tests")]
     #[test]
     fn reports_final_send_result_and_payload_size() {
         let capabilities = TestCapabilities::default();
@@ -385,6 +387,7 @@ mod tests {
         assert!(payload_size > 0);
     }
 
+    #[cfg_attr(miri, ignore = "tinybytes unsafe covered by its own miri tests")]
     #[test]
     fn reports_redirects_as_failed_sends() {
         for status in [
@@ -421,6 +424,7 @@ mod tests {
         }
     }
 
+    #[cfg_attr(miri, ignore = "pure header building; no unsafe in path")]
     #[test]
     fn json_request_uses_configured_api_key() {
         let capabilities = TestCapabilities::default();
@@ -442,6 +446,7 @@ mod tests {
         assert_eq!(requests[0].headers()["dd-api-key"], "test-api-key");
     }
 
+    #[cfg_attr(miri, ignore = "pure header validation; no unsafe in path")]
     #[test]
     fn json_request_rejects_invalid_api_key() {
         let capabilities = TestCapabilities::default();
@@ -459,6 +464,7 @@ mod tests {
         assert!(matches!(error, AgentlessError::InvalidApiKey));
     }
 
+    #[cfg_attr(miri, ignore = "pure debug formatting; no unsafe in path")]
     #[test]
     fn debug_output_redacts_agentless_secrets() {
         assert!(!format!("{:?}", config()).contains("test-api-key"));

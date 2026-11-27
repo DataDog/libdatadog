@@ -906,6 +906,7 @@ mod tests {
         )
     }
 
+    #[cfg_attr(miri, ignore = "safe in-memory frame merging; no unsafe in path")]
     #[test]
     #[cfg(target_os = "linux")]
     fn truncated_remote_unwind_retains_collector_callers() {
@@ -939,6 +940,7 @@ mod tests {
         assert_eq!(unrelated, expected);
     }
 
+    #[cfg_attr(miri, ignore = "safe in-memory frame merging; no unsafe in path")]
     #[test]
     #[cfg(target_os = "linux")]
     fn repeated_instruction_addresses_are_matched_in_order() {
@@ -958,6 +960,7 @@ mod tests {
         }
     }
 
+    #[cfg_attr(miri, ignore = "safe in-memory frame merging; no unsafe in path")]
     #[test]
     #[cfg(target_os = "linux")]
     fn repeated_instruction_addresses_use_stack_pointers_when_available() {
@@ -990,6 +993,7 @@ mod tests {
         assert_eq!(unrelated, expected);
     }
 
+    #[cfg_attr(miri, ignore = "safe stdin-line/json state machine; no unsafe in path")]
     #[test]
     #[cfg(target_os = "linux")]
     fn collector_emitted_stacks_recover_callers_before_promotion() {
@@ -1046,6 +1050,7 @@ mod tests {
         assert_eq!(threads[1], sleeper);
     }
 
+    #[cfg_attr(miri, ignore = "safe stdin-line/json state machine; no unsafe in path")]
     #[test]
     #[cfg(target_os = "linux")]
     fn empty_collector_emitted_crashing_stack_retains_collector_callers() {
@@ -1097,6 +1102,7 @@ mod tests {
 
     const SPANS_BLOCK: &str = r#"{"version":1,"agent_url":"http://agent:8126","traces":[{"trace_id":"00000000000000000000000000000003","spans":[{"span_id":"0000000000000007","service":"s","name":"n","start_unix_ns":5}]}]}"#;
 
+    #[cfg_attr(miri, ignore = "safe stdin-line/json state machine; no unsafe in path")]
     #[test]
     fn spans_to_close_are_kept_per_block() {
         let (builder, state) = parse_test_lines(&[
@@ -1141,6 +1147,7 @@ mod tests {
     }
 
     /// Keep the primary stack and completed threads when the stream stops inside a section.
+    #[cfg_attr(miri, ignore = "safe stdin-line/json state machine; no unsafe in path")]
     #[test]
     fn threads_delivered_before_a_truncated_stream_are_kept() {
         let primary = stack_with_frames("0x1000", Some("main"));
@@ -1167,6 +1174,7 @@ mod tests {
     }
 
     /// Thread sections must append, preserving all frame details.
+    #[cfg_attr(miri, ignore = "safe stdin-line/json state machine; no unsafe in path")]
     #[test]
     fn threads_block_round_trips() {
         let threads = vec![
@@ -1198,6 +1206,7 @@ mod tests {
         }
     }
 
+    #[cfg_attr(miri, ignore = "safe stdin-line/json state machine; no unsafe in path")]
     #[test]
     fn a_malformed_threads_entry_is_refused() {
         assert!(parse_test_lines(&[DD_CRASHTRACK_BEGIN_THREADS, "{not json"]).is_err());
@@ -1274,6 +1283,7 @@ mod tests {
         );
     }
 
+    #[cfg_attr(miri, ignore = "safe stdin-line/json state machine; no unsafe in path")]
     #[test]
     fn test_stdin_state_waiting_to_message() {
         let mut builder = CrashInfoBuilder::new();
@@ -1294,6 +1304,7 @@ mod tests {
         assert!(matches!(next_state, StdinState::Message));
     }
 
+    #[cfg_attr(miri, ignore = "safe stdin-line/json state machine; no unsafe in path")]
     #[test]
     fn test_stdin_state_message_content() {
         let mut builder = CrashInfoBuilder::new();
@@ -1319,6 +1330,7 @@ mod tests {
         assert!(builder.has_message());
     }
 
+    #[cfg_attr(miri, ignore = "safe stdin-line/json state machine; no unsafe in path")]
     #[test]
     fn test_stdin_state_message_to_waiting() {
         let mut builder = CrashInfoBuilder::new();
@@ -1339,6 +1351,7 @@ mod tests {
         assert!(matches!(next_state, StdinState::Waiting));
     }
 
+    #[cfg_attr(miri, ignore = "safe stdin-line/json state machine; no unsafe in path")]
     #[test]
     fn test_message_state_with_empty_line() {
         let mut builder = CrashInfoBuilder::new();
@@ -1359,6 +1372,7 @@ mod tests {
         assert!(result.is_ok());
     }
 
+    #[cfg_attr(miri, ignore = "safe stdin-line/json state machine; no unsafe in path")]
     #[test]
     fn test_message_state_with_multiline_content() {
         let mut builder = CrashInfoBuilder::new();
@@ -1381,6 +1395,7 @@ mod tests {
         // This test documents current behavior
     }
 
+    #[cfg_attr(miri, ignore = "safe stdin-line/json state machine; no unsafe in path")]
     #[test]
     fn test_message_state_full_workflow() {
         let mut builder = CrashInfoBuilder::new();
@@ -1424,6 +1439,7 @@ mod tests {
         assert!(matches!(state, StdinState::Waiting));
     }
 
+    #[cfg_attr(miri, ignore = "safe stdin-line/json state machine; no unsafe in path")]
     #[test]
     fn test_stacktrace_empty_workflow() {
         // Test that receiving BEGIN_STACKTRACE followed by END_STACKTRACE
@@ -1475,6 +1491,7 @@ mod tests {
         );
     }
 
+    #[cfg_attr(miri, ignore = "safe stdin-line/json state machine; no unsafe in path")]
     #[test]
     fn test_stacktrace_with_frames_workflow() {
         let mut builder = CrashInfoBuilder::new();
@@ -1523,6 +1540,7 @@ mod tests {
         assert_eq!(stack.frames[0].ip, Some("0x1234".to_string()));
     }
 
+    #[cfg_attr(miri, ignore = "safe stdin-line/json state machine; no unsafe in path")]
     #[test]
     fn test_message_with_escaped_sentinel_does_not_inject() {
         // Simulates what emit_message produces after sanitize_message_for_wire:
@@ -1623,6 +1641,7 @@ mod crashing_thread_tests {
         )
     }
 
+    #[cfg_attr(miri, ignore = "safe frame trimming; no unsafe in path")]
     #[test]
     fn crash_site_frame_becomes_the_first_frame() {
         let mut stack = parked_in_handler();
@@ -1636,6 +1655,7 @@ mod crashing_thread_tests {
     /// The handler runs on an alternate signal stack, so its frames can sit at
     /// addresses either side of the thread's own stack. Only the exact crash-site
     /// frame may end the prefix.
+    #[cfg_attr(miri, ignore = "safe frame trimming; no unsafe in path")]
     #[test]
     fn alternate_signal_stack_above_thread_stack_is_still_trimmed() {
         let mut stack = StackTrace::from_frames(
@@ -1655,6 +1675,7 @@ mod crashing_thread_tests {
 
     /// The ucontext block zero-pads its registers while unwound frames don't, so the
     /// two must be compared as numbers rather than as strings.
+    #[cfg_attr(miri, ignore = "safe frame trimming; no unsafe in path")]
     #[test]
     fn zero_padded_registers_match_unpadded_frames() {
         let registers = crash_site_registers(&ucontext(
@@ -1669,6 +1690,7 @@ mod crashing_thread_tests {
         assert_eq!(stack.frames.len(), 3);
     }
 
+    #[cfg_attr(miri, ignore = "safe frame trimming; no unsafe in path")]
     #[test]
     fn stack_is_untouched_when_no_frame_matches() {
         let mut stack = parked_in_handler();
@@ -1678,6 +1700,7 @@ mod crashing_thread_tests {
         assert_eq!(stack.frames, before);
     }
 
+    #[cfg_attr(miri, ignore = "safe frame trimming; no unsafe in path")]
     #[test]
     fn stack_is_untouched_when_it_already_starts_at_the_crash_site() {
         let mut stack = StackTrace::from_frames(
@@ -1692,6 +1715,7 @@ mod crashing_thread_tests {
 
     /// A frame sharing only the instruction pointer is a different activation of the
     /// same function, not the crash site.
+    #[cfg_attr(miri, ignore = "safe frame trimming; no unsafe in path")]
     #[test]
     fn matching_ip_alone_does_not_end_the_prefix() {
         let mut stack = StackTrace::from_frames(
@@ -1707,6 +1731,7 @@ mod crashing_thread_tests {
         assert_eq!(stack.frames[0].sp.as_deref(), Some("0x7ffe0040"));
     }
 
+    #[cfg_attr(miri, ignore = "safe hex register parsing; no unsafe in path")]
     #[test]
     fn registers_are_read_per_architecture() {
         assert_eq!(
@@ -1728,6 +1753,7 @@ mod crashing_thread_tests {
         );
     }
 
+    #[cfg_attr(miri, ignore = "safe config boolean logic; no unsafe in path")]
     #[test]
     fn promotes_only_symbolizable_stacks_from_saved_crash_registers() -> anyhow::Result<()> {
         let receiver_symbols = CrashtrackerConfiguration::builder()

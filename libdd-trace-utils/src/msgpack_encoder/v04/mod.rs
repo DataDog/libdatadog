@@ -360,6 +360,10 @@ mod tests {
         msgpack_const_string_encoding::<N>(s)
     }
 
+    #[cfg_attr(
+        miri,
+        ignore = "const msgpack string encoding + rmpv decode; no unsafe in path"
+    )]
     #[test]
     fn fixstr_boundary_31_bytes() {
         let s = "a".repeat(31);
@@ -368,6 +372,10 @@ mod tests {
         assert_eq!(value.as_str(), Some(s.as_str()));
     }
 
+    #[cfg_attr(
+        miri,
+        ignore = "const msgpack string encoding + rmpv decode; no unsafe in path"
+    )]
     #[test]
     fn str8_boundary_200_bytes() {
         let s = "b".repeat(200);
@@ -376,6 +384,10 @@ mod tests {
         assert_eq!(value.as_str(), Some(s.as_str()));
     }
 
+    #[cfg_attr(
+        miri,
+        ignore = "const msgpack string encoding + rmpv decode; no unsafe in path"
+    )]
     #[test]
     fn str16_boundary_300_bytes() {
         let s = "c".repeat(300);

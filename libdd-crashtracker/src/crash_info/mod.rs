@@ -263,6 +263,7 @@ mod tests {
     use std::fs;
 
     use super::*;
+    #[cfg_attr(miri, ignore = "pure schemars/serde schema comparison; no unsafe")]
     #[test]
     fn test_schema_matches_rfc() {
         let rfc_schema_filename = concat!(

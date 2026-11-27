@@ -537,6 +537,7 @@ impl SeriesBuilder {
 mod tests {
     use super::*;
 
+    #[cfg_attr(miri, ignore = "no unsafe in path; pure series serialization logic")]
     #[test]
     fn series_serialize_as_submitted() {
         let rate = DatadogSeries {
@@ -561,6 +562,7 @@ mod tests {
         );
     }
 
+    #[cfg_attr(miri, ignore = "no unsafe in path; pure series serialization logic")]
     #[test]
     fn tag_values_are_normalized_one_character_per_code_point() {
         assert_eq!(datadog_tag_value("Ada@Example.com"), "ada_example.com");
@@ -571,6 +573,7 @@ mod tests {
         assert_eq!(datadog_tag_value("a-b_c:d.e/f"), "a-b_c:d.e/f");
     }
 
+    #[cfg_attr(miri, ignore = "no unsafe in path; pure series serialization logic")]
     #[test]
     fn dogstatsd_lines() {
         assert_eq!(
@@ -593,6 +596,7 @@ mod tests {
         );
     }
 
+    #[cfg_attr(miri, ignore = "no unsafe in path; pure series serialization logic")]
     #[test]
     fn types_and_intervals() {
         assert_eq!(SeriesType::Rate.as_str(), "rate");
@@ -601,6 +605,7 @@ mod tests {
         assert_eq!(SeriesType::Distribution.interval(), None);
     }
 
+    #[cfg_attr(miri, ignore = "no unsafe in path; pure series serialization logic")]
     #[test]
     fn a_nano_usd_total_is_divided_once() {
         // 21 nano-USD: 2.1e-9 USD over DogStatsD, 2.1e-10 USD/s over the API,

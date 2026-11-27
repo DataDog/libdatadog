@@ -100,6 +100,7 @@ mod tests {
         },
     };
 
+    #[cfg_attr(miri, ignore = "no unsafe in path; pure rule-matching logic")]
     #[test]
     fn matches_regex() {
         let check = ConditionCheck::Regex {
@@ -111,6 +112,7 @@ mod tests {
         assert!(!check.eval(None));
     }
 
+    #[cfg_attr(miri, ignore = "no unsafe in path; pure rule-matching logic")]
     #[test]
     fn not_matches_regex() {
         let check = ConditionCheck::Regex {
@@ -122,6 +124,7 @@ mod tests {
         assert!(!check.eval(None));
     }
 
+    #[cfg_attr(miri, ignore = "no unsafe in path; pure rule-matching logic")]
     #[test]
     fn one_of() {
         let check = ConditionCheck::Membership {
@@ -133,6 +136,7 @@ mod tests {
         assert!(!check.eval(Some(&"charlie".into())));
     }
 
+    #[cfg_attr(miri, ignore = "no unsafe in path; pure rule-matching logic")]
     #[test]
     fn not_one_of() {
         let check = ConditionCheck::Membership {
@@ -147,6 +151,7 @@ mod tests {
         assert!(!check.eval(None));
     }
 
+    #[cfg_attr(miri, ignore = "no unsafe in path; pure rule-matching logic")]
     #[test]
     fn one_of_int() {
         assert!(
@@ -158,6 +163,7 @@ mod tests {
         );
     }
 
+    #[cfg_attr(miri, ignore = "no unsafe in path; pure rule-matching logic")]
     #[test]
     fn one_of_bool() {
         let true_check = ConditionCheck::Membership {
@@ -176,6 +182,7 @@ mod tests {
         assert!(!false_check.eval(None));
     }
 
+    #[cfg_attr(miri, ignore = "no unsafe in path; pure rule-matching logic")]
     #[test]
     fn is_null() {
         assert!(
@@ -192,6 +199,7 @@ mod tests {
         );
     }
 
+    #[cfg_attr(miri, ignore = "no unsafe in path; pure rule-matching logic")]
     #[test]
     fn is_not_null() {
         assert!(
@@ -208,6 +216,7 @@ mod tests {
         );
     }
 
+    #[cfg_attr(miri, ignore = "no unsafe in path; pure rule-matching logic")]
     #[test]
     fn gte() {
         let check = ConditionCheck::Comparison {
@@ -217,6 +226,7 @@ mod tests {
         assert!(check.eval(Some(&18.0.into())));
         assert!(!check.eval(Some(&17.0.into())));
     }
+    #[cfg_attr(miri, ignore = "no unsafe in path; pure rule-matching logic")]
     #[test]
     fn gt() {
         let check = ConditionCheck::Comparison {
@@ -226,6 +236,7 @@ mod tests {
         assert!(check.eval(Some(&19.0.into())));
         assert!(!check.eval(Some(&18.0.into())));
     }
+    #[cfg_attr(miri, ignore = "no unsafe in path; pure rule-matching logic")]
     #[test]
     fn lte() {
         let check = ConditionCheck::Comparison {
@@ -235,6 +246,7 @@ mod tests {
         assert!(check.eval(Some(&18.0.into())));
         assert!(!check.eval(Some(&19.0.into())));
     }
+    #[cfg_attr(miri, ignore = "no unsafe in path; pure rule-matching logic")]
     #[test]
     fn lt() {
         let check = ConditionCheck::Comparison {
@@ -245,6 +257,7 @@ mod tests {
         assert!(!check.eval(Some(&18.0.into())));
     }
 
+    #[cfg_attr(miri, ignore = "no unsafe in path; pure rule-matching logic")]
     #[test]
     fn empty_rule() {
         let rule = RuleWire { conditions: vec![] };
@@ -254,6 +267,7 @@ mod tests {
         )));
     }
 
+    #[cfg_attr(miri, ignore = "no unsafe in path; pure rule-matching logic")]
     #[test]
     fn single_condition_rule() {
         let rule = RuleWire {
@@ -271,6 +285,7 @@ mod tests {
         )));
     }
 
+    #[cfg_attr(miri, ignore = "no unsafe in path; pure rule-matching logic")]
     #[test]
     fn two_condition_rule() {
         let rule = RuleWire {
@@ -305,6 +320,7 @@ mod tests {
         )));
     }
 
+    #[cfg_attr(miri, ignore = "no unsafe in path; pure rule-matching logic")]
     #[test]
     fn missing_attribute() {
         let rule = RuleWire {
@@ -326,6 +342,7 @@ mod tests {
         ExtendedVersion::parse(s).unwrap()
     }
 
+    #[cfg_attr(miri, ignore = "no unsafe in path; pure rule-matching logic")]
     #[test]
     fn semver_eq() {
         let check = ConditionCheck::SemverComparison {
@@ -339,6 +356,7 @@ mod tests {
         assert!(!check.eval(None));
     }
 
+    #[cfg_attr(miri, ignore = "no unsafe in path; pure rule-matching logic")]
     #[test]
     fn semver_neq() {
         let check = ConditionCheck::SemverComparison {
@@ -351,6 +369,7 @@ mod tests {
         assert!(!check.eval(None));
     }
 
+    #[cfg_attr(miri, ignore = "no unsafe in path; pure rule-matching logic")]
     #[test]
     fn semver_lt() {
         let check = ConditionCheck::SemverComparison {
@@ -362,6 +381,7 @@ mod tests {
         assert!(!check.eval(Some(&"2.0.1".into())));
     }
 
+    #[cfg_attr(miri, ignore = "no unsafe in path; pure rule-matching logic")]
     #[test]
     fn semver_lte() {
         let check = ConditionCheck::SemverComparison {
@@ -373,6 +393,7 @@ mod tests {
         assert!(!check.eval(Some(&"2.0.1".into())));
     }
 
+    #[cfg_attr(miri, ignore = "no unsafe in path; pure rule-matching logic")]
     #[test]
     fn semver_gt() {
         let check = ConditionCheck::SemverComparison {
@@ -384,6 +405,7 @@ mod tests {
         assert!(!check.eval(Some(&"0.9.9".into())));
     }
 
+    #[cfg_attr(miri, ignore = "no unsafe in path; pure rule-matching logic")]
     #[test]
     fn semver_gte() {
         let check = ConditionCheck::SemverComparison {
@@ -395,6 +417,7 @@ mod tests {
         assert!(!check.eval(Some(&"0.9.9".into())));
     }
 
+    #[cfg_attr(miri, ignore = "no unsafe in path; pure rule-matching logic")]
     #[test]
     fn semver_prerelease_ordering() {
         let check = ConditionCheck::SemverComparison {
@@ -406,6 +429,7 @@ mod tests {
         assert!(!check.eval(Some(&"1.0.0".into())));
     }
 
+    #[cfg_attr(miri, ignore = "no unsafe in path; pure rule-matching logic")]
     #[test]
     fn semver_supports_indefinite_core_version_parts() {
         let equal = ConditionCheck::SemverComparison {
@@ -424,6 +448,7 @@ mod tests {
         assert!(greater.eval(Some(&"18.0.0.0.0.1.0.0.1".into())));
     }
 
+    #[cfg_attr(miri, ignore = "no unsafe in path; pure rule-matching logic")]
     #[test]
     fn semver_malformed_attribute_returns_false() {
         let check = ConditionCheck::SemverComparison {

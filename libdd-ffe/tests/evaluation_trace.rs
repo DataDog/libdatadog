@@ -71,6 +71,7 @@ fn flag(conditions: Vec<Value>) -> Value {
     })
 }
 
+#[cfg_attr(miri, ignore = "no unsafe in path; evaluation and log tracing logic")]
 #[test]
 fn trace_and_assignment_apis_log_each_root_once_including_early_errors() {
     log::set_logger(&LOGGER).unwrap();

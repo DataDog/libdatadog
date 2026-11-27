@@ -178,6 +178,7 @@ fn invalid_fixtures_are_rejected_with_the_expected_error_code() {
     report(failures);
 }
 
+#[cfg_attr(miri, ignore = "no unsafe in path; pure corpus conformance logic")]
 #[test]
 fn the_corpus_has_the_stated_number_of_cases() {
     let mut total = 0;
@@ -193,6 +194,7 @@ fn the_corpus_has_the_stated_number_of_cases() {
     assert_eq!(total, 285);
 }
 
+#[cfg_attr(miri, ignore = "no unsafe in path; pure corpus conformance logic")]
 #[test]
 fn issue_codes_in_the_cases_are_known_ones() {
     let known: BTreeSet<String> = IssueCode::ALL
@@ -209,6 +211,7 @@ fn issue_codes_in_the_cases_are_known_ones() {
     assert!(unknown.is_empty(), "{unknown:?}");
 }
 
+#[cfg_attr(miri, ignore = "no unsafe in path; pure corpus conformance logic")]
 #[test]
 fn cases_that_hold_a_number_no_double_holds_are_read_from_their_text() {
     let mut found = 0;
@@ -240,6 +243,7 @@ fn holds_infinity(value: &Json) -> bool {
     }
 }
 
+#[cfg_attr(miri, ignore = "no unsafe in path; pure corpus conformance logic")]
 #[test]
 fn every_profile_this_crate_claims_is_in_the_registry_at_its_version() {
     let registry = registry();
@@ -256,6 +260,7 @@ fn every_profile_this_crate_claims_is_in_the_registry_at_its_version() {
     }
 }
 
+#[cfg_attr(miri, ignore = "no unsafe in path; pure corpus conformance logic")]
 #[test]
 fn the_deployment_attribute_list_is_the_registry_list() {
     let from_registry: BTreeSet<(String, String)> = registry()
@@ -270,6 +275,7 @@ fn the_deployment_attribute_list_is_the_registry_list() {
     assert_eq!(built_in, from_registry);
 }
 
+#[cfg_attr(miri, ignore = "no unsafe in path; pure corpus conformance logic")]
 #[test]
 fn point_check_rejects_attributes_outside_the_allowlist() {
     let registry = registry();
@@ -318,6 +324,7 @@ fn point_check_rejects_attributes_outside_the_allowlist() {
     assert_eq!(findings, expected);
 }
 
+#[cfg_attr(miri, ignore = "no unsafe in path; pure corpus conformance logic")]
 #[test]
 fn counters_are_aggregated_per_attribute_set() {
     let fixture = read_json(&data().join("gateway-request/valid/cache-miss-then-write.json"));

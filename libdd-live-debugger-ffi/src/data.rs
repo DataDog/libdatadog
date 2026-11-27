@@ -382,6 +382,7 @@ mod tests {
     use libdd_live_debugger::debugger_defs::ProbeMetadata;
     use libdd_live_debugger::{LiveDebuggingData, parse_json};
 
+    #[cfg_attr(miri, ignore = "no unsafe in path; safe From/serde conversions")]
     #[test]
     fn test_line_probe_metadata_location() {
         let json = r#"{
@@ -401,6 +402,7 @@ mod tests {
         );
     }
 
+    #[cfg_attr(miri, ignore = "no unsafe in path; safe From/serde conversions")]
     #[test]
     fn test_method_probe_metadata_location() {
         let json = r#"{

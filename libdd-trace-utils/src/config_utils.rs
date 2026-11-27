@@ -115,6 +115,7 @@ mod tests {
         }
     }
 
+    #[cfg_attr(miri, ignore = "pure url join; no unsafe in path")]
     #[test]
     fn test_intake_url_prefixed_joins_without_double_slash() {
         for prefix in [
@@ -277,6 +278,7 @@ mod tests {
         );
     }
 
+    #[cfg_attr(miri, ignore = "asserts absence of env vars; no unsafe in path")]
     #[test]
     fn test_no_environment_detected() {
         let _lock = ENV_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());

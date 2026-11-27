@@ -92,6 +92,7 @@ mod tests {
         assert!(expected_scheduled_after - Duration::from_nanos(10) < scheduled_in);
     }
 
+    #[cfg_attr(miri, ignore = "pure scheduling logic; no unsafe in path")]
     #[test]
     fn test_schedule() {
         let start = Instant::now();

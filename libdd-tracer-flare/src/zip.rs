@@ -487,6 +487,7 @@ mod tests {
         ]
     }
 
+    #[cfg_attr(miri, ignore = "std fs + external zip crate; no unsafe in path")]
     #[test]
     fn test_zip_files() {
         // Create a temporary directory with test files
@@ -532,6 +533,7 @@ mod tests {
         assert_eq!(content, "sub sub file content");
     }
 
+    #[cfg_attr(miri, ignore = "std fs + external zip crate; no unsafe in path")]
     #[test]
     fn test_zip_files_with_invalid_path() {
         let result = zip_files(vec!["/invalid/path".to_string()]);
@@ -539,6 +541,7 @@ mod tests {
         assert!(matches!(result.unwrap_err(), FlareError::ZipError(_)));
     }
 
+    #[cfg_attr(miri, ignore = "pure multipart payload building; no unsafe in path")]
     #[test]
     fn test_generate_payload_fields_headers_and_order() {
         let mut zip_file = tempfile().unwrap();
@@ -602,6 +605,7 @@ mod tests {
         );
     }
 
+    #[cfg_attr(miri, ignore = "pure multipart payload building; no unsafe in path")]
     #[test]
     fn test_generate_payload_filename_format() {
         let mut zip_file = tempfile().unwrap();
@@ -641,6 +645,7 @@ mod tests {
         assert!(timestamp.chars().all(|c| c.is_ascii_digit()));
     }
 
+    #[cfg_attr(miri, ignore = "url rejected before send; no unsafe in path")]
     #[tokio::test]
     async fn test_send_invalid_url_returns_error() {
         let manager = TracerFlareManager::new("http://[::1", "rust");
@@ -660,6 +665,7 @@ mod tests {
         assert!(matches!(result, Err(FlareError::SendError(_))));
     }
 
+    #[cfg_attr(miri, ignore = "rejected before any send; no unsafe in path")]
     #[tokio::test]
     async fn test_zip_and_send_requires_send_action() {
         let manager = TracerFlareManager::new("http://localhost:8126", "rust");

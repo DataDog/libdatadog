@@ -172,6 +172,7 @@ mod tests {
         }
     }
 
+    #[cfg_attr(miri, ignore = "pure bookkeeper state machine; no unsafe in path")]
     #[cfg_attr(all(miri, target_os = "macos"), ignore)]
     #[tokio::test]
     async fn test_bookkeeper() {

@@ -46,6 +46,7 @@ impl RuntimeMetadata {
 mod tests {
     use super::*;
 
+    #[cfg_attr(miri, ignore = "struct construction only; no unsafe in path")]
     #[test]
     fn test_new() {
         let language_name = "Rust";

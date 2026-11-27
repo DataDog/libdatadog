@@ -23,12 +23,14 @@ fn rejected(json: &str) -> String {
     }
 }
 
+#[cfg_attr(miri, ignore = "no unsafe in crate; pure registry lookup logic")]
 #[test]
 fn accepts_the_embedded_file() {
     let registry = parse(include_str!("../mappings.json")).expect("valid");
     assert!(!registry.concepts.is_empty());
 }
 
+#[cfg_attr(miri, ignore = "no unsafe in crate; pure registry lookup logic")]
 #[test]
 fn accepts_a_minimal_registry() {
     let registry = parse(&registry(HTTP_METHOD)).expect("valid");
@@ -37,6 +39,7 @@ fn accepts_a_minimal_registry() {
     assert_eq!(registry.concepts[0].variant, "HttpMethod");
 }
 
+#[cfg_attr(miri, ignore = "no unsafe in crate; pure registry lookup logic")]
 #[test]
 fn missing_type_is_a_string() {
     let json = registry(r#""a":{"canonical":"a","fallbacks":[{"name":"a","provider":"datadog"}]}"#);
@@ -47,6 +50,7 @@ fn missing_type_is_a_string() {
     );
 }
 
+#[cfg_attr(miri, ignore = "no unsafe in crate; pure registry lookup logic")]
 #[test]
 fn conditions_become_predicates() {
     let json = registry(
@@ -75,6 +79,7 @@ fn conditions_become_predicates() {
     );
 }
 
+#[cfg_attr(miri, ignore = "no unsafe in crate; pure registry lookup logic")]
 #[test]
 fn unknown_top_level_and_metadata_fields_are_allowed() {
     let json = format!(
@@ -83,6 +88,7 @@ fn unknown_top_level_and_metadata_fields_are_allowed() {
     parse(&json).expect("valid");
 }
 
+#[cfg_attr(miri, ignore = "no unsafe in crate; pure registry lookup logic")]
 #[test]
 fn rejects_invalid_registries() {
     let cases = [
@@ -174,6 +180,7 @@ fn rejects_invalid_registries() {
     }
 }
 
+#[cfg_attr(miri, ignore = "no unsafe in crate; pure registry lookup logic")]
 #[test]
 fn variant_names() {
     for (concept, want) in [

@@ -71,6 +71,7 @@ mod tests {
         assert_eq!(roundtrip, roundtrip2);
     }
 
+    #[cfg_attr(miri, ignore = "no unsafe in path; safe-code encode plus prost decode")]
     #[test]
     fn roundtrip() {
         bolero::check!().with_type::<ValueType>().for_each(test);

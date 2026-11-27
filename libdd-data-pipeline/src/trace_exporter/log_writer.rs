@@ -81,6 +81,7 @@ mod tests {
         }
     }
 
+    #[cfg_attr(miri, ignore = "safe serialization via mock; no unsafe in path")]
     #[test]
     fn encodes_and_writes_through_capability() {
         let cap = CapturingLog::default();
@@ -103,6 +104,7 @@ mod tests {
         assert_eq!(v["traces"][0][0]["span_id"], "0000000000000002");
     }
 
+    #[cfg_attr(miri, ignore = "safe serialization via mock; no unsafe in path")]
     #[test]
     fn empty_traces_do_not_call_capability() {
         let cap = CapturingLog::default();
@@ -112,6 +114,7 @@ mod tests {
         assert!(cap.0.lock().expect("lock").is_empty());
     }
 
+    #[cfg_attr(miri, ignore = "safe serialization via mock; no unsafe in path")]
     #[test]
     fn encodes_and_writes_through_capability_v1() {
         let cap = CapturingLog::default();
@@ -143,6 +146,7 @@ mod tests {
         assert_eq!(v["traces"][0][0]["span_id"], "0000000000000002");
     }
 
+    #[cfg_attr(miri, ignore = "safe serialization via mock; no unsafe in path")]
     #[test]
     fn empty_chunks_do_not_call_capability_v1() {
         let cap = CapturingLog::default();

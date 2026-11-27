@@ -272,6 +272,7 @@ mod tests {
         Json::parse(text).unwrap()
     }
 
+    #[cfg_attr(miri, ignore = "no unsafe in path; pure document projection logic")]
     #[test]
     fn metric_lists() {
         assert_eq!(metric_list_from_json(&Json::Null), Ok(None));
@@ -287,6 +288,7 @@ mod tests {
         assert_eq!(error.message(), "metrics must be an array of strings");
     }
 
+    #[cfg_attr(miri, ignore = "no unsafe in path; pure document projection logic")]
     #[test]
     fn known_metrics_per_profile() {
         let all = crate::known_metrics("").unwrap();
@@ -304,6 +306,7 @@ mod tests {
         assert_eq!(error.message(), "unsupported profile: nope");
     }
 
+    #[cfg_attr(miri, ignore = "no unsafe in path; pure document projection logic")]
     #[test]
     fn a_document_decodes() {
         let document = json(ATTEMPT);
@@ -321,6 +324,7 @@ mod tests {
         assert_eq!(decoded.document(None).metrics, None);
     }
 
+    #[cfg_attr(miri, ignore = "no unsafe in path; pure document projection logic")]
     #[test]
     fn a_document_s_own_metrics_win_over_the_defaults() {
         let document = json(&ATTEMPT.replace(
@@ -331,6 +335,7 @@ mod tests {
         assert_eq!(decoded.document(Some(&["x"])).metrics, Some(&[][..]));
     }
 
+    #[cfg_attr(miri, ignore = "no unsafe in path; pure document projection logic")]
     #[test]
     fn rejected_documents() {
         let reject = |text: &str| RequestDocument::from_json(&json(text)).unwrap_err();
@@ -345,6 +350,7 @@ mod tests {
         assert_eq!(error.message(), "deployment attributes must be an object");
     }
 
+    #[cfg_attr(miri, ignore = "no unsafe in path; pure document projection logic")]
     #[test]
     fn a_request_names_the_rejected_document() {
         let error = RequestDocument::from_request_json(&json("{}")).unwrap_err();
@@ -360,6 +366,7 @@ mod tests {
         assert!(error.message().starts_with("document 0: "), "{error:?}");
     }
 
+    #[cfg_attr(miri, ignore = "no unsafe in path; pure document projection logic")]
     #[test]
     fn a_request_is_added_with_default_metrics() {
         let request = json(&format!("[{ATTEMPT}]"));
@@ -375,6 +382,7 @@ mod tests {
         assert!(batch.len() > 2);
     }
 
+    #[cfg_attr(miri, ignore = "no unsafe in path; pure document projection logic")]
     #[test]
     fn a_document_error_names_its_index() {
         let error = MetricError::from(DocumentError {
@@ -385,6 +393,7 @@ mod tests {
         assert_eq!(error.message(), "document 3: bad");
     }
 
+    #[cfg_attr(miri, ignore = "no unsafe in path; pure document projection logic")]
     #[test]
     fn a_document_projects_to_datadog_series() {
         let projection = DatadogProjection::from_request_json(&json(ATTEMPT)).unwrap();
@@ -408,6 +417,7 @@ mod tests {
         assert_eq!(text, value.to_string());
     }
 
+    #[cfg_attr(miri, ignore = "no unsafe in path; pure document projection logic")]
     #[test]
     fn a_projected_document_keeps_its_metrics() {
         let document = json(&ATTEMPT.replace(

@@ -553,6 +553,10 @@ mod tests {
     #[cfg(feature = "tracing")]
     use std::sync::Mutex;
 
+    #[cfg_attr(
+        miri,
+        ignore = "session and dedup logic over mock transports; no unsafe in path"
+    )]
     #[test]
     #[cfg(feature = "tracing")]
     fn invalid_legacy_evp_configuration_is_logged_without_endpoint_details() {
@@ -599,6 +603,10 @@ mod tests {
         assert!(session.get_evp_transport("invalid.target-canary").is_none());
     }
 
+    #[cfg_attr(
+        miri,
+        ignore = "session and dedup logic over mock transports; no unsafe in path"
+    )]
     #[test]
     fn explicit_evp_transport_is_shared_and_not_overwritten_by_legacy_config() {
         let mut session = ConnectionSession::for_test(InstanceId::new("session", "runtime"));
@@ -644,6 +652,10 @@ mod tests {
         assert!(exposure_transport.shares_route_state(&after_legacy_config));
     }
 
+    #[cfg_attr(
+        miri,
+        ignore = "session and dedup logic over mock transports; no unsafe in path"
+    )]
     #[test]
     fn separately_configured_evp_targets_have_isolated_route_state() {
         let mut session = ConnectionSession::for_test(InstanceId::new("session", "runtime"));
@@ -673,6 +685,10 @@ mod tests {
         assert!(!ffe.shares_route_state(&errors));
     }
 
+    #[cfg_attr(
+        miri,
+        ignore = "session and dedup logic over mock transports; no unsafe in path"
+    )]
     #[test]
     fn evp_updates_preserve_snapshots_and_isolate_connections() {
         use crate::service::{EvpProducerIdentity, EvpTransportConfig};
@@ -731,6 +747,10 @@ mod tests {
         );
     }
 
+    #[cfg_attr(
+        miri,
+        ignore = "session and dedup logic over mock transports; no unsafe in path"
+    )]
     #[test]
     fn repeated_legacy_configuration_preserves_exposure_deduplication_scope() {
         let mut session = ConnectionSession::for_test(InstanceId::new("session", "runtime"));
@@ -750,6 +770,10 @@ mod tests {
         assert_eq!(before.deduplication_scope(), after.deduplication_scope());
     }
 
+    #[cfg_attr(
+        miri,
+        ignore = "session and dedup logic over mock transports; no unsafe in path"
+    )]
     #[test]
     fn meaningful_configuration_changes_replace_the_transport() {
         use crate::service::{EvpProducerIdentity, EvpTransportConfig, EvpTransportMode};
@@ -808,6 +832,10 @@ mod tests {
         }
     }
 
+    #[cfg_attr(
+        miri,
+        ignore = "session and dedup logic over mock transports; no unsafe in path"
+    )]
     #[test]
     fn legacy_api_key_endpoint_disables_ffe_transport_including_after_local_config() {
         let mut session = ConnectionSession::for_test(InstanceId::new("session", "runtime"));

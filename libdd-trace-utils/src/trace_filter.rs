@@ -465,6 +465,10 @@ mod tests {
 
     // ---- reject_regex (TagRegexFilter – literal key, regex value) ----
 
+    #[cfg_attr(
+        miri,
+        ignore = "regex matching runs in external regex engine; only sibling tinybytes unsafe in path, covered by libdd-tinybytes miri tests"
+    )]
     #[test]
     fn reject_regex_value_match_drops() {
         let mut traces = one_trace(span_with("r", &[("env", "production")]));
@@ -538,6 +542,10 @@ mod tests {
         assert_eq!(traces.len(), 1);
     }
 
+    #[cfg_attr(
+        miri,
+        ignore = "regex matching runs in external regex engine; only sibling tinybytes unsafe in path, covered by libdd-tinybytes miri tests"
+    )]
     #[test]
     fn require_regex_missing_drops() {
         let mut traces = one_trace(span_with("r", &[]));
@@ -709,6 +717,10 @@ mod tests {
         assert_eq!(traces.len(), 1);
     }
 
+    #[cfg_attr(
+        miri,
+        ignore = "regex matching runs in external regex engine; only sibling tinybytes unsafe in path, covered by libdd-tinybytes miri tests"
+    )]
     #[test]
     fn regex_reject_spaces_around_colon_drops() {
         // " env : prod.* " → key="env", regex="prod.*"

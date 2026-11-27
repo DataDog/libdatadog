@@ -302,6 +302,10 @@ mod tests {
         }
     }
 
+    #[cfg_attr(
+        miri,
+        ignore = "pure coalescer and origin derivation; no unsafe in path"
+    )]
     #[test]
     fn enqueue_accepts_borrowed_producer_identity() {
         let coalescer = FlagEvaluationCoalescer::default();
@@ -320,6 +324,10 @@ mod tests {
         );
     }
 
+    #[cfg_attr(
+        miri,
+        ignore = "pure coalescer and origin derivation; no unsafe in path"
+    )]
     #[test]
     fn self_telemetry_metric_names_describe_evaluation_count_units() {
         assert_eq!(
@@ -336,6 +344,10 @@ mod tests {
         );
     }
 
+    #[cfg_attr(
+        miri,
+        ignore = "pure coalescer and origin derivation; no unsafe in path"
+    )]
     #[test]
     fn derives_canonical_evp_origin_from_language() {
         for (language, expected) in [

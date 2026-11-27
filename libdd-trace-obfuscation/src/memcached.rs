@@ -49,6 +49,7 @@ mod tests {
         [test_obfuscate_memcached_5]    ["decr mykey 5"]                            ["decr mykey 5"];
         [fuzzing_2126976840]            ["\t"]                                      [""];
     )]
+    #[cfg_attr(miri, ignore = "pure memcached string obfuscation; no unsafe in path")]
     #[test]
     fn test_name() {
         let result = obfuscate_memcached_string(input);

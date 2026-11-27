@@ -216,6 +216,7 @@ mod tests {
         Box::new(|_data: &[u8]| anyhow::bail!("not invoked in this test"))
     }
 
+    #[cfg_attr(miri, ignore = "pure product parsing; no unsafe in path")]
     #[test]
     fn parse_returns_none_for_unregistered_product() {
         let registry = ParserRegistry::new();
@@ -225,6 +226,7 @@ mod tests {
         assert!(parsed.is_none());
     }
 
+    #[cfg_attr(miri, ignore = "pure product parsing; no unsafe in path")]
     #[test]
     fn register_rejects_duplicate_product() {
         let mut registry = ParserRegistry::new();

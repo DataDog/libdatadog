@@ -297,6 +297,7 @@ mod tests {
                 ]
             ];
     )]
+    #[cfg_attr(miri, ignore = "pure redis tokenizer logic; no unsafe in path")]
     #[test]
     fn test_name() {
         let mut tokenizer = RedisTokenizer::new(input);

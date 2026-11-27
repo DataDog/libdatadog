@@ -181,6 +181,7 @@ mod tests {
         m.get(key).and_then(|v| v.to_str().ok())
     }
 
+    #[cfg_attr(miri, ignore = "pure header string parsing; no unsafe in path")]
     #[test]
     fn tags_to_hashmap() {
         let header_tags = TracerHeaderTags {
@@ -219,6 +220,7 @@ mod tests {
         assert_eq!(get(&map, "datadog-client-dropped-p0-spans"), Some("120"));
     }
 
+    #[cfg_attr(miri, ignore = "pure header string parsing; no unsafe in path")]
     #[test]
     fn tags_to_hashmap_empty_value() {
         let header_tags = TracerHeaderTags {
@@ -257,6 +259,7 @@ mod tests {
         assert_eq!(get(&map, "datadog-client-dropped-p0-spans"), None);
     }
 
+    #[cfg_attr(miri, ignore = "pure header string parsing; no unsafe in path")]
     #[test]
     fn header_map_to_tags() {
         let mut header_map = HeaderMap::new();
@@ -290,6 +293,7 @@ mod tests {
         assert_eq!(tags.generic.dropped_p0_spans, 0);
     }
 
+    #[cfg_attr(miri, ignore = "pure header string parsing; no unsafe in path")]
     #[test]
     fn test_header_map_to_tags_computed_stats_empty_string() {
         let val = "";
@@ -302,6 +306,7 @@ mod tests {
         );
     }
 
+    #[cfg_attr(miri, ignore = "pure header string parsing; no unsafe in path")]
     #[test]
     fn test_header_map_to_tags_computed_stats_not_set() {
         let header_map = HeaderMap::new();
@@ -313,6 +318,7 @@ mod tests {
     }
 
     // Table-driven tests for is_header_true
+    #[cfg_attr(miri, ignore = "pure header string parsing; no unsafe in path")]
     #[test]
     fn test_is_header_true() {
         // values that should resolve to true
@@ -334,6 +340,7 @@ mod tests {
     }
 
     // Table-driven tests for client_computed_stats header
+    #[cfg_attr(miri, ignore = "pure header string parsing; no unsafe in path")]
     #[test]
     fn test_header_map_to_tags_computed_stats_true_values() {
         for val in &[
@@ -349,6 +356,7 @@ mod tests {
         }
     }
 
+    #[cfg_attr(miri, ignore = "pure header string parsing; no unsafe in path")]
     #[test]
     fn test_header_map_to_tags_computed_stats_false_values() {
         for val in &["0", "f", "F", "FALSE", "False", "false", ""] {
@@ -363,6 +371,7 @@ mod tests {
     }
 
     // Table-driven tests for client_computed_top_level header
+    #[cfg_attr(miri, ignore = "pure header string parsing; no unsafe in path")]
     #[test]
     fn test_header_map_to_tags_computed_top_level_true_values() {
         for val in &[
@@ -378,6 +387,7 @@ mod tests {
         }
     }
 
+    #[cfg_attr(miri, ignore = "pure header string parsing; no unsafe in path")]
     #[test]
     fn test_header_map_to_tags_computed_top_level_false_values() {
         for val in &["0", "f", "F", "FALSE", "False", "false", ""] {
@@ -391,6 +401,7 @@ mod tests {
         }
     }
 
+    #[cfg_attr(miri, ignore = "pure header string parsing; no unsafe in path")]
     #[test]
     fn test_header_map_to_tags_computed_top_level_not_set() {
         let header_map = HeaderMap::new();

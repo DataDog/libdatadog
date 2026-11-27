@@ -360,6 +360,7 @@ impl fmt::Debug for EvaluationError {
 mod tests {
     use super::*;
 
+    #[cfg_attr(miri, ignore = "no unsafe in path; pure error encoding logic")]
     #[test]
     fn equality_compares_every_prerequisite_key() {
         let chain = |inner: &'static str| EvaluationError::DependencyEvaluationFailed {
@@ -374,6 +375,7 @@ mod tests {
         assert_ne!(chain("leaf"), chain("other"));
     }
 
+    #[cfg_attr(miri, ignore = "no unsafe in path; pure error encoding logic")]
     #[test]
     fn constant_patterns_and_shared_suffixes_remain_supported() {
         const DISABLED: EvaluationError = EvaluationError::FlagDisabled;
@@ -387,6 +389,7 @@ mod tests {
         );
     }
 
+    #[cfg_attr(miri, ignore = "no unsafe in path; pure error encoding logic")]
     #[test]
     fn error_wire_round_trips_and_preserves_terminal_forms() {
         for error in [
@@ -434,6 +437,7 @@ mod tests {
         );
     }
 
+    #[cfg_attr(miri, ignore = "no unsafe in path; pure error encoding logic")]
     #[test]
     fn nondependency_bincode_encodings_remain_compatible() {
         // Golden bytes from the original derived EvaluationError representation.
@@ -470,6 +474,7 @@ mod tests {
         }
     }
 
+    #[cfg_attr(miri, ignore = "no unsafe in path; pure error encoding logic")]
     #[test]
     fn deep_dependency_errors_drop_on_a_bounded_thread_stack() {
         for mut error in [

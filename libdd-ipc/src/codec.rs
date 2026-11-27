@@ -52,6 +52,7 @@ impl std::error::Error for DecodeError {}
 mod tests {
     use super::{encode, encode_with_reserve};
 
+    #[cfg_attr(miri, ignore = "pure bincode encode; codec has no unsafe")]
     #[test]
     fn encode_with_reserve_serializes_once() {
         struct Counted(std::cell::Cell<usize>);
@@ -66,6 +67,7 @@ mod tests {
         assert_eq!(value.0.get(), 1);
     }
 
+    #[cfg_attr(miri, ignore = "pure bincode encode; codec has no unsafe")]
     #[test]
     fn encode_with_reserve_preserves_encoding_and_headroom() {
         let value = ("request", vec![1_u64, 2, 3]);

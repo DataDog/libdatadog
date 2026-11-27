@@ -807,6 +807,7 @@ mod tests {
         [test_keep_multiple_keys]         [&["_index","title"]][r#"{"hits":[{"_index":"bookdb_index","_type":"book","_score":0.9,"_source":{"summary":"text","title":"ES in Action","publish_date":"2015-12-03"},"highlight":{"title":["ES Action"]}}]}"#] [r#"{"hits":[{"_index":"bookdb_index","_type":"?","_score":"?","_source":{"summary":"?","title":"ES in Action","publish_date":"?"},"highlight":{"title":["ES Action"]}}]}"#];
         [test_keep_key_wallet]            [&["company_wallet_configuration_id"]] [r#"{"email":"dev@datadoghq.com","company_wallet_configuration_id":1}"#] [r#"{"email":"?","company_wallet_configuration_id":1}"#];
     )]
+    #[cfg_attr(miri, ignore = "pure json scanner logic; no unsafe in path")]
     #[test]
     fn test_name() {
         let (res, err) = obf(keep_keys).obfuscate(input);
@@ -825,6 +826,7 @@ mod tests {
         [test_truncated_open_value_string]  [r#"{"query":""#]                                                        [r#"{"query":"?"..."#]                            [Some(JsonScanError::UnexpectedEndOfInput { char_position: 11 })];
         [test_truncated_multi_json]         [r#"{"first json": "valid"} {"second json": "unfinished"#]               [r#"{"first json":"?"} {"second json":"?"..."#]   [Some(JsonScanError::UnexpectedEndOfInput { char_position: 53 })];
     )]
+    #[cfg_attr(miri, ignore = "pure json scanner logic; no unsafe in path")]
     #[test]
     fn test_name() {
         let (res, err) = obf(&[]).obfuscate(input);
@@ -833,6 +835,7 @@ mod tests {
     }
 
     /// The error messages are the Agent's, because they reach users through the same channels.
+    #[cfg_attr(miri, ignore = "pure json scanner logic; no unsafe in path")]
     #[test]
     fn test_scan_error_messages_match_the_agent() {
         let (_, err) = obf(&[]).obfuscate("INVALID");
@@ -850,6 +853,7 @@ mod tests {
     /// The obfuscator copies keys in the order it reads them, because it is a scanner rather than a
     /// `serde_json::Map`, which is why this crate does not need `serde_json/preserve_order` - a
     /// feature it cannot enable without enabling it for every crate in a dependent's workspace.
+    #[cfg_attr(miri, ignore = "pure json scanner logic; no unsafe in path")]
     #[test]
     fn test_key_order_is_the_input_order() {
         let input = r#"{"z":1,"a":{"y":2,"b":3},"m":4}"#;
@@ -859,6 +863,7 @@ mod tests {
         assert_eq!(result, expected);
     }
 
+    #[cfg_attr(miri, ignore = "pure json scanner logic; no unsafe in path")]
     #[test]
     fn test_multiple_json_objects() {
         // Multiple concatenated JSON objects (elasticsearch bulk API pattern).
@@ -881,6 +886,7 @@ mod tests {
 
     /// Whitespace between a key and its colon is skipped, so it must not end up inside the key the
     /// lookup is done with.
+    #[cfg_attr(miri, ignore = "pure json scanner logic; no unsafe in path")]
     #[test]
     fn test_whitespace_around_key_does_not_break_lookup() {
         let input = "{ \"keepme\" : 1 , \"other\" : 2 }";
@@ -889,6 +895,7 @@ mod tests {
         assert_eq!(result, r#"{"keepme":1,"other":"?"}"#);
     }
 
+    #[cfg_attr(miri, ignore = "pure json scanner logic; no unsafe in path")]
     #[test]
     fn test_transform_key_sql_basic() {
         let input = r#"{"query":"select * from table where id = 2","hello":"world","hi":"there"}"#;
@@ -900,6 +907,7 @@ mod tests {
         assert_eq!(val["query"], json!("select * from table where id = ?"));
     }
 
+    #[cfg_attr(miri, ignore = "pure json scanner logic; no unsafe in path")]
     #[test]
     fn test_transform_key_with_object_value_falls_through() {
         let input = r#"{"object":{"not a":"query"}}"#;
@@ -910,6 +918,7 @@ mod tests {
         );
     }
 
+    #[cfg_attr(miri, ignore = "pure json scanner logic; no unsafe in path")]
     #[test]
     fn test_transform_key_with_array_value_falls_through() {
         let input = r#"{"object":["not","a","query"]}"#;
@@ -922,6 +931,7 @@ mod tests {
 
     /// A kept subtree is copied as sent, but a transform key inside it still rewrites its own
     /// value, and keeping resumes for the rest of the subtree.
+    #[cfg_attr(miri, ignore = "pure json scanner logic; no unsafe in path")]
     #[test]
     fn test_transform_key_inside_a_kept_subtree_still_transforms() {
         let input =
@@ -940,6 +950,7 @@ mod tests {
 
     /// A key in both sets is kept, and a kept subtree does not adopt the keep depth of a nested
     /// keep key: the subtree ends where the outer key opened it.
+    #[cfg_attr(miri, ignore = "pure json scanner logic; no unsafe in path")]
     #[test]
     fn test_keep_wins_over_transform_for_the_same_key() {
         let obfuscator = obf_keys(&["both", "inner"], &["both"]);
@@ -954,6 +965,7 @@ mod tests {
 
     /// A bare top-level literal is a value, not a key, so it is obfuscated. A literal that follows
     /// a complete document is where the Agent's scanner leaves it: at the top level, read as a key.
+    #[cfg_attr(miri, ignore = "pure json scanner logic; no unsafe in path")]
     #[test]
     fn test_top_level_literal_is_a_value() {
         for input in ["42", r#""bare""#, "true", "null"] {
@@ -970,6 +982,7 @@ mod tests {
     /// Without a callback, a transform key is just another key. This is the Agent's behavior when
     /// no transformer is configured, and it is why the entry points that take no callback are safe
     /// to use with any config.
+    #[cfg_attr(miri, ignore = "pure json scanner logic; no unsafe in path")]
     #[test]
     fn test_transform_keys_are_obfuscated_when_no_transform_is_given() {
         let input = r#"{"query":"select * from table where id = 2"}"#;
@@ -984,6 +997,7 @@ mod tests {
 
     /// The transform is a closure, so it can capture configuration that is not - and should not
     /// be - part of the serializable JSON config.
+    #[cfg_attr(miri, ignore = "pure json scanner logic; no unsafe in path")]
     #[test]
     fn test_transform_captures_runtime_sql_config() {
         let input = r#"{"query":"select col1 from table2"}"#;
@@ -1014,6 +1028,7 @@ mod tests {
     }
 
     /// The Agent unescapes a string value before obfuscating it.
+    #[cfg_attr(miri, ignore = "pure json scanner logic; no unsafe in path")]
     #[test]
     fn test_transform_value_is_unescaped_before_transforming() {
         let input = r#"{"query":"select \"a\" from t"}"#;
@@ -1031,6 +1046,7 @@ mod tests {
     }
 
     /// A transform value that cannot be unquoted reaches the callback verbatim, quotes included.
+    #[cfg_attr(miri, ignore = "pure json scanner logic; no unsafe in path")]
     #[test]
     fn test_unquotable_transform_value_is_passed_through_verbatim() {
         // A number: not a quoted string, so there is nothing to unquote.
@@ -1056,6 +1072,7 @@ mod tests {
     }
 
     /// The callback can return a borrow of its argument, a `&'static str`, or an owned string.
+    #[cfg_attr(miri, ignore = "pure json scanner logic; no unsafe in path")]
     #[test]
     fn test_transform_result_may_be_borrowed_static_or_owned() {
         let input = r#"{"a":"one","b":"two","c":"three"}"#;
@@ -1077,6 +1094,7 @@ mod tests {
         );
     }
 
+    #[cfg_attr(miri, ignore = "pure json scanner logic; no unsafe in path")]
     #[test]
     fn test_transform_result_is_json_escaped() {
         let input = r#"{"query":"replace me"}"#;
@@ -1099,6 +1117,7 @@ mod tests {
         assert_eq!(output, expected);
     }
 
+    #[cfg_attr(miri, ignore = "pure json scanner logic; no unsafe in path")]
     #[test]
     fn test_sql_transform_with_quoted_identifier_is_json_escaped() {
         let input = r#"{"query":"SELECT * FROM \"users\" WHERE id = 1"}"#;
@@ -1123,6 +1142,7 @@ mod tests {
 
     /// A transform error is reported, the value is obfuscated rather than leaked, and the rest of
     /// the document is still obfuscated.
+    #[cfg_attr(miri, ignore = "pure json scanner logic; no unsafe in path")]
     #[test]
     fn test_transform_error_is_reported_and_value_is_obfuscated() {
         let input = r#"{"query":"","other":"kept","second":"  "}"#;
@@ -1146,6 +1166,7 @@ mod tests {
     }
 
     /// A caller can replace failed SQL values and record errors without failing the JSON pass.
+    #[cfg_attr(miri, ignore = "pure json scanner logic; no unsafe in path")]
     #[test]
     fn test_caller_supplied_sql_failure_replacement() {
         let input = r#"{"query":"","tab":"\t"}"#;
@@ -1184,6 +1205,7 @@ mod tests {
 
     /// Malformed JSON still produces partial output through the transforming entry points, and the
     /// scan error is reported next to any transform error.
+    #[cfg_attr(miri, ignore = "pure json scanner logic; no unsafe in path")]
     #[test]
     fn test_malformed_json_with_transform_reports_both_channels() {
         let input = r#"{"query":"","next":"#;
@@ -1205,6 +1227,7 @@ mod tests {
         );
     }
 
+    #[cfg_attr(miri, ignore = "pure json scanner logic; no unsafe in path")]
     #[test]
     fn test_obfuscate_into_matches_the_allocating_path_and_reuses_scratch() {
         let obfuscator = obf_keys(&["hello"], &["query"]);
@@ -1241,6 +1264,7 @@ mod tests {
         );
     }
 
+    #[cfg_attr(miri, ignore = "pure json scanner logic; no unsafe in path")]
     #[test]
     fn test_scratch_capacity_is_retained_until_trimmed() {
         // A `fn` item rather than a `let`-bound closure: inference does not give a closure
@@ -1290,6 +1314,7 @@ mod tests {
     }
 
     /// Scratch reuse must survive a pass that ended in an error, including a transform error.
+    #[cfg_attr(miri, ignore = "pure json scanner logic; no unsafe in path")]
     #[test]
     fn test_scratch_reuse_after_errors() {
         let obfuscator = obf_keys(&[], &["query"]);
@@ -1318,6 +1343,7 @@ mod tests {
 
     /// The config is plain data: it round-trips through serde and compares by value, which is what
     /// a caller that fetches it from the Agent needs.
+    #[cfg_attr(miri, ignore = "pure json scanner logic; no unsafe in path")]
     #[test]
     fn test_config_is_serializable_and_comparable() {
         let obfuscator = obf_keys(&["keepme"], &["query"]);

@@ -696,6 +696,7 @@ mod opt_out_tests {
         EvaluationContext::new(None, Arc::new(attributes))
     }
 
+    #[cfg_attr(miri, ignore = "no unsafe in path; opt-out timestamp validation logic")]
     #[test]
     fn opt_out_timestamp_validation_and_disabled_mode() {
         let immediate = EvaluationOptions {
@@ -733,6 +734,7 @@ mod opt_out_tests {
         }
     }
 
+    #[cfg_attr(miri, ignore = "no unsafe in path; opt-out timestamp validation logic")]
     #[test]
     fn opt_out_timestamp_syntax_is_explicit_and_errors_are_redacted() {
         let immediate = EvaluationOptions {
@@ -765,6 +767,7 @@ mod opt_out_tests {
         }
     }
 
+    #[cfg_attr(miri, ignore = "no unsafe in path; opt-out timestamp validation logic")]
     #[test]
     fn opt_out_skips_before_targeting_and_preserves_ordinary_fallback() {
         let config = Configuration::from_server_response(
@@ -847,6 +850,7 @@ mod opt_out_tests {
         )
     }
 
+    #[cfg_attr(miri, ignore = "no unsafe in path; opt-out timestamp validation logic")]
     #[test]
     fn future_cutoff_preserves_precision_and_exposure_selection() {
         let subject = context(Some(json!("2026-10-19T12:00:00Z")));
@@ -902,6 +906,7 @@ mod opt_out_tests {
         }
     }
 
+    #[cfg_attr(miri, ignore = "no unsafe in path; opt-out timestamp validation logic")]
     #[test]
     fn inactive_policy_does_not_call_allocation_exclusion() {
         // D017: observe the production boundary, not a count inferred from the policy.
@@ -937,6 +942,7 @@ mod opt_out_tests {
         }
     }
 
+    #[cfg_attr(miri, ignore = "no unsafe in path; opt-out timestamp validation logic")]
     #[test]
     fn malformed_activation_is_scoped_to_effective_future_mode() {
         for activation in [json!("bad"), json!(42), json!(true), json!([]), json!({})] {
@@ -987,6 +993,7 @@ mod opt_out_tests {
         }
     }
 
+    #[cfg_attr(miri, ignore = "no unsafe in path; opt-out timestamp validation logic")]
     #[test]
     fn future_invalid_context_precedes_flag_lookup() {
         let config = future_configuration(json!("2026-10-19T00:00:00Z"));
@@ -1020,6 +1027,7 @@ mod tests {
         AssignmentReason, AssignmentValue, FeatureValue, UniversalFlagConfig,
     };
 
+    #[cfg_attr(miri, ignore = "no unsafe in path; pure allocation selection logic")]
     #[test]
     fn assignment_carries_features_of_selected_split() {
         let config = UniversalFlagConfig::from_json(
@@ -1087,6 +1095,7 @@ mod tests {
         assert!(assignment.features_slice().is_empty());
     }
 
+    #[cfg_attr(miri, ignore = "no unsafe in path; pure allocation selection logic")]
     #[test]
     fn invalid_flag_does_not_poison_valid_neighbor() {
         let config = UniversalFlagConfig::from_json(

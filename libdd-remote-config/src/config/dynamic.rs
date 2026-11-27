@@ -163,6 +163,7 @@ pub mod tests {
         }
     }
 
+    #[cfg_attr(miri, ignore = "pure config parsing; no unsafe in path")]
     #[test]
     fn absent_field_emits_no_variant() {
         let cfg: DynamicConfigFile = parse_json(br#"{"action": "", "lib_config": {}}"#).unwrap();
@@ -170,6 +171,7 @@ pub mod tests {
         assert!(<Vec<Configs>>::from(cfg.lib_config).is_empty());
     }
 
+    #[cfg_attr(miri, ignore = "pure config parsing; no unsafe in path")]
     #[test]
     fn explicit_null_is_indistinguishable_from_absent() {
         // No three-state model: null and absent both become `None`, so
@@ -183,6 +185,7 @@ pub mod tests {
         assert!(<Vec<Configs>>::from(cfg.lib_config).is_empty());
     }
 
+    #[cfg_attr(miri, ignore = "pure config parsing; no unsafe in path")]
     #[test]
     fn concrete_value_emits_set_variant() {
         let cfg: DynamicConfigFile =
@@ -194,6 +197,7 @@ pub mod tests {
         assert!(matches!(configs[0], Configs::TracingSamplingRate(r) if r == 0.25));
     }
 
+    #[cfg_attr(miri, ignore = "pure config parsing; no unsafe in path")]
     #[test]
     fn unrelated_field_does_not_emit_sampling_variants() {
         // Regression guard: a payload that updates only `tracing_tags` must
@@ -216,6 +220,7 @@ pub mod tests {
         );
     }
 
+    #[cfg_attr(miri, ignore = "pure config parsing; no unsafe in path")]
     #[test]
     fn data_streams_enabled_true_and_false_emit_variant() {
         for expected in [true, false] {
@@ -230,6 +235,7 @@ pub mod tests {
         }
     }
 
+    #[cfg_attr(miri, ignore = "pure config parsing; no unsafe in path")]
     #[test]
     fn data_streams_enabled_absent_or_null_emits_no_variant() {
         for lib_config in ["{}", r#"{"data_streams_enabled": null}"#] {
@@ -240,6 +246,7 @@ pub mod tests {
         }
     }
 
+    #[cfg_attr(miri, ignore = "pure config parsing; no unsafe in path")]
     #[test]
     fn data_streams_enabled_is_emitted_next_to_other_fields() {
         let cfg = parse_json(
@@ -265,6 +272,7 @@ pub mod tests {
         );
     }
 
+    #[cfg_attr(miri, ignore = "pure config parsing; no unsafe in path")]
     #[test]
     fn data_streams_enabled_wrong_type_fails_the_whole_file() {
         // Like every typed field in `DynamicConfig`, a value of the wrong type is a parse error

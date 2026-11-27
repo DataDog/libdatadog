@@ -92,6 +92,7 @@ pub struct OtlpGrpcTraceConfig {
 mod tests {
     use super::*;
     use std::str::FromStr;
+    #[cfg_attr(miri, ignore = "pure protocol parsing; no unsafe in path")]
     #[test]
     fn protocol_from_str() {
         assert_eq!(
@@ -106,6 +107,7 @@ mod tests {
         assert!(OtlpProtocol::from_str("nonsense").is_err());
     }
 
+    #[cfg_attr(miri, ignore = "pure protocol parsing; no unsafe in path")]
     #[test]
     fn protocol_content_types() {
         assert_eq!(

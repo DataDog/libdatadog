@@ -912,6 +912,7 @@ mod tests {
         };
     }
 
+    #[cfg_attr(miri, ignore = "no unsafe in path; pure eval logic")]
     #[test]
     fn test_eval() {
         let vars = HashMap::from([

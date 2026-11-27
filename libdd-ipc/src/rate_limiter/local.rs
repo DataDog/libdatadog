@@ -199,6 +199,7 @@ mod tests {
         assert!(t2 >= t1);
     }
 
+    #[cfg_attr(miri, ignore = "pure atomic admission algorithm; no unsafe in path")]
     #[test]
     fn test_local_limiter_algorithm() {
         let deadline = AtomicU64::new(0);

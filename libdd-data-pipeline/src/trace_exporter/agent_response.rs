@@ -56,6 +56,7 @@ impl AgentResponsePayloadVersion {
 mod tests {
     use super::*;
 
+    #[cfg_attr(miri, ignore = "pure response parsing; no unsafe in path")]
     #[test]
     fn test_check_and_update() {
         let version = AgentResponsePayloadVersion::new();
@@ -76,6 +77,7 @@ mod tests {
         assert_eq!(version.header_value(), "xyz789");
     }
 
+    #[cfg_attr(miri, ignore = "pure response parsing; no unsafe in path")]
     #[test]
     fn test_check_and_update_ignores_empty_version() {
         let version = AgentResponsePayloadVersion::new();

@@ -99,6 +99,7 @@ mod tests {
         ))
     }
 
+    #[cfg_attr(miri, ignore = "pure change tracking; no unsafe in path")]
     #[test]
     fn removals_are_emitted_before_additions() {
         let mut tracker: ChangeTracker<TestFile> = ChangeTracker::default();

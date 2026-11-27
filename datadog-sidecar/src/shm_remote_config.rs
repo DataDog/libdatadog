@@ -949,6 +949,7 @@ mod tests {
         ))
     });
 
+    #[cfg_attr(miri, ignore = "shm path string derivation; no unsafe in path")]
     #[test]
     fn publication_scope_preserves_agent_paths_and_separates_cdn_directories() {
         let config = ConfigInvariants {
@@ -974,6 +975,7 @@ mod tests {
         assert_eq!(invariants.config, config);
     }
 
+    #[cfg_attr(miri, ignore = "shm path string derivation; no unsafe in path")]
     #[test]
     fn shm_paths_distinguish_targets_and_endpoints() {
         let mut invariants: RemoteConfigInvariants = ConfigInvariants {

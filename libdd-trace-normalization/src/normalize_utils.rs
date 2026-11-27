@@ -302,6 +302,7 @@ mod tests {
     use super::*;
     use duplicate::duplicate_item;
 
+    #[cfg_attr(miri, ignore = "pure i64 arithmetic; no unsafe in path")]
     #[test]
     fn test_normalize_span_start_duration_handles_min_start() {
         let mut start = i64::MIN;
@@ -311,6 +312,7 @@ mod tests {
         assert!(start > YEAR_2000_NANOSEC_TS);
     }
 
+    #[cfg_attr(miri, ignore = "pure i64 arithmetic; no unsafe in path")]
     #[test]
     fn test_normalize_span_start_duration_handles_max_start() {
         let mut start = i64::MAX;

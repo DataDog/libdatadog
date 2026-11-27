@@ -558,6 +558,7 @@ mod tests {
         mock.assert_async().await;
     }
 
+    #[cfg_attr(miri, ignore = "pure path, msgpack and drain logic; no unsafe in path")]
     #[test]
     fn shm_paths_distinguish_tables() {
         let path = dsm_checkpoint_shm_path(&key());
@@ -589,6 +590,7 @@ mod tests {
         );
     }
 
+    #[cfg_attr(miri, ignore = "pure path, msgpack and drain logic; no unsafe in path")]
     #[test]
     fn the_endpoint_is_the_agents_pipeline_stats_path() {
         let agent = Endpoint::from_slice("http://localhost:8126");
@@ -605,6 +607,7 @@ mod tests {
         assert!(dsm_endpoint(&agentless).is_none());
     }
 
+    #[cfg_attr(miri, ignore = "pure path, msgpack and drain logic; no unsafe in path")]
     #[test]
     fn draining_waits_for_the_next_boundary() {
         let at = |nanos: u64| UNIX_EPOCH + Duration::from_nanos(nanos);
@@ -622,6 +625,7 @@ mod tests {
 
     /// Field names, types and nesting as the Java and Go tracers write them, with sketches as
     /// msgpack `bin`.
+    #[cfg_attr(miri, ignore = "pure path, msgpack and drain logic; no unsafe in path")]
     #[test]
     fn the_payload_has_the_fields_the_backend_expects() {
         let checkpoints = vec![DsmCheckpointBucket {
@@ -714,6 +718,7 @@ mod tests {
     /// Backlogs go out in the bucket of the interval they were recorded in, next to its
     /// checkpoints; an interval with only backlogs still gets a bucket, and buckets are ordered by
     /// start.
+    #[cfg_attr(miri, ignore = "pure path, msgpack and drain logic; no unsafe in path")]
     #[test]
     fn backlogs_share_their_intervals_bucket_with_its_checkpoints() {
         let checkpoint = || DsmCheckpoint {

@@ -439,6 +439,10 @@ mod tests {
         }
     }
 
+    #[cfg_attr(
+        miri,
+        ignore = "pure prost-to-json serialization; external crates only, no unsafe in path"
+    )]
     #[test]
     fn ids_are_hex_timestamps_are_strings_kind_is_int() {
         let j = span_json(base_span());
@@ -455,6 +459,10 @@ mod tests {
         assert!(j.get("status").is_none());
     }
 
+    #[cfg_attr(
+        miri,
+        ignore = "pure prost-to-json serialization; external crates only, no unsafe in path"
+    )]
     #[test]
     fn int_value_is_string_bytes_value_is_base64() {
         let mut s = base_span();
@@ -489,6 +497,10 @@ mod tests {
         assert_eq!(by("name")["stringValue"], "v");
     }
 
+    #[cfg_attr(
+        miri,
+        ignore = "pure prost-to-json serialization; external crates only, no unsafe in path"
+    )]
     #[test]
     fn status_and_parent_and_link_emitted() {
         let mut s = base_span();

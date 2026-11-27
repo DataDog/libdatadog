@@ -706,6 +706,7 @@ mod tests {
         V::String(s.to_owned())
     }
 
+    #[cfg_attr(miri, ignore = "pure f64 to i64 conversion; no unsafe in path")]
     #[test]
     fn exact_i64_conversion() {
         assert_eq!(f64_to_exact_i64(-3.0), Some(-3));
@@ -723,6 +724,7 @@ mod tests {
         assert_eq!(str_value("2").as_i64(), None);
     }
 
+    #[cfg_attr(miri, ignore = "std hashmap operations; no unsafe in path")]
     #[test]
     fn hash_map_value_map_mut() {
         let mut map = Map::new();

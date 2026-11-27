@@ -173,6 +173,7 @@ fn parse_ip_v4(s: &str, sep: char) -> Option<(&str, &str)> {
 mod tests {
     use super::*;
 
+    #[cfg_attr(miri, ignore = "pure ip-address string parsing; no unsafe in path")]
     #[test]
     fn test_split_prefix() {
         assert_eq!(split_prefix("ip-1.1.1.1"), ("ip-", "1.1.1.1"));
@@ -182,6 +183,7 @@ mod tests {
         assert_eq!(split_prefix("foo,bar-1.1.1.1"), ("", "foo,bar-1.1.1.1"));
     }
 
+    #[cfg_attr(miri, ignore = "pure ip-address string parsing; no unsafe in path")]
     #[test]
     #[allow(clippy::cognitive_complexity)]
     fn test_quantize_peer_ip_addresses() {

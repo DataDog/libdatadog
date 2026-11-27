@@ -301,6 +301,7 @@ mod tests {
         }
     }
 
+    #[cfg_attr(miri, ignore = "no unsafe in path; exposure serialization/dedup logic")]
     #[test]
     fn exposure_batch_debug_redacts_identity_and_attributes() {
         let batch = FfeExposureBatch {
@@ -325,6 +326,7 @@ mod tests {
         .map(|payload| serde_json::from_str(&payload).unwrap())
     }
 
+    #[cfg_attr(miri, ignore = "no unsafe in path; exposure serialization/dedup logic")]
     #[test]
     fn deduplication_is_partitioned_by_producer_scope() {
         let deduplicator = ExposureDeduplicator::new(4);
@@ -350,6 +352,7 @@ mod tests {
         );
     }
 
+    #[cfg_attr(miri, ignore = "no unsafe in path; exposure serialization/dedup logic")]
     #[test]
     fn encodes_structured_batch_and_preserves_empty_subject() {
         let deduplicator = ExposureDeduplicator::new(4);
@@ -374,6 +377,7 @@ mod tests {
         );
     }
 
+    #[cfg_attr(miri, ignore = "no unsafe in path; exposure serialization/dedup logic")]
     #[test]
     fn deduplicates_same_assignment_and_emits_changed_assignment() {
         let deduplicator = ExposureDeduplicator::new(4);
@@ -407,6 +411,7 @@ mod tests {
         assert!(changed.is_some());
     }
 
+    #[cfg_attr(miri, ignore = "no unsafe in path; exposure serialization/dedup logic")]
     #[test]
     fn zero_cache_limit_disables_deduplication() {
         let deduplicator = ExposureDeduplicator::new(0);
@@ -431,6 +436,7 @@ mod tests {
         assert!(duplicate.is_some());
     }
 
+    #[cfg_attr(miri, ignore = "no unsafe in path; exposure serialization/dedup logic")]
     #[test]
     fn cache_key_includes_service_env_and_version() {
         let deduplicator = ExposureDeduplicator::new(4);
@@ -458,6 +464,7 @@ mod tests {
         assert!(other_service.is_some());
     }
 
+    #[cfg_attr(miri, ignore = "no unsafe in path; exposure serialization/dedup logic")]
     #[test]
     fn serializes_serial_id_at_the_event_top_level() {
         let payload = encode_one(
@@ -469,6 +476,7 @@ mod tests {
         assert_eq!(payload["exposures"][0]["serial_id"], 4242);
     }
 
+    #[cfg_attr(miri, ignore = "no unsafe in path; exposure serialization/dedup logic")]
     #[test]
     fn serializes_a_zero_serial_id() {
         let payload = encode_one(
@@ -480,6 +488,7 @@ mod tests {
         assert_eq!(payload["exposures"][0]["serial_id"], 0);
     }
 
+    #[cfg_attr(miri, ignore = "no unsafe in path; exposure serialization/dedup logic")]
     #[test]
     fn omits_an_absent_serial_id() {
         let payload = encode_one(
@@ -491,6 +500,7 @@ mod tests {
         assert_eq!(payload["exposures"][0].get("serial_id"), None);
     }
 
+    #[cfg_attr(miri, ignore = "no unsafe in path; exposure serialization/dedup logic")]
     #[test]
     fn emits_an_exposure_when_only_the_serial_id_appears() {
         let deduplicator = ExposureDeduplicator::new(4);
@@ -504,6 +514,7 @@ mod tests {
         assert_eq!(appeared.unwrap()["exposures"][0]["serial_id"], 0);
     }
 
+    #[cfg_attr(miri, ignore = "no unsafe in path; exposure serialization/dedup logic")]
     #[test]
     fn emits_an_exposure_when_only_the_serial_id_changes() {
         let deduplicator = ExposureDeduplicator::new(4);
@@ -520,6 +531,7 @@ mod tests {
         assert_eq!(changed.unwrap()["exposures"][0]["serial_id"], 1);
     }
 
+    #[cfg_attr(miri, ignore = "no unsafe in path; exposure serialization/dedup logic")]
     #[test]
     fn emits_an_exposure_when_the_serial_id_disappears() {
         let deduplicator = ExposureDeduplicator::new(4);
@@ -533,6 +545,7 @@ mod tests {
         assert_eq!(disappeared.unwrap()["exposures"][0].get("serial_id"), None);
     }
 
+    #[cfg_attr(miri, ignore = "no unsafe in path; exposure serialization/dedup logic")]
     #[test]
     fn emits_an_exposure_when_the_serial_id_returns_to_an_earlier_value() {
         let deduplicator = ExposureDeduplicator::new(4);
@@ -554,6 +567,7 @@ mod tests {
         assert_eq!(returned.unwrap()["exposures"][0]["serial_id"], 7);
     }
 
+    #[cfg_attr(miri, ignore = "no unsafe in path; exposure serialization/dedup logic")]
     #[test]
     fn deduplicates_an_unchanged_serial_id() {
         let deduplicator = ExposureDeduplicator::new(4);
@@ -577,6 +591,7 @@ mod tests {
         }
     }
 
+    #[cfg_attr(miri, ignore = "no unsafe in path; exposure serialization/dedup logic")]
     #[test]
     fn serializes_scalar_features_as_a_flat_object() {
         let payload = encode_one(
@@ -593,6 +608,7 @@ mod tests {
         );
     }
 
+    #[cfg_attr(miri, ignore = "no unsafe in path; exposure serialization/dedup logic")]
     #[test]
     fn omits_features_when_none_survive_and_keeps_the_exposure() {
         for features_json in ["", "not json", "[1]", "{}", r#"{"a":null}"#] {
@@ -607,6 +623,7 @@ mod tests {
         }
     }
 
+    #[cfg_attr(miri, ignore = "no unsafe in path; exposure serialization/dedup logic")]
     #[test]
     fn exposure_features_are_truncated_at_the_byte_cap() {
         use crate::telemetry::features::{MAX_FEATURES_BYTES, features_of_encoded_len};
@@ -622,6 +639,7 @@ mod tests {
         assert!(serde_json::to_string(features).unwrap().len() <= MAX_FEATURES_BYTES);
     }
 
+    #[cfg_attr(miri, ignore = "no unsafe in path; exposure serialization/dedup logic")]
     #[test]
     fn features_round_trip_via_bincode() {
         let batch = FfeExposureBatch {
@@ -636,6 +654,7 @@ mod tests {
         assert_eq!(decoded, batch);
     }
 
+    #[cfg_attr(miri, ignore = "no unsafe in path; exposure serialization/dedup logic")]
     #[test]
     fn features_do_not_affect_deduplication() {
         let deduplicator = ExposureDeduplicator::new(4);
@@ -646,6 +665,7 @@ mod tests {
         assert_eq!(changed, None);
     }
 
+    #[cfg_attr(miri, ignore = "no unsafe in path; exposure serialization/dedup logic")]
     #[test]
     fn drops_incomplete_exposures() {
         let deduplicator = ExposureDeduplicator::new(4);

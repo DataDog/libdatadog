@@ -73,6 +73,10 @@ fn request_with_context(
     }
 }
 
+#[cfg_attr(
+    miri,
+    ignore = "bincode encode/decode roundtrip and debug redaction; no unsafe in path"
+)]
 #[test]
 fn matching_ipc_preserves_rows_optional_fields_and_neighboring_actions() {
     for rows in [0, 1, 2] {

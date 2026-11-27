@@ -856,6 +856,10 @@ mod tests {
         );
     }
 
+    #[cfg_attr(
+        miri,
+        ignore = "env selection via test-only set_var; tested path is safe"
+    )]
     #[test]
     fn test_errors_intake_config_from_env() {
         let _lock = ENV_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
@@ -881,6 +885,10 @@ mod tests {
         assert_eq!(endpoint.url.path(), DIRECT_ERRORS_INTAKE_URL_PATH);
     }
 
+    #[cfg_attr(
+        miri,
+        ignore = "env selection via test-only set_var; tested path is safe"
+    )]
     #[test]
     fn test_errors_intake_config_custom_site() {
         let _lock = ENV_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
@@ -905,6 +913,10 @@ mod tests {
         assert_eq!(endpoint.url.path(), DIRECT_ERRORS_INTAKE_URL_PATH);
     }
 
+    #[cfg_attr(
+        miri,
+        ignore = "env selection via test-only set_var; tested path is safe"
+    )]
     #[test]
     fn test_errors_intake_config_agent_proxy() {
         let _lock = ENV_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
@@ -923,6 +935,10 @@ mod tests {
         assert_eq!(endpoint.url.path(), AGENT_ERRORS_INTAKE_URL_PATH);
     }
 
+    #[cfg_attr(
+        miri,
+        ignore = "env selection via test-only set_var; tested path is safe"
+    )]
     #[test]
     fn test_errors_intake_config_agent_with_api_key_but_no_direct() {
         let _lock = ENV_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
@@ -946,6 +962,10 @@ mod tests {
         assert!(endpoint.api_key.is_none());
     }
 
+    #[cfg_attr(
+        miri,
+        ignore = "env selection via test-only set_var; tested path is safe"
+    )]
     #[test]
     fn test_errors_intake_disabled_flag() {
         let _lock = ENV_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
@@ -965,6 +985,10 @@ mod tests {
         assert!(!uploader.is_enabled());
     }
 
+    #[cfg_attr(
+        miri,
+        ignore = "env selection via test-only set_var; tested path is safe"
+    )]
     #[test]
     #[cfg(unix)]
     fn test_errors_intake_config_uds_socket() {
@@ -1017,6 +1041,10 @@ mod tests {
         assert!(endpoint.api_key.is_none());
     }
 
+    #[cfg_attr(
+        miri,
+        ignore = "env selection via test-only set_var; tested path is safe"
+    )]
     #[test]
     fn test_errors_intake_config_unix_url() {
         let _lock = ENV_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
@@ -1038,6 +1066,10 @@ mod tests {
         assert!(endpoint.api_key.is_none());
     }
 
+    #[cfg_attr(
+        miri,
+        ignore = "env selection via test-only set_var; tested path is safe"
+    )]
     #[test]
     fn test_errors_intake_endpoint_priority_order() {
         let _lock = ENV_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
@@ -1079,6 +1111,10 @@ mod tests {
         assert_eq!(endpoint.url.port_u16(), Some(DEFAULT_AGENT_PORT));
     }
 
+    #[cfg_attr(
+        miri,
+        ignore = "env selection via test-only set_var; tested path is safe"
+    )]
     #[test]
     fn test_errors_intake_direct_submission_vs_agent_priority() {
         let _lock = ENV_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
@@ -1119,6 +1155,10 @@ mod tests {
         assert_eq!(endpoint.url.path(), AGENT_ERRORS_INTAKE_URL_PATH);
     }
 
+    #[cfg_attr(
+        miri,
+        ignore = "env selection via test-only set_var; tested path is safe"
+    )]
     #[test]
     #[cfg(unix)]
     fn test_errors_intake_host_port_priority_over_uds() {

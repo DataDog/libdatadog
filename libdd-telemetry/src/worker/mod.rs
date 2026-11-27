@@ -1600,6 +1600,7 @@ mod tests {
     fn is_send<T: Send>(_: T) {}
     fn is_sync<T: Sync>(_: T) {}
 
+    #[cfg_attr(miri, ignore = "static send/sync assert; no unsafe in path")]
     #[test]
     fn test_handle_sync_send() {
         #[allow(clippy::redundant_closure)]

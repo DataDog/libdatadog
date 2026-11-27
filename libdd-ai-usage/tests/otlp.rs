@@ -213,6 +213,7 @@ fn the_export_decodes_with_the_upstream_definitions_and_carries_every_point() {
     assert!(counters.len() > 50 && histograms.len() > 50);
 }
 
+#[cfg_attr(miri, ignore = "no unsafe in path; pure OTLP encoding logic")]
 #[test]
 fn a_point_that_states_its_profile_is_exported_once_under_the_scope() {
     let projection = |cost: &str| {
@@ -275,6 +276,7 @@ fn a_point_that_states_its_profile_is_exported_once_under_the_scope() {
     }
 }
 
+#[cfg_attr(miri, ignore = "no unsafe in path; pure OTLP encoding logic")]
 #[test]
 fn bucket_bounds_follow_the_upstream_advice() {
     let mut batch = MetricBatch::new();

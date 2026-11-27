@@ -272,6 +272,7 @@ fn normalize_site(site: &str) -> Result<String, EndpointError> {
 mod tests {
     use super::*;
 
+    #[cfg_attr(miri, ignore = "no unsafe in path; pure endpoint URL validation logic")]
     #[test]
     fn url_credentials_are_case_sensitive_subscription_identity() {
         let endpoints: std::collections::HashSet<_> = [
@@ -293,6 +294,7 @@ mod tests {
         );
     }
 
+    #[cfg_attr(miri, ignore = "no unsafe in path; pure endpoint URL validation logic")]
     #[test]
     fn shared_endpoint_preserves_the_subscription_wire_contract() {
         // The previous endpoint was serialized as these two fields. Keep
@@ -324,6 +326,7 @@ mod tests {
         }
     }
 
+    #[cfg_attr(miri, ignore = "no unsafe in path; pure endpoint URL validation logic")]
     #[test]
     fn invalid_serialized_endpoint_does_not_disclose_credentials() {
         let wire = serde_json::json!({
@@ -334,6 +337,7 @@ mod tests {
         assert!(!error.to_string().contains("private-credential"));
     }
 
+    #[cfg_attr(miri, ignore = "no unsafe in path; pure endpoint URL validation logic")]
     #[test]
     fn managed_endpoint_uses_normalized_site_and_encoded_environment() {
         let endpoint = CdnEndpoint::build("", " DATADOGHQ.EU \t", "prod / blue", "key")
@@ -347,6 +351,7 @@ mod tests {
         );
     }
 
+    #[cfg_attr(miri, ignore = "no unsafe in path; pure endpoint URL validation logic")]
     #[test]
     fn managed_endpoint_omits_an_absent_environment_and_defaults_blank_site() {
         let endpoint = CdnEndpoint::build("", "  ", "", "key").expect("managed endpoint");
@@ -356,6 +361,7 @@ mod tests {
         );
     }
 
+    #[cfg_attr(miri, ignore = "no unsafe in path; pure endpoint URL validation logic")]
     #[test]
     fn managed_endpoint_requires_an_api_key() {
         assert_eq!(
@@ -364,6 +370,7 @@ mod tests {
         );
     }
 
+    #[cfg_attr(miri, ignore = "no unsafe in path; pure endpoint URL validation logic")]
     #[test]
     fn managed_endpoint_rejects_invalid_api_key_headers_without_disclosing_them() {
         for key in ["secret\r", "secret\n", "secret\0", "secret\u{7f}"] {
@@ -382,6 +389,7 @@ mod tests {
         }
     }
 
+    #[cfg_attr(miri, ignore = "no unsafe in path; pure endpoint URL validation logic")]
     #[test]
     fn managed_endpoint_rejects_sites_that_can_change_the_url_meaning() {
         for site in [
@@ -402,6 +410,7 @@ mod tests {
         }
     }
 
+    #[cfg_attr(miri, ignore = "no unsafe in path; pure endpoint URL validation logic")]
     #[test]
     fn custom_root_endpoint_gets_the_canonical_path_and_keeps_its_query() {
         for base_url in ["http://localhost:8080", "http://localhost:8080/"] {
@@ -427,6 +436,7 @@ mod tests {
         );
     }
 
+    #[cfg_attr(miri, ignore = "no unsafe in path; pure endpoint URL validation logic")]
     #[test]
     fn custom_non_root_endpoint_is_preserved_without_environment() {
         let endpoint = CdnEndpoint::build(
@@ -444,6 +454,7 @@ mod tests {
         assert_eq!(endpoint.api_key(), None);
     }
 
+    #[cfg_attr(miri, ignore = "no unsafe in path; pure endpoint URL validation logic")]
     #[test]
     fn custom_endpoint_validation_errors_never_contain_the_url() {
         let credential = "credential-that-must-not-leak";
@@ -464,6 +475,7 @@ mod tests {
         }
     }
 
+    #[cfg_attr(miri, ignore = "no unsafe in path; pure endpoint URL validation logic")]
     #[test]
     fn endpoint_debug_output_is_redacted() {
         let endpoint = CdnEndpoint::build("https://user:password@localhost/custom", "", "", "key")

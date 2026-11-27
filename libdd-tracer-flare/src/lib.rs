@@ -529,6 +529,7 @@ mod tests {
     #[cfg(feature = "listener")]
     use std::sync::{Arc, atomic::Ordering};
 
+    #[cfg_attr(miri, ignore = "pure log-level/config parsing; no unsafe in path")]
     #[test]
     fn test_try_from_string_to_flare_action() {
         assert_eq!(LogLevel::try_from("trace").unwrap(), LogLevel::Trace);
@@ -544,6 +545,7 @@ mod tests {
         );
     }
 
+    #[cfg_attr(miri, ignore = "pure log-level/config parsing; no unsafe in path")]
     #[test]
     fn test_log_level_ordering() {
         // Test that the ordering is maintained as expected (Trace < Debug < Info < Warn < Error <
@@ -556,6 +558,7 @@ mod tests {
         assert!(LogLevel::Critical < LogLevel::Off);
     }
 
+    #[cfg_attr(miri, ignore = "pure log-level/config parsing; no unsafe in path")]
     #[test]
     fn test_set_log_levels_updates_state() {
         let manager = TracerFlareManager::new("http://localhost:8126", "rust");
@@ -573,6 +576,7 @@ mod tests {
         );
     }
 
+    #[cfg_attr(miri, ignore = "pure log-level/config parsing; no unsafe in path")]
     #[test]
     #[cfg(feature = "listener")]
     fn test_priority_in_flare_action() {
@@ -628,6 +632,7 @@ mod tests {
         );
     }
 
+    #[cfg_attr(miri, ignore = "pure log-level/config parsing; no unsafe in path")]
     #[test]
     #[cfg(feature = "listener")]
     fn test_remote_config_with_valid_log_level() {
@@ -652,6 +657,7 @@ mod tests {
         assert_eq!(result.unwrap(), FlareAction::Set(LogLevel::Info));
     }
 
+    #[cfg_attr(miri, ignore = "pure log-level/config parsing; no unsafe in path")]
     #[test]
     #[cfg(feature = "listener")]
     fn test_remote_config_with_send_task() {
@@ -678,6 +684,7 @@ mod tests {
         assert_eq!(result.unwrap(), FlareAction::Send(task));
     }
 
+    #[cfg_attr(miri, ignore = "pure log-level/config parsing; no unsafe in path")]
     #[test]
     #[cfg(feature = "listener")]
     fn test_remote_config_with_invalid_config() {
@@ -700,6 +707,7 @@ mod tests {
         assert_eq!(result.unwrap(), FlareAction::None);
     }
 
+    #[cfg_attr(miri, ignore = "pure log-level/config parsing; no unsafe in path")]
     #[test]
     fn test_remote_config_task_with_wrong_type_returns_none() {
         use libdd_remote_config::config::agent_task::{AgentTask, AgentTaskFile};
@@ -718,6 +726,7 @@ mod tests {
         assert_eq!(result.unwrap(), FlareAction::None);
     }
 
+    #[cfg_attr(miri, ignore = "pure log-level/config parsing; no unsafe in path")]
     #[test]
     fn test_handle_remote_config_data_send_stops_collecting() {
         use libdd_remote_config::config::agent_task::{AgentTask, AgentTaskFile};
@@ -740,6 +749,7 @@ mod tests {
         assert!(!tracer_flare.collecting.load(Ordering::Relaxed));
     }
 
+    #[cfg_attr(miri, ignore = "pure log-level/config parsing; no unsafe in path")]
     #[test]
     #[cfg(feature = "listener")]
     fn test_handle_remote_config_file() {
@@ -795,6 +805,7 @@ mod tests {
         assert!(!tracer_flare.collecting.load(Ordering::Relaxed));
     }
 
+    #[cfg_attr(miri, ignore = "pure log-level/config parsing; no unsafe in path")]
     #[test]
     #[cfg(feature = "listener")]
     fn test_check_remote_config_file_with_parsing_error() {

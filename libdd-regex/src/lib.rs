@@ -47,6 +47,7 @@ mod tests {
         assert!(Regex::new(r"[0-9]+").unwrap().is_match("abc123"));
     }
 
+    #[cfg_attr(miri, ignore = "external regex engine; no unsafe in path")]
     #[cfg(all(
         feature = "full",
         not(all(feature = "regex-lite", not(feature = "require-regex-full")))
@@ -56,6 +57,7 @@ mod tests {
         assert!(Regex::new(r"[a-z&&[^aeiou]]+").unwrap().is_match("rhythm"));
     }
 
+    #[cfg_attr(miri, ignore = "external regex engine; no unsafe in path")]
     #[cfg(all(
         feature = "full",
         not(all(feature = "regex-lite", not(feature = "require-regex-full")))
@@ -65,6 +67,7 @@ mod tests {
         assert!(Regex::new(r"\p{Greek}+").unwrap().is_match("Δοκιμή"));
     }
 
+    #[cfg_attr(miri, ignore = "pure metacharacter escaping; no unsafe in path")]
     #[test]
     fn escape_quotes_metacharacters() {
         assert_eq!(super::escape("a.b*c"), r"a\.b\*c");

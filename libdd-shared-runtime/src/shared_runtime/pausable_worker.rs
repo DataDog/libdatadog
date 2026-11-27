@@ -631,6 +631,10 @@ mod tests {
     }
 
     // Dropping a worker without shutdown makes pending flush tokens return `FlushAborted`.
+    #[cfg_attr(
+        miri,
+        ignore = "flush token without starting the worker loop; no unsafe in path"
+    )]
     #[test]
     fn test_drop_aborts_flush() {
         let (pw, _receiver, _, runtime) = setup();
@@ -643,6 +647,7 @@ mod tests {
     }
 
     // Requesting a flush on a worker in an invalid state returns an error.
+    #[cfg_attr(miri, ignore = "pure enum-state check; no unsafe in path")]
     #[test]
     fn test_request_flush_invalid_state() {
         let pw: PausableWorker<Box<dyn Worker>> = PausableWorker::InvalidState;

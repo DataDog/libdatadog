@@ -1103,6 +1103,7 @@ mod tests {
         }
     }
 
+    #[cfg_attr(miri, ignore = "no unsafe in path; pure payload encoding logic")]
     #[test]
     fn normalization_reuses_canonical_error_storage() {
         for code in ["FLAG_NOT_FOUND", "GENERAL"] {
@@ -1120,6 +1121,7 @@ mod tests {
         }
     }
 
+    #[cfg_attr(miri, ignore = "no unsafe in path; pure payload encoding logic")]
     #[test]
     fn protected_wire_omits_canary_without_upstream_normalization() {
         let mut event = full_event();
@@ -1137,6 +1139,7 @@ mod tests {
         );
     }
 
+    #[cfg_attr(miri, ignore = "no unsafe in path; pure payload encoding logic")]
     #[test]
     fn event_debug_redacts_sensitive_fields() {
         let mut event = full_event();
@@ -1154,6 +1157,7 @@ mod tests {
         assert!(!debug.contains("premium"));
     }
 
+    #[cfg_attr(miri, ignore = "no unsafe in path; pure payload encoding logic")]
     #[test]
     fn privacy_wire_modes_and_optional_identity() {
         for consent in [false, true] {
@@ -1186,6 +1190,7 @@ mod tests {
         }
     }
 
+    #[cfg_attr(miri, ignore = "no unsafe in path; pure payload encoding logic")]
     #[test]
     fn protected_wire_hashes_exact_text_even_when_hash_looking() {
         for (key, expected) in [
@@ -1211,6 +1216,7 @@ mod tests {
         }
     }
 
+    #[cfg_attr(miri, ignore = "no unsafe in path; pure payload encoding logic")]
     #[test]
     fn consent_separates_full_but_not_degraded_identity() {
         let mut protected = full_event();
@@ -1229,6 +1235,7 @@ mod tests {
         assert!(EventKey::new(&protected) == EventKey::new(&consented));
     }
 
+    #[cfg_attr(miri, ignore = "no unsafe in path; pure payload encoding logic")]
     #[test]
     fn mixed_consent_stays_separate_through_aggregation_and_encoding() {
         for protected_first in [false, true] {
@@ -1281,6 +1288,7 @@ mod tests {
         }
     }
 
+    #[cfg_attr(miri, ignore = "no unsafe in path; pure payload encoding logic")]
     #[test]
     fn pre_degraded_rows_coalesce_without_counting_a_cardinality_transition() {
         for first_consent in [false, true] {
@@ -1321,6 +1329,7 @@ mod tests {
         }
     }
 
+    #[cfg_attr(miri, ignore = "no unsafe in path; pure payload encoding logic")]
     #[test]
     fn privacy_merge_folds_consent_and_preserves_weighted_times() {
         for (first, second) in [(true, false), (false, true)] {
@@ -1340,6 +1349,7 @@ mod tests {
         }
     }
 
+    #[cfg_attr(miri, ignore = "no unsafe in path; pure payload encoding logic")]
     #[test]
     fn privacy_aggregation_discards_protected_context_and_raw_errors() {
         let coalescer = FlagEvaluationEvpCoalescer::default();
@@ -1368,6 +1378,7 @@ mod tests {
         assert_eq!(events[0].error.as_ref().unwrap().message, "GENERAL");
     }
 
+    #[cfg_attr(miri, ignore = "no unsafe in path; pure payload encoding logic")]
     #[test]
     fn privacy_degraded_wire_rejects_injected_sensitive_fields() {
         for consent in [false, true] {
@@ -1381,6 +1392,7 @@ mod tests {
         }
     }
 
+    #[cfg_attr(miri, ignore = "no unsafe in path; pure payload encoding logic")]
     #[test]
     fn direct_encoder_bounds_consented_context_and_omits_empty_errors() {
         let mut event = full_event();
@@ -1407,6 +1419,7 @@ mod tests {
         }
     }
 
+    #[cfg_attr(miri, ignore = "no unsafe in path; pure payload encoding logic")]
     #[test]
     fn prune_context_inspects_prefix_before_filtering_and_preserves_unicode() {
         let mut attrs = BTreeMap::new();
@@ -1420,6 +1433,7 @@ mod tests {
         assert!(!pruned.contains_key("256"));
     }
 
+    #[cfg_attr(miri, ignore = "no unsafe in path; pure payload encoding logic")]
     #[test]
     fn field_omissions_are_counted_once_per_evaluation_not_as_drops() {
         let mut event = full_event();
@@ -1509,6 +1523,7 @@ mod tests {
 
     // ── Test: required fields present in serialized JSON ──────────────────────
 
+    #[cfg_attr(miri, ignore = "no unsafe in path; pure payload encoding logic")]
     #[test]
     fn fully_populated_event_serializes_required_fields() {
         let batch = FfeFlagEvaluationBatch {
@@ -1562,6 +1577,7 @@ mod tests {
     // null-placeholder stripping that the flageval-worker schema requires
     // happens in the EVP payload encoder, not at the type level.
 
+    #[cfg_attr(miri, ignore = "no unsafe in path; pure payload encoding logic")]
     #[test]
     fn degraded_tier_event_serializes_optional_fields_as_null() {
         let degraded = degraded_event();
@@ -1597,6 +1613,7 @@ mod tests {
         );
     }
 
+    #[cfg_attr(miri, ignore = "no unsafe in path; pure payload encoding logic")]
     #[test]
     fn cap_sizing_constants_preserve_default_caps() {
         assert_eq!(EVAL_SCALE_FULL_BUCKET_TARGET, 125_000);
@@ -1616,6 +1633,7 @@ mod tests {
     // mixing a full-tier event (Some fields) and degraded-tier event (None
     // fields) must survive serialize→deserialize byte-for-byte.
 
+    #[cfg_attr(miri, ignore = "no unsafe in path; pure payload encoding logic")]
     #[test]
     fn batch_round_trips_via_bincode_with_mixed_optional_fields() {
         let batch = FfeFlagEvaluationBatch {
@@ -1633,6 +1651,7 @@ mod tests {
 
     // ── Test: context pruning — 256-field limit ───────────────────────────────
 
+    #[cfg_attr(miri, ignore = "no unsafe in path; pure payload encoding logic")]
     #[test]
     fn context_pruning_keeps_at_most_256_fields() {
         let mut attrs = BTreeMap::new();
@@ -1649,6 +1668,7 @@ mod tests {
 
     // ── Test: context pruning — skip string values > 256 chars ───────────────
 
+    #[cfg_attr(miri, ignore = "no unsafe in path; pure payload encoding logic")]
     #[test]
     fn context_pruning_skips_oversized_string_values() {
         let mut attrs = BTreeMap::new();
@@ -1672,6 +1692,7 @@ mod tests {
 
     // ── Test: batch round-trips via serde ────────────────────────────────────
 
+    #[cfg_attr(miri, ignore = "no unsafe in path; pure payload encoding logic")]
     #[test]
     fn batch_round_trips_via_serde() {
         let batch = FfeFlagEvaluationBatch {
@@ -1683,6 +1704,7 @@ mod tests {
         assert_eq!(batch, decoded);
     }
 
+    #[cfg_attr(miri, ignore = "no unsafe in path; pure payload encoding logic")]
     #[test]
     fn payload_encoding_strips_degraded_tier_placeholders() {
         let batch = FfeFlagEvaluationBatch {
@@ -1719,6 +1741,7 @@ mod tests {
         );
     }
 
+    #[cfg_attr(miri, ignore = "no unsafe in path; pure payload encoding logic")]
     #[test]
     fn payload_encoding_strips_empty_top_level_env_and_version_only_as_placeholders() {
         let batch = FfeFlagEvaluationBatch {
@@ -1748,6 +1771,7 @@ mod tests {
         );
     }
 
+    #[cfg_attr(miri, ignore = "no unsafe in path; pure payload encoding logic")]
     #[test]
     fn payload_encoding_keeps_full_tier_fields() {
         let mut event = full_event();
@@ -1805,6 +1829,7 @@ mod tests {
         );
     }
 
+    #[cfg_attr(miri, ignore = "no unsafe in path; pure payload encoding logic")]
     #[test]
     fn payload_encoding_collapses_empty_nested_context() {
         let mut ev = degraded_event();
@@ -1827,6 +1852,7 @@ mod tests {
         );
     }
 
+    #[cfg_attr(miri, ignore = "no unsafe in path; pure payload encoding logic")]
     #[test]
     fn payload_encoding_expands_evaluation_string_into_object() {
         let batch = FfeFlagEvaluationBatch {
@@ -1851,6 +1877,7 @@ mod tests {
         );
     }
 
+    #[cfg_attr(miri, ignore = "no unsafe in path; pure payload encoding logic")]
     #[test]
     fn payload_encoding_drops_unparseable_evaluation_gracefully() {
         let mut event = full_event();
@@ -1874,6 +1901,7 @@ mod tests {
         );
     }
 
+    #[cfg_attr(miri, ignore = "no unsafe in path; pure payload encoding logic")]
     #[test]
     fn placeholder_stripping_recurses_into_non_context_evaluation_objects() {
         let mut value = json!({
@@ -1899,6 +1927,7 @@ mod tests {
         );
     }
 
+    #[cfg_attr(miri, ignore = "no unsafe in path; pure payload encoding logic")]
     #[test]
     fn placeholder_stripping_preserves_context_evaluation_subtree() {
         let mut value = json!({
@@ -1927,6 +1956,7 @@ mod tests {
         assert!(value["context"].get("dd").is_none());
     }
 
+    #[cfg_attr(miri, ignore = "no unsafe in path; pure payload encoding logic")]
     #[test]
     fn payload_encoding_preserves_false_and_empty_context_values() {
         let mut event = full_event();
@@ -1957,6 +1987,7 @@ mod tests {
         assert!(evaluation["empty_array"].is_array());
     }
 
+    #[cfg_attr(miri, ignore = "no unsafe in path; pure payload encoding logic")]
     #[test]
     fn payload_encoding_empty_batch_has_no_payloads_or_splits() {
         let result = encode_flag_evaluation_payloads(
@@ -1974,6 +2005,7 @@ mod tests {
         assert_eq!(result.degraded_oversized_rows, 0);
     }
 
+    #[cfg_attr(miri, ignore = "no unsafe in path; pure payload encoding logic")]
     #[test]
     fn payload_encoding_splits_by_encoded_byte_limit() {
         let event = full_event();
@@ -2010,6 +2042,7 @@ mod tests {
         }
     }
 
+    #[cfg_attr(miri, ignore = "no unsafe in path; pure payload encoding logic")]
     #[test]
     fn payload_encoding_degrades_oversized_full_event_before_drop() {
         let mut oversized = full_event();
@@ -2092,6 +2125,7 @@ mod tests {
         assert_eq!(ev["error"]["message"], "GENERAL");
     }
 
+    #[cfg_attr(miri, ignore = "no unsafe in path; pure payload encoding logic")]
     #[test]
     fn payload_encoding_drops_oversized_degraded_event() {
         let mut oversized = degraded_event();
@@ -2112,6 +2146,7 @@ mod tests {
         assert_eq!(result.payload_splits, 0);
     }
 
+    #[cfg_attr(miri, ignore = "no unsafe in path; pure payload encoding logic")]
     #[test]
     fn coalescer_coalesces_identical_batches() {
         let coalescer = FlagEvaluationEvpCoalescer::<String>::default();
@@ -2197,6 +2232,7 @@ mod tests {
         assert_eq!(stats.rows_dropped_degraded_cap, 0);
     }
 
+    #[cfg_attr(miri, ignore = "no unsafe in path; pure payload encoding logic")]
     #[test]
     fn coalescer_counts_degraded_cap_drops_by_evaluation_count() {
         let coalescer = FlagEvaluationEvpCoalescer::<String>::default();
@@ -2248,6 +2284,7 @@ mod tests {
             .collect()
     }
 
+    #[cfg_attr(miri, ignore = "no unsafe in path; pure payload encoding logic")]
     #[test]
     fn features_split_full_buckets_and_equal_sets_merge() {
         let coalescer = FlagEvaluationEvpCoalescer::<String>::default();
@@ -2269,6 +2306,7 @@ mod tests {
         assert_eq!(counts[&None], 84);
     }
 
+    #[cfg_attr(miri, ignore = "no unsafe in path; pure payload encoding logic")]
     #[test]
     fn features_split_degraded_buckets() {
         let coalescer = FlagEvaluationEvpCoalescer::<String>::default();
@@ -2299,6 +2337,7 @@ mod tests {
         );
     }
 
+    #[cfg_attr(miri, ignore = "no unsafe in path; pure payload encoding logic")]
     #[test]
     fn payload_writes_features_in_every_tier_and_consent_mode() {
         let features = r#"{"holdout.key":"h1","service":"","included":false,"weight":0}"#;
@@ -2321,6 +2360,7 @@ mod tests {
         }
     }
 
+    #[cfg_attr(miri, ignore = "no unsafe in path; pure payload encoding logic")]
     #[test]
     fn payload_omits_absent_or_empty_features() {
         for features in [None, Some(String::new()), Some("not json".to_owned())] {
@@ -2338,6 +2378,7 @@ mod tests {
         }
     }
 
+    #[cfg_attr(miri, ignore = "no unsafe in path; pure payload encoding logic")]
     #[test]
     fn payload_limit_degradation_keeps_features() {
         let mut oversized = event_with_features(r#"{"holdout.key":"h1"}"#);
@@ -2367,6 +2408,7 @@ mod tests {
         assert_eq!(v["flagEvaluations"][0]["features"]["holdout.key"], "h1");
     }
 
+    #[cfg_attr(miri, ignore = "no unsafe in path; pure payload encoding logic")]
     #[test]
     fn full_and_degraded_buckets_keep_features_up_to_the_byte_cap() {
         use crate::telemetry::features::features_of_encoded_len;
@@ -2397,6 +2439,7 @@ mod tests {
         }
     }
 
+    #[cfg_attr(miri, ignore = "no unsafe in path; pure payload encoding logic")]
     #[test]
     fn features_round_trip_via_bincode() {
         let batch = FfeFlagEvaluationBatch {

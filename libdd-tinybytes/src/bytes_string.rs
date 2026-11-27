@@ -230,6 +230,7 @@ mod tests {
         assert_eq!(bytes_string.as_str(), "hello");
     }
 
+    #[cfg_attr(miri, ignore = "error path only; validation fails before any unsafe")]
     #[test]
     fn test_from_slice_invalid_utf8() {
         let invalid_utf8_slice = &[0, 159, 146, 150];

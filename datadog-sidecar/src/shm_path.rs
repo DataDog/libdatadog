@@ -36,6 +36,7 @@ mod tests {
 
     /// The paths built here are the ones each caller used to build itself: a tuple key hashes
     /// like its fields hashed in turn.
+    #[cfg_attr(miri, ignore = "pure shm path string derivation; no unsafe in path")]
     #[test]
     fn a_keyed_path_is_the_one_callers_built_before() {
         let (env, version, service) = ("env", "1.0", "service");
@@ -58,6 +59,7 @@ mod tests {
         );
     }
 
+    #[cfg_attr(miri, ignore = "pure shm path string derivation; no unsafe in path")]
     #[test]
     fn a_path_fits_macos_names() {
         let path = keyed_shm_path("a-very-long-prefix-for-a-segment", &"key");

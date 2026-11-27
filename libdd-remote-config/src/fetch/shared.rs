@@ -692,6 +692,7 @@ pub mod tests {
         assert!(storage.0.files.lock().unwrap().is_empty());
     }
 
+    #[cfg_attr(miri, ignore = "pure mutex/refcount stress; no unsafe in path")]
     #[tokio::test]
     async fn stats_and_expiration_do_not_deadlock() {
         let storage = RefcountingStorage::new(

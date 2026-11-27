@@ -134,6 +134,7 @@ mod tests {
         assert_eq!(roundtrip, roundtrip2);
     }
 
+    #[cfg_attr(miri, ignore = "no unsafe in path; safe-code encode plus prost decode")]
     #[test]
     fn basic() {
         let location = Location {
@@ -148,6 +149,7 @@ mod tests {
         test(&location);
     }
 
+    #[cfg_attr(miri, ignore = "no unsafe in path; safe-code encode plus prost decode")]
     #[test]
     fn roundtrip() {
         bolero::check!().with_type::<Location>().for_each(test);

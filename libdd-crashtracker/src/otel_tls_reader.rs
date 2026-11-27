@@ -421,6 +421,7 @@ mod tests {
         buf
     }
 
+    #[cfg_attr(miri, ignore = "pure byte decoding; unsafe tls scanning not exercised")]
     #[test]
     fn decode_valid_record() {
         let trace_id: [u8; 16] = core::array::from_fn(|i| (i + 1) as u8);
@@ -442,6 +443,7 @@ mod tests {
         assert_eq!(ctx.attributes[0].value, "abcdef0123456789");
     }
 
+    #[cfg_attr(miri, ignore = "pure byte decoding; unsafe tls scanning not exercised")]
     #[test]
     fn decode_header_only_record() {
         let data = make_record(&[0xAA; 16], &[0xBB; 8], 0x00, &[]);
@@ -450,6 +452,7 @@ mod tests {
         assert!(ctx.attributes.is_empty());
     }
 
+    #[cfg_attr(miri, ignore = "pure byte decoding; unsafe tls scanning not exercised")]
     #[test]
     fn decode_invalid_record_returns_none() {
         let mut data = make_record(&[0; 16], &[0; 8], 0, &[]);
@@ -457,16 +460,19 @@ mod tests {
         assert!(decode_record(1, &data).is_none());
     }
 
+    #[cfg_attr(miri, ignore = "pure byte decoding; unsafe tls scanning not exercised")]
     #[test]
     fn decode_too_short_returns_none() {
         assert!(decode_record(1, &[0u8; 10]).is_none());
     }
 
+    #[cfg_attr(miri, ignore = "pure byte decoding; unsafe tls scanning not exercised")]
     #[test]
     fn decode_attributes_empty() {
         assert!(decode_attributes(&[]).is_empty());
     }
 
+    #[cfg_attr(miri, ignore = "pure byte decoding; unsafe tls scanning not exercised")]
     #[test]
     fn decode_attributes_multiple() {
         let data = [
@@ -481,12 +487,14 @@ mod tests {
         assert_eq!(attrs[1].value, "test");
     }
 
+    #[cfg_attr(miri, ignore = "pure byte decoding; unsafe tls scanning not exercised")]
     #[test]
     fn decode_attributes_truncated() {
         let data = [0, 10, b'a', b'b', b'c'];
         assert!(decode_attributes(&data).is_empty());
     }
 
+    #[cfg_attr(miri, ignore = "pure byte-to-hex formatting; no unsafe in path")]
     #[test]
     fn bytes_to_hex_works() {
         assert_eq!(bytes_to_hex(&[0x00, 0xff, 0xab, 0xcd]), "00ffabcd");

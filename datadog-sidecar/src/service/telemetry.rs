@@ -886,6 +886,7 @@ mod tests {
         );
     }
 
+    #[cfg_attr(miri, ignore = "shm path string derivation; no unsafe in path")]
     #[test]
     fn shm_paths_distinguish_services_and_environments() {
         let path = path_for_telemetry("service-a", "env-a");
@@ -1013,6 +1014,10 @@ mod tests {
     }
 
     /// A delayed removal must not evict a newer client stored under the same key.
+    #[cfg_attr(
+        miri,
+        ignore = "client-cache logic over tokio channels; no unsafe in path"
+    )]
     #[test]
     fn stale_client_removal_preserves_replacement() {
         let clients = TelemetryCachedClientSet {
@@ -1040,6 +1045,10 @@ mod tests {
         assert!(clients.inner.lock_or_panic().is_empty());
     }
 
+    #[cfg_attr(
+        miri,
+        ignore = "client-cache logic over tokio channels; no unsafe in path"
+    )]
     #[test]
     fn in_process_client_keeps_instance_and_rebinds_application() {
         let (sender, mut receiver) = mpsc::channel(2);

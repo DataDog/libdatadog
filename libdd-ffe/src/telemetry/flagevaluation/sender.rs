@@ -594,6 +594,7 @@ mod tests {
         .await;
     }
 
+    #[cfg_attr(miri, ignore = "no unsafe in path; pure endpoint URL construction")]
     #[test]
     fn endpoint_preserves_authority_overrides_path() {
         let base = Endpoint {
@@ -606,6 +607,7 @@ mod tests {
         assert_eq!(ep.url.path(), EVP_FLAGEVALUATION_PATH);
     }
 
+    #[cfg_attr(miri, ignore = "no unsafe in path; pure endpoint URL construction")]
     #[test]
     fn endpoint_rejects_agentless() {
         let base = Endpoint {

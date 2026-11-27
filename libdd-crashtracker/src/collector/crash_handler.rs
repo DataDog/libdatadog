@@ -671,6 +671,7 @@ mod tests {
         }
     }
 
+    #[cfg_attr(miri, ignore = "pure string formatting; no unsafe in path")]
     #[test]
     fn test_format_message_with_message_and_location() {
         let location = panic::Location::caller();
@@ -682,12 +683,14 @@ mod tests {
         assert!(result.ends_with(&format!("{})", location.column())));
     }
 
+    #[cfg_attr(miri, ignore = "pure string formatting; no unsafe in path")]
     #[test]
     fn test_format_message_with_message_no_location() {
         let result = format_message("message", "test panic", None);
         assert_eq!(result, "Process panicked with message \"test panic\"");
     }
 
+    #[cfg_attr(miri, ignore = "pure string formatting; no unsafe in path")]
     #[test]
     fn test_format_message_empty_message_with_location() {
         let location = panic::Location::caller();
@@ -698,12 +701,14 @@ mod tests {
         assert!(result.ends_with(&format!("{})", location.column())));
     }
 
+    #[cfg_attr(miri, ignore = "pure string formatting; no unsafe in path")]
     #[test]
     fn test_format_message_empty_message_no_location() {
         let result = format_message("unknown type", "", None);
         assert_eq!(result, "Process panicked with unknown type");
     }
 
+    #[cfg_attr(miri, ignore = "pure string formatting; no unsafe in path")]
     #[test]
     fn test_format_message_different_categories() {
         let result1 = format_message("message", "test", None);
@@ -716,6 +721,7 @@ mod tests {
         assert_eq!(result3, "Process panicked with custom category \"content\"");
     }
 
+    #[cfg_attr(miri, ignore = "pure string formatting; no unsafe in path")]
     #[test]
     fn test_format_message_with_special_characters() {
         let result = format_message("message", "test \"quoted\" 'text'", None);

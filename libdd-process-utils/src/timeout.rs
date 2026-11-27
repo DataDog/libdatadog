@@ -54,6 +54,7 @@ impl core::fmt::Debug for TimeoutManager {
 mod tests {
     use super::*;
 
+    #[cfg_attr(miri, ignore = "instant/duration arithmetic; no unsafe in path")]
     #[test]
     fn test_timeout_manager_new() {
         let timeout = Duration::from_secs(5);
@@ -63,6 +64,7 @@ mod tests {
         assert!(manager.remaining() >= TimeoutManager::MINIMUM_REAP_TIME);
     }
 
+    #[cfg_attr(miri, ignore = "instant/duration arithmetic; no unsafe in path")]
     #[test]
     fn test_timeout_manager_remaining() {
         let timeout = Duration::from_millis(100);
@@ -79,6 +81,7 @@ mod tests {
         assert!(remaining_after_sleep >= TimeoutManager::MINIMUM_REAP_TIME);
     }
 
+    #[cfg_attr(miri, ignore = "instant/duration arithmetic; no unsafe in path")]
     #[test]
     fn test_timeout_manager_elapsed() {
         let timeout = Duration::from_secs(1);
@@ -93,6 +96,7 @@ mod tests {
         assert!(elapsed >= Duration::from_millis(10));
     }
 
+    #[cfg_attr(miri, ignore = "instant/duration arithmetic; no unsafe in path")]
     #[test]
     fn test_timeout_manager_minimum_reap_time() {
         let timeout = Duration::from_millis(50); // Less than MINIMUM_REAP_TIME
@@ -102,6 +106,7 @@ mod tests {
         assert_eq!(manager.remaining(), TimeoutManager::MINIMUM_REAP_TIME);
     }
 
+    #[cfg_attr(miri, ignore = "instant/duration arithmetic; no unsafe in path")]
     #[test]
     fn test_timeout_manager_debug() {
         let timeout = Duration::from_secs(1);
@@ -117,6 +122,7 @@ mod tests {
         assert!(debug_str.contains("remaining"));
     }
 
+    #[cfg_attr(miri, ignore = "instant/duration arithmetic; no unsafe in path")]
     #[test]
     fn test_timeout_manager_timeout_exceeded() {
         let timeout = Duration::from_millis(10);

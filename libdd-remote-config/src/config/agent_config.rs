@@ -61,6 +61,7 @@ pub fn parse_json(data: &[u8]) -> serde_json::error::Result<AgentConfigFile> {
 mod tests {
     use super::*;
 
+    #[cfg_attr(miri, ignore = "pure config parsing; no unsafe in path")]
     #[test]
     fn test_valid_config_with_log_level() {
         let json_data = r#"{
@@ -77,6 +78,7 @@ mod tests {
         assert_eq!(config.config.log_level, Some("debug".to_string()));
     }
 
+    #[cfg_attr(miri, ignore = "pure config parsing; no unsafe in path")]
     #[test]
     fn test_valid_config_without_log_level() {
         let json_data = r#"{
@@ -91,6 +93,7 @@ mod tests {
         assert_eq!(config.config.log_level, None);
     }
 
+    #[cfg_attr(miri, ignore = "pure config parsing; no unsafe in path")]
     #[test]
     fn test_missing_required_field_name() {
         let json_data = r#"{
@@ -103,6 +106,7 @@ mod tests {
         assert!(result.is_err());
     }
 
+    #[cfg_attr(miri, ignore = "pure config parsing; no unsafe in path")]
     #[test]
     fn test_serialization() {
         let config = AgentConfigFile {

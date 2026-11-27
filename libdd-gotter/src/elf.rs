@@ -1312,6 +1312,7 @@ mod tests {
         MAPS_READS.with(|reads| reads.set(0));
     }
 
+    #[cfg_attr(miri, ignore = "no unsafe in path; pure maps range lookup")]
     #[test]
     fn page_prot_guard_finds_original_mapping_protection() {
         let guard = PageProtGuard {
@@ -1350,6 +1351,7 @@ mod tests {
         assert_eq!(maps_reads(), 2);
     }
 
+    #[cfg_attr(miri, ignore = "no unsafe in path; pure snapshot caching logic")]
     #[test]
     fn maps_snapshot_does_not_cache_failed_reads() {
         let entry = MapEntry {
@@ -1517,6 +1519,7 @@ mod tests {
         );
     }
 
+    #[cfg_attr(miri, ignore = "no unsafe in path; pure hash arithmetic")]
     #[test]
     fn test_sysv_hash_known_values() {
         // Reference values from the ELF spec and glibc's dl-hash.h.
@@ -1734,6 +1737,7 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
+    #[cfg_attr(miri, ignore = "no unsafe in path; pure reloc-type matching")]
     #[test]
     fn test_is_got_pointer_reloc_accepts_pointer_width_types() {
         // x86_64
@@ -1746,6 +1750,7 @@ mod tests {
         assert!(is_got_pointer_reloc(1026)); // R_AARCH64_JUMP_SLOT
     }
 
+    #[cfg_attr(miri, ignore = "no unsafe in path; pure reloc-type matching")]
     #[test]
     fn test_is_got_pointer_reloc_rejects_non_pointer_types() {
         assert!(!is_got_pointer_reloc(0)); // R_*_NONE
@@ -1758,6 +1763,7 @@ mod tests {
         assert!(!is_got_pointer_reloc(u32::MAX));
     }
 
+    #[cfg_attr(miri, ignore = "no unsafe in path; pure reloc-type matching")]
     #[test]
     fn test_is_rela_got_pointer_reloc_addend_is_ignored_for_got_slots() {
         const R_X86_64_64: u32 = 1;
@@ -1873,6 +1879,7 @@ mod tests {
         }
     }
 
+    #[cfg_attr(miri, ignore = "no unsafe in path; pure phdr range scan")]
     #[test]
     fn find_containing_load_segment_hit() {
         let phdrs = [
@@ -1891,6 +1898,7 @@ mod tests {
         );
     }
 
+    #[cfg_attr(miri, ignore = "no unsafe in path; pure phdr range scan")]
     #[test]
     fn find_containing_load_segment_miss() {
         let phdrs = [make_load_phdr(0x1000, 0x2000)];
@@ -1900,6 +1908,7 @@ mod tests {
         assert_eq!(find_containing_load_segment(&phdrs, 0, 0x3000), None);
     }
 
+    #[cfg_attr(miri, ignore = "no unsafe in path; pure phdr range scan")]
     #[test]
     fn find_containing_load_segment_with_base() {
         let phdrs = [make_load_phdr(0x1000, 0x2000)];
@@ -1913,6 +1922,7 @@ mod tests {
         assert_eq!(find_containing_load_segment(&phdrs, base, 0x1000), None);
     }
 
+    #[cfg_attr(miri, ignore = "no unsafe in path; pure phdr range scan")]
     #[test]
     fn find_containing_load_segment_skips_non_load() {
         let mut phdr = make_load_phdr(0x1000, 0x2000);

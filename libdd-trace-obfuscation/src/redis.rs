@@ -397,6 +397,7 @@ mod tests {
     [fuzzing_crlf] ["\r\n"] ["\r"];
     [fuzzing_box_char] ["𖺻"] ["𖺻"];
     )]
+    #[cfg_attr(miri, ignore = "pure redis string obfuscation; no unsafe in path")]
     #[test]
     fn test_name() {
         let result = quantize_redis_string(input);
@@ -493,6 +494,7 @@ SET k v
 SET k ?"];
     [test_obfuscate_redis_string_67] ["HSET key field value field value"] ["HSET key field ? field ?"];
     )]
+    #[cfg_attr(miri, ignore = "pure redis string obfuscation; no unsafe in path")]
     #[test]
     fn test_name() {
         let result = obfuscate_redis_string(input);
@@ -521,6 +523,7 @@ SET k ?"];
     [test_obfuscate_fuzzing_unicode] ["\u{00b}ჸ"] ["ჸ"];
     [test_obfuscate_fuzzing_whitespaces] ["ჸ\n\tჸ"] ["ჸ ?"];
     )]
+    #[cfg_attr(miri, ignore = "pure redis string obfuscation; no unsafe in path")]
     #[test]
     fn test_name() {
         let result = remove_all_redis_args(input);

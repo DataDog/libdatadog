@@ -64,6 +64,7 @@ fn value_of(projection: &Projection, name: &str) -> Vec<f64> {
         .collect()
 }
 
+#[cfg_attr(miri, ignore = "no unsafe in path; pure validation logic")]
 #[test]
 fn provider_attempt_checks_run_in_the_contract_order() {
     // Each input breaks the rule of one step and of a later step; the
@@ -128,6 +129,7 @@ fn provider_attempt_checks_run_in_the_contract_order() {
     }
 }
 
+#[cfg_attr(miri, ignore = "no unsafe in path; pure validation logic")]
 #[test]
 fn count_checks_follow_the_field_order_and_do_not_depend_on_member_order() {
     // Both inputs hold the same two faults, written in opposite orders.
@@ -158,6 +160,7 @@ fn count_checks_follow_the_field_order_and_do_not_depend_on_member_order() {
 /// valid on a calculated cost and on an estimated cost that states
 /// `cost_rate_card`. A stated card outside the grammar is left off the point
 /// and the bound is kept.
+#[cfg_attr(miri, ignore = "no unsafe in path; pure validation logic")]
 #[test]
 fn a_lower_bound_needs_a_calculation_or_an_estimate_that_names_its_card() {
     const COUNTER: &str = "trajectory.gen_ai.client.inference.usage.cost";
@@ -226,6 +229,7 @@ fn a_lower_bound_needs_a_calculation_or_an_estimate_that_names_its_card() {
     }
 }
 
+#[cfg_attr(miri, ignore = "no unsafe in path; pure validation logic")]
 #[test]
 fn the_cost_contradictions_run_in_their_own_order() {
     let cost = |members: &str| code(&format!("{BASE}, {members}"));
@@ -264,6 +268,7 @@ fn the_cost_contradictions_run_in_their_own_order() {
     assert_eq!(unusable.points.len(), 1);
 }
 
+#[cfg_attr(miri, ignore = "no unsafe in path; pure validation logic")]
 #[test]
 fn a_bad_rate_card_is_an_issue_only_on_a_cost_that_is_recorded() {
     let projection = attempt(&format!(
@@ -280,6 +285,7 @@ fn a_bad_rate_card_is_an_issue_only_on_a_cost_that_is_recorded() {
     assert_eq!(recorded.points.len(), 3);
 }
 
+#[cfg_attr(miri, ignore = "no unsafe in path; pure validation logic")]
 #[test]
 fn numbers_no_double_holds_follow_the_table_for_each_kind_of_field() {
     assert_eq!(code(&BASE.replace(": 1,", ": 1e400,")), "duration_invalid");
@@ -323,6 +329,7 @@ fn numbers_no_double_holds_follow_the_table_for_each_kind_of_field() {
     assert_eq!(streaming.map(|_| ()), Err("duration_invalid"));
 }
 
+#[cfg_attr(miri, ignore = "no unsafe in path; pure validation logic")]
 #[test]
 fn output_parts_without_a_total_are_recorded_with_an_issue() {
     let projection = attempt(&format!(
@@ -350,6 +357,7 @@ fn output_parts_without_a_total_are_recorded_with_an_issue() {
     assert_eq!(parts, [("text", 1.0), ("audio", 3.0)]);
 }
 
+#[cfg_attr(miri, ignore = "no unsafe in path; pure validation logic")]
 #[test]
 fn normalization_keeps_every_issue_and_each_profile_reports_its_own() {
     let usage = ReportedUsage {
@@ -384,6 +392,7 @@ fn normalization_keeps_every_issue_and_each_profile_reports_its_own() {
     );
 }
 
+#[cfg_attr(miri, ignore = "no unsafe in path; pure validation logic")]
 #[test]
 fn an_inclusive_total_above_the_bound_is_not_known() {
     let projection = attempt(&format!(
@@ -404,6 +413,7 @@ fn an_inclusive_total_above_the_bound_is_not_known() {
     );
 }
 
+#[cfg_attr(miri, ignore = "no unsafe in path; pure validation logic")]
 #[test]
 fn a_null_modality_part_is_absent_whatever_its_key() {
     let projection = attempt(&format!(
@@ -417,6 +427,7 @@ fn a_null_modality_part_is_absent_whatever_its_key() {
     );
 }
 
+#[cfg_attr(miri, ignore = "no unsafe in path; pure validation logic")]
 #[test]
 fn a_missing_observation_is_required_and_another_type_is_wrong() {
     for profile in [

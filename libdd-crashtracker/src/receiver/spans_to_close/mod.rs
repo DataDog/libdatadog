@@ -454,6 +454,7 @@ mod tests {
         encode_v1::to_vec_from_v1(payload)
     }
 
+    #[cfg_attr(miri, ignore = "safe span finishing and msgpack roundtrip; no unsafe")]
     #[test]
     fn builds_finishes_and_encodes_the_described_spans() {
         let crash = crash(
@@ -531,6 +532,7 @@ mod tests {
         assert!(attr(step, "_top_level").is_none());
     }
 
+    #[cfg_attr(miri, ignore = "safe span finishing and msgpack roundtrip; no unsafe")]
     #[test]
     fn keeps_the_staged_message_and_priority_and_never_ends_before_the_start() {
         let mut block = block();
@@ -614,6 +616,7 @@ mod tests {
             .to_string()
     }
 
+    #[cfg_attr(miri, ignore = "safe url scheme checks; no unsafe in path")]
     #[test]
     fn traces_go_to_the_blocks_agent_for_http_and_unix_agents() {
         let crash = Endpoint::from_slice("http://other:8126");
@@ -628,6 +631,7 @@ mod tests {
         assert_eq!(unix.url.path(), V1_TRACES_PATH);
     }
 
+    #[cfg_attr(miri, ignore = "safe url scheme checks; no unsafe in path")]
     #[test]
     fn traces_without_an_agent_url_go_to_the_crash_trackers_agent() {
         let mut crash =
@@ -647,6 +651,7 @@ mod tests {
         );
     }
 
+    #[cfg_attr(miri, ignore = "safe url scheme checks; no unsafe in path")]
     #[test]
     fn traces_without_an_agent_url_need_an_agent_endpoint() {
         let mut intake = Endpoint::from_slice("https://intake.datadoghq.com");
@@ -830,6 +835,7 @@ mod tests {
         );
     }
 
+    #[cfg_attr(miri, ignore = "safe url scheme checks; no unsafe in path")]
     #[test]
     fn agent_urls_must_be_http_or_unix() {
         for url in [
@@ -852,6 +858,7 @@ mod tests {
         );
     }
 
+    #[cfg_attr(miri, ignore = "safe span finishing and msgpack roundtrip; no unsafe")]
     #[test]
     fn staged_top_level_markers_are_sent_as_is() {
         let child = |attributes: &str| {

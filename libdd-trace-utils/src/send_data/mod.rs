@@ -540,6 +540,10 @@ mod tests {
         }
     }
 
+    #[cfg_attr(
+        miri,
+        ignore = "pure SendData construction over prost payloads; no unsafe in path"
+    )]
     #[test]
     fn send_data_new_api_key() {
         let header_tags = TracerHeaderTags::default();
@@ -563,6 +567,10 @@ mod tests {
         assert_eq!(data.target.url.path(), "/foo/bar");
     }
 
+    #[cfg_attr(
+        miri,
+        ignore = "pure SendData construction over prost payloads; no unsafe in path"
+    )]
     #[test]
     fn send_data_new_no_api_key() {
         let header_tags = TracerHeaderTags::default();
@@ -1128,6 +1136,10 @@ mod tests {
         assert_eq!(res.responses_count_per_code.len(), 0);
     }
 
+    #[cfg_attr(
+        miri,
+        ignore = "pure SendData construction over prost payloads; no unsafe in path"
+    )]
     #[test]
     fn test_builder() {
         let header_tags = HEADER_TAGS;

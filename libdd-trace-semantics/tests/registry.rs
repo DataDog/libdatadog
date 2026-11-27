@@ -14,6 +14,7 @@ fn mappings() -> Value {
     serde_json::from_str(include_str!("../mappings.json")).unwrap_or_default()
 }
 
+#[cfg_attr(miri, ignore = "no unsafe in crate; pure registry lookup logic")]
 #[test]
 fn version_and_hash_come_from_the_json() {
     let json = mappings();
@@ -26,6 +27,7 @@ fn version_and_hash_come_from_the_json() {
     );
 }
 
+#[cfg_attr(miri, ignore = "no unsafe in crate; pure registry lookup logic")]
 #[test]
 fn every_concept_is_generated_with_its_entries_in_order() {
     let json = mappings();
@@ -81,6 +83,7 @@ fn every_concept_is_generated_with_its_entries_in_order() {
     }
 }
 
+#[cfg_attr(miri, ignore = "no unsafe in crate; pure registry lookup logic")]
 #[test]
 fn concept_by_name() {
     assert_eq!(concept("http.method"), Some(Concept::HttpMethod));
@@ -94,6 +97,7 @@ fn concept_by_name() {
     assert_eq!(concept(""), None);
 }
 
+#[cfg_attr(miri, ignore = "no unsafe in crate; pure registry lookup logic")]
 #[test]
 fn http_method_prefers_otel_name() {
     let names: Vec<_> = Concept::HttpMethod
@@ -106,6 +110,7 @@ fn http_method_prefers_otel_name() {
 
 /// Callers read promoted tags with their trait-model getters (e.g. `Span::span_kind`), not with
 /// lookups, so a registry update that gives one of them another name would be silently missed.
+#[cfg_attr(miri, ignore = "no unsafe in crate; pure registry lookup logic")]
 #[test]
 fn promoted_tags_have_no_other_names() {
     for tag in PROMOTED_SPAN_TAGS.into_iter().chain(PROMOTED_CHUNK_TAGS) {

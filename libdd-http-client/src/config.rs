@@ -241,6 +241,7 @@ mod tests {
         let _ = rustls::crypto::ring::default_provider().install_default();
     }
 
+    #[cfg_attr(miri, ignore = "no unsafe in path; pure config getter logic")]
     #[test]
     fn config_getters() {
         let config =
@@ -250,6 +251,7 @@ mod tests {
         assert!(config.treat_http_errors_as_errors());
     }
 
+    #[cfg_attr(miri, ignore = "no unsafe in path; pure builder validation logic")]
     #[test]
     fn builder_missing_base_url() {
         let result = HttpClientBuilder::new()
@@ -264,6 +266,7 @@ mod tests {
         );
     }
 
+    #[cfg_attr(miri, ignore = "no unsafe in path; pure builder validation logic")]
     #[test]
     fn builder_missing_timeout() {
         let result = HttpClientBuilder::new()

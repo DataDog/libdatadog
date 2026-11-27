@@ -274,6 +274,7 @@ impl AgentClientBuilder {
 mod tests {
     use super::*;
 
+    #[cfg_attr(miri, ignore = "no unsafe in path; pure builder validation logic")]
     #[test]
     fn build_fails_without_transport() {
         let result = AgentClientBuilder::new()
@@ -284,6 +285,7 @@ mod tests {
         assert!(matches!(result, Err(BuildError::MissingTransport)));
     }
 
+    #[cfg_attr(miri, ignore = "no unsafe in path; pure builder validation logic")]
     #[test]
     fn build_fails_without_language_metadata() {
         let result = AgentClientBuilder::new().http("localhost", 8126).build();

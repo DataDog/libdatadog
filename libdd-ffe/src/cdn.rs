@@ -121,6 +121,7 @@ impl<S: ConfigurationSink> CdnFetcher<S> {
 mod tests {
     use super::*;
 
+    #[cfg_attr(miri, ignore = "no unsafe in path; pure serde deserialization logic")]
     #[test]
     fn subscription_wire_format_preserves_identity_and_redacts_credentials() {
         let config = CdnConfig {
@@ -148,6 +149,7 @@ mod tests {
         assert_ne!(other, config);
     }
 
+    #[cfg_attr(miri, ignore = "no unsafe in path; pure serde deserialization logic")]
     #[test]
     fn deserialized_settings_cannot_bypass_endpoint_and_timing_validation() {
         let mut config = CdnConfig {
@@ -180,6 +182,7 @@ mod tests {
         assert!(config.validate().is_ok());
     }
 
+    #[cfg_attr(miri, ignore = "no unsafe in path; pure serde deserialization logic")]
     #[test]
     fn a_subscription_without_a_service_still_deserializes() {
         let config = CdnConfig {
@@ -196,6 +199,7 @@ mod tests {
         assert_eq!(decoded.service, None);
     }
 
+    #[cfg_attr(miri, ignore = "no unsafe in path; pure serde deserialization logic")]
     #[test]
     fn invalid_config_identifies_the_field_without_disclosing_values() {
         let config = CdnConfig {

@@ -184,6 +184,7 @@ mod tests {
 
     // --- ReportingAllocator ---
 
+    #[cfg_attr(miri, ignore = "no unsafe in path; pure arithmetic")]
     #[test]
     fn new_starts_at_zero() {
         let a = ReportingAllocator::new(System);
@@ -231,6 +232,7 @@ mod tests {
 
     // --- AllocatedBytesMeasurement ---
 
+    #[cfg_attr(miri, ignore = "no unsafe in path; pure arithmetic")]
     #[test]
     fn measurement_zero_and_add() {
         let m = AllocatedBytesMeasurement(Cell::new(false), &SHARED);
@@ -249,6 +251,7 @@ mod tests {
         unsafe { SHARED.dealloc(ptr, layout) };
     }
 
+    #[cfg_attr(miri, ignore = "no unsafe in path; pure arithmetic")]
     #[test]
     fn measurement_to_f64_alternates_epsilon() {
         let m = AllocatedBytesMeasurement(Cell::new(false), &SHARED);
@@ -260,6 +263,7 @@ mod tests {
         assert!((m.to_f64(&1000) - 999.99).abs() < 1e-9);
     }
 
+    #[cfg_attr(miri, ignore = "no unsafe in path; pure arithmetic")]
     #[test]
     fn measurement_name() {
         assert_eq!(
@@ -270,6 +274,7 @@ mod tests {
 
     // --- AllocationFormatter::scale_values ---
 
+    #[cfg_attr(miri, ignore = "no unsafe in path; pure arithmetic")]
     #[test]
     fn scale_values_zero_returns_bytes() {
         let f = AllocationFormatter;
@@ -277,6 +282,7 @@ mod tests {
         assert_eq!(f.scale_values(0.0, &mut v), "b");
     }
 
+    #[cfg_attr(miri, ignore = "no unsafe in path; pure arithmetic")]
     #[test]
     fn scale_values_sub_byte_returns_bytes() {
         let f = AllocationFormatter;
@@ -285,6 +291,7 @@ mod tests {
         assert_eq!(f.scale_values(0.1, &mut v), "b");
     }
 
+    #[cfg_attr(miri, ignore = "no unsafe in path; pure arithmetic")]
     #[test]
     fn scale_values_bytes() {
         let f = AllocationFormatter;
@@ -293,6 +300,7 @@ mod tests {
         assert!((v[0] - 1.0).abs() < 1e-9);
     }
 
+    #[cfg_attr(miri, ignore = "no unsafe in path; pure arithmetic")]
     #[test]
     fn scale_values_kilobytes() {
         let f = AllocationFormatter;
@@ -301,6 +309,7 @@ mod tests {
         assert!((v[0] - 2.0).abs() < 1e-9);
     }
 
+    #[cfg_attr(miri, ignore = "no unsafe in path; pure arithmetic")]
     #[test]
     fn scale_values_megabytes() {
         let f = AllocationFormatter;
@@ -309,6 +318,7 @@ mod tests {
         assert!((v[0] - 3.0).abs() < 1e-9);
     }
 
+    #[cfg_attr(miri, ignore = "no unsafe in path; pure arithmetic")]
     #[test]
     fn scale_values_gigabytes() {
         let f = AllocationFormatter;
@@ -317,6 +327,7 @@ mod tests {
         assert!((v[0] - 4.0).abs() < 1e-9);
     }
 
+    #[cfg_attr(miri, ignore = "no unsafe in path; pure arithmetic")]
     #[test]
     fn scale_values_terabytes() {
         let f = AllocationFormatter;
@@ -325,6 +336,7 @@ mod tests {
         assert!((v[0] - 5.0).abs() < 1e-9);
     }
 
+    #[cfg_attr(miri, ignore = "no unsafe in path; pure arithmetic")]
     #[test]
     fn scale_values_very_large_clamps_to_terabytes() {
         let f = AllocationFormatter;
@@ -332,6 +344,7 @@ mod tests {
         assert_eq!(f.scale_values(1e18, &mut v), "Tb");
     }
 
+    #[cfg_attr(miri, ignore = "no unsafe in path; pure arithmetic")]
     #[test]
     fn scale_for_machines_returns_bytes_unit() {
         let f = AllocationFormatter;

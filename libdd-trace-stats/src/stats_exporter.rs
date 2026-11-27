@@ -817,6 +817,7 @@ mod tests {
     const BUCKETS_DURATION: Duration = Duration::from_secs(10);
 
     /// Fails to compile if stats exporter is not Send and Sync
+    #[cfg_attr(miri, ignore = "static send/sync assert; no unsafe in path")]
     #[test]
     fn test_stats_exporter_sync_send() {
         let _ = is_send::<StatsExporter<NativeCapabilities>>;
@@ -919,6 +920,7 @@ mod tests {
         mock.assert_calls_async(2).await;
     }
 
+    #[cfg_attr(miri, ignore = "encoding via external rmp_serde; no unsafe in path")]
     #[test]
     fn mutable_metadata_updates_propagate_to_encoded_payloads() {
         let meta = get_test_metadata();
@@ -1342,6 +1344,7 @@ mod tests {
         );
     }
 
+    #[cfg_attr(miri, ignore = "encoding via external rmp_serde; no unsafe in path")]
     #[test]
     fn test_encode_stats_payload_defaults_empty_env() {
         // Test that empty env defaults to "unknown-env"

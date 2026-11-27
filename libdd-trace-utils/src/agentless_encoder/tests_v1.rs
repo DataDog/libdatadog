@@ -19,6 +19,10 @@ fn bs(s: &str) -> BytesString {
 // Demonstrates that serde_json ignores the `len` hint passed to `serialize_map` (other than the
 // `Some(0)` special case): the bytes produced are identical whether the hint is `None` or the
 // exact entry count, so precomputing it buys nothing for this serializer.
+#[cfg_attr(
+    miri,
+    ignore = "pure serde_json map len hint behavior; no crate code in path"
+)]
 #[test]
 fn serde_json_serialize_map_len_hint_does_not_affect_output() {
     use serde::ser::{SerializeMap, Serializer};
@@ -65,6 +69,10 @@ fn json_from_bytes(b: &[u8]) -> Value {
     serde_json::from_slice(b).expect("payload must be valid JSON")
 }
 
+#[cfg_attr(
+    miri,
+    ignore = "metadata-handle propagation logic; only sibling tinybytes unsafe in path, covered by libdd-tinybytes miri tests"
+)]
 #[test]
 fn runtime_id_updates_propagate_through_the_metadata_handle() {
     let metadata = base_metadata();

@@ -38,6 +38,7 @@ impl HttpResponse {
 mod tests {
     use super::*;
 
+    #[cfg_attr(miri, ignore = "no unsafe in path; pure response struct field checks")]
     #[test]
     fn fields_accessible() {
         let resp = HttpResponse {
@@ -52,6 +53,7 @@ mod tests {
         assert_eq!(resp.body.as_ref(), b"{\"ok\":true}");
     }
 
+    #[cfg_attr(miri, ignore = "no unsafe in path; pure response struct field checks")]
     #[test]
     fn empty_response() {
         let resp = HttpResponse {
@@ -64,6 +66,7 @@ mod tests {
         assert!(resp.body.is_empty());
     }
 
+    #[cfg_attr(miri, ignore = "no unsafe in path; pure debug formatting check")]
     #[test]
     fn debug_includes_status() {
         let resp = HttpResponse {

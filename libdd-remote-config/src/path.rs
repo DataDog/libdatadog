@@ -289,6 +289,7 @@ impl<'a> hashbrown::Equivalent<Arc<RemoteConfigPath>> for RemoteConfigPathRef<'a
 mod tests {
     use super::*;
 
+    #[cfg_attr(miri, ignore = "pure path parsing; no unsafe in path")]
     #[test]
     fn parse_datadog_roundtrip() {
         let raw = "datadog/42/APM_TRACING/cfg-1/tracing.config";
@@ -301,6 +302,7 @@ mod tests {
         assert_eq!(p.to_string(), raw);
     }
 
+    #[cfg_attr(miri, ignore = "pure path parsing; no unsafe in path")]
     #[test]
     fn parse_employee_roundtrip() {
         let raw = "employee/ASM_DD/blocklist/rules";
@@ -313,6 +315,7 @@ mod tests {
         assert_eq!(p.to_string(), raw);
     }
 
+    #[cfg_attr(miri, ignore = "pure path parsing; no unsafe in path")]
     #[test]
     fn ref_matches_owned() {
         let raw = "datadog/1/ASM/cfg/name";
@@ -323,6 +326,7 @@ mod tests {
         assert_eq!(o.name(), "name");
     }
 
+    #[cfg_attr(miri, ignore = "pure path parsing; no unsafe in path")]
     #[test]
     fn hash_and_eq_by_wire_form() {
         let a = RemoteConfigPath::parse("datadog/1/ASM/cfg/name").unwrap();
@@ -334,6 +338,7 @@ mod tests {
         assert!(s.contains(&b));
     }
 
+    #[cfg_attr(miri, ignore = "pure path parsing; no unsafe in path")]
     #[test]
     fn rejects_bad_paths() {
         assert!(RemoteConfigPath::parse("").is_err());

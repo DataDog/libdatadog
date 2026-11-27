@@ -54,6 +54,7 @@ const ATTEMPT_COUNTERS: [&str; 3] = [
     "trajectory.gen_ai.client.inference.usage.cost",
 ];
 
+#[cfg_attr(miri, ignore = "no unsafe in path; pure request classification logic")]
 #[test]
 fn the_token_and_cost_counters_carry_a_stated_tier_and_a_true_batch() {
     let projection = attempt(r#", "service_tier": "priority", "batch": true"#).unwrap();
@@ -64,6 +65,7 @@ fn the_token_and_cost_counters_carry_a_stated_tier_and_a_true_batch() {
     }
 }
 
+#[cfg_attr(miri, ignore = "no unsafe in path; pure request classification logic")]
 #[test]
 fn a_histogram_never_carries_the_tier_or_the_batch_flag() {
     let projection = attempt(r#", "service_tier": "priority", "batch": true"#).unwrap();
@@ -79,6 +81,7 @@ fn a_histogram_never_carries_the_tier_or_the_batch_flag() {
     }
 }
 
+#[cfg_attr(miri, ignore = "no unsafe in path; pure request classification logic")]
 #[test]
 fn an_unstated_tier_and_a_batch_that_is_not_true_add_nothing() {
     let plain = attempt("").unwrap();
@@ -96,6 +99,7 @@ fn an_unstated_tier_and_a_batch_that_is_not_true_add_nothing() {
     }
 }
 
+#[cfg_attr(miri, ignore = "no unsafe in path; pure request classification logic")]
 #[test]
 fn the_tier_and_the_batch_flag_are_independent_of_each_other_and_of_the_band() {
     let tier = attempt(r#", "service_tier": "flex""#).unwrap();
@@ -117,6 +121,7 @@ fn the_tier_and_the_batch_flag_are_independent_of_each_other_and_of_the_band() {
     }
 }
 
+#[cfg_attr(miri, ignore = "no unsafe in path; pure request classification logic")]
 #[test]
 fn every_breakdown_counter_carries_the_tier_and_the_batch_flag() {
     let projection = breakdown(r#", "service_tier": "priority", "batch": true"#).unwrap();
@@ -131,6 +136,7 @@ fn every_breakdown_counter_carries_the_tier_and_the_batch_flag() {
     assert_eq!(unstated.points, plain.points);
 }
 
+#[cfg_attr(miri, ignore = "no unsafe in path; pure request classification logic")]
 #[test]
 fn a_tier_is_an_identifier_and_a_batch_is_a_boolean() {
     let cases = [
@@ -159,6 +165,7 @@ fn a_tier_is_an_identifier_and_a_batch_is_a_boolean() {
     assert!(attempt(longest).is_ok());
 }
 
+#[cfg_attr(miri, ignore = "no unsafe in path; pure request classification logic")]
 #[test]
 fn the_tier_is_checked_after_every_type_and_before_the_cost() {
     assert_eq!(

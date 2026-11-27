@@ -226,6 +226,7 @@ impl HttpRequest {
 mod tests {
     use super::*;
 
+    #[cfg_attr(miri, ignore = "no unsafe in path; pure request struct defaults")]
     #[test]
     fn new_request_defaults() {
         let req = HttpRequest::new(HttpMethod::Get, "http://localhost/info".to_owned());
@@ -236,6 +237,7 @@ mod tests {
         assert!(req.timeout.is_none());
     }
 
+    #[cfg_attr(miri, ignore = "no unsafe in path; pure request struct building")]
     #[test]
     fn request_with_headers_and_body() {
         let mut req = HttpRequest::new(HttpMethod::Post, "http://localhost/data".to_owned());
@@ -249,12 +251,14 @@ mod tests {
         assert_eq!(req.timeout, Some(Duration::from_secs(10)));
     }
 
+    #[cfg_attr(miri, ignore = "no unsafe in path; pure enum equality")]
     #[test]
     fn http_method_equality() {
         assert_eq!(HttpMethod::Get, HttpMethod::Get);
         assert_ne!(HttpMethod::Get, HttpMethod::Post);
     }
 
+    #[cfg_attr(miri, ignore = "no unsafe in path; pure multipart part building")]
     #[test]
     fn test_multipart_part_builder() {
         let part = MultipartPart::new("name", bytes::Bytes::from_static(b"data"))

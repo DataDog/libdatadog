@@ -293,6 +293,7 @@ mod tests {
         }
     }
 
+    #[cfg_attr(miri, ignore = "no unsafe in path; pure OTLP metric encoding logic")]
     #[test]
     fn encodes_otlp_counter_and_aggregates_matching_attributes() {
         let payload = encode_metrics_payload(
@@ -323,6 +324,7 @@ mod tests {
         );
     }
 
+    #[cfg_attr(miri, ignore = "no unsafe in path; pure OTLP metric encoding logic")]
     #[test]
     fn excludes_allocation_key_for_error_default_and_disabled() {
         for reason in ["ERROR", "DEFAULT", "DISABLED"] {

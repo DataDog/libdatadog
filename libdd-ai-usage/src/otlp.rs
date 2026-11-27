@@ -508,6 +508,7 @@ mod tests {
         batch
     }
 
+    #[cfg_attr(miri, ignore = "no unsafe in path; pure OTLP encoding logic")]
     #[test]
     fn one_scope_per_profile_with_the_profile_attribute() {
         let request =
@@ -537,6 +538,7 @@ mod tests {
         );
     }
 
+    #[cfg_attr(miri, ignore = "no unsafe in path; pure OTLP encoding logic")]
     #[test]
     fn counters_are_integer_delta_sums_and_histograms_have_buckets() {
         let request = batch().otlp_request(SCOPE, WINDOW, OtlpBinding::OpenTelemetry);
@@ -578,6 +580,7 @@ mod tests {
         assert_eq!(point.bucket_counts.iter().sum::<u64>(), 2);
     }
 
+    #[cfg_attr(miri, ignore = "no unsafe in path; pure OTLP encoding logic")]
     #[test]
     fn bucket_upper_bounds_are_inclusive() {
         let point = histogram_point(
@@ -592,12 +595,14 @@ mod tests {
         assert_eq!(point.bucket_counts[DURATION_BOUNDS.len()], 1);
     }
 
+    #[cfg_attr(miri, ignore = "no unsafe in path; pure OTLP encoding logic")]
     #[test]
     fn an_empty_batch_encodes_no_resource() {
         let request = MetricBatch::new().otlp_request(SCOPE, WINDOW, OtlpBinding::Datadog);
         assert!(request.resource_metrics.is_empty());
     }
 
+    #[cfg_attr(miri, ignore = "no unsafe in path; pure OTLP encoding logic")]
     #[test]
     fn the_datadog_binding_sends_cost_in_usd_and_versions_with_a_slash() {
         let batch = batch();

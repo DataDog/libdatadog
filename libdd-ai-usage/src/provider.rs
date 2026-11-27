@@ -1924,6 +1924,10 @@ pub fn is_person_identifier(value: &str) -> bool {
 mod tests {
     use super::*;
 
+    #[cfg_attr(
+        miri,
+        ignore = "no unsafe in path; pure provider table and parsing logic"
+    )]
     #[test]
     fn formats_are_parsed_as_bindings_name_them() {
         assert_eq!(UsageFormat::parse(""), Ok(UsageFormat::Auto));
@@ -1933,6 +1937,10 @@ mod tests {
         assert_eq!(error.message(), "unknown usage format: nope");
     }
 
+    #[cfg_attr(
+        miri,
+        ignore = "no unsafe in path; pure provider table and parsing logic"
+    )]
     #[test]
     fn a_report_serializes_every_member() {
         let report = ProviderReport::new(ProviderResponse::default(), StreamOutcome::Open, None);
@@ -1946,6 +1954,10 @@ mod tests {
         );
     }
 
+    #[cfg_attr(
+        miri,
+        ignore = "no unsafe in path; pure provider table and parsing logic"
+    )]
     #[test]
     fn a_failure_without_a_cause_is_an_api_error() {
         let failed = |name: Option<&str>| {
@@ -1969,6 +1981,10 @@ mod tests {
         assert_eq!(completed.error_type(), None);
     }
 
+    #[cfg_attr(
+        miri,
+        ignore = "no unsafe in path; pure provider table and parsing logic"
+    )]
     #[test]
     fn a_report_reads_a_body_with_inclusive_totals() {
         let body = br#"{"model": "claude-x", "usage": {"input_tokens": 10, "output_tokens": 2,
@@ -1992,6 +2008,10 @@ mod tests {
         assert_eq!(serde_json::json!(report.error_type()), value["error_type"]);
     }
 
+    #[cfg_attr(
+        miri,
+        ignore = "no unsafe in path; pure provider table and parsing logic"
+    )]
     #[test]
     fn id_headers_per_provider() {
         assert_eq!(
@@ -2010,6 +2030,10 @@ mod tests {
         assert!(provider_id_headers("OpenAI").is_empty());
     }
 
+    #[cfg_attr(
+        miri,
+        ignore = "no unsafe in path; pure provider table and parsing logic"
+    )]
     #[test]
     fn ids_from_headers_arns_and_urls() {
         const ACCOUNT: &str = "trajectory.request.provider_account_id";
@@ -2044,6 +2068,10 @@ mod tests {
         assert!(provider_ids("", [], [], Some("https://example.com/v1/projects/p")).is_empty());
     }
 
+    #[cfg_attr(
+        miri,
+        ignore = "no unsafe in path; pure provider table and parsing logic"
+    )]
     #[test]
     fn ids_from_a_json_document() {
         let document = Json::parse(
@@ -2120,6 +2148,10 @@ mod tests {
         }
     }
 
+    #[cfg_attr(
+        miri,
+        ignore = "no unsafe in path; pure provider table and parsing logic"
+    )]
     #[test]
     fn provider_aliases_are_sorted_and_canonical() {
         assert!(PROVIDER_ALIASES.windows(2).all(|w| w[0].0 < w[1].0));
@@ -2194,6 +2226,10 @@ mod tests {
         assert_eq!(closing_quote(b"abc\\"), Err(true));
     }
 
+    #[cfg_attr(
+        miri,
+        ignore = "no unsafe in path; pure provider table and parsing logic"
+    )]
     #[test]
     fn a_pruned_event_reads_as_the_whole_event() {
         let events = [

@@ -57,6 +57,7 @@ mod tests {
         )
     }
 
+    #[cfg_attr(miri, ignore = "no unsafe in path; pure file-based id selection logic")]
     #[test]
     fn level1_dmi_wins_when_present() {
         let dir = tempfile::tempdir().unwrap();
@@ -70,6 +71,7 @@ mod tests {
         );
     }
 
+    #[cfg_attr(miri, ignore = "no unsafe in path; pure file-based id selection logic")]
     #[test]
     fn level2_etc_used_when_dmi_absent() {
         let dir = tempfile::tempdir().unwrap();
@@ -82,6 +84,7 @@ mod tests {
         );
     }
 
+    #[cfg_attr(miri, ignore = "no unsafe in path; pure file-based id selection logic")]
     #[test]
     fn level2_skipped_when_etc_not_32_chars() {
         let dir = tempfile::tempdir().unwrap();
@@ -94,6 +97,7 @@ mod tests {
         );
     }
 
+    #[cfg_attr(miri, ignore = "no unsafe in path; pure file-based id selection logic")]
     #[test]
     fn level3_boot_id_as_last_resort() {
         let dir = tempfile::tempdir().unwrap();
@@ -105,6 +109,7 @@ mod tests {
         );
     }
 
+    #[cfg_attr(miri, ignore = "no unsafe in path; pure file-based id selection logic")]
     #[test]
     fn all_absent_returns_empty() {
         let dir = tempfile::tempdir().unwrap();
@@ -112,6 +117,7 @@ mod tests {
         assert_eq!(get_machine_id_impl_paths(&dmi, &etc, &boot), "");
     }
 
+    #[cfg_attr(miri, ignore = "no unsafe in path; pure file-based id selection logic")]
     #[test]
     fn trims_whitespace() {
         let dir = tempfile::tempdir().unwrap();

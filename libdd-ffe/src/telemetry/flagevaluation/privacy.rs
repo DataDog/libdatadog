@@ -248,6 +248,7 @@ mod tests {
     use super::*;
     use serde_json::json;
 
+    #[cfg_attr(miri, ignore = "no unsafe in path; pure privacy normalization logic")]
     #[test]
     fn error_codes_accept_only_canonical_openfeature_values() {
         for code in [
@@ -272,6 +273,7 @@ mod tests {
         }
     }
 
+    #[cfg_attr(miri, ignore = "no unsafe in path; pure privacy normalization logic")]
     #[test]
     fn invalid_json_omits_only_context_and_has_a_finite_reason() {
         for raw in ["{private-canary", "null", "[]", "1"] {
@@ -282,6 +284,7 @@ mod tests {
         }
     }
 
+    #[cfg_attr(miri, ignore = "no unsafe in path; pure privacy normalization logic")]
     #[test]
     fn root_and_nested_object_widths_report_distinct_reasons() {
         let attrs: Map<String, Value> = (0..257)
@@ -311,6 +314,7 @@ mod tests {
         }
     }
 
+    #[cfg_attr(miri, ignore = "no unsafe in path; pure privacy normalization logic")]
     #[test]
     fn container_caps_and_depth_bound_retained_values() {
         let raw = json!({"a": (0..257).collect::<Vec<_>>()}).to_string();
@@ -328,6 +332,7 @@ mod tests {
         assert!(omissions.contains_context(ContextTruncationReason::MaxSnapshotDepth));
     }
 
+    #[cfg_attr(miri, ignore = "no unsafe in path; pure privacy normalization logic")]
     #[test]
     fn sibling_arrays_share_the_leaf_budget_after_repeated_normalization() {
         let raw = json!({
@@ -349,6 +354,7 @@ mod tests {
         }
     }
 
+    #[cfg_attr(miri, ignore = "no unsafe in path; pure privacy normalization logic")]
     #[test]
     fn rejected_fields_consume_width_and_global_visit_budgets() {
         let mut attrs = Map::new();
@@ -367,6 +373,7 @@ mod tests {
         assert!(omissions.contains_context(ContextTruncationReason::MaxValueLength));
     }
 
+    #[cfg_attr(miri, ignore = "no unsafe in path; pure privacy normalization logic")]
     #[test]
     fn null_false_and_empty_values_survive_snapshot() {
         let raw = r#"{"a":null,"b":false,"c":"","d":{},"e":[]}"#;

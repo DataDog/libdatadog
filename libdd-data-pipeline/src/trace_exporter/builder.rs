@@ -1314,6 +1314,7 @@ mod tests {
         );
     }
 
+    #[cfg_attr(miri, ignore = "pure builder/config logic; no unsafe in path")]
     #[test]
     fn set_output_to_log_some_zero_uses_default() {
         // `Some(0)` is coerced to "use the default cap" (a 0 cap would drop every
@@ -1482,6 +1483,7 @@ mod tests {
         );
     }
 
+    #[cfg_attr(miri, ignore = "pure builder/config logic; no unsafe in path")]
     #[test]
     fn test_enable_v1_protocol_sets_output_format() {
         let mut builder = TraceExporterBuilder::default();
@@ -1492,6 +1494,7 @@ mod tests {
         ));
     }
 
+    #[cfg_attr(miri, ignore = "pure builder/config logic; no unsafe in path")]
     #[test]
     fn test_v1_input_v05_incompatible() {
         let mut builder = TraceExporterBuilder::default();

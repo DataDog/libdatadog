@@ -422,6 +422,7 @@ fn resolve_module_file(test_name: &str, src_dir: &Path, workspace_root: &Path) -
 mod tests {
     use super::*;
 
+    #[cfg_attr(miri, ignore = "no unsafe in path; pure xml/lookup logic")]
     #[test]
     fn test_target_lookup_normalizes_hyphens() {
         let mut lookup = TargetLookup::new();
@@ -433,6 +434,7 @@ mod tests {
         assert!(lookup.get("my_package", None).is_some());
     }
 
+    #[cfg_attr(miri, ignore = "no unsafe in path; pure xml/lookup logic")]
     #[test]
     fn test_target_lookup_lib_alias() {
         let mut lookup = TargetLookup::new();
@@ -449,6 +451,7 @@ mod tests {
         assert_eq!(result.unwrap(), &PathBuf::from("/src/lib.rs"));
     }
 
+    #[cfg_attr(miri, ignore = "no unsafe in path; pure xml/lookup logic")]
     #[test]
     fn test_target_lookup_test_target() {
         let mut lookup = TargetLookup::new();
@@ -463,6 +466,7 @@ mod tests {
         assert_eq!(result.unwrap(), &PathBuf::from("/tests/test_send_data.rs"));
     }
 
+    #[cfg_attr(miri, ignore = "no unsafe in path; pure xml/lookup logic")]
     #[test]
     fn test_process_junit_xml_adds_file_attribute() {
         let mut lookup = TargetLookup::new();
@@ -503,6 +507,7 @@ mod tests {
         assert!(result.contains(r#"file="libdd-library-config-ffi/src/tracer_metadata.rs""#));
     }
 
+    #[cfg_attr(miri, ignore = "no unsafe in path; pure xml/lookup logic")]
     #[test]
     fn test_process_junit_xml_integration_test() {
         let mut lookup = TargetLookup::new();
@@ -525,6 +530,7 @@ mod tests {
         assert!(result.contains(r#"file="my-crate/tests/integration_test.rs""#));
     }
 
+    #[cfg_attr(miri, ignore = "no unsafe in path; pure xml/lookup logic")]
     #[test]
     fn test_process_junit_xml_setup_script() {
         let mut lookup = TargetLookup::new();
@@ -547,6 +553,7 @@ mod tests {
         assert!(result.contains(r#"file="bin_tests/src/bin/prebuild.rs""#));
     }
 
+    #[cfg_attr(miri, ignore = "no unsafe in path; pure xml/lookup logic")]
     #[test]
     fn test_parse_cargo_run_command() {
         // Standard format

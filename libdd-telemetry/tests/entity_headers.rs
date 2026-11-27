@@ -9,6 +9,7 @@
 use libdd_telemetry::config::Config;
 use libdd_telemetry::worker::http_client::request_builder;
 
+#[cfg_attr(miri, ignore = "only unsafe is test-body set_var; tested path is safe")]
 #[test]
 fn telemetry_request_carries_entity_headers() {
     // SAFETY: no other test runs in this binary.

@@ -692,6 +692,7 @@ mod tests {
         }
     }
 
+    #[cfg_attr(miri, ignore = "rule parsing error case; no unsafe in path")]
     #[test]
     fn test_parse_rules_invalid_regex() {
         let result = replacer::parse_rules_from_string(r#"[{"http.url", ")", "${1}?"}]"#);
@@ -1085,6 +1086,7 @@ mod tests {
         assert_eq!(v04_span.metrics.get("other"), Some(&1.5));
     }
 
+    #[cfg_attr(miri, ignore = "pure number formatting; no unsafe in path")]
     #[test]
     fn decimal_form_matches_go_formatting() {
         let fmt = |v: f64| super::with_decimal(v, str::to_owned);

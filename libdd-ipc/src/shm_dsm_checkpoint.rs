@@ -447,6 +447,7 @@ mod tests {
 
     /// The bin ranges are constants because array lengths have to be; check them against the
     /// mapping they stand for.
+    #[cfg_attr(miri, ignore = "pure bin index arithmetic; no unsafe in path")]
     #[test]
     fn bin_ranges_are_the_backend_bins_they_claim() {
         let sketch = backend_sketch().unwrap();
@@ -463,6 +464,7 @@ mod tests {
     }
 
     /// Writers bin values without a sketch at hand; the bin they pick has to be the sketch's.
+    #[cfg_attr(miri, ignore = "pure float binning loop; no unsafe in path")]
     #[test]
     fn writers_bin_values_as_the_sketch_does() {
         let sketch = backend_sketch().unwrap();

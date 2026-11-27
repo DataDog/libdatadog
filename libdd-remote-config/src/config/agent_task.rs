@@ -97,6 +97,7 @@ pub fn parse_json(data: &[u8]) -> serde_json::error::Result<AgentTaskFile> {
 mod tests {
     use super::*;
 
+    #[cfg_attr(miri, ignore = "pure config parsing; no unsafe in path")]
     #[test]
     fn test_valid_case_id() {
         let json_data = r#"{
@@ -115,6 +116,7 @@ mod tests {
         assert_eq!(task.args.case_id, "12345".to_string());
     }
 
+    #[cfg_attr(miri, ignore = "pure config parsing; no unsafe in path")]
     #[test]
     fn test_invalid_case_id_zero() {
         let json_data = r#"{
@@ -131,6 +133,7 @@ mod tests {
         assert!(result.is_err());
     }
 
+    #[cfg_attr(miri, ignore = "pure config parsing; no unsafe in path")]
     #[test]
     fn test_invalid_case_id_non_digit() {
         let json_data = r#"{
@@ -147,6 +150,7 @@ mod tests {
         assert!(result.is_err());
     }
 
+    #[cfg_attr(miri, ignore = "pure config parsing; no unsafe in path")]
     #[test]
     fn test_invalid_case_id_empty() {
         let json_data = r#"{
@@ -163,6 +167,7 @@ mod tests {
         assert!(result.is_err());
     }
 
+    #[cfg_attr(miri, ignore = "pure config parsing; no unsafe in path")]
     #[test]
     fn test_serialization() {
         let task = AgentTaskFile {

@@ -81,11 +81,13 @@ pub fn get_machine_id() -> &'static str {
 mod tests {
     use super::*;
 
+    #[cfg_attr(miri, ignore = "no unsafe in path; pure uuid string normalization")]
     #[test]
     fn cached_value_is_stable() {
         assert_eq!(get_machine_id(), get_machine_id());
     }
 
+    #[cfg_attr(miri, ignore = "no unsafe in path; pure uuid string normalization")]
     #[test]
     fn value_has_uuid_shape_if_nonempty() {
         let id = get_machine_id();
@@ -102,6 +104,7 @@ mod tests {
         }
     }
 
+    #[cfg_attr(miri, ignore = "no unsafe in path; pure uuid string normalization")]
     #[test]
     fn normalize_bare_hex_inserts_hyphens() {
         assert_eq!(
@@ -110,6 +113,7 @@ mod tests {
         );
     }
 
+    #[cfg_attr(miri, ignore = "no unsafe in path; pure uuid string normalization")]
     #[test]
     fn normalize_uppercase_uuid_lowercased() {
         assert_eq!(
@@ -118,6 +122,7 @@ mod tests {
         );
     }
 
+    #[cfg_attr(miri, ignore = "no unsafe in path; pure uuid string normalization")]
     #[test]
     fn normalize_lowercase_uuid_unchanged() {
         assert_eq!(
@@ -126,6 +131,7 @@ mod tests {
         );
     }
 
+    #[cfg_attr(miri, ignore = "no unsafe in path; pure uuid string normalization")]
     #[test]
     fn normalize_invalid_returns_empty() {
         assert_eq!(normalize_uuid(""), "");

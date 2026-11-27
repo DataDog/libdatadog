@@ -1459,6 +1459,7 @@ pub mod tests {
         );
     }
 
+    #[cfg_attr(miri, ignore = "pure capability bit encoding; no unsafe in path")]
     #[test]
     fn test_dependent_flag_capability_encoding() {
         let legacy = ConfigProductCapabilities::new(

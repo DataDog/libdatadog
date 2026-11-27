@@ -133,6 +133,7 @@ fn perturbed_observations_never_panic_and_stay_within_the_registry() {
     assert!(rejected > 1_000, "{rejected} rejected");
 }
 
+#[cfg_attr(miri, ignore = "no unsafe in path; pure parsing robustness logic")]
 #[test]
 fn deeply_nested_and_garbage_json_is_refused_without_panic() {
     let deep = format!("{}{}", "[".repeat(10_000), "]".repeat(10_000));

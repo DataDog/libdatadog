@@ -380,6 +380,7 @@ mod tests {
     };
     use libdd_common::Endpoint;
 
+    #[cfg_attr(miri, ignore = "bincode codec roundtrip; codec has no unsafe")]
     #[test]
     fn appsec_client_request_decodes_as_server_request() {
         let request = SidecarInterfaceClientRequest::SendAppsecMessage {
@@ -400,6 +401,7 @@ mod tests {
         }
     }
 
+    #[cfg_attr(miri, ignore = "bincode codec roundtrip; codec has no unsafe")]
     #[test]
     fn evp_transport_config_decodes_across_the_ipc_boundary() {
         let agent_endpoint = Endpoint {

@@ -64,6 +64,7 @@ fn cause(error: &EvaluationError) -> &EvaluationError {
     }
 }
 
+#[cfg_attr(miri, ignore = "no unsafe in path; safe dependency-graph evaluation")]
 #[test]
 fn compares_variant_keys_not_values_and_supports_both_membership_operators() {
     for (operator, values, expected) in [
@@ -85,6 +86,7 @@ fn compares_variant_keys_not_values_and_supports_both_membership_operators() {
     }
 }
 
+#[cfg_attr(miri, ignore = "no unsafe in path; safe dependency-graph evaluation")]
 #[test]
 fn empty_dependency_comparands_still_evaluate_the_prerequisite() {
     for operator in ["ONE_OF", "NOT_ONE_OF"] {
@@ -101,6 +103,7 @@ fn empty_dependency_comparands_still_evaluate_the_prerequisite() {
     }
 }
 
+#[cfg_attr(miri, ignore = "no unsafe in path; safe dependency-graph evaluation")]
 #[test]
 fn authored_order_short_circuits_missing_prerequisites() {
     let result = eval(wire(
@@ -122,6 +125,7 @@ fn authored_order_short_circuits_missing_prerequisites() {
     assert_eq!(result.evaluations.len(), 1);
 }
 
+#[cfg_attr(miri, ignore = "no unsafe in path; safe dependency-graph evaluation")]
 #[test]
 fn reached_failed_prerequisites_abort_the_root_instead_of_selecting_fallback() {
     let mut disabled = flag(vec![]);
@@ -145,6 +149,7 @@ fn reached_failed_prerequisites_abort_the_root_instead_of_selecting_fallback() {
     }
 }
 
+#[cfg_attr(miri, ignore = "no unsafe in path; safe dependency-graph evaluation")]
 #[test]
 fn invalid_dependency_conditions_are_isolated_to_the_containing_flag() {
     for invalid in [
@@ -192,6 +197,7 @@ fn invalid_dependency_conditions_are_isolated_to_the_containing_flag() {
     }
 }
 
+#[cfg_attr(miri, ignore = "no unsafe in path; safe dependency-graph evaluation")]
 #[test]
 fn an_empty_attribute_selector_without_a_reference_remains_valid() {
     let condition = json!({"attribute": "", "operator": "IS_NULL", "value": true});
@@ -200,6 +206,7 @@ fn an_empty_attribute_selector_without_a_reference_remains_valid() {
     assert!(result.evaluations.is_empty());
 }
 
+#[cfg_attr(miri, ignore = "no unsafe in path; safe dependency-graph evaluation")]
 #[test]
 fn dnf_expansion_memoizes_but_restores_exposure_eligibility_for_the_winning_rule() {
     let mut root = flag(vec![]);
@@ -213,6 +220,7 @@ fn dnf_expansion_memoizes_but_restores_exposure_eligibility_for_the_winning_rule
     assert!(result.evaluations[0].exposure_eligible);
 }
 
+#[cfg_attr(miri, ignore = "no unsafe in path; safe dependency-graph evaluation")]
 #[test]
 fn prerequisite_from_rejected_rule_is_not_exposed_by_later_rule_in_same_allocation() {
     let mut root = flag(vec![]);
@@ -228,6 +236,7 @@ fn prerequisite_from_rejected_rule_is_not_exposed_by_later_rule_in_same_allocati
     assert!(!result.evaluations[0].exposure_eligible);
 }
 
+#[cfg_attr(miri, ignore = "no unsafe in path; safe dependency-graph evaluation")]
 #[test]
 fn rejected_rules_retain_evaluations_without_exposures() {
     let result = eval(wire(
@@ -239,6 +248,7 @@ fn rejected_rules_retain_evaluations_without_exposures() {
     assert!(!result.evaluations[0].exposure_eligible);
 }
 
+#[cfg_attr(miri, ignore = "no unsafe in path; safe dependency-graph evaluation")]
 #[test]
 fn rejected_split_does_not_expose_prerequisites() {
     let mut root = flag(vec![dependency("parent")]);
@@ -249,6 +259,7 @@ fn rejected_split_does_not_expose_prerequisites() {
     assert!(!result.evaluations[0].exposure_eligible);
 }
 
+#[cfg_attr(miri, ignore = "no unsafe in path; safe dependency-graph evaluation")]
 #[test]
 fn root_failure_suppresses_all_prerequisite_exposures() {
     let result = eval(wire(
@@ -259,6 +270,7 @@ fn root_failure_suppresses_all_prerequisite_exposures() {
     assert!(result.evaluations.iter().all(|r| !r.exposure_eligible));
 }
 
+#[cfg_attr(miri, ignore = "no unsafe in path; safe dependency-graph evaluation")]
 #[test]
 fn shared_transitive_dependencies_are_reported_once_and_keep_do_log() {
     let mut parent = flag(vec![dependency("leaf")]);
@@ -280,6 +292,7 @@ fn shared_transitive_dependencies_are_reported_once_and_keep_do_log() {
     assert!(!result.evaluations[1].result.as_ref().unwrap().do_log);
 }
 
+#[cfg_attr(miri, ignore = "no unsafe in path; safe dependency-graph evaluation")]
 #[test]
 fn rejected_transitive_paths_never_gain_exposure_eligibility() {
     let result = eval(wire(json!({"root": flag(vec![dependency("a")]),
@@ -288,6 +301,7 @@ fn rejected_transitive_paths_never_gain_exposure_eligibility() {
     assert!(result.evaluations.iter().all(|r| !r.exposure_eligible));
 }
 
+#[cfg_attr(miri, ignore = "no unsafe in path; safe dependency-graph evaluation")]
 #[test]
 fn cycles_fail_without_evaluating_the_root_twice() {
     for flags in [
@@ -328,6 +342,7 @@ fn chain(edges: usize) -> Value {
     wire(flags.into())
 }
 
+#[cfg_attr(miri, ignore = "no unsafe in path; safe dependency-graph evaluation")]
 #[test]
 fn depth_counts_edges_defaults_to_ten_and_preserves_explicit_zero() {
     for (edges, limit, passes) in [
@@ -359,6 +374,7 @@ fn depth_counts_edges_defaults_to_ten_and_preserves_explicit_zero() {
     }
 }
 
+#[cfg_attr(miri, ignore = "no unsafe in path; safe dependency-graph evaluation")]
 #[test]
 fn invalid_depth_limits_default_to_ten() {
     for limit in [
@@ -412,6 +428,7 @@ fn invalid_depth_limits_default_to_ten() {
     }
 }
 
+#[cfg_attr(miri, ignore = "no unsafe in path; safe dependency-graph evaluation")]
 #[test]
 fn invalid_depth_limits_do_not_affect_skipped_dependency_conditions() {
     let mut future = flag(vec![dependency("missing")]);
@@ -453,6 +470,7 @@ fn invalid_depth_limits_do_not_affect_skipped_dependency_conditions() {
     }
 }
 
+#[cfg_attr(miri, ignore = "no unsafe in path; safe dependency-graph evaluation")]
 #[test]
 fn experimentation_opt_out_can_skip_an_invalid_dependency_limit() {
     let mut root = flag(vec![dependency("missing")]);
@@ -476,6 +494,7 @@ fn experimentation_opt_out_can_skip_an_invalid_dependency_limit() {
     assert!(result.evaluations.is_empty());
 }
 
+#[cfg_attr(miri, ignore = "no unsafe in path; safe dependency-graph evaluation")]
 #[test]
 fn omitted_depth_limits_default_to_ten() {
     for params in [
@@ -505,6 +524,7 @@ fn omitted_depth_limits_default_to_ten() {
     }
 }
 
+#[cfg_attr(miri, ignore = "no unsafe in path; safe dependency-graph evaluation")]
 #[test]
 fn integral_json_numbers_are_valid_depth_limits() {
     for (limit, edges) in [
@@ -528,6 +548,7 @@ fn integral_json_numbers_are_valid_depth_limits() {
     }
 }
 
+#[cfg_attr(miri, ignore = "no unsafe in path; safe dependency-graph evaluation")]
 #[test]
 fn depth_rejected_prerequisites_are_recorded_before_their_ancestors() {
     for (edges, limit, expected) in [(1, 0, vec!["f1"]), (3, 2, vec!["f3", "f2", "f1"])] {
@@ -556,6 +577,7 @@ fn depth_rejected_prerequisites_are_recorded_before_their_ancestors() {
     }
 }
 
+#[cfg_attr(miri, ignore = "no unsafe in path; safe dependency-graph evaluation")]
 #[test]
 fn depth_rejection_does_not_duplicate_active_or_memoized_nodes_or_include_the_root() {
     for (flags, limit, expected) in [
@@ -596,6 +618,7 @@ fn depth_rejection_does_not_duplicate_active_or_memoized_nodes_or_include_the_ro
     }
 }
 
+#[cfg_attr(miri, ignore = "no unsafe in path; safe dependency-graph evaluation")]
 #[test]
 fn memoization_cannot_bypass_depth_on_a_deeper_path_even_for_rejected_rules() {
     for rejected in [false, true] {
@@ -619,6 +642,7 @@ fn memoization_cannot_bypass_depth_on_a_deeper_path_even_for_rejected_rules() {
     }
 }
 
+#[cfg_attr(miri, ignore = "no unsafe in path; safe dependency-graph evaluation")]
 #[test]
 fn memoization_is_scoped_to_each_top_level_evaluation() {
     let config = Configuration::from_server_response(
@@ -649,6 +673,7 @@ fn memoization_is_scoped_to_each_top_level_evaluation() {
     }
 }
 
+#[cfg_attr(miri, ignore = "no unsafe in path; safe dependency-graph evaluation")]
 #[test]
 fn dependencies_reuse_context_timestamp_and_experimentation_policy() {
     let mut parent = flag(vec![
@@ -687,6 +712,7 @@ fn dependencies_reuse_context_timestamp_and_experimentation_policy() {
     }
 }
 
+#[cfg_attr(miri, ignore = "no unsafe in path; safe dependency-graph evaluation")]
 #[test]
 fn later_allocations_still_evaluate_dependencies() {
     let mut root = flag(vec![dependency("parent")]);
@@ -700,6 +726,7 @@ fn later_allocations_still_evaluate_dependencies() {
     assert!(result.evaluations[0].exposure_eligible);
 }
 
+#[cfg_attr(miri, ignore = "no unsafe in path; safe dependency-graph evaluation")]
 #[test]
 fn independent_flags_ignore_unrelated_dependency_graphs() {
     let mut w = wire(json!({"root":flag(vec![]), "cycle":flag(vec![dependency("cycle")])}));
@@ -709,6 +736,7 @@ fn independent_flags_ignore_unrelated_dependency_graphs() {
     assert!(result.evaluations.is_empty());
 }
 
+#[cfg_attr(miri, ignore = "no unsafe in path; safe dependency-graph evaluation")]
 #[test]
 fn memoized_transitive_prerequisite_keeps_nested_exposures_when_reused() {
     let mut root = flag(vec![]);
@@ -730,6 +758,7 @@ fn memoized_transitive_prerequisite_keeps_nested_exposures_when_reused() {
     assert!(r.evaluations.iter().all(|e| e.exposure_eligible));
 }
 
+#[cfg_attr(miri, ignore = "no unsafe in path; safe dependency-graph evaluation")]
 #[test]
 fn transitive_success_then_root_rule_rejection_exposes_nothing() {
     let r = eval(wire(
@@ -745,6 +774,7 @@ fn transitive_success_then_root_rule_rejection_exposes_nothing() {
     );
 }
 
+#[cfg_attr(miri, ignore = "no unsafe in path; safe dependency-graph evaluation")]
 #[test]
 fn prerequisite_first_reached_in_rejected_allocation_is_exposed_once_by_later_allocation() {
     let mut root = flag(vec![dependency("parent"), fails()]);
@@ -760,6 +790,7 @@ fn prerequisite_first_reached_in_rejected_allocation_is_exposed_once_by_later_al
 
 // Build/parse outside the measured thread so this isolates evaluation, including
 // prerequisite error recording and destruction of the returned trace.
+#[cfg_attr(miri, ignore = "no unsafe in path; safe dependency-graph evaluation")]
 #[test]
 fn deep_dependencies_use_a_bounded_thread_stack() {
     // Keep every scenario under Miri without interpreting the full native stress workload.

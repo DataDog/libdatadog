@@ -6,6 +6,7 @@ mod tests {
     use crate::deserializers::is_default;
     use crate::pb::Span;
 
+    #[cfg_attr(miri, ignore = "pure pb struct serde logic; no unsafe in path")]
     #[test]
     fn test_is_default() {
         assert!(is_default(&false));
@@ -18,6 +19,7 @@ mod tests {
         assert!(!is_default(&"foo"));
     }
 
+    #[cfg_attr(miri, ignore = "pure pb struct serde logic; no unsafe in path")]
     #[test]
     fn test_serialize_span() {
         let mut span = Span {
@@ -37,7 +39,7 @@ mod tests {
 
     use crate::pb::{ClientGroupedStats, ClientStatsBucket, ClientStatsPayload, Trilean::NotSet};
 
-    #[cfg_attr(all(miri, target_os = "macos"), ignore)]
+    #[cfg_attr(miri, ignore = "pure pb struct serde logic; no unsafe in path")]
     #[tokio::test]
     async fn test_deserialize_client_stats_payload() {
         let stats_json = r#"{
@@ -136,6 +138,7 @@ mod tests {
         assert_eq!(deserialized_stats_json, client_stats_payload)
     }
 
+    #[cfg_attr(miri, ignore = "pure pb struct serde logic; no unsafe in path")]
     #[test]
     fn test_deserialize_tracer_payload_partial_container_debug() {
         use crate::pb::{ContainerDebug, TracerPayload};

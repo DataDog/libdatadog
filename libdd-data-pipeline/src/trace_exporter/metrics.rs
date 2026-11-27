@@ -84,6 +84,7 @@ mod tests {
     use super::*;
     use libdd_common::tag;
 
+    #[cfg_attr(miri, ignore = "pure metrics construction; no unsafe in path")]
     #[test]
     fn test_metrics_emitter_new() {
         let tags = vec![tag!("service", "test")];
@@ -94,6 +95,7 @@ mod tests {
         assert_eq!(emitter.common_tags[0], tag!("service", "test"));
     }
 
+    #[cfg_attr(miri, ignore = "pure metrics construction; no unsafe in path")]
     #[test]
     fn test_metrics_emitter_emit_no_client() {
         let tags = vec![tag!("env", "test")];

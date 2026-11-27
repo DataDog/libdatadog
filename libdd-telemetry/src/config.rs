@@ -413,6 +413,7 @@ mod tests {
         })
     }
 
+    #[cfg_attr(miri, ignore = "pure url/env config parsing; no unsafe in path")]
     #[test]
     fn test_agent_host_detection_trace_agent_url_should_take_precedence() {
         let cases = [
@@ -439,6 +440,7 @@ mod tests {
         }
     }
 
+    #[cfg_attr(miri, ignore = "pure url/env config parsing; no unsafe in path")]
     #[test]
     fn test_agent_host_detection_agent_host_and_port() {
         let cases = [
@@ -472,6 +474,7 @@ mod tests {
         }
     }
 
+    #[cfg_attr(miri, ignore = "pure url/env config parsing; no unsafe in path")]
     #[test]
     #[cfg(unix)]
     fn test_agent_host_detection_socket_found() {
@@ -490,6 +493,7 @@ mod tests {
         );
     }
 
+    #[cfg_attr(miri, ignore = "pure url/env config parsing; no unsafe in path")]
     #[test]
     fn test_agent_host_detection_fallback() {
         let settings = Settings {
@@ -508,6 +512,7 @@ mod tests {
         );
     }
 
+    #[cfg_attr(miri, ignore = "pure url/env config parsing; no unsafe in path")]
     #[test]
     fn test_config_set_url() {
         let mut cfg = Config::default();
@@ -520,6 +525,7 @@ mod tests {
         );
     }
 
+    #[cfg_attr(miri, ignore = "pure url/env config parsing; no unsafe in path")]
     #[test]
     fn test_config_set_url_file() {
         let cases = [
@@ -553,6 +559,7 @@ mod tests {
         }
     }
 
+    #[cfg_attr(miri, ignore = "pure url/env config parsing; no unsafe in path")]
     #[test]
     fn test_config_set_parsed_file_uri_does_not_reencode_path() {
         let mut cfg = Config::default();
@@ -567,6 +574,7 @@ mod tests {
         );
     }
 
+    #[cfg_attr(miri, ignore = "pure url/env config parsing; no unsafe in path")]
     #[test]
     #[cfg(unix)]
     fn test_config_set_url_unix_socket() {
@@ -585,6 +593,7 @@ mod tests {
         );
     }
 
+    #[cfg_attr(miri, ignore = "pure url/env config parsing; no unsafe in path")]
     #[test]
     fn test_config_set_url_windows_pipe() {
         let mut cfg = Config::default();
@@ -602,6 +611,7 @@ mod tests {
         );
     }
 
+    #[cfg_attr(miri, ignore = "pure url/env config parsing; no unsafe in path")]
     #[test]
     fn test_from_settings_propagates_extended_heartbeat_interval() {
         use std::time::Duration;
@@ -615,6 +625,7 @@ mod tests {
         assert_eq!(cfg.telemetry_extended_heartbeat_interval, custom_interval);
     }
 
+    #[cfg_attr(miri, ignore = "pure url/env config parsing; no unsafe in path")]
     #[test]
     fn test_from_settings_default_extended_heartbeat_interval() {
         use std::time::Duration;
@@ -627,6 +638,7 @@ mod tests {
         );
     }
 
+    #[cfg_attr(miri, ignore = "pure url/env config parsing; no unsafe in path")]
     #[test]
     fn test_extended_heartbeat_interval_from_env() {
         use std::time::Duration;

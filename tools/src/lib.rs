@@ -346,6 +346,7 @@ pub mod headers {
     mod tests {
         use super::*;
 
+        #[cfg_attr(miri, ignore = "no unsafe in path; pure c-header parsing")]
         #[test]
         fn redundant_platform_guards_match_unconditional_types() {
             let header = "#if defined(_WIN32)\ntypedef enum Option_Tag {\n#if defined(_WIN32)\n  SOME,\n#endif\n#if defined(_WIN32)\n  NONE,\n#endif\n} Option_Tag;\n\ntypedef struct Option {\n  Option_Tag tag;\n#if defined(_WIN32)\n  int value;\n#endif\n} Option;\n#endif\n";
@@ -360,6 +361,7 @@ pub mod headers {
             );
         }
 
+        #[cfg_attr(miri, ignore = "no unsafe in path; pure c-header parsing")]
         #[test]
         fn differing_or_alternative_guards_are_preserved() {
             for branch in [
@@ -387,6 +389,7 @@ pub mod headers {
             }
         }
 
+        #[cfg_attr(miri, ignore = "no unsafe in path; pure c-header parsing")]
         #[test]
         fn collect_typedef() {
             let input = "typedef void *Foo;\n";
@@ -394,6 +397,7 @@ pub mod headers {
             test_regex_match(input, expected);
         }
 
+        #[cfg_attr(miri, ignore = "no unsafe in path; pure c-header parsing")]
         #[test]
         fn collect_typedef_comment() {
             let input = r"
@@ -412,6 +416,7 @@ typedef void *Foo;
             test_regex_match(input, expected);
         }
 
+        #[cfg_attr(miri, ignore = "no unsafe in path; pure c-header parsing")]
         #[test]
         fn collect_struct_typedef() {
             let input = r"/**
@@ -427,6 +432,7 @@ typedef struct ddog_Vec_U8 {
             test_regex_match(input, expected);
         }
 
+        #[cfg_attr(miri, ignore = "no unsafe in path; pure c-header parsing")]
         #[test]
         fn collect_union_typedef() {
             let input = r"/**
@@ -441,6 +447,7 @@ typedef union my_union {
             test_regex_match(input, expected);
         }
 
+        #[cfg_attr(miri, ignore = "no unsafe in path; pure c-header parsing")]
         #[test]
         fn collect_union_nested() {
             let input = r"typedef union ddog_Union_U8 {
@@ -460,6 +467,7 @@ typedef union my_union {
             test_regex_match(input, expected);
         }
 
+        #[cfg_attr(miri, ignore = "no unsafe in path; pure c-header parsing")]
         #[test]
         fn collect_define() {
             let input = r#"#define FOO __attribute__((unused))
@@ -468,6 +476,7 @@ typedef union my_union {
             test_regex_match(input, expected);
         }
 
+        #[cfg_attr(miri, ignore = "no unsafe in path; pure c-header parsing")]
         #[test]
         fn collect_multiple_definitions() {
             let input = r"
@@ -513,6 +522,7 @@ typedef struct ddog_Vec_U8 {
             test_regex_match(input, expected);
         }
 
+        #[cfg_attr(miri, ignore = "no unsafe in path; pure c-header parsing")]
         #[test]
         fn collect_definitions_comments() {
             let header = r"/** foo */
@@ -549,6 +559,7 @@ typedef struct ddog_Vec_U8 {
             );
         }
 
+        #[cfg_attr(miri, ignore = "no unsafe in path; pure c-header parsing")]
         #[test]
         fn forward_decl_is_dropped_when_full_body_exists() {
             // The forward declaration may appear either before or after the
@@ -580,6 +591,7 @@ typedef struct OpaqueStringId OpaqueStringId;
             );
         }
 
+        #[cfg_attr(miri, ignore = "no unsafe in path; pure c-header parsing")]
         #[test]
         fn opaque_forward_decl_is_kept_without_body() {
             // An opaque type only has a forward declaration; it must be kept.
@@ -588,6 +600,7 @@ typedef struct OpaqueStringId OpaqueStringId;
             assert_eq!(dedup_base_typedefs(input), input);
         }
 
+        #[cfg_attr(miri, ignore = "no unsafe in path; pure c-header parsing")]
         #[test]
         fn distinct_alias_typedef_is_kept() {
             // `typedef struct A B;` with A != B is a real alias, not a
@@ -601,6 +614,7 @@ typedef struct ddog_OpaqueCancellationToken ddog_prof_TokioCancellationToken;
             assert_eq!(dedup_base_typedefs(input), input);
         }
 
+        #[cfg_attr(miri, ignore = "no unsafe in path; pure c-header parsing")]
         #[test]
         fn exact_duplicate_typedef_with_differing_comment_is_dropped() {
             // Same pointer typedef emitted twice, once bare and once with a doc
@@ -619,6 +633,7 @@ typedef struct ddog_prof_Function2 *ddog_prof_FunctionId2;
             );
         }
 
+        #[cfg_attr(miri, ignore = "no unsafe in path; pure c-header parsing")]
         #[test]
         fn unrelated_typedefs_are_untouched() {
             let input = r"typedef uint64_t ddog_QueueId;
@@ -632,6 +647,7 @@ typedef struct ddog_Slice_U8 *ddog_Slice_U8Handle;
             assert_eq!(dedup_base_typedefs(input), input);
         }
 
+        #[cfg_attr(miri, ignore = "no unsafe in path; pure c-header parsing")]
         #[test]
         fn is_ident_rejects_leading_digit() {
             // A valid identifier starts with a letter or underscore and may

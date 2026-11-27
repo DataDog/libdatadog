@@ -115,6 +115,7 @@ mod tests {
     use std::sync::OnceLock;
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
+    #[cfg_attr(miri, ignore = "native proxy machinery; no crate unsafe in path")]
     #[tokio::test]
     async fn proxy_connect_preserves_scheme_ports_and_authentication() {
         let listener = Arc::new(tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap());
@@ -200,6 +201,7 @@ mod tests {
         }
     }
 
+    #[cfg_attr(miri, ignore = "native proxy machinery; no crate unsafe in path")]
     #[tokio::test]
     async fn no_proxy_connects_directly() {
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();

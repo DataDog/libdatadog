@@ -432,6 +432,7 @@ impl<'a> TryFrom<&'a prost_impls::Profile> for Profile<'a> {
 mod tests {
     use super::*;
 
+    #[cfg_attr(miri, ignore = "no unsafe in path; pure label struct field logic")]
     #[test]
     fn label_uses_at_most_one_of_str_and_num() {
         let label = Label {

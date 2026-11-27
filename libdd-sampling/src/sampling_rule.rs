@@ -283,6 +283,7 @@ mod tests {
     use crate::sampling_rule_config::SamplingRuleConfig;
     use std::borrow::Cow;
 
+    #[cfg_attr(miri, ignore = "pure rule matching logic; no unsafe in crate")]
     #[test]
     fn integer_to_stack_str_formats_and_falls_back() {
         let mut buf = [0u8; 24];
@@ -383,12 +384,14 @@ mod tests {
 
     // --- from_configs ---
 
+    #[cfg_attr(miri, ignore = "pure rule matching logic; no unsafe in crate")]
     #[test]
     fn test_from_configs_empty() {
         let rules = SamplingRule::from_configs(vec![]);
         assert!(rules.is_empty());
     }
 
+    #[cfg_attr(miri, ignore = "pure rule matching logic; no unsafe in crate")]
     #[test]
     fn test_from_configs_single() {
         let config = SamplingRuleConfig {
@@ -405,6 +408,7 @@ mod tests {
         assert_eq!(rules[0].provenance, "customer");
     }
 
+    #[cfg_attr(miri, ignore = "pure rule matching logic; no unsafe in crate")]
     #[test]
     fn test_from_configs_preserves_provenance() {
         let configs = vec![
@@ -432,6 +436,7 @@ mod tests {
 
     // --- HTTP status code matching ---
 
+    #[cfg_attr(miri, ignore = "pure rule matching logic; no unsafe in crate")]
     #[test]
     fn test_matches_http_status_code_rule_matching() {
         let rule = SamplingRule::new(
@@ -447,6 +452,7 @@ mod tests {
         assert!(rule.matches(&span));
     }
 
+    #[cfg_attr(miri, ignore = "pure rule matching logic; no unsafe in crate")]
     #[test]
     fn test_matches_http_status_code_rule_not_matching() {
         let rule = SamplingRule::new(
@@ -462,6 +468,7 @@ mod tests {
         assert!(!rule.matches(&span));
     }
 
+    #[cfg_attr(miri, ignore = "pure rule matching logic; no unsafe in crate")]
     #[test]
     fn test_matches_http_status_code_absent_returns_false() {
         let rule = SamplingRule::new(
@@ -476,6 +483,7 @@ mod tests {
         assert!(!rule.matches(&span));
     }
 
+    #[cfg_attr(miri, ignore = "pure rule matching logic; no unsafe in crate")]
     #[test]
     fn test_matches_http_response_status_code_key() {
         let rule = SamplingRule::new(
@@ -494,6 +502,7 @@ mod tests {
         assert!(rule.matches(&span));
     }
 
+    #[cfg_attr(miri, ignore = "pure rule matching logic; no unsafe in crate")]
     #[test]
     fn test_matches_http_status_code_wildcard() {
         let rule = SamplingRule::new(
@@ -511,6 +520,7 @@ mod tests {
 
     // --- Alternate key (OTel → DD) matching ---
 
+    #[cfg_attr(miri, ignore = "pure rule matching logic; no unsafe in crate")]
     #[test]
     fn test_matches_alternate_key_found() {
         // Rule uses DD key "http.method"; span stores OTel key "http.request.method"
@@ -535,6 +545,7 @@ mod tests {
         assert!(rule.matches(&span));
     }
 
+    #[cfg_attr(miri, ignore = "pure rule matching logic; no unsafe in crate")]
     #[test]
     fn test_matches_alternate_key_value_mismatch() {
         let rule = SamplingRule::new(
@@ -557,6 +568,7 @@ mod tests {
         assert!(!rule.matches(&span));
     }
 
+    #[cfg_attr(miri, ignore = "pure rule matching logic; no unsafe in crate")]
     #[test]
     fn test_matches_non_http_tag_no_alternate_fallback() {
         // Non-http. keys do NOT fall through to alternate-key scan
@@ -582,6 +594,7 @@ mod tests {
 
     // --- Float attribute matching ---
 
+    #[cfg_attr(miri, ignore = "pure rule matching logic; no unsafe in crate")]
     #[test]
     fn test_match_attribute_value_non_integer_float_wildcard_matches() {
         let rule = SamplingRule::new(
@@ -603,6 +616,7 @@ mod tests {
         assert!(rule.matches(&span));
     }
 
+    #[cfg_attr(miri, ignore = "pure rule matching logic; no unsafe in crate")]
     #[test]
     fn test_match_attribute_value_non_integer_float_non_wildcard_no_match() {
         let rule = SamplingRule::new(
@@ -624,6 +638,7 @@ mod tests {
         assert!(!rule.matches(&span));
     }
 
+    #[cfg_attr(miri, ignore = "pure rule matching logic; no unsafe in crate")]
     #[test]
     fn test_resource_mismatch_returns_false() {
         let rule = SamplingRule::new(
@@ -640,6 +655,7 @@ mod tests {
 
     // --- RuleProvenance ---
 
+    #[cfg_attr(miri, ignore = "pure rule matching logic; no unsafe in crate")]
     #[test]
     fn test_rule_provenance_from_str() {
         assert_eq!(RuleProvenance::from("customer"), RuleProvenance::Customer);
@@ -649,6 +665,7 @@ mod tests {
         assert_eq!(RuleProvenance::from(""), RuleProvenance::Default);
     }
 
+    #[cfg_attr(miri, ignore = "pure rule matching logic; no unsafe in crate")]
     #[test]
     fn test_rule_provenance_ordering() {
         assert!(RuleProvenance::Customer < RuleProvenance::Dynamic);

@@ -82,6 +82,7 @@ mod tests {
     use bolero::generator::TypeGenerator;
     use prost::Message;
 
+    #[cfg_attr(miri, ignore = "no unsafe in path; safe-code encode plus prost decode")]
     #[test]
     fn empty() {
         let sample = Sample {
@@ -103,6 +104,7 @@ mod tests {
         assert_eq!(prost_sample, roundtrip);
     }
 
+    #[cfg_attr(miri, ignore = "no unsafe in path; safe-code encode plus prost decode")]
     #[test]
     fn roundtrip() {
         let locations = Vec::<u64>::produce();

@@ -146,11 +146,13 @@ fn read_heap_sampling_enabled() -> bool {
 mod sampling_flag_tests {
     use super::parse_heap_sampling_enabled;
 
+    #[cfg_attr(miri, ignore = "no unsafe in path; pure env-flag string matching")]
     #[test]
     fn unset_defaults_to_enabled() {
         assert!(parse_heap_sampling_enabled(None));
     }
 
+    #[cfg_attr(miri, ignore = "no unsafe in path; pure env-flag string matching")]
     #[test]
     fn falsey_values_disable() {
         for v in [
@@ -170,6 +172,7 @@ mod sampling_flag_tests {
         }
     }
 
+    #[cfg_attr(miri, ignore = "no unsafe in path; pure env-flag string matching")]
     #[test]
     fn truthy_and_unrecognized_values_enable() {
         for v in [&b"1"[..], b"true", b"TRUE", b"yes", b"on", b"", b"maybe"] {

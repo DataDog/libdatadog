@@ -865,11 +865,13 @@ mod tests {
         assert_eq!(actual, expected);
     }
 
+    #[cfg_attr(miri, ignore = "no unsafe in path; pure yaml config parsing")]
     #[test]
     fn test_empty_configs() {
         test_config(b"", b"", vec![]);
     }
 
+    #[cfg_attr(miri, ignore = "no unsafe in path; pure yaml config parsing")]
     #[test]
     fn test_missing_files() {
         let configurator = Configurator::new(true);
@@ -909,6 +911,7 @@ mod tests {
         }
     }
 
+    #[cfg_attr(miri, ignore = "no unsafe in path; pure yaml config parsing")]
     #[test]
     fn test_large_files() {
         let configurator = Configurator::new(true);
@@ -959,6 +962,7 @@ mod tests {
         }
     }
 
+    #[cfg_attr(miri, ignore = "no unsafe in path; pure yaml config parsing")]
     #[test]
     fn test_local_host_global_config() {
         use LibraryConfigSource::*;
@@ -1042,6 +1046,7 @@ apm_configuration_default:
         );
     }
 
+    #[cfg_attr(miri, ignore = "no unsafe in path; pure yaml config parsing")]
     #[test]
     fn test_fleet_host_global_config() {
         use LibraryConfigSource::*;
@@ -1135,6 +1140,7 @@ wtf:
         );
     }
 
+    #[cfg_attr(miri, ignore = "no unsafe in path; pure yaml config parsing")]
     #[test]
     fn test_merge_local_fleet() {
         use LibraryConfigSource::*;
@@ -1182,6 +1188,7 @@ apm_configuration_default:
         );
     }
 
+    #[cfg_attr(miri, ignore = "no unsafe in path; pure yaml config parsing")]
     #[test]
     fn test_process_config() {
         test_config(
@@ -1213,6 +1220,7 @@ rules:
         );
     }
 
+    #[cfg_attr(miri, ignore = "no unsafe in path; pure yaml config parsing")]
     #[test]
     fn test_parse_comment_only_yaml() {
         let configurator = Configurator::new(true);
@@ -1223,6 +1231,7 @@ rules:
         }
     }
 
+    #[cfg_attr(miri, ignore = "no unsafe in path; pure yaml config parsing")]
     #[test]
     fn test_parse_empty_yaml() {
         let configurator = Configurator::new(true);
@@ -1233,6 +1242,7 @@ rules:
         }
     }
 
+    #[cfg_attr(miri, ignore = "no unsafe in path; pure yaml config parsing")]
     #[test]
     fn test_parse_whitespace_only_yaml() {
         let configurator = Configurator::new(true);
@@ -1243,6 +1253,7 @@ rules:
         }
     }
 
+    #[cfg_attr(miri, ignore = "no unsafe in path; pure yaml config parsing")]
     #[test]
     fn test_parse_static_config() {
         let mut tmp = tempfile::NamedTempFile::new().unwrap();
@@ -1296,6 +1307,7 @@ rules:
         )
     }
 
+    #[cfg_attr(miri, ignore = "no unsafe in path; pure yaml config parsing")]
     #[test]
     fn test_selector_match() {
         let process_info = ProcessInfo {
@@ -1353,6 +1365,7 @@ rules:
         }
     }
 
+    #[cfg_attr(miri, ignore = "no unsafe in path; pure yaml config parsing")]
     #[test]
     fn test_fleet_over_local() {
         let process_info: ProcessInfo = ProcessInfo {
@@ -1463,6 +1476,7 @@ mod config_read_tests {
         }
     }
 
+    #[cfg_attr(miri, ignore = "no unsafe in path; in-memory reader logic")]
     #[test]
     fn reader_too_large_skipped() {
         let reader = MemReader::new()
@@ -1486,6 +1500,7 @@ mod config_read_tests {
         assert!(logs.iter().any(|l| l.contains("too large")));
     }
 
+    #[cfg_attr(miri, ignore = "no unsafe in path; in-memory reader logic")]
     #[test]
     fn reader_io_error_aborts() {
         let reader = MemReader::new().with_error("/local", io::ErrorKind::PermissionDenied);

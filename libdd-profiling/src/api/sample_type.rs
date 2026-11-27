@@ -281,6 +281,7 @@ mod tests {
     use super::*;
     use strum::IntoEnumIterator;
 
+    #[cfg_attr(miri, ignore = "no unsafe in path; pure enum conversion logic")]
     #[test]
     fn sample_type_round_trip_conversion() {
         // Test that converting SampleType -> ValueType -> SampleType gives the same result
@@ -292,6 +293,7 @@ mod tests {
         }
     }
 
+    #[cfg_attr(miri, ignore = "no unsafe in path; pure enum conversion logic")]
     #[test]
     fn value_type_to_sample_type_unknown_type() {
         // Test that unknown type/unit combinations fail gracefully

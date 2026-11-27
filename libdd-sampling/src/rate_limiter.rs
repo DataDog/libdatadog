@@ -304,6 +304,7 @@ mod tests {
     use std::thread;
     use std::time::Duration;
 
+    #[cfg_attr(miri, ignore = "pure token-bucket logic; no unsafe in crate")]
     #[test]
     fn test_rate_limiter_allow_all() {
         let limiter = RateLimiter::new(-1, None);
@@ -317,6 +318,7 @@ mod tests {
         assert_eq!(limiter.effective_rate(), 1.0);
     }
 
+    #[cfg_attr(miri, ignore = "pure token-bucket logic; no unsafe in crate")]
     #[test]
     fn test_rate_limiter_block_all() {
         let limiter = RateLimiter::new(0, None);
@@ -548,6 +550,7 @@ mod tests {
         assert!(!limiter.is_allowed(), "second window must be exhausted");
     }
 
+    #[cfg_attr(miri, ignore = "pure token-bucket logic; no unsafe in crate")]
     #[test]
     fn test_debug_impl() {
         let limiter = RateLimiter::new(10, None);
@@ -555,6 +558,7 @@ mod tests {
         assert!(dbg.contains("RateLimiter"));
     }
 
+    #[cfg_attr(miri, ignore = "pure token-bucket logic; no unsafe in crate")]
     #[test]
     fn test_window_reset_and_token_cap() {
         use std::time::Duration;
@@ -568,6 +572,7 @@ mod tests {
         assert!(limiter.is_allowed());
     }
 
+    #[cfg_attr(miri, ignore = "pure token-bucket logic; no unsafe in crate")]
     #[test]
     fn test_effective_rate_zero_total() {
         // New limiter with no calls: effective_rate should be 1.0 (no data = pass through)

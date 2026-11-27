@@ -735,6 +735,7 @@ mod tests {
         unsafe { libc::syscall(libc::SYS_gettid) as libc::pid_t }
     }
 
+    #[cfg_attr(miri, ignore = "safe std::fs readdir; unsafe ptrace not exercised")]
     #[test]
     fn enumerate_includes_current_thread() {
         let pid = std::process::id() as libc::pid_t;
@@ -742,6 +743,7 @@ mod tests {
         assert!(tids.contains(&pid), "main thread TID {pid} not in {tids:?}");
     }
 
+    #[cfg_attr(miri, ignore = "safe std::fs readdir; unsafe ptrace not exercised")]
     #[test]
     fn enumerate_rejects_nonexistent_pid() {
         // PID 0 is not a real process.

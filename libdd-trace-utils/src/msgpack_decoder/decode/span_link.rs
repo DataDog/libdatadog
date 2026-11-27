@@ -98,6 +98,7 @@ mod tests {
     use crate::msgpack_decoder::decode::error::DecodeError;
     use std::str::FromStr;
 
+    #[cfg_attr(miri, ignore = "pure FromStr key enum mapping; no unsafe in path")]
     #[test]
     fn test_span_link_key_from_str() {
         // Valid cases

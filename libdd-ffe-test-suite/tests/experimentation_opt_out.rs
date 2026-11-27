@@ -104,6 +104,7 @@ const MODES: [ExperimentationOptOutMode; 3] = [
     ExperimentationOptOutMode::FutureExperimentsOnly,
 ];
 
+#[cfg_attr(miri, ignore = "no unsafe in path; libdd-ffe evaluator is safe code")]
 #[test]
 fn lean_policy_cases_use_production_evaluator() {
     // D002/D004 r2/D010/D011. Expectations are copied unchanged from the Lean oracle.
@@ -192,6 +193,7 @@ fn lean_policy_cases_use_production_evaluator() {
     eprintln!("Lean policy: {count} passed, 0 failed, 0 skipped");
 }
 
+#[cfg_attr(miri, ignore = "no unsafe in path; libdd-ffe evaluator is safe code")]
 #[test]
 fn activation_validation_covers_unreachable_and_ordinary_allocations() {
     // D004 applies to the entire flag, even after a matching allocation or behind time/rule gates.
@@ -246,6 +248,7 @@ fn activation_validation_covers_unreachable_and_ordinary_allocations() {
     }
 }
 
+#[cfg_attr(miri, ignore = "no unsafe in path; libdd-ffe evaluator is safe code")]
 #[test]
 fn start_and_end_validity_remain_independent_of_opt_out() {
     for field in ["startAt", "endAt"] {
@@ -264,6 +267,7 @@ fn start_and_end_validity_remain_independent_of_opt_out() {
     }
 }
 
+#[cfg_attr(miri, ignore = "no unsafe in path; libdd-ffe evaluator is safe code")]
 #[test]
 fn missing_and_null_activation_have_the_same_conservative_behavior() {
     for missing in [true, false] {
@@ -281,6 +285,7 @@ fn missing_and_null_activation_have_the_same_conservative_behavior() {
     }
 }
 
+#[cfg_attr(miri, ignore = "no unsafe in path; libdd-ffe evaluator is safe code")]
 #[test]
 fn opt_out_grammar_does_not_narrow_allocation_schedules() {
     for (field, timestamp) in [
@@ -297,6 +302,7 @@ fn opt_out_grammar_does_not_narrow_allocation_schedules() {
     }
 }
 
+#[cfg_attr(miri, ignore = "no unsafe in path; libdd-ffe evaluator is safe code")]
 #[test]
 fn opt_out_timestamps_reject_surrounding_whitespace() {
     for timestamp in [
@@ -394,6 +400,7 @@ fn assert_timestamp_assignment(result: Assignment, retained: bool, id: &str) {
     assert_eq!(result.serial_id, Some(if retained { 7 } else { 8 }), "{id}");
 }
 
+#[cfg_attr(miri, ignore = "no unsafe in path; libdd-ffe evaluator is safe code")]
 #[test]
 fn lean_timestamp_cases_use_both_production_paths() {
     // D005/D006/D007: frozen expected instants, never the host parser, are the oracle.

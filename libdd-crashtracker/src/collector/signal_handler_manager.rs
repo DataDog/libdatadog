@@ -214,6 +214,7 @@ unsafe fn register_signal_handler(
 
 #[cfg(test)]
 mod tests {
+    #[cfg_attr(miri, ignore = "const vs libc::SIGRTMAX check; no unsafe in path")]
     #[cfg(target_os = "linux")]
     #[test]
     fn test_max_signals() {

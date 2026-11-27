@@ -420,6 +420,7 @@ mod tests {
         }
     }
 
+    #[cfg_attr(miri, ignore = "pure metric construction; no unsafe in path")]
     #[test]
     fn test_http_tag_value() {
         assert_eq!(TransportErrorType::Http(400).as_tag_value().as_ref(), "400");
@@ -427,6 +428,7 @@ mod tests {
         assert_eq!(TransportErrorType::Http(500).as_tag_value().as_ref(), "500");
     }
 
+    #[cfg_attr(miri, ignore = "pure metric construction; no unsafe in path")]
     #[test]
     fn test_non_http_tag_values() {
         assert_eq!(
@@ -444,12 +446,14 @@ mod tests {
         assert_eq!(TransportErrorType::Build.as_tag_value().as_ref(), "build");
     }
 
+    #[cfg_attr(miri, ignore = "pure metric construction; no unsafe in path")]
     #[test]
     fn test_dropped_excludes_404_and_415() {
         assert!(!TransportErrorType::Http(404).should_emit_dropped_metrics());
         assert!(!TransportErrorType::Http(415).should_emit_dropped_metrics());
     }
 
+    #[cfg_attr(miri, ignore = "pure metric construction; no unsafe in path")]
     #[test]
     fn test_dropped_includes_other_http() {
         assert!(TransportErrorType::Http(400).should_emit_dropped_metrics());
@@ -460,6 +464,7 @@ mod tests {
         assert!(TransportErrorType::Http(503).should_emit_dropped_metrics());
     }
 
+    #[cfg_attr(miri, ignore = "pure metric construction; no unsafe in path")]
     #[test]
     fn test_dropped_includes_non_http() {
         assert!(TransportErrorType::Network.should_emit_dropped_metrics());
@@ -468,6 +473,7 @@ mod tests {
         assert!(TransportErrorType::Build.should_emit_dropped_metrics());
     }
 
+    #[cfg_attr(miri, ignore = "pure metric construction; no unsafe in path")]
     #[test]
     fn test_success_construction() {
         let result = SendResult::success(1024, 5, 1);
@@ -479,6 +485,7 @@ mod tests {
         assert_eq!(result.request_attempts, 1);
     }
 
+    #[cfg_attr(miri, ignore = "pure metric construction; no unsafe in path")]
     #[test]
     fn test_failure_construction() {
         let result = SendResult::failure(TransportErrorType::Http(500), 2048, 10, 3);
@@ -490,6 +497,7 @@ mod tests {
         assert_eq!(result.request_attempts, 3);
     }
 
+    #[cfg_attr(miri, ignore = "pure metric construction; no unsafe in path")]
     #[test]
     fn test_success_metrics() {
         let result = SendResult::success(1024, 5, 1);
@@ -503,6 +511,7 @@ mod tests {
         assert!(metrics.contains(&(HealthMetric::Count(TRANSPORT_TRACES_SUCCESSFUL, 5), None)));
     }
 
+    #[cfg_attr(miri, ignore = "pure metric construction; no unsafe in path")]
     #[test]
     fn test_success_no_failure_metrics() {
         let result = SendResult::success(1024, 5, 1);
@@ -521,6 +530,7 @@ mod tests {
         }
     }
 
+    #[cfg_attr(miri, ignore = "pure metric construction; no unsafe in path")]
     #[test]
     fn test_http_400_emits_dropped() {
         let result = SendResult::failure(TransportErrorType::Http(400), 2048, 10, 5);
@@ -541,6 +551,7 @@ mod tests {
         )));
     }
 
+    #[cfg_attr(miri, ignore = "pure metric construction; no unsafe in path")]
     #[test]
     fn test_http_404_skips_dropped() {
         let result = SendResult::failure(TransportErrorType::Http(404), 2048, 10, 5);
@@ -559,6 +570,7 @@ mod tests {
         }
     }
 
+    #[cfg_attr(miri, ignore = "pure metric construction; no unsafe in path")]
     #[test]
     fn test_http_415_skips_dropped() {
         let result = SendResult::failure(TransportErrorType::Http(415), 1024, 3, 1);
@@ -571,6 +583,7 @@ mod tests {
         )));
     }
 
+    #[cfg_attr(miri, ignore = "pure metric construction; no unsafe in path")]
     #[test]
     fn test_network_error_emits_dropped() {
         let result = SendResult::failure(TransportErrorType::Network, 512, 2, 3);
@@ -587,6 +600,7 @@ mod tests {
         )));
     }
 
+    #[cfg_attr(miri, ignore = "pure metric construction; no unsafe in path")]
     #[test]
     fn test_timeout_emits_dropped() {
         let result = SendResult::failure(TransportErrorType::Timeout, 1024, 5, 5);
@@ -603,6 +617,7 @@ mod tests {
         )));
     }
 
+    #[cfg_attr(miri, ignore = "pure metric construction; no unsafe in path")]
     #[test]
     fn test_build_error_emits_dropped() {
         let result = SendResult::failure(TransportErrorType::Build, 256, 1, 1);
@@ -619,6 +634,7 @@ mod tests {
         )));
     }
 
+    #[cfg_attr(miri, ignore = "pure metric construction; no unsafe in path")]
     #[test]
     fn test_response_body_error_emits_dropped() {
         let result = SendResult::failure(TransportErrorType::ResponseBody, 4096, 20, 1);
@@ -631,6 +647,7 @@ mod tests {
         )));
     }
 
+    #[cfg_attr(miri, ignore = "pure metric construction; no unsafe in path")]
     #[test]
     fn test_base_metrics_always_emitted() {
         let scenarios = vec![
@@ -660,6 +677,7 @@ mod tests {
         }
     }
 
+    #[cfg_attr(miri, ignore = "pure metric construction; no unsafe in path")]
     #[test]
     fn test_request_attempts_reflects_retries() {
         let result = SendResult::failure(TransportErrorType::Http(503), 1024, 5, 5);
@@ -682,6 +700,7 @@ mod tests {
                 .unwrap()
         }
 
+        #[cfg_attr(miri, ignore = "pure metric construction; no unsafe in path")]
         #[test]
         fn test_from_retry_result_success_2xx() {
             let response = mock_response(StatusCode::OK);
@@ -695,6 +714,7 @@ mod tests {
             assert_eq!(send_result.request_attempts, 1);
         }
 
+        #[cfg_attr(miri, ignore = "pure metric construction; no unsafe in path")]
         #[test]
         fn test_from_retry_result_http_error() {
             let response = mock_response(StatusCode::BAD_REQUEST);
@@ -706,6 +726,7 @@ mod tests {
             assert_eq!(send_result.request_attempts, 3);
         }
 
+        #[cfg_attr(miri, ignore = "pure metric construction; no unsafe in path")]
         #[test]
         fn test_from_retry_result_timeout_error() {
             let retry_result: SendWithRetryResult = Err(SendWithRetryError::Timeout(5));
@@ -716,6 +737,7 @@ mod tests {
             assert_eq!(send_result.request_attempts, 5);
         }
 
+        #[cfg_attr(miri, ignore = "pure metric construction; no unsafe in path")]
         #[test]
         fn test_from_retry_result_network_error() {
             // We can't really simulate network error, so we test the behavior
@@ -736,6 +758,7 @@ mod tests {
             )));
         }
 
+        #[cfg_attr(miri, ignore = "pure metric construction; no unsafe in path")]
         #[test]
         fn test_from_retry_result_build_error() {
             let retry_result: SendWithRetryResult = Err(SendWithRetryError::Build(1));
@@ -746,6 +769,7 @@ mod tests {
             assert_eq!(send_result.request_attempts, 1);
         }
 
+        #[cfg_attr(miri, ignore = "pure metric construction; no unsafe in path")]
         #[test]
         fn test_from_retry_result_response_body_error() {
             let retry_result: SendWithRetryResult = Err(SendWithRetryError::ResponseBody(2));
@@ -759,6 +783,7 @@ mod tests {
             assert_eq!(send_result.request_attempts, 2);
         }
 
+        #[cfg_attr(miri, ignore = "pure metric construction; no unsafe in path")]
         #[test]
         fn test_from_retry_result_preserves_context() {
             let response = mock_response(StatusCode::OK);
@@ -776,6 +801,7 @@ mod tests {
     mod serialization_metrics {
         use super::*;
 
+        #[cfg_attr(miri, ignore = "pure metric construction; no unsafe in path")]
         #[test]
         fn test_serialize_errors_constant_defined() {
             assert_eq!(
@@ -784,6 +810,7 @@ mod tests {
             );
         }
 
+        #[cfg_attr(miri, ignore = "pure metric construction; no unsafe in path")]
         #[test]
         fn test_deserialize_errors_constant_defined() {
             assert_eq!(
@@ -792,6 +819,7 @@ mod tests {
             );
         }
 
+        #[cfg_attr(miri, ignore = "pure metric construction; no unsafe in path")]
         #[test]
         fn test_serialize_metric_can_be_used() {
             let metric = HealthMetric::Count(SERIALIZE_TRACES_ERRORS, 1);

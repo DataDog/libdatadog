@@ -378,6 +378,10 @@ mod tests {
         serde_json::from_str(event.context.as_ref().unwrap().evaluation.as_ref().unwrap()).unwrap()
     }
 
+    #[cfg_attr(
+        miri,
+        ignore = "pure bounded conversion via safe build_request; no unsafe in path"
+    )]
     #[test]
     fn oversized_identity_degrades_without_losing_evaluation_dimensions() {
         let oversized = "private-canary".repeat(libdd_ipc::max_message_size() / 14 + 1);
@@ -409,6 +413,10 @@ mod tests {
         }
     }
 
+    #[cfg_attr(
+        miri,
+        ignore = "pure bounded conversion via safe build_request; no unsafe in path"
+    )]
     #[test]
     fn combined_input_size_degrades_before_copying_identity_or_context() {
         // The key itself fits; adding retained metadata exceeds the ceiling.
@@ -434,6 +442,10 @@ mod tests {
         assert_eq!(captured.evaluation_count, 1);
     }
 
+    #[cfg_attr(
+        miri,
+        ignore = "pure bounded conversion via safe build_request; no unsafe in path"
+    )]
     #[test]
     fn oversized_retained_dimension_still_rejects_the_observation() {
         let oversized = "x".repeat(libdd_ipc::max_message_size() + 1);
@@ -445,6 +457,10 @@ mod tests {
         ));
     }
 
+    #[cfg_attr(
+        miri,
+        ignore = "pure bounded conversion via safe build_request; no unsafe in path"
+    )]
     #[test]
     fn scalar_types_and_verbatim_values_are_captured_without_legacy_json() {
         let mut attrs = vec![
@@ -468,6 +484,10 @@ mod tests {
         assert!(row.observe_full_evaluation_data);
     }
 
+    #[cfg_attr(
+        miri,
+        ignore = "pure bounded conversion via safe build_request; no unsafe in path"
+    )]
     #[test]
     fn protected_capture_ignores_context_and_its_error_state() {
         let mut attribute = attr("invalid", "private-context-canary");
@@ -518,6 +538,10 @@ mod tests {
         }
     }
 
+    #[cfg_attr(
+        miri,
+        ignore = "pure bounded conversion via safe build_request; no unsafe in path"
+    )]
     #[test]
     fn only_first_256_entries_are_inspected_even_when_one_is_rejected() {
         let names: Vec<_> = (0..257).map(|i| format!("field{i}")).collect();
@@ -535,6 +559,10 @@ mod tests {
         );
     }
 
+    #[cfg_attr(
+        miri,
+        ignore = "pure truncation comparison of two safe conversion paths; no unsafe in path"
+    )]
     #[test]
     fn scalar_and_json_entry_points_agree_on_top_level_truncation() {
         let overlength = "x".repeat(257);
@@ -584,6 +612,10 @@ mod tests {
         }
     }
 
+    #[cfg_attr(
+        miri,
+        ignore = "pure bounded conversion via safe build_request; no unsafe in path"
+    )]
     #[test]
     fn unicode_limits_skip_instead_of_truncating() {
         let exact = "é".repeat(256);
@@ -606,6 +638,10 @@ mod tests {
         assert!(row.field_omissions.contains_context(Reason::MaxValueLength));
     }
 
+    #[cfg_attr(
+        miri,
+        ignore = "pure bounded conversion via safe build_request; no unsafe in path"
+    )]
     #[test]
     fn bad_scalars_are_omitted_without_losing_healthy_fields() {
         let invalid = [0xffu8];
@@ -623,6 +659,10 @@ mod tests {
         assert!(row.field_omissions.contains_context(Reason::SnapshotError));
     }
 
+    #[cfg_attr(
+        miri,
+        ignore = "pure bounded conversion via safe build_request; no unsafe in path"
+    )]
     #[test]
     fn caller_snapshot_failure_keeps_evaluation_without_context() {
         let row = convert(
@@ -678,6 +718,10 @@ mod tests {
         assert!(!row.field_omissions.targeting_key_invalid);
     }
 
+    #[cfg_attr(
+        miri,
+        ignore = "pure bounded conversion via safe build_request; no unsafe in path"
+    )]
     #[test]
     fn invalid_optional_text_and_private_errors_do_not_drop_the_event() {
         let invalid = [0xffu8];
@@ -735,6 +779,10 @@ mod tests {
         }
     }
 
+    #[cfg_attr(
+        miri,
+        ignore = "pure bounded conversion via safe build_request; no unsafe in path"
+    )]
     #[test]
     fn captured_context_needs_no_further_pruning() {
         let over = "é".repeat(257);
@@ -766,6 +814,10 @@ mod tests {
         }
     }
 
+    #[cfg_attr(
+        miri,
+        ignore = "pure bounded conversion via safe build_request; no unsafe in path"
+    )]
     #[test]
     fn features_are_canonicalized_and_survive_identity_degradation() {
         let oversized = "x".repeat(libdd_ipc::max_message_size());
@@ -780,6 +832,10 @@ mod tests {
         }
     }
 
+    #[cfg_attr(
+        miri,
+        ignore = "pure bounded conversion via safe build_request; no unsafe in path"
+    )]
     #[test]
     fn malformed_or_oversized_features_are_omitted_without_rejecting() {
         let invalid = [0xffu8];
@@ -797,6 +853,10 @@ mod tests {
         }
     }
 
+    #[cfg_attr(
+        miri,
+        ignore = "pure bounded conversion via safe build_request; no unsafe in path"
+    )]
     #[test]
     fn aggregated_input_is_rejected() {
         let mut source = event(false);
@@ -810,6 +870,10 @@ mod tests {
         assert_eq!(result.unwrap_err(), FfeSubmissionStatus::InvalidInput);
     }
 
+    #[cfg_attr(
+        miri,
+        ignore = "pure bounded conversion via safe build_request; no unsafe in path"
+    )]
     #[test]
     fn oversized_identifiers_reject_but_ignored_error_and_context_do_not() {
         let huge = "x".repeat(libdd_ipc::max_message_size() + 1);

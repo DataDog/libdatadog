@@ -378,6 +378,7 @@ mod tests {
         assert_eq!(span.env.as_deref(), Some("prod"));
     }
 
+    #[cfg_attr(miri, ignore = "bails on zero span id before any unsafe")]
     #[test]
     fn zero_span_id_fails() {
         let mut span = TestSpan {

@@ -607,6 +607,7 @@ mod tests {
         assert_eq!(chunk.spans().filter(|s| s.span_id() == 1).count(), 1);
     }
 
+    #[cfg_attr(miri, ignore = "pure SpanKind enum mapping; no unsafe in path")]
     #[test]
     fn span_kind_default_is_internal() {
         assert_eq!(SpanKind::default(), SpanKind::Internal);
@@ -615,6 +616,7 @@ mod tests {
         assert_eq!(SpanKind::from(9), SpanKind::Internal);
     }
 
+    #[cfg_attr(miri, ignore = "pure SpanKind enum mapping; no unsafe in path")]
     #[test]
     fn span_kind_from_meta() {
         assert_eq!(SpanKind::from_meta("server"), SpanKind::Server);
@@ -626,6 +628,7 @@ mod tests {
         assert_eq!(SpanKind::from_meta("anything-else"), SpanKind::Internal);
     }
 
+    #[cfg_attr(miri, ignore = "pure SpanKind enum mapping; no unsafe in path")]
     #[test]
     fn span_kind_repr_matches_otel_spec() {
         assert_eq!(SpanKind::Unspecified as u32, 0);
