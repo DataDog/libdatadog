@@ -17,7 +17,7 @@ use tracing::warn;
 
 use crate::span_concentrator::cardinality_limit_telemetry::CollapsedFieldSet;
 use libdd_trace_model::{Attributes as _, ChunkSpanView, Span, TraceChunk};
-use libdd_trace_semantics::{Concept, Value, lookup_i64, lookup_str, lookup_value};
+use libdd_trace_semantics::{Concept, LookupValue, lookup_i64, lookup_str, lookup_value};
 
 use super::{
     CardinalityLimitConfig,
@@ -178,9 +178,9 @@ fn get_http_status_code(span: &impl Span) -> u32 {
 /// `None` without falling through.
 fn get_grpc_status_code(span: &impl Span) -> Option<u8> {
     match lookup_value(span, Concept::RpcGrpcStatusCode)? {
-        Value::String(s) => grpc_status_str_to_int_value(s),
-        Value::Int(i) => u8::try_from(i).ok(),
-        Value::Float(f) => {
+        LookupValue::String(s) => grpc_status_str_to_int_value(s),
+        LookupValue::Int(i) => u8::try_from(i).ok(),
+        LookupValue::Float(f) => {
             libdd_trace_model::f64_to_exact_i64(f).and_then(|i| u8::try_from(i).ok())
         }
         _ => None,

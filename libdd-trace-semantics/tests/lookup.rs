@@ -9,7 +9,9 @@ use alloc::borrow::Cow;
 use std::collections::HashMap;
 
 use libdd_trace_model::{AttributeValue, Attributes, StringData};
-use libdd_trace_semantics::{Concept, Value, lookup_f64, lookup_i64, lookup_str, lookup_value};
+use libdd_trace_semantics::{
+    Concept, LookupValue, lookup_f64, lookup_i64, lookup_str, lookup_value,
+};
 
 type V = AttributeValue<StringData>;
 
@@ -166,31 +168,31 @@ fn value_lookup_types_values_by_entry() {
     let method = Typed::new([("http.method", s("GET"))]);
     assert_eq!(
         lookup_value(&method, Concept::HttpMethod),
-        Some(Value::String("GET"))
+        Some(LookupValue::String("GET"))
     );
 
     // http.status_code: int64 first, then string.
     let int = Typed::new([("http.status_code", V::Int(200))]);
     assert_eq!(
         lookup_value(&int, Concept::HttpStatusCode),
-        Some(Value::Int(200))
+        Some(LookupValue::Int(200))
     );
     let v04 = V04::new([], [("http.status_code", 404.0)]);
     assert_eq!(
         lookup_value(&v04, Concept::HttpStatusCode),
-        Some(Value::Int(404))
+        Some(LookupValue::Int(404))
     );
     let meta = V04::new([("http.status_code", "200")], []);
     assert_eq!(
         lookup_value(&meta, Concept::HttpStatusCode),
-        Some(Value::String("200"))
+        Some(LookupValue::String("200"))
     );
 
     // _dd.top_level is float64.
     let float = Typed::new([("_dd.top_level", V::Float(1.5))]);
     assert_eq!(
         lookup_value(&float, Concept::DdTopLevel),
-        Some(Value::Float(1.5))
+        Some(LookupValue::Float(1.5))
     );
 
     assert_eq!(lookup_value(&Typed::default(), Concept::HttpMethod), None);
@@ -201,7 +203,7 @@ fn value_lookup_skips_empty_strings() {
     let attrs = Typed::new([("http.request.method", s("")), ("http.method", s("GET"))]);
     assert_eq!(
         lookup_value(&attrs, Concept::HttpMethod),
-        Some(Value::String("GET"))
+        Some(LookupValue::String("GET"))
     );
 }
 
@@ -213,7 +215,7 @@ fn value_lookup_checks_conditions() {
     ]);
     assert_eq!(
         lookup_value(&grpc, Concept::RpcGrpcStatusCode),
-        Some(Value::Int(7))
+        Some(LookupValue::Int(7))
     );
 
     let jsonrpc = Typed::new([

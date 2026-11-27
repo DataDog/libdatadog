@@ -128,21 +128,39 @@ fn is_partial_snapshot(attrs: &impl Attributes) -> bool {
     lookup_f64(attrs, Concept::DdPartialVersion).is_some_and(|v| v >= 0.0)
 }
 
-/// Evaluates whether a span is eligible for stats computation, returning `Some(is_top_level)`
-/// when eligible and `None` otherwise.
-fn check_span_eligibility<'a>(
+/// Result of [`check_span_eligibility`].
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Eligibility {
+    Eligible { is_top_level: bool },
+    NotEligible,
+}
+
+/// Evaluates whether a span is eligible for stats computation.
+///
+/// Eligibility markers are read from `markers` and the span kind from `span`, which is only
+/// queried when the markers alone don't make the span eligible. They are separate so that
+/// [`SpanConcentrator::add_span`] can read markers from the inner span only while reading the
+/// span kind through the [`ChunkSpanView`], which falls back to the chunk.
+fn check_span_eligibility(
     markers: &impl Attributes,
-    span_kind: impl FnOnce() -> Option<&'a str>,
+    span: &impl Span,
     span_kinds_stats_computed: &[String],
-) -> Option<bool> {
+) -> Eligibility {
     let top_level = is_top_level(markers);
     let eligible = (top_level
         || is_measured(markers)
         || (!span_kinds_stats_computed.is_empty()
-            && span_kind()
+            && span
+                .span_kind()
                 .is_some_and(|kind| span_kinds_stats_computed.contains(&kind.to_lowercase()))))
         && !is_partial_snapshot(markers);
-    eligible.then_some(top_level)
+    if eligible {
+        Eligibility::Eligible {
+            is_top_level: top_level,
+        }
+    } else {
+        Eligibility::NotEligible
+    }
 }
 
 /// Return true if the span is eligible for stats computation.
@@ -152,7 +170,10 @@ fn check_span_eligibility<'a>(
 /// [`Attributes`] implementation falls back to chunk attributes, whereas
 /// [`SpanConcentrator::add_span`] reads these markers from the inner span only.
 pub fn is_span_eligible<T: Span>(span: &T, span_kinds_stats_computed: &[String]) -> bool {
-    check_span_eligibility(span, || span.span_kind(), span_kinds_stats_computed).is_some()
+    matches!(
+        check_span_eligibility(span, span, span_kinds_stats_computed),
+        Eligibility::Eligible { .. }
+    )
 }
 
 #[cfg(feature = "stats-obfuscation")]
@@ -361,11 +382,9 @@ impl SpanConcentrator {
     pub fn add_span<C: TraceChunk>(&mut self, span: &ChunkSpanView<'_, C>) {
         // Eligibility markers are span-only and never inherited from chunk attributes;
         // span_kind keeps using the view getter so V1 spans can fall back to the chunk.
-        let Some(top_level) = check_span_eligibility(
-            span.span,
-            || span.span_kind(),
-            self.span_kinds_stats_computed.as_slice(),
-        ) else {
+        let Eligibility::Eligible { is_top_level } =
+            check_span_eligibility(span.span, span, self.span_kinds_stats_computed.as_slice())
+        else {
             return;
         };
         let mut bucket_timestamp =
@@ -412,7 +431,7 @@ impl SpanConcentrator {
         if target_bucket.obfuscated {
             agg_key.truncate(self.big_resource);
         }
-        target_bucket.insert(agg_key, span.duration(), span.is_error(), top_level);
+        target_bucket.insert(agg_key, span.duration(), span.is_error(), is_top_level);
     }
 
     #[cfg(feature = "stats-obfuscation")]

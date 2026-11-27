@@ -33,7 +33,7 @@ extern crate alloc;
 
 mod lookup;
 
-pub use lookup::{Value, lookup_f64, lookup_i64, lookup_str, lookup_value};
+pub use lookup::{LookupValue, lookup_f64, lookup_i64, lookup_str, lookup_value};
 
 include!(concat!(env!("OUT_DIR"), "/registry.rs"));
 

@@ -31,7 +31,7 @@ use crate::{Concept, Condition, Entry, Predicate, ValueType};
 /// A value read by [`lookup_value`], with the type of the entry it was read from.
 #[non_exhaustive]
 #[derive(Clone, Copy, Debug, PartialEq)]
-pub enum Value<'a> {
+pub enum LookupValue<'a> {
     /// The value of a `string` entry, never empty
     String(&'a str),
     /// The value of an `int64` entry
@@ -48,7 +48,10 @@ pub enum Value<'a> {
 ///
 /// Promoted tags can't be read with lookups: use the `Span` and `TraceChunk` getters instead.
 #[must_use]
-pub fn lookup_value<A: Attributes + ?Sized>(attrs: &A, concept: Concept) -> Option<Value<'_>> {
+pub fn lookup_value<A: Attributes + ?Sized>(
+    attrs: &A,
+    concept: Concept,
+) -> Option<LookupValue<'_>> {
     value_in(attrs, concept.entries())
 }
 
@@ -86,12 +89,15 @@ pub fn lookup_f64<A: Attributes + ?Sized>(attrs: &A, concept: Concept) -> Option
     f64_in(attrs, concept.entries())
 }
 
-fn value_in<'a, A: Attributes + ?Sized>(attrs: &'a A, entries: &[Entry]) -> Option<Value<'a>> {
+fn value_in<'a, A: Attributes + ?Sized>(
+    attrs: &'a A,
+    entries: &[Entry],
+) -> Option<LookupValue<'a>> {
     entries.iter().find_map(|entry| {
         let value = match entry.value_type {
-            ValueType::Int64 => attrs.attribute_i64(entry.name).map(Value::Int),
-            ValueType::Float64 => attrs.attribute_f64(entry.name).map(Value::Float),
-            ValueType::String => non_empty_str(attrs, entry.name).map(Value::String),
+            ValueType::Int64 => attrs.attribute_i64(entry.name).map(LookupValue::Int),
+            ValueType::Float64 => attrs.attribute_f64(entry.name).map(LookupValue::Float),
+            ValueType::String => non_empty_str(attrs, entry.name).map(LookupValue::String),
         }?;
         conditions_hold(attrs, entry).then_some(value)
     })
@@ -99,9 +105,9 @@ fn value_in<'a, A: Attributes + ?Sized>(attrs: &'a A, entries: &[Entry]) -> Opti
 
 fn str_in<'a, A: Attributes + ?Sized>(attrs: &'a A, entries: &[Entry]) -> Option<Cow<'a, str>> {
     Some(match value_in(attrs, entries)? {
-        Value::String(v) => Cow::Borrowed(v),
-        Value::Int(v) => Cow::Owned(v.to_string()),
-        Value::Float(v) => Cow::Owned(v.to_string()),
+        LookupValue::String(v) => Cow::Borrowed(v),
+        LookupValue::Int(v) => Cow::Owned(v.to_string()),
+        LookupValue::Float(v) => Cow::Owned(v.to_string()),
     })
 }
 
