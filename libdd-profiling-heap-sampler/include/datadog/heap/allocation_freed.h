@@ -1,13 +1,13 @@
 /**
  * @file allocation_freed.h
  *
- * Pre-free hook for the ddheap sampler.
+ * Pre-free hook for the otel_memory sampler.
  *
  * Call dd_allocation_freed() before forwarding to the underlying deallocator.
  * On the fast path it checks whether the pointer carries the architecture-
  * specific sample flag (a top-byte tag on arm64, a magic header word on
  * x86-64); unsampled pointers return immediately with their inputs unchanged.
- * On the slow path it emits the ddheap:free USDT and returns the raw pointer
+ * On the slow path it emits the otel_memory:free USDT and returns the raw pointer
  * and adjusted size that the caller must pass to the real free.
  *
  * The caller must use the ptr and size from the returned dd_alloc_freed_t
@@ -49,7 +49,7 @@ dd_alloc_freed_t dd_allocation_freed_slow(void *ptr, void *raw, size_t size,
  * Wraps free, operator delete (sized and unsized), sdallocx, etc.
  *
  * Checks whether the allocation at `ptr` was previously sampled and
- * emits the matching `ddheap:free` USDT if so, then returns the
+ * emits the matching `otel_memory:free` USDT if so, then returns the
  * (ptr, size) the caller must forward to the underlying deallocator
  * verbatim.
  *

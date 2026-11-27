@@ -54,10 +54,10 @@ They are responsible for deciding whether or not to sample, and storing the info
 
 The actual USDTs emitted are:
 
-* `ddheap:alloc(void *user, uint64_t size, uint64_t weight)` — fired on sampled allocations; `user` is the user-visible pointer, `size` in bytes, `weight` is the unbiased size estimator (`nsamples * interval`)
-* `ddheap:free(void *ptr)` — fired when a previously-sampled allocation is freed
-* `ddheap:mmap` - TODO 
-* `ddheap:munmap` - TODO
+* `otel_memory:alloc(void *user, uint64_t size, uint64_t weight)` — fired on sampled allocations; `user` is the user-visible pointer, `size` in bytes, `weight` is the unbiased size estimator (`nsamples * interval`)
+* `otel_memory:free(void *ptr)` — fired when a previously-sampled allocation is freed
+* `otel_memory:mmap` - TODO 
+* `otel_memory:munmap` - TODO
 
 **Allocations**
 
