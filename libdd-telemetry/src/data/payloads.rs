@@ -220,6 +220,9 @@ pub enum Method {
 
 #[derive(Serialize, Deserialize, Debug, Clone, Default)]
 pub struct Endpoint {
+    /// Type of the endpoint, such as `"REST"`. Not serialized when the endpoint has no type.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub r#type: Option<String>,
     #[serde(default)]
     pub method: Option<Method>,
     #[serde(default)]
