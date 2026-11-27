@@ -91,6 +91,17 @@ impl<S: FileStorage, C: HttpClientCapability + SleepCapability> SingleFetcher<S,
         self
     }
 
+    /// Skips local target file hash verification for this Agent endpoint.
+    ///
+    /// Only use this with a trusted Agent that verifies the files before serving
+    /// them over a trusted transport. Agentless verification is unchanged.
+    /// [`Self::rebind`] restores local hash checks on cache misses when given a
+    /// replacement endpoint. It can still reuse cached files by advertised hash.
+    pub fn with_preverified_agent_files(mut self) -> Self {
+        self.fetcher.preverified_agent_files = true;
+        self
+    }
+
     /// Replaces the identity sent on subsequent polls without resetting client or file state.
     pub fn set_identity(&mut self, client_id: String, runtime_id: String, tags: Vec<String>) {
         self.client_id = client_id;
@@ -108,6 +119,7 @@ impl<S: FileStorage, C: HttpClientCapability + SleepCapability> SingleFetcher<S,
             client_id,
             client_state: previous_client_state,
         } = self;
+        let preverified_agent_files = endpoint.is_none() && fetcher.preverified_agent_files;
         let (file_storage, previous) = fetcher.into_parts();
 
         let mut invariants = previous.invariants.clone();
@@ -123,8 +135,10 @@ impl<S: FileStorage, C: HttpClientCapability + SleepCapability> SingleFetcher<S,
         let mut client_state = ConfigClientState::default();
         client_state.set_extra_services(previous_client_state.extra_services);
 
+        let mut fetcher = ConfigFetcher::new(file_storage, Arc::new(state)).await?;
+        fetcher.preverified_agent_files = preverified_agent_files;
         Ok(SingleFetcher {
-            fetcher: ConfigFetcher::new(file_storage, Arc::new(state)).await?,
+            fetcher,
             target,
             product_capabilities,
             runtime_id,
@@ -292,7 +306,99 @@ mod tests {
     use super::*;
     use crate::fetch::test_server::RemoteConfigServer;
     use crate::file_storage::SimpleFileStorage;
+    use base64::Engine;
+    use http::Response;
     use libdd_capabilities_impl::NativeCapabilities;
+    use libdd_networking::http_common;
+    use libdd_trace_protobuf::remoteconfig::{ClientGetConfigsResponse, File};
+
+    #[tokio::test]
+    #[cfg_attr(miri, ignore)]
+    async fn preverified_agent_files_are_scoped_to_the_endpoint() {
+        let server = RemoteConfigServer::spawn();
+        let target = Target::new(
+            "service".to_string(),
+            "env".to_string(),
+            "1.2.3".to_string(),
+            vec![],
+            vec![],
+        );
+        let path = "employee/APM_TRACING/preverified/config";
+        let base64 = base64::engine::general_purpose::STANDARD;
+        let serve_file = |server: &RemoteConfigServer, version: u64, raw: Vec<u8>| {
+            let targets = serde_json::json!({
+                "signed": {
+                    "version": version,
+                    "custom": { "opaque_backend_state": "" },
+                    "targets": {
+                        (path): {
+                            "length": 6,
+                            "hashes": { "sha256": format!("{version:064x}") },
+                            "custom": { "v": version },
+                        },
+                    },
+                },
+            });
+            let response = ClientGetConfigsResponse {
+                targets: base64
+                    .encode(serde_json::to_vec(&targets).unwrap())
+                    .into_bytes(),
+                target_files: vec![File {
+                    path: path.to_string(),
+                    raw,
+                }],
+                client_configs: vec![path.to_string()],
+                ..Default::default()
+            };
+            *server.next_response.lock().unwrap() = Some(Response::new(http_common::Body::from(
+                serde_json::to_vec(&response).unwrap(),
+            )));
+        };
+        let encoded = base64.encode(b"config").into_bytes();
+        let mut fetcher = SingleFetcher::new_no_agentless(
+            SimpleFileStorage::default(),
+            target.clone(),
+            "runtime-id".to_string(),
+            server.dummy_options(),
+            NativeCapabilities::new_periodic(),
+        );
+
+        serve_file(&server, 1, encoded.clone());
+        assert!(fetcher.fetch_once().await.unwrap().unwrap().is_empty());
+
+        let mut fetcher = fetcher.with_preverified_agent_files();
+        serve_file(&server, 1, encoded.clone());
+        let files = fetcher.fetch_once().await.unwrap().unwrap();
+        assert_eq!(files[0].contents().as_slice(), b"config");
+
+        let mut fetcher = fetcher.rebind(target.clone(), None).await.unwrap();
+        serve_file(&server, 2, encoded.clone());
+        let files = fetcher.fetch_once().await.unwrap().unwrap();
+        assert_eq!(files[0].version(), 2);
+        {
+            let request = server.last_request.lock().unwrap();
+            let cached = &request.as_ref().unwrap().cached_target_files;
+            assert_eq!(cached.len(), 1);
+            assert_eq!(cached[0].hashes[0].hash, format!("{:064x}", 1));
+        }
+
+        serve_file(&server, 2, base64.encode(b"unused").into_bytes());
+        let files = fetcher.fetch_once().await.unwrap().unwrap();
+        assert_eq!(files[0].contents().as_slice(), b"config");
+
+        serve_file(&server, 3, b"!".to_vec());
+        let files = fetcher.fetch_once().await.unwrap().unwrap();
+        assert_eq!(files[0].version(), 2);
+
+        let replacement = RemoteConfigServer::spawn();
+        let mut fetcher = fetcher
+            .rebind(target, Some(replacement.endpoint.clone()))
+            .await
+            .unwrap();
+        serve_file(&replacement, 4, encoded);
+        let files = fetcher.fetch_once().await.unwrap().unwrap();
+        assert_eq!(files[0].version(), 2);
+    }
 
     #[tokio::test]
     #[cfg_attr(miri, ignore)]
