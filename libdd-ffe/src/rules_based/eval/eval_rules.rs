@@ -435,4 +435,75 @@ mod tests {
         assert!(!check.eval(Some(&"1.02.3".into())));
         assert!(!check.eval(None));
     }
+
+    fn targeting_key_condition(check: ConditionCheck) -> Condition {
+        Condition {
+            attribute: "targetingKey".into(),
+            check,
+        }
+    }
+
+    fn subject(key: Option<&str>) -> EvaluationContext {
+        EvaluationContext::new(key.map(Into::into), Arc::new(HashMap::new()))
+    }
+
+    #[test]
+    fn targeting_key_one_of() {
+        let condition = targeting_key_condition(ConditionCheck::Membership {
+            expected_membership: true,
+            values: ["foo".into(), "baz".into()].into(),
+        });
+        assert!(condition.eval(&subject(Some("foo"))));
+        assert!(condition.eval(&subject(Some("baz"))));
+        assert!(!condition.eval(&subject(Some("bar"))));
+        assert!(!condition.eval(&subject(None)));
+    }
+
+    #[test]
+    fn targeting_key_not_one_of() {
+        let condition = targeting_key_condition(ConditionCheck::Membership {
+            expected_membership: false,
+            values: ["foo".into()].into(),
+        });
+        assert!(!condition.eval(&subject(Some("foo"))));
+        assert!(condition.eval(&subject(Some("bar"))));
+        assert!(!condition.eval(&subject(None)));
+    }
+
+    #[test]
+    fn targeting_key_matches() {
+        let condition = targeting_key_condition(ConditionCheck::Regex {
+            expected_match: true,
+            regex: "^user-".try_into().unwrap(),
+        });
+        assert!(condition.eval(&subject(Some("user-1"))));
+        assert!(!condition.eval(&subject(Some("admin-1"))));
+        assert!(!condition.eval(&subject(None)));
+    }
+
+    #[test]
+    fn targeting_key_not_matches() {
+        let condition = targeting_key_condition(ConditionCheck::Regex {
+            expected_match: false,
+            regex: "^user-".try_into().unwrap(),
+        });
+        assert!(!condition.eval(&subject(Some("user-1"))));
+        assert!(condition.eval(&subject(Some("admin-1"))));
+        assert!(!condition.eval(&subject(None)));
+    }
+
+    #[test]
+    fn targeting_key_is_null() {
+        let is_null = targeting_key_condition(ConditionCheck::Null {
+            expected_null: true,
+        });
+        assert!(!is_null.eval(&subject(Some("user-1"))));
+        assert!(is_null.eval(&subject(None)));
+
+        let is_not_null = targeting_key_condition(ConditionCheck::Null {
+            expected_null: false,
+        });
+        assert!(is_not_null.eval(&subject(Some("user-1"))));
+        assert!(!is_not_null.eval(&subject(None)));
+    }
 }
