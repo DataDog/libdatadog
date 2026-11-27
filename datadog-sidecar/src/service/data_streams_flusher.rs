@@ -28,8 +28,8 @@ use libdd_ipc::shm_dsm_backlog::{
     DsmBacklogBucket, ShmDsmBacklogTable,
 };
 use libdd_ipc::shm_dsm_checkpoint::{
-    DEFAULT_DSM_CHECKPOINT_SLOT_COUNT, DEFAULT_DSM_CHECKPOINT_STRING_POOL_BYTES, DSM_BUCKET_NANOS,
-    DsmCheckpointBucket, ShmDsmCheckpointTable, now_nanos,
+    DEFAULT_DSM_CHECKPOINT_SLOT_COUNT, DSM_BUCKET_NANOS, DSM_CHECKPOINT_STRING_POOL_BYTES_PER_SLOT,
+    DsmCheckpointBucket, MAX_DSM_CHECKPOINT_SLOT_COUNT, ShmDsmCheckpointTable, now_nanos,
 };
 use libdd_trace_utils::send_with_retry::{
     CompressionStrategy, RetryBackoffType, RetryStrategy, send_with_retry,
@@ -81,6 +81,19 @@ pub(crate) struct DsmConfig {
     pub tracer_version: String,
     /// `key:value` process tags, as the payload's `ProcessTags` carries them.
     pub process_tags: Vec<String>,
+    /// Checkpoints per bucket of the checkpoint tables this session creates, from
+    /// [`checkpoint_slot_count`]. Sessions reporting under the same [`DsmTableKey`] share its
+    /// tables, which take the size of the session that creates them.
+    pub checkpoint_slot_count: usize,
+}
+
+/// The checkpoints per bucket of a session that asks for `requested`: the default for 0, and at
+/// most [`MAX_DSM_CHECKPOINT_SLOT_COUNT`].
+pub(crate) fn checkpoint_slot_count(requested: usize) -> usize {
+    match requested {
+        0 => DEFAULT_DSM_CHECKPOINT_SLOT_COUNT,
+        n => n.min(MAX_DSM_CHECKPOINT_SLOT_COUNT),
+    }
 }
 
 /// Map key for the DSM table map: one table per payload the tables are flushed into.
@@ -148,8 +161,8 @@ pub(crate) fn get_or_create_dsm_table(
         let checkpoints = ShmDsmCheckpointTable::create(
             dsm_checkpoint_shm_path(&key),
             DSM_BUCKET_NANOS,
-            DEFAULT_DSM_CHECKPOINT_SLOT_COUNT,
-            DEFAULT_DSM_CHECKPOINT_STRING_POOL_BYTES,
+            config.checkpoint_slot_count,
+            config.checkpoint_slot_count * DSM_CHECKPOINT_STRING_POOL_BYTES_PER_SLOT,
         )
         // A worker may already have followed the path to the backlog table; signalled, it falls
         // back to IPC rather than writing to a table no one drains.
@@ -479,7 +492,27 @@ mod tests {
             language_version: "8.3".into(),
             tracer_version: "1.0.0".into(),
             process_tags: vec!["entrypoint.name:php".into()],
+            checkpoint_slot_count: DEFAULT_DSM_CHECKPOINT_SLOT_COUNT,
         }
+    }
+
+    #[test]
+    fn a_session_asking_for_no_checkpoint_slots_gets_the_default_and_at_most_the_maximum() {
+        assert_eq!(checkpoint_slot_count(0), DEFAULT_DSM_CHECKPOINT_SLOT_COUNT);
+        assert_eq!(checkpoint_slot_count(1), 1);
+        assert_eq!(checkpoint_slot_count(200), 200);
+        assert_eq!(
+            checkpoint_slot_count(MAX_DSM_CHECKPOINT_SLOT_COUNT),
+            MAX_DSM_CHECKPOINT_SLOT_COUNT
+        );
+        assert_eq!(
+            checkpoint_slot_count(MAX_DSM_CHECKPOINT_SLOT_COUNT + 1),
+            MAX_DSM_CHECKPOINT_SLOT_COUNT
+        );
+        assert_eq!(
+            checkpoint_slot_count(usize::MAX),
+            MAX_DSM_CHECKPOINT_SLOT_COUNT
+        );
     }
 
     /// A drained table goes out as one gzipped msgpack POST to the agent's DSM endpoint.
