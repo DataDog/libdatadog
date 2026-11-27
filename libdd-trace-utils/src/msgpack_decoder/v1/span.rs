@@ -143,7 +143,12 @@ where
     }
 
     // V1 attributes are a flat array of triplets, not a real msgpack map, so duplicate keys are
-    // possible; leave `deduped` false so re-encoding applies the defensive last-write-wins dedup.
+    // possible. Once UTF-8 repair may have made two distinct wire keys equal, dedup here so they
+    // are one entry, last write wins, as in the Agent. Otherwise leave `deduped` false so
+    // re-encoding applies the defensive last-write-wins dedup, keeping the valid path free.
+    if table.has_repaired() {
+        map.dedup();
+    }
     Ok(map)
 }
 
