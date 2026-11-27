@@ -171,6 +171,9 @@ pub fn replace_span_tags_v04<T: TraceData>(span: &mut v04::Span<T>, rules: &[Rep
 /// matched, even by a pattern matching the empty string. A replaced `span.kind` that isn't a known
 /// kind unsets it. Like the Datadog Agent, `"*"` rules skip hidden (`_`-prefixed) attributes and
 /// the env, and rules named `env` are ignored.
+///
+/// Span event attributes are rewritten as well, by `"*"` rules and by rules naming the attribute.
+/// On events `"*"` rules only skip hidden attributes.
 pub fn replace_span_tags_trait<S: SpanMut>(span: &mut S, rules: &[ReplaceRule]) {
     for rule in rules {
         match rule.name.as_ref() {
@@ -186,17 +189,27 @@ pub fn replace_span_tags_trait<S: SpanMut>(span: &mut S, rules: &[ReplaceRule]) 
                         replace_promoted_tag(rule, span, key);
                     }
                 }
+                for event in span.span_events_mut() {
+                    replace_event_wildcard_attributes(event, rule);
+                }
             }
             "resource.name" => replace_resource(rule, span),
             ENV_KEY => {}
-            name => match PROMOTED_SPAN_TAGS.into_iter().find(|key| *key == name) {
-                Some(key) => replace_promoted_tag(rule, span, key),
-                None => {
-                    if let Some(value) = span.attribute_mut(name) {
+            name => {
+                match PROMOTED_SPAN_TAGS.into_iter().find(|key| *key == name) {
+                    Some(key) => replace_promoted_tag(rule, span, key),
+                    None => {
+                        if let Some(value) = span.attribute_mut(name) {
+                            apply_rule_to_attr_value(rule, value);
+                        }
+                    }
+                }
+                for event in span.span_events_mut() {
+                    if let Some(value) = event.attribute_mut(name) {
                         apply_rule_to_attr_value(rule, value);
                     }
                 }
-            },
+            }
         }
     }
 }
@@ -250,6 +263,18 @@ fn is_wildcard_replaceable_tag(key: &str) -> bool {
 fn replace_wildcard_attributes<A: AttributesMut>(attrs: &mut A, rule: &ReplaceRule) {
     attrs.retain_attributes(|key, value| {
         if is_wildcard_replaceable_tag(key) {
+            apply_rule_to_attr_value(rule, value);
+        }
+        true
+    });
+}
+
+/// Applies a `"*"` rule to the attributes of a span event. Unlike the span itself, events only
+/// skip hidden (`_`-prefixed) attributes: the Datadog Agent's `env` exemption protects the span's
+/// env, which sampling and stats read, and an event attribute named `env` is not that.
+fn replace_event_wildcard_attributes<A: AttributesMut>(event: &mut A, rule: &ReplaceRule) {
+    event.retain_attributes(|key, value| {
+        if !is_hidden_tag(key) {
             apply_rule_to_attr_value(rule, value);
         }
         true
@@ -1256,5 +1281,80 @@ mod tests {
                 "{json}"
             );
         }
+    }
+
+    fn span_with_event(attrs: &[(&str, &str)]) -> v1::SpanBytes {
+        let mut span = v1::SpanBytes::default();
+        let mut event = v1::SpanEventBytes::default();
+        for (key, value) in attrs {
+            event.attributes.insert(bs(key), str_attr(value));
+        }
+        span.span_events.push(event);
+        span
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn star_rule_replaces_span_event_attributes_v1() {
+        let rules = rules(
+            r#"[
+                {"name": "*", "pattern": "token-[0-9]+", "repl": "token-?"},
+                {"name": "secret", "pattern": ".*", "repl": "?"}
+            ]"#,
+        );
+        let mut span = span_with_event(&[
+            ("secret", "hunter2"),
+            ("msg", "got token-1234"),
+            ("_dd.hidden", "token-1"),
+        ]);
+        span.attributes.insert(bs("secret"), str_attr("hunter2"));
+        replacer::replace_span_tags_v1(&mut span, &rules);
+
+        assert_eq!(span.attribute_str("secret"), Some("?"));
+        let event = &span.span_events[0];
+        assert_eq!(event.attribute_str("secret"), Some("?"));
+        assert_eq!(event.attribute_str("msg"), Some("got token-?"));
+        assert_eq!(event.attribute_str("_dd.hidden"), Some("token-1"));
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn named_rules_replace_hidden_and_nested_span_event_attributes_v1() {
+        let rules = rules(
+            r#"[
+                {"name": "_dd.hidden", "pattern": "secret", "repl": "?"},
+                {"name": "arr", "pattern": "secret", "repl": "?"},
+                {"name": "unrelated", "pattern": "secret", "repl": "?"}
+            ]"#,
+        );
+        let mut span = span_with_event(&[("_dd.hidden", "secret"), ("other", "secret")]);
+        span.span_events[0]
+            .attributes
+            .insert(bs("arr"), nested_array("secret"));
+        replacer::replace_span_tags_v1(&mut span, &rules);
+
+        let event = &span.span_events[0];
+        assert_eq!(event.attribute_str("_dd.hidden"), Some("?"));
+        assert_eq!(event.attribute_str("other"), Some("secret"));
+        assert_eq!(event.attributes.get("arr"), Some(&nested_array("?")));
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn star_rule_rewrites_an_event_attribute_named_env_v1() {
+        // The env exemption is about the span's env, which sampling and stats read. Events have
+        // no such field, and the Agent only skips hidden attributes on them.
+        let star = rules(r#"[{"name": "*", "pattern": "secret", "repl": "?"}]"#);
+        let mut span = span_with_event(&[("env", "secret")]);
+        span.attributes.insert(bs("env"), str_attr("secret"));
+        replacer::replace_span_tags_v1(&mut span, &star);
+        assert_eq!(span.attribute_str("env"), Some("secret"));
+        assert_eq!(span.span_events[0].attribute_str("env"), Some("?"));
+
+        // A rule named `env` is dropped outright, events included.
+        let named = rules(r#"[{"name": "env", "pattern": "secret", "repl": "?"}]"#);
+        let mut span = span_with_event(&[("env", "secret")]);
+        replacer::replace_span_tags_v1(&mut span, &named);
+        assert_eq!(span.span_events[0].attribute_str("env"), Some("secret"));
     }
 }
