@@ -136,6 +136,63 @@ impl<T: GlobalAlloc> criterion::measurement::Measurement for AllocatedBytesMeasu
     }
 }
 
+/// Returns `true` when running in a CI environment.
+///
+/// Detection is based on the `CI` environment variable, which is predefined by
+/// GitLab CI, GitHub Actions and most other CI systems.
+#[inline]
+pub fn running_in_ci() -> bool {
+    std::env::var("CI").is_ok_and(|v| v == "true" || v == "1")
+}
+
+/// Drop-in replacement for `criterion_main!` with CI exclusions.
+///
+/// # Forms
+///
+/// - `bench_main_skip_ci!(a, b, c; skip = [a, c])`: `a` and `c` are skipped when running in CI (see
+///   [`running_in_ci`]). `b` always runs.
+/// - `bench_main_skip_ci!(a, b; skip = all)`: the whole benchmark target is skipped when running in
+///   CI.
+///
+/// The group list must be provided. It is what runs outside of CI. The `skip` section must be
+/// provided last and is separated from the group list by `;`. A skipped group is reported on
+/// stderr, so CI logs make it obvious why a benchmark produced no results.
+#[macro_export]
+macro_rules! bench_main_skip_ci {
+    ($($group:path),+ $(,)? ; skip = all $(,)?) => {
+        fn main() {
+            if $crate::bench_utils::running_in_ci() {
+                eprintln!("CI environment detected; skipping all benchmarks");
+                return;
+            }
+            let mut criterion = ::criterion::Criterion::default().configure_from_args();
+            $(
+                $group(&mut criterion);
+            )+
+        }
+    };
+    ($($group:path),+ $(,)? ; skip = [$($skip:path),* $(,)?] $(,)?) => {
+        fn main() {
+            let skipped: &[&str] = &[ $( stringify!($skip) ),* ];
+                let mut criterion = ::criterion::Criterion::default().configure_from_args();
+                $(
+                    if $crate::bench_utils::running_in_ci() && skipped.contains(&stringify!($group)) {
+                    eprintln!("CI environment detected; skipping {}", stringify!($group));
+                } else {
+                    $group(&mut criterion);
+                }
+            )+
+        }
+    };
+    ($($group:path),+ $(,)?) => {
+        fn main() {
+            compile_error!("The bench_main_skip_ci! macro requires a third argument of the form `; skip = all` or `; skip = [group1, group2, ...]`\
+            that specifies which benchmarks must be skipped from CI runs. \
+            If no benchmark should be skipped, use the standard `criterion_main!` macro instead");
+        }
+    };
+}
+
 struct AllocationFormatter;
 
 impl criterion::measurement::ValueFormatter for AllocationFormatter {

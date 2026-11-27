@@ -3513,6 +3513,7 @@ dependencies = [
  "criterion",
  "libc",
  "libdd-profiling-heap-sampler",
+ "tools",
 ]
 
 [[package]]
