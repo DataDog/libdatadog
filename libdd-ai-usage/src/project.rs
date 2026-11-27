@@ -17,7 +17,7 @@ use crate::observation::{
 use crate::point::{
     Attrs, ErrorCode, IssueCode, Issues, MetricError, MetricPoint, Projection, Sink, reject,
 };
-use crate::usage::{Modality, NormalizedUsage, normalize_usage};
+use crate::usage::{Modality, NormalizedUsage, normalize_provider_usage};
 
 const TOKEN_MODALITY: &str = "gen_ai.token.modality";
 const CACHE_LIFETIME: &str = "trajectory.cache.lifetime";
@@ -491,7 +491,7 @@ pub(crate) fn provider_attempt<'a>(
     let error_type = check_error_type(&o.error_type)?;
     let observation_point = check_observation_point(&o.observation_point)?;
 
-    let usage = normalize_usage(&o.usage, operation == "embeddings")?;
+    let usage = normalize_provider_usage(&o.usage, operation == "embeddings", Some(provider))?;
     let mut issues = provider_attempt_issues(&usage);
     let base = provider_attributes(
         operation,
@@ -672,7 +672,7 @@ pub(crate) fn token_breakdown<'a>(
     };
     let observation_point = check_observation_point(&o.observation_point)?;
 
-    let usage = normalize_usage(&o.usage, embeddings)?;
+    let usage = normalize_provider_usage(&o.usage, embeddings, Some(provider))?;
     let base = provider_attributes(
         operation,
         provider,

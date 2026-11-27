@@ -18,9 +18,11 @@ until `tests/conformance.rs` passes.
 ## Source
 
 Every file here except this README is byte-for-byte a file of the
-specification at commit `a1bdc9d6782285d72869a12182787d2f9b466781`
-(https://github.com/ddoghq-sandbox/trajectory-spec/pull/434, which makes
-every Datadog Counter a rate over 10 seconds):
+specification at commit `18347edef346b7f10ddae90eef7af582afeda6b2`
+(https://github.com/ddoghq-sandbox/trajectory-spec/pull/435, which makes
+the uncached input of a provider without cache writes known; it follows
+https://github.com/ddoghq-sandbox/trajectory-spec/pull/434, which makes every
+Datadog Counter a rate over 10 seconds):
 
 | Here | In the specification |
 | --- | --- |
