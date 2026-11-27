@@ -7,6 +7,31 @@
 VERBOSE=false
 LIST_AFFECTED=false
 
+SCRIPT_DIR=$(dirname "${BASH_SOURCE[0]}")
+# shellcheck source=semver-rustdoc.sh
+. "$SCRIPT_DIR/semver-rustdoc.sh"
+
+# One extraction per revision per invocation, shared by the passes below.
+# Memoized by directory presence, not an associative array: this script runs
+# on macOS's bash 3.2 (release-version-bumps.sh), which has no `declare -A`.
+EXTRACT_ROOT=$(mktemp -d) || exit 1
+trap 'rm -rf "$EXTRACT_ROOT"' EXIT
+
+extract_tree_at_rev() {
+    local rev=$1 dir
+    dir="$EXTRACT_ROOT/$(printf '%s' "$rev" | tr -c '[:alnum:]' '_')"
+    if [[ -f "$dir/Cargo.toml" ]]; then
+        printf '%s\n' "$dir"
+        return 0
+    fi
+    mkdir -p "$dir" || return 1
+    if ! git archive "$rev" | tar -x -C "$dir"; then
+        echo "Error: could not extract $rev" >&2
+        return 1
+    fi
+    printf '%s\n' "$dir"
+}
+
 # Use GITHUB_OUTPUT from environment or default to /dev/stdout for local testing
 if [ -z "$GITHUB_OUTPUT" ]; then
     GITHUB_OUTPUT=/dev/stdout
@@ -170,17 +195,9 @@ crate_target_kinds() {
 
 # Echo the target kinds at a specific revision. crate ($1) at revision ($2).
 crate_target_kinds_at_rev() {
-    local crate=$1 rev=$2
-    local tree kinds
-    tree=$(mktemp -d) || return 1
-    if ! git archive "$rev" | tar -x -C "$tree"; then
-        echo "Error: could not extract $rev to read target kinds for $crate" >&2
-        rm -rf "$tree"
-        return 1
-    fi
-    kinds=$(crate_target_kinds "$crate" "$tree")
-    rm -rf "$tree"
-    echo "$kinds"
+    local crate=$1 rev=$2 tree
+    tree=$(extract_tree_at_rev "$rev") || return 1
+    crate_target_kinds "$crate" "$tree"
 }
 
 # Echo one tab-separated row per manifest fact about crate $1 at revision $2, read once
@@ -189,6 +206,11 @@ crate_target_kinds_at_rev() {
 #
 #   <crate> dep      <name> <alias> <kind> <target> <req> <feats> <defaults>  per dependency
 #   <crate> feature  <name> default|optional                                  per feature
+#   <crate> featedge    <name> <enabled>                                    per direct feature edge
+#   <crate> featclosure <name> <enabled,enabled,...>                         per feature, transitive closure
+#
+# The featedge/featclosure rows feed the no-longer-enables check in pass 2c.
+# Raw facts: the unstable-name and `default` exclusions live with the consumer.
 #
 # Each column below earns its place by preventing one specific misread.
 #
@@ -227,17 +249,11 @@ crate_target_kinds_at_rev() {
 manifest_facts_at_rev() {
     local crate=$1 rev=$2
     local tree meta cargo_status label=${crate:-the workspace}
-    tree=$(mktemp -d) || return 1
-    if ! git archive "$rev" | tar -x -C "$tree"; then
-        echo "Error: could not extract $rev to read the manifest for $label" >&2
-        rm -rf "$tree"
-        return 1
-    fi
+    tree=$(extract_tree_at_rev "$rev") || return 1
     # Captured before jq: without pipefail a failing cargo would surface as jq's clean
     # exit over empty input, and a broken manifest would read as "declares nothing".
     meta=$(cargo metadata --format-version=1 --no-deps --manifest-path "$tree/Cargo.toml" 2>/dev/null)
     cargo_status=$?
-    rm -rf "$tree"
     if [[ $cargo_status -ne 0 || -z "$meta" ]]; then
         echo "Error: could not read the manifest for $label at $rev" >&2
         return 1
@@ -259,10 +275,11 @@ manifest_facts_at_rev() {
         # Every feature `default` reaches, directly or through another feature. One
         # round per declared feature reaches the fixed point: a round that changes
         # anything adds at least one of the finitely many features.
-        def default_closure($f):
+        def closure($f; $start):
             reduce range(0; ($f | length) + 1) as $_
-                (($f["default"] // []) | local_edges($f);
+                ($start | local_edges($f);
                  (. + ([ .[] | ($f[.] // [])[] ] | local_edges($f))) | unique);
+        def default_closure($f): closure($f; $f["default"] // []);
         .packages[]
         | select($crate == "" or .name == $crate)
         | . as $p
@@ -278,7 +295,9 @@ manifest_facts_at_rev() {
               | default_closure($f) as $d
               | ($f | keys[]) as $n
               | select($n != "default")
-              | [$p.name, "feature", $n, (if ($d | index($n)) then "default" else "optional" end)] )
+              | ( [$p.name, "feature", $n, (if ($d | index($n)) then "default" else "optional" end)],
+                  ( ($f[$n] | local_edges($f))[] | [$p.name, "featedge", $n, .] ),
+                  [$p.name, "featclosure", $n, (closure($f; $f[$n]) | sort | join(","))] ) )
           )
         | @tsv' <<< "$meta"
 }
@@ -524,6 +543,13 @@ compute_semver_results() {
 
     # ----------------------------------------------------------------
     # 1) cargo-semver-checks (type-signature lints) — library targets only.
+    #
+    # Both revisions' rustdoc JSON is generated up front and handed to the
+    # tool (--current-rustdoc/--baseline-rustdoc): the baseline JSON comes
+    # from the cache and the current JSON is shared with cargo-public-api
+    # below. A file baseline carries no manifest, so the tool's four feature
+    # lints do not run; pass 2c mirrors the one Major finding they alone
+    # covered (the rest is Allow-level or already covered by passes 2b/2c).
     # ----------------------------------------------------------------
     local semver_level="none"
     local semver_reason=""
@@ -543,9 +569,17 @@ compute_semver_results() {
     elif ! $has_lib || ! $baseline_has_lib; then
         log_verbose "Skipping cargo-semver-checks: $crate has no library target on both revs (baseline: ${baseline_kinds:-none}, now: $target_kinds)"
     else
-        local step_start=$SECONDS
+        local step_start=$SECONDS base_tree cur_json base_json
+        base_tree=$(extract_tree_at_rev "$baseline") || exit 1
+        log_progress "Generating current rustdoc JSON"
+        cur_json=$(mktemp)
+        semver_rustdoc_generate "$crate" semver "$(pwd)" "$cur_json" || exit 1
+        log_progress "Generating baseline rustdoc JSON (cache-aware)"
+        base_json=$(mktemp)
+        semver_rustdoc_baseline "$crate" "$baseline" "$base_tree" semver "$base_json" || exit 1
         log_progress "Running cargo-semver-checks"
-        SEMVER_OUTPUT=$(cargo semver-checks -p "$crate" --color=never --all-features --baseline-rev "$baseline" 2>&1)
+        SEMVER_OUTPUT=$(cargo semver-checks -p "$crate" --color=never \
+            --current-rustdoc "$cur_json" --baseline-rustdoc "$base_json" 2>&1)
         SEMVER_EXIT_CODE=$?
         log_progress "cargo-semver-checks finished in $(( SECONDS - step_start ))s (exit code $SEMVER_EXIT_CODE)"
 
@@ -622,9 +656,17 @@ compute_semver_results() {
         # crates: cargo-semver-checks is skipped for them, so this is the only
         # comparison, and under the default feature set a removed or renamed
         # feature-gated macro would be invisible and pass as a patch.
-        local step_start=$SECONDS
+        #
+        # JSON from the shared generation above, public flavor (this tool
+        # does not document private or doc(hidden) items). Deps are already
+        # built by pass 1's generation, so only this crate's rustdoc reruns.
+        local step_start=$SECONDS cur_pub base_pub
         log_progress "Running cargo-public-api diff"
-        PUBLIC_API_OUTPUT=$(cargo public-api --package "$crate" --all-features --color=never diff "$baseline..$current" 2>&1)
+        cur_pub=$(mktemp)
+        semver_rustdoc_generate "$crate" public "$(pwd)" "$cur_pub" || exit 1
+        base_pub=$(mktemp)
+        semver_rustdoc_baseline "$crate" "$baseline" "$(extract_tree_at_rev "$baseline")" public "$base_pub" || exit 1
+        PUBLIC_API_OUTPUT=$(cargo public-api --color=never diff "$base_pub" "$cur_pub" 2>&1)
         EXIT_CODE=$?
         log_progress "cargo-public-api finished in $(( SECONDS - step_start ))s (exit code $EXIT_CODE)"
 
@@ -807,12 +849,39 @@ compute_semver_results() {
     # *_enables_feature lints' job. It reaches this pass only where it moves the set of
     # features `default` reaches, which the rows resolve (see manifest_facts_at_rev);
     # emptying a `bundle` that `default` lists undefaults everything below it.
+    # The no-longer-enables check below mirrors cargo-semver-checks'
+    # feature_no_longer_enables_feature, which pass 1's file baseline leaves
+    # the tool no manifest data to run: baseline F directly enables I, the
+    # current F no longer transitively enables I (a rerouted implication is
+    # fine), both still exist, F is not `default`, and names matching the
+    # unstable-feature heuristic (unstable/nightly/bench[-_]* or _-prefixed)
+    # are excluded.
     # ----------------------------------------------------------------
     if $manifest_compared; then
-        local base_features now_features
-        local feat_name feat_default removed="" added="" undefaulted=""
+        local base_features now_features now_closures
+        local feat_name feat_default removed="" added="" undefaulted="" no_longer_enables=""
         base_features=$(awk -F'\t' '$2 == "feature" { print $3 "\t" $4 }' <<< "$base_facts")
         now_features=$(awk -F'\t' '$2 == "feature" { print $3 "\t" $4 }' <<< "$now_facts")
+        now_closures=$(awk -F'\t' '$2 == "featclosure" { print $3 "\t" $4 }' <<< "$now_facts")
+
+        local edge_f edge_i
+        while IFS=$'\t' read -r edge_f edge_i; do
+            [[ -z "$edge_f" ]] && continue
+            [[ "$edge_f" == "default" ]] && continue
+            grep -qE '^(unstable|nightly|bench)([-_].*)?$|^_' <<< "$edge_f" && continue
+            grep -qE '^(unstable|nightly|bench)([-_].*)?$|^_' <<< "$edge_i" && continue
+            awk -F'\t' -v n="$edge_f" '$1 == n { found = 1 } END { exit !found }' <<< "$now_features" || continue
+            # `default` has no `feature` row, but `foo = ["default"]` losing
+            # its default entry is still a break.
+            if [[ "$edge_i" != "default" ]]; then
+                awk -F'\t' -v n="$edge_i" '$1 == n { found = 1 } END { exit !found }' <<< "$now_features" || continue
+            fi
+            if ! awk -F'\t' -v f="$edge_f" -v i="$edge_i" \
+                '$1 == f && index("," $2 ",", "," i ",") { found = 1 } END { exit !found }' \
+                <<< "$now_closures"; then
+                no_longer_enables+="$edge_f -> $edge_i"$'\n'
+            fi
+        done < <(awk -F'\t' '$2 == "featedge" { print $3 "\t" $4 }' <<< "$base_facts")
 
         while IFS=$'\t' read -r feat_name feat_default; do
             [[ -z "$feat_name" ]] && continue
@@ -834,14 +903,15 @@ compute_semver_results() {
             fi
         done <<< "$now_features"
 
-        if [[ -n "$removed" || -n "$undefaulted" ]]; then
+        if [[ -n "$removed" || -n "$undefaulted" || -n "$no_longer_enables" ]]; then
             feature_level="major"
-            feature_reason="Cargo feature removed or no longer enabled by default"
+            feature_reason="Cargo feature removed, no longer enabled by default, or no longer enabling another feature"
             feature_details=$(truncate_details 50 <<< "$(
                 [[ -n "$removed" ]] && printf 'removed: %s\n' "${removed//$'\n'/ }"
                 [[ -n "$undefaulted" ]] && printf 'no longer default: %s\n' "${undefaulted//$'\n'/ }"
+                [[ -n "$no_longer_enables" ]] && printf 'no longer enables: %s\n' "${no_longer_enables//$'\n'/ }"
             )")
-            log_verbose "features removed: ${removed//$'\n'/ } undefaulted: ${undefaulted//$'\n'/ }"
+            log_verbose "features removed: ${removed//$'\n'/ } undefaulted: ${undefaulted//$'\n'/ } no_longer_enables: ${no_longer_enables//$'\n'/ }"
         elif [[ -n "$added" ]]; then
             feature_level="minor"
             feature_reason="Cargo feature added"
