@@ -146,6 +146,21 @@ workspace MSRV). Run it locally the same way:
 (cd .github/actions && RUSTUP_TOOLCHAIN=$(awk -F'"' '/^stable[[:space:]]*=/ {print $2}' ../../ci-toolchain.toml) cargo run -p workspace-deps-lint)
 ```
 
+### Workspace membership changes vs. in-flight releases
+Splitting a crate, adding, renaming or removing a workspace member, or moving code between crates conflicts with both
+PRs of an in-flight release: the proposal PR (into the ephemeral `release/*` branch) and the later "merge release branch
+to main" PR, which can stay open for weeks after the proposal merges. Before starting or merging such a change, check
+for one:
+
+```bash
+git fetch origin --prune && git branch -r --list "origin/release/libdd-*/*" "origin/release-proposal/libdd-*/*"
+```
+
+If any branch matches, warn the user and ask how to sequence the work. If none does but a split or new crate is pending,
+land it before opening a release proposal. The merge-back PR must land first, and a release whose tags exist must never
+be closed and regenerated. Details are in
+[CONTRIBUTING.md](CONTRIBUTING.md#workspace-membership-changes-and-release-proposals).
+
 ### Cryptography
 - Default build: ring as TLS crypto provider
 - FIPS (US government cloud) builds: aws-lc-rs via `fips` feature flag

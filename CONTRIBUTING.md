@@ -198,6 +198,39 @@ When the pull request is merged, a `Backport` workflow automatically cherry-pick
 branch and opens a pull request for each of them. New features, chores, and documentation changes are not
 backported.
 
+## Workspace membership changes and release proposals
+
+A release has two phases, each with its own PR:
+
+1. **Proposal PR** (`chore(release): proposal for …`, branch `release-proposal/libdd-*/*`). It merges into an ephemeral
+   release branch (`release/libdd-*/<timestamp>`), not into `main`, and the per-crate release tags (for example
+   `libdd-common-v10.0.0`) are pushed along with it.
+2. **Merge-back PR** (`chore(release): merge release branch to main`, branch `release/libdd-*/<timestamp>`). It stays
+   open after the proposal merges and is what brings the released versions, `Cargo.lock` and changelogs to `main`. It
+   can remain open for weeks.
+
+Both rewrite versions in member `Cargo.toml`s, `Cargo.lock` and per-crate `CHANGELOG.md` files. Splitting a crate,
+adding a new member, renaming or removing one, or moving code between crates touches the same files, so landing such a
+change while either PR is open can produce large conflicts.
+
+Before starting or merging a workspace membership change, check whether a release is in flight:
+
+```bash
+git fetch origin --prune && git branch -r --list "origin/release/libdd-*/*" "origin/release-proposal/libdd-*/*"
+```
+
+A `release/libdd-*/*` branch means a release is in flight even if the proposal PR is already merged, because the
+merge-back PR may still be open. A `release-proposal/libdd-*/*` branch means the proposal PR is still open.
+
+- **Proposal PR open:** prefer waiting for it to merge, then handle the merge-back PR as below.
+- **Merge-back PR open:** the merge-back PR must land first. Do not close and regenerate the release: the tags already
+  exist, `main` never received the released versions, and a rerun would bump them again.
+- **Split or new crates pending, no release in flight:** the workflow guard only blocks a new proposal while a release
+  branch exists, so it does not protect against this. Land the split first, or open the proposal after it merges, so the
+  proposal sees the final workspace layout.
+- If the merge-back PR has been open for a long time, ask the release owner to merge it rather than working around it.
+- Mention the interaction in the PR description so reviewers can sequence the merges.
+
 ## Final word
 
 Many thanks to all of our contributors, and looking forward to seeing you on Github! :tada:
