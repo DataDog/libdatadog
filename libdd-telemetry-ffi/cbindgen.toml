@@ -14,6 +14,8 @@ sys_includes = ["stdbool.h", "stddef.h", "stdint.h", "stdio.h"]
 includes = ["common.h"]
 
 [export]
+# TelemetryWorkerBuilderEndpointProperty constants must stay in the header; signatures now take raw u32.
+include = ["TelemetryWorkerBuilderEndpointProperty"]
 prefix = "ddog_"
 renaming_overrides_prefixing = true
 

@@ -248,6 +248,8 @@ pub enum TelemetryWorkerBuilderEndpointProperty {
     ConfigEndpoint,
 }
 
+// Raw u32 rather than a Rust enum: config.endpoint is the only property, so the selector is
+// ignored.
 #[unsafe(no_mangle)]
 #[allow(clippy::missing_safety_doc)]
 /// Sets the endpoint property from its component parts.
@@ -257,7 +259,7 @@ pub enum TelemetryWorkerBuilderEndpointProperty {
 /// * config.endpoint
 pub unsafe extern "C" fn ddog_telemetry_builder_with_property_endpoint(
     telemetry_builder: &mut TelemetryWorkerBuilder,
-    _property: TelemetryWorkerBuilderEndpointProperty,
+    _property: u32,
     url: ffi::CharSlice,
     api_key: ffi::CharSlice,
     timeout_ms: u64,

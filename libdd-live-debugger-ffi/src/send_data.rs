@@ -25,6 +25,25 @@ pub enum FieldType {
     LOCAL,
 }
 
+impl From<FieldType> for u32 {
+    fn from(value: FieldType) -> u32 {
+        value as u32
+    }
+}
+
+impl TryFrom<u32> for FieldType {
+    type Error = u32;
+
+    fn try_from(value: u32) -> core::result::Result<Self, Self::Error> {
+        Ok(match value {
+            v if v == u32::from(Self::STATIC) => Self::STATIC,
+            v if v == u32::from(Self::ARG) => Self::ARG,
+            v if v == u32::from(Self::LOCAL) => Self::LOCAL,
+            v => return Err(v),
+        })
+    }
+}
+
 #[repr(C)]
 pub struct CaptureValue<'a> {
     pub r#type: CharSlice<'a>,
@@ -338,14 +357,19 @@ pub extern "C" fn ddog_snapshot_add_capture_fields<'a, 'b: 'a, 'c: 'a>(
         .insert(name.to_utf8_lossy(), value.into());
 }
 
+/// Adds a field to the snapshot capture, in the category selected by `r#type` (a `FieldType`
+/// discriminant; an unknown value is ignored and the field is dropped).
 #[unsafe(no_mangle)]
 #[allow(improper_ctypes_definitions)] // Vec has a fixed size, and we care only about that here
 pub extern "C" fn ddog_snapshot_add_field<'a, 'b: 'a, 'c: 'a>(
     capture: &mut DebuggerCapture<'a>,
-    r#type: FieldType,
+    r#type: u32,
     name: CharSlice<'b>,
     value: CaptureValue<'c>,
 ) {
+    let Ok(r#type) = FieldType::try_from(r#type) else {
+        return;
+    };
     let fields = match r#type {
         FieldType::STATIC => &mut capture.0.static_fields,
         FieldType::ARG => &mut capture.0.arguments,

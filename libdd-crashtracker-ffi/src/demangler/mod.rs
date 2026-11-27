@@ -19,11 +19,13 @@ use symbolic_demangle::Demangle;
 #[named]
 pub unsafe extern "C" fn ddog_crasht_demangle(
     name: CharSlice,
-    options: DemangleOptions,
+    options: u32,
 ) -> StringWrapperResult {
     wrap_with_ffi_result!({
         let name = name.to_utf8_lossy();
         let name = Name::from(name);
+        let options = DemangleOptions::try_from(options)
+            .map_err(|raw| anyhow::anyhow!("invalid DemangleOptions discriminant: {raw}"))?;
         let options = match options {
             DemangleOptions::Complete => symbolic_demangle::DemangleOptions::complete(),
             DemangleOptions::NameOnly => symbolic_demangle::DemangleOptions::name_only(),
@@ -39,17 +41,19 @@ fn test_demangle() {
     // don't run this test under Miri.
     let test_string = "_ZNSt28__atomic_futex_unsigned_base26_M_futex_wait_until_steadyEPjjbNSt6chrono8durationIlSt5ratioILl1ELl1EEEENS2_IlS3_ILl1ELl1000000000EEEE";
     let test_slice = CharSlice::from(test_string);
-    let result: String = unsafe { ddog_crasht_demangle(test_slice, DemangleOptions::Complete) }
-        .unwrap()
-        .into();
+    let result: String =
+        unsafe { ddog_crasht_demangle(test_slice, u32::from(DemangleOptions::Complete)) }
+            .unwrap()
+            .into();
     assert_eq!(
         result,
         "std::__atomic_futex_unsigned_base::_M_futex_wait_until_steady(unsigned int*, unsigned int, bool, std::chrono::duration<long, std::ratio<(long)1, (long)1> >, std::chrono::duration<long, std::ratio<(long)1, (long)1000000000> >)"
     );
 
-    let result: String = unsafe { ddog_crasht_demangle(test_slice, DemangleOptions::NameOnly) }
-        .unwrap()
-        .into();
+    let result: String =
+        unsafe { ddog_crasht_demangle(test_slice, u32::from(DemangleOptions::NameOnly)) }
+            .unwrap()
+            .into();
     assert_eq!(
         result,
         "std::__atomic_futex_unsigned_base::_M_futex_wait_until_steady"
@@ -60,13 +64,28 @@ fn test_demangle() {
 fn test_demangle_fails() {
     let test_string = "_ZNSt28__fdf";
     let test_slice = CharSlice::from(test_string);
-    let result: String = unsafe { ddog_crasht_demangle(test_slice, DemangleOptions::Complete) }
-        .unwrap()
-        .into();
+    let result: String =
+        unsafe { ddog_crasht_demangle(test_slice, u32::from(DemangleOptions::Complete)) }
+            .unwrap()
+            .into();
     assert_eq!(result, "");
 
-    let result: String = unsafe { ddog_crasht_demangle(test_slice, DemangleOptions::NameOnly) }
-        .unwrap()
-        .into();
+    let result: String =
+        unsafe { ddog_crasht_demangle(test_slice, u32::from(DemangleOptions::NameOnly)) }
+            .unwrap()
+            .into();
     assert_eq!(result, "");
+}
+
+#[test]
+fn test_demangle_rejects_invalid_options() {
+    let test_slice = CharSlice::from("_ZNSt28__fdf");
+    let error = match unsafe { ddog_crasht_demangle(test_slice, u32::MAX) } {
+        StringWrapperResult::Err(e) => e,
+        StringWrapperResult::Ok(_) => panic!("invalid discriminant must be rejected"),
+    };
+    assert!(
+        error.as_ref().contains("invalid DemangleOptions"),
+        "{error:?}"
+    );
 }

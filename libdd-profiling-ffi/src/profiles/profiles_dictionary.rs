@@ -165,17 +165,19 @@ pub unsafe extern "C" fn ddog_prof_ProfilesDictionary_insert_mapping(
 /// - `string_id` must be non-null and valid for writes of `StringId`.
 /// - `handle` must refer to a live dictionary.
 /// - The UTF-8 policy indicated by `utf8_option` must be respected by caller for the provided
-///   `byte_slice`.
+///   `byte_slice`. `utf8_option` must be a valid `Utf8Option` discriminant.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ddog_prof_ProfilesDictionary_insert_str(
     string_id: *mut StringId2,
     dict: Option<&ProfilesDictionary>,
     byte_slice: CharSlice,
-    utf8_option: Utf8Option,
+    utf8_option: u32,
 ) -> ProfileStatus {
     ensure_non_null_out_parameter!(string_id);
     ProfileStatus::from(|| -> Result<(), ProfileError> {
         let dict = dict.ok_or(NULL_PROFILES_DICTIONARY)?;
+        let utf8_option = Utf8Option::try_from(utf8_option)
+            .map_err(|_| ProfileError::from(c"invalid Utf8Option discriminant"))?;
         utf8::insert_str(dict.strings(), byte_slice, utf8_option)
             .map(|id| unsafe { string_id.write(id.into()) })
     }())
@@ -196,16 +198,18 @@ pub unsafe extern "C" fn ddog_prof_ProfilesDictionary_insert_str(
 /// - `strings` must be a valid slice for the duration of the call.
 /// - `string_ids` must be a valid writable slice of `StringId2` with the same length as `strings`.
 /// - The UTF-8 policy indicated by `utf8_option` must be respected by the caller for every string
-///   in `strings`.
+///   in `strings`. `utf8_option` must be a valid `Utf8Option` discriminant.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ddog_prof_ProfilesDictionary_insert_strs(
     mut string_ids: MutSlice<StringId2>,
     dict: Option<&ProfilesDictionary>,
     strings: Slice<CharSlice>,
-    utf8_option: Utf8Option,
+    utf8_option: u32,
 ) -> ProfileStatus {
     ProfileStatus::from(|| -> Result<(), ProfileError> {
         let dict = dict.ok_or(NULL_PROFILES_DICTIONARY)?;
+        let utf8_option = Utf8Option::try_from(utf8_option)
+            .map_err(|_| ProfileError::from(c"invalid Utf8Option discriminant"))?;
         if strings.len() != string_ids.len() {
             return Err(ProfileError::from(
                 c"input strings slice and output StringId2 slice have different lengths",
@@ -316,7 +320,7 @@ mod tests {
                 MutSlice::from(ids.as_mut_slice()),
                 dict,
                 Slice::from(char_slices.as_slice()),
-                Utf8Option::Validate,
+                u32::from(Utf8Option::Validate),
             ))
             .unwrap();
 
@@ -344,9 +348,34 @@ mod tests {
                 MutSlice::from(ids.as_mut_slice()),
                 dict,
                 Slice::from(char_slices.as_slice()),
-                Utf8Option::Validate,
+                u32::from(Utf8Option::Validate),
             );
             assert!(!status.err.is_null(), "expected error for length mismatch");
+
+            ddog_prof_ProfilesDictionary_drop(&mut handle);
+        }
+    }
+
+    #[test]
+    fn test_insert_strs_rejects_invalid_utf8_option() {
+        let mut handle = ArcHandle::default();
+        unsafe {
+            Result::from(ddog_prof_ProfilesDictionary_new(&mut handle)).unwrap();
+            let dict = handle.as_inner().ok();
+
+            let char_slices = [CharSlice::from("a")];
+            let mut ids = vec![StringId2::default(); 1];
+
+            let status = ddog_prof_ProfilesDictionary_insert_strs(
+                MutSlice::from(ids.as_mut_slice()),
+                dict,
+                Slice::from(char_slices.as_slice()),
+                u32::MAX,
+            );
+            assert!(
+                !status.err.is_null(),
+                "expected error for invalid discriminant"
+            );
 
             ddog_prof_ProfilesDictionary_drop(&mut handle);
         }
@@ -362,7 +391,7 @@ mod tests {
                 MutSlice::from(ids.as_mut_slice()),
                 None,
                 Slice::from(char_slices.as_slice()),
-                Utf8Option::Validate,
+                u32::from(Utf8Option::Validate),
             );
             assert!(!status.err.is_null(), "expected error for null dict");
         }
@@ -379,7 +408,7 @@ mod tests {
                 &mut string_id,
                 handle.as_inner().ok(),
                 CharSlice::from("void main(int, char *[])"),
-                Utf8Option::Assume,
+                u32::from(Utf8Option::Assume),
             ))
             .unwrap();
 

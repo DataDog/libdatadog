@@ -28,6 +28,8 @@ after_includes = """
 "feature = collector_windows" = "_CRASHTRACKING_COLLECTOR"
 
 [export]
+# DemangleOptions constants must stay in the header; signatures now take raw u32.
+include = ["DemangleOptions"]
 prefix = "ddog_crasht_"
 renaming_overrides_prefixing = true
 

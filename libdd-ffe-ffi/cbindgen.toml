@@ -16,7 +16,12 @@ sys_includes = ["stdbool.h", "stddef.h", "stdint.h"]
 includes = ["common.h"]
 
 [export]
-include = ["libdd-ffe-ffi"]
+# Enum constants must stay in the header; signatures now take raw u32.
+include = [
+  "libdd-ffe-ffi",
+  "ExpectedFlagType",
+  "ExperimentationOptOutMode",
+]
 prefix = "ddog_ffe_"
 renaming_overrides_prefixing = true
 

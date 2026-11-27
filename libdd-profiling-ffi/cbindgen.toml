@@ -25,6 +25,8 @@ struct TokioCancellationToken;
 """
 
 [export]
+# Utf8Option constants must stay in the header; signatures now take raw u32.
+include = ["Utf8Option"]
 prefix = "ddog_prof_"
 renaming_overrides_prefixing = true
 

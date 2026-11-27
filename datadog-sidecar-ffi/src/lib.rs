@@ -979,6 +979,24 @@ pub enum EvpTransportMode {
     PreferLocalThenDirect,
 }
 
+impl From<EvpTransportMode> for u32 {
+    fn from(value: EvpTransportMode) -> u32 {
+        value as u32
+    }
+}
+
+impl TryFrom<u32> for EvpTransportMode {
+    type Error = u32;
+
+    fn try_from(value: u32) -> core::result::Result<Self, Self::Error> {
+        Ok(match value {
+            v if v == u32::from(Self::AgentOnly) => Self::AgentOnly,
+            v if v == u32::from(Self::PreferLocalThenDirect) => Self::PreferLocalThenDirect,
+            v => return Err(v),
+        })
+    }
+}
+
 /// Logical tracer identity attached to EVP requests.
 ///
 /// Both fields must be non-empty, valid HTTP header values no longer than 256
@@ -1007,12 +1025,17 @@ pub struct EvpProducerIdentity<'a> {
 #[allow(clippy::missing_safety_doc)]
 pub unsafe extern "C" fn ddog_sidecar_session_set_evp_transport(
     transport: &mut Box<SidecarTransport>,
-    mode: EvpTransportMode,
+    mode: u32,
     agent_endpoint: &Endpoint,
     direct_endpoint: *const Endpoint,
     intake_subdomain: CharSlice<'_>,
     producer: &EvpProducerIdentity<'_>,
 ) -> MaybeError {
+    let Ok(mode) = EvpTransportMode::try_from(mode) else {
+        return MaybeError::Some(ffi::Error::from(format!(
+            "invalid EvpTransportMode discriminant: {mode}"
+        )));
+    };
     let mode = match mode {
         EvpTransportMode::AgentOnly => SidecarEvpTransportMode::AgentOnly,
         EvpTransportMode::PreferLocalThenDirect => SidecarEvpTransportMode::PreferLocalThenDirect,

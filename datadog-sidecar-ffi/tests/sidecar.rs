@@ -291,7 +291,7 @@ fn test_ddog_sidecar_register_app() {
         // Bind direct credentials to the consumer's declared intake target.
         match ddog_sidecar_session_set_evp_transport(
             &mut transport,
-            EvpTransportMode::PreferLocalThenDirect,
+            u32::from(EvpTransportMode::PreferLocalThenDirect),
             &agent_endpoint,
             &direct_endpoint,
             "errors-intake".into(),
@@ -310,7 +310,7 @@ fn test_ddog_sidecar_register_app() {
         // Clients stay Agent-only unless they explicitly select fallback.
         assert_maybe_no_error!(ddog_sidecar_session_set_evp_transport(
             &mut transport,
-            EvpTransportMode::AgentOnly,
+            u32::from(EvpTransportMode::AgentOnly),
             &agent_endpoint,
             null(),
             "event-platform-intake".into(),
@@ -318,7 +318,7 @@ fn test_ddog_sidecar_register_app() {
         ));
         assert_maybe_no_error!(ddog_sidecar_session_set_evp_transport(
             &mut transport,
-            EvpTransportMode::PreferLocalThenDirect,
+            u32::from(EvpTransportMode::PreferLocalThenDirect),
             &agent_endpoint,
             &direct_endpoint,
             "event-platform-intake".into(),
@@ -628,7 +628,7 @@ fn test_ddog_sidecar_ffe_large_batches_reach_the_intake() {
     assert_maybe_no_error!(unsafe {
         ddog_sidecar_session_set_evp_transport(
             sidecar.transport(),
-            EvpTransportMode::AgentOnly,
+            u32::from(EvpTransportMode::AgentOnly),
             &agent_endpoint,
             null(),
             "event-platform-intake".into(),
