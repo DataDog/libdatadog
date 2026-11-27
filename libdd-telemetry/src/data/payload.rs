@@ -295,6 +295,29 @@ mod tests {
     }
 
     #[test]
+    fn test_endpoint_kind_serialization() {
+        let endpoint_with_type = crate::data::Endpoint {
+            r#type: Some(String::from("REST")),
+            method: None,
+            path: None,
+            operation_name: String::from("http.request"),
+            resource_name: String::from("GET /users"),
+            request_body_type: None,
+            response_body_type: None,
+            response_code: None,
+        };
+        let serialized = endpoint_with_type.to_json_value().unwrap();
+        assert_eq!(serialized["type"], json!("REST"));
+
+        let endpoint_without_type = crate::data::Endpoint {
+            r#type: None,
+            ..endpoint_with_type
+        };
+        let serialized = endpoint_without_type.to_json_value().unwrap();
+        assert!(serialized.get("type").is_none());
+    }
+
+    #[test]
     fn test_app_heartbeat_serialization() {
         let payload = Payload::AppHeartbeat(());
 

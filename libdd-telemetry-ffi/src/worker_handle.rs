@@ -149,6 +149,7 @@ pub unsafe extern "C" fn ddog_telemetry_handle_add_product_change(
 
 /// * path: an empty slice means no path
 /// * request_body_type, response_body_type, response_code: an empty slice means not set
+/// * type: an empty slice means the endpoint has no type, such as `"REST"`
 ///
 /// # Safety
 ///
@@ -160,6 +161,7 @@ pub unsafe extern "C" fn ddog_telemetry_handle_add_product_change(
 /// * `request_body_type`, `response_body_type` and `response_code` must each point to `len` valid,
 ///   initialized elements (null only when `len` is 0), and each `CharSlice` element follows the
 ///   rules above. None of them may be mutated during the call.
+/// * `type` must point to `len` readable bytes. An empty slice means the endpoint has no type.
 #[unsafe(no_mangle)]
 #[named]
 pub unsafe extern "C" fn ddog_telemetry_handle_add_endpoint(
@@ -171,6 +173,7 @@ pub unsafe extern "C" fn ddog_telemetry_handle_add_endpoint(
     request_body_type: ffi::Slice<ffi::CharSlice>,
     response_body_type: ffi::Slice<ffi::CharSlice>,
     response_code: ffi::Slice<u32>,
+    r#type: ffi::CharSlice,
 ) -> MaybeError {
     catch_panic!({
         fn strings(s: ffi::Slice<ffi::CharSlice>) -> Result<Option<Vec<String>>, String> {
@@ -192,6 +195,7 @@ pub unsafe extern "C" fn ddog_telemetry_handle_add_endpoint(
             request_body_type: crate::try_c!(strings(request_body_type)),
             response_body_type: crate::try_c!(strings(response_body_type)),
             response_code: (!codes.is_empty()).then(|| codes.to_vec()),
+            r#type: crate::try_c!(r#type.try_to_string_option()),
         };
         crate::try_c!(handle.try_send_msg(TelemetryActions::AddEndpoint(endpoint)));
         MaybeError::None
@@ -453,6 +457,7 @@ mod tests {
                 ffi::Slice::from(&req[..]),
                 ffi::Slice::empty(),
                 ffi::Slice::from(&codes[..]),
+                ffi::CharSlice::from("REST"),
             )
             .unwrap_none();
             ddog_telemetry_handle_add_config(
