@@ -3832,6 +3832,7 @@ dependencies = [
  "criterion",
  "crossbeam-channel",
  "flate2",
+ "foldhash 0.2.0",
  "futures",
  "getrandom 0.2.15",
  "hashbrown 0.17.1",
