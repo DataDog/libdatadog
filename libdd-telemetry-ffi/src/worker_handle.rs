@@ -34,6 +34,27 @@ pub unsafe extern "C" fn ddog_telemetry_handle_add_dependency(
     MaybeError::None
 }
 
+/// Reports an integration to the telemetry worker. An integration is a component the tracer
+/// instruments, for example a library or framework.
+///
+/// * handle: telemetry worker that receives the integration
+/// * dependency_name: name of the integration
+/// * dependency_version: version of the integration. An empty slice means no version.
+/// * enabled: whether the integration is enabled
+/// * compatible: whether the integration is compatible with the runtime. `None` means the tracer
+///   does not know.
+/// * auto_enabled: whether the tracer enabled the integration automatically. `None` means the
+///   tracer does not know.
+/// * error_message: error message describing why the integration failed to load. An empty slice
+///   means no error message.
+///
+/// # Safety
+///
+/// * `handle` must be a valid, non-null pointer to a live `TelemetryWorkerHandle`, not dropped
+///   during the call.
+/// * Every `CharSlice` must point to `len` readable bytes (the pointer may be null only when `len`
+///   is 0) and must not be mutated during the call. Strings that are not valid UTF-8 return an
+///   error.
 #[allow(clippy::missing_safety_doc)]
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ddog_telemetry_handle_add_integration(
@@ -43,16 +64,18 @@ pub unsafe extern "C" fn ddog_telemetry_handle_add_integration(
     enabled: bool,
     compatible: ffi::Option<bool>,
     auto_enabled: ffi::Option<bool>,
+    error_message: ffi::CharSlice,
 ) -> MaybeError {
     let name = crate::try_c!(dependency_name.try_to_string());
     let version = crate::try_c!(dependency_version.try_to_string_option());
+    let error = crate::try_c!(error_message.try_to_string_option());
     crate::try_c!(handle.add_integration(
         name,
         enabled,
         version,
         compatible.into(),
         auto_enabled.into(),
-        None,
+        error,
     ));
     MaybeError::None
 }
@@ -635,6 +658,7 @@ mod tests {
                 true,
                 ffi::Option::<bool>::None,
                 ffi::Option::<bool>::None,
+                ffi::CharSlice::from("incompatible with runtime"),
             )
             .unwrap_none();
 
@@ -645,6 +669,7 @@ mod tests {
                 true,
                 ffi::Option::<bool>::None,
                 ffi::Option::<bool>::None,
+                ffi::CharSlice::from(""),
             )
             .unwrap_none();
 
@@ -673,6 +698,11 @@ mod tests {
                 Some("2.0.0"),
                 "Non-empty version must be preserved through the FFI layer"
             );
+            assert_eq!(
+                versioned["error"].as_str(),
+                Some("incompatible with runtime"),
+                "Non-empty error message must be preserved through the FFI layer"
+            );
 
             let versionless = integrations
                 .iter()
@@ -682,6 +712,11 @@ mod tests {
                 versionless["version"].is_null(),
                 "Empty version string should map to null/None, got {:?}",
                 versionless["version"]
+            );
+            assert!(
+                versionless["error"].is_null(),
+                "Empty error message should map to null/None, got {:?}",
+                versionless["error"]
             );
         }
     }
