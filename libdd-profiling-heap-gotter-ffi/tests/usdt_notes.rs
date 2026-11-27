@@ -18,18 +18,96 @@
 //! validates the real shipped artifact. Mirrors
 //! libdd-otel-thread-ctx-ffi/tests/elf_properties.rs.
 //!
-//! The cdylib path is derived at runtime from the test executable location.
-//! Both the test binary and the cdylib live in `target/<[triple/]profile>/deps/`.
+//! The cdylib path is derived at runtime from the test executable location,
+//! in whichever of cargo's two target layouts the test binary lives in: the
+//! `deps` layout (stable toolchains and older nightlies), where the test
+//! binary and the cdylib sit side by side in
+//! `target/<[triple/]profile>/deps/`, and the `build` layout (newer
+//! nightlies), where every unit's outputs live in their own
+//! `target/<[triple/]profile>/build/<package>/<hash>/out/` directory.
 
 #![cfg(target_os = "linux")]
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
+
+/// Name of the crate's `cdylib` output.
+const CDYLIB_NAME: &str = "liblibdd_profiling_heap_gotter_ffi.so";
 
 fn cdylib_path() -> PathBuf {
     let exe = std::env::current_exe().expect("failed to read current executable path");
-    exe.parent()
+    let binary_dir = exe
+        .parent()
         .expect("unexpected test executable path structure")
-        .join("liblibdd_profiling_heap_gotter_ffi.so")
+        .to_owned();
+
+    // Directories that may hold the cdylib: the test binary's own directory
+    // (the only location in the `deps` layout), plus, once the profile root
+    // is known, the shared `deps` directory and every
+    // `build/<package>/<hash>/out/` directory of the `build` layout.
+    let mut dirs = vec![binary_dir.clone()];
+
+    // Profile root: `<profile>/deps` or `<profile>/build/<package>/<hash>/out`.
+    let profile_dir = if binary_dir.file_name().is_some_and(|name| name == "deps") {
+        binary_dir.parent().map(Path::to_path_buf)
+    } else {
+        // out -> hash -> package -> build -> profile root
+        let mut ancestors = binary_dir.ancestors().skip(1);
+        let _hash = ancestors.next();
+        let _package = ancestors.next();
+        let build = ancestors.next();
+        let profile = ancestors.next();
+        match (build, profile) {
+            (Some(build), Some(profile))
+                if build.file_name().is_some_and(|name| name == "build") =>
+            {
+                Some(profile.to_path_buf())
+            }
+            _ => None,
+        }
+    };
+
+    if let Some(profile) = profile_dir {
+        let deps = profile.join("deps");
+        if deps.is_dir() {
+            dirs.push(deps);
+        }
+        if let Ok(packages) = std::fs::read_dir(profile.join("build")) {
+            for package in packages.flatten() {
+                let Ok(hashes) = std::fs::read_dir(package.path()) else {
+                    continue;
+                };
+                for hash in hashes.flatten() {
+                    let out = hash.path().join("out");
+                    if out.is_dir() {
+                        dirs.push(out);
+                    }
+                }
+            }
+        }
+    }
+
+    let mut candidates: Vec<PathBuf> = dirs
+        .iter()
+        .map(|dir| dir.join(CDYLIB_NAME))
+        .filter(|path| path.is_file())
+        .collect();
+    assert!(
+        !candidates.is_empty(),
+        "no artifact `{CDYLIB_NAME}` found in {}",
+        dirs.iter()
+            .map(|dir| dir.display().to_string())
+            .collect::<Vec<_>>()
+            .join(", ")
+    );
+
+    // Several units may have built the cdylib (e.g. once per feature
+    // combination); keep the most recently modified one.
+    candidates.sort_by_key(|path| {
+        std::fs::metadata(path)
+            .and_then(|metadata| metadata.modified())
+            .expect("failed to read artifact metadata")
+    });
+    candidates.pop().expect("checked non-empty above")
 }
 
 /// `ddheap:alloc` is unconditional: every build samples allocations, so its
