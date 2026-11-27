@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 #include <datadog/common.h>
+#include <datadog/shared-runtime.h>
 #include <datadog/telemetry.h>
 #include <stdio.h>
 
@@ -33,13 +34,25 @@ int main(void) {
   TRY(ddog_telemetry_builder_with_str_application_env(builder, env));
 
   TRY(ddog_telemetry_builder_with_bool_config_telemetry_debug_logging_enabled(builder, true));
+  TRY(ddog_telemetry_builder_with_shutdown_timeout_ms(builder, 1000));
 
   ddog_TelemetryWorkerHandle *handle;
-  TRY(ddog_telemetry_builder_run(builder, &handle));
+  const ddog_ForkSafeRuntime *runtime;
+  ddog_SharedRuntimeFFIError *runtime_err = ddog_shared_runtime_new(&runtime);
+  if (runtime_err) {
+    fprintf(stderr, "ERROR: could not create the shared runtime\n");
+    ddog_shared_runtime_error_free(runtime_err);
+    return 1;
+  }
+  ddog_TelemetryWorkerRuntimeHandle *worker;
+  TRY(ddog_telemetry_builder_spawn(builder, runtime, false, &handle, &worker));
   TRY(ddog_telemetry_handle_start(handle));
 
   TRY(ddog_telemetry_handle_stop(handle));
-  ddog_telemetry_handle_wait_for_shutdown(handle);
+  // Blocks until the final flush is done, at most the shutdown timeout.
+  TRY(ddog_telemetry_worker_stop(worker));
+  ddog_telemetry_handle_drop(handle);
+  ddog_shared_runtime_free(runtime);
 
   return 0;
 }

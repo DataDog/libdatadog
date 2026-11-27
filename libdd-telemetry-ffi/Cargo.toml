@@ -25,6 +25,7 @@ build_common = { path = "../build-common" }
 [dependencies]
 libdd-capabilities-impl = { path = "../libdd-capabilities-impl" }
 libdd-telemetry = { path = "../libdd-telemetry" }
+libdd-shared-runtime = { path = "../libdd-shared-runtime" }
 libdd-common = { path = "../libdd-common" }
 libdd-common-ffi = { path = "../libdd-common-ffi", default-features = false, features = ["std"] }
 libdd-regex = { path = "../libdd-regex" }
@@ -32,6 +33,7 @@ function_name.workspace = true
 paste.workspace = true
 
 [dev-dependencies]
+tokio = { workspace = true, features = ["rt"] }
 tempfile.workspace = true
 serde_json.workspace = true
 

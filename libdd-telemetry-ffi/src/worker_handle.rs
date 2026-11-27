@@ -267,6 +267,8 @@ pub extern "C" fn ddog_telemetry_handle_clone(
 }
 
 #[unsafe(no_mangle)]
+/// Sends a Stop lifecycle event. A non-restartable worker then stops processing; release its
+/// runtime slot with `ddog_telemetry_worker_stop`.
 pub extern "C" fn ddog_telemetry_handle_stop(handle: &TelemetryWorkerHandle) -> MaybeError {
     crate::try_c!(handle.send_stop());
     MaybeError::None
@@ -320,25 +322,8 @@ pub unsafe extern "C" fn ddog_telemetry_handle_add_point_with_tags(
 }
 
 #[unsafe(no_mangle)]
-/// This function takes ownership of the handle. It should not be used after calling it
-pub extern "C" fn ddog_telemetry_handle_wait_for_shutdown(handle: Box<TelemetryWorkerHandle>) {
-    handle.wait_for_shutdown()
-}
-
-#[unsafe(no_mangle)]
-/// This function takes ownership of the handle. It should not be used after calling it
-pub extern "C" fn ddog_telemetry_handle_wait_for_shutdown_ms(
-    handle: Box<TelemetryWorkerHandle>,
-    wait_for_ms: u64,
-) {
-    handle.wait_for_shutdown_deadline(
-        std::time::Instant::now() + std::time::Duration::from_millis(wait_for_ms),
-    )
-}
-
-#[unsafe(no_mangle)]
-/// Drops the handle without waiting for shutdown. The worker will continue running in the
-/// background until it exits by itself
+/// Drops the handle. The worker keeps running until it is stopped with
+/// `ddog_telemetry_worker_stop` or its shared runtime is shut down.
 pub extern "C" fn ddog_telemetry_handle_drop(handle: Box<TelemetryWorkerHandle>) {
     drop(handle);
 }
@@ -347,13 +332,18 @@ pub extern "C" fn ddog_telemetry_handle_drop(handle: Box<TelemetryWorkerHandle>)
 mod tests {
     use super::*;
     use crate::builder::*;
+    use crate::tests::{spawn_worker, stop_worker};
     use ffi::tags::ddog_Vec_Tag_new;
     use libdd_telemetry::{data::LogLevel, worker::TelemetryWorkerBuilder};
     use std::{mem::MaybeUninit, ptr::NonNull};
 
     /// Spins up a worker backed by a file:// endpoint, returns (handle, temp_file).
     /// The caller is responsible for stopping the worker and reading the file.
-    unsafe fn start_file_backed_worker() -> (Box<TelemetryWorkerHandle>, tempfile::NamedTempFile) {
+    unsafe fn start_file_backed_worker() -> (
+        Box<TelemetryWorkerHandle>,
+        Box<TelemetryWorkerRuntimeHandle>,
+        tempfile::NamedTempFile,
+    ) {
         unsafe {
             let mut builder: MaybeUninit<Box<TelemetryWorkerBuilder>> = MaybeUninit::uninit();
             ddog_telemetry_builder_instantiate(
@@ -378,12 +368,9 @@ mod tests {
             )
             .unwrap_none();
 
-            let mut handle: MaybeUninit<Box<TelemetryWorkerHandle>> = MaybeUninit::uninit();
-            ddog_telemetry_builder_run(builder, NonNull::new(&mut handle).unwrap().cast())
-                .unwrap_none();
-            let handle = handle.assume_init();
+            let (handle, worker) = spawn_worker(builder, false);
             ddog_telemetry_handle_start(&handle).unwrap_none();
-            (handle, f)
+            (handle, worker, f)
         }
     }
 
@@ -424,7 +411,7 @@ mod tests {
     #[cfg_attr(miri, ignore)]
     fn test_handle_end_to_end() {
         unsafe {
-            let (handle, f) = start_file_backed_worker();
+            let (handle, worker, f) = start_file_backed_worker();
 
             ddog_telemetry_handle_add_config(
                 &handle,
@@ -512,7 +499,7 @@ mod tests {
             ddog_telemetry_handle_send_extended_heartbeat(&handle).unwrap_none();
 
             ddog_telemetry_handle_stop(&handle).unwrap_none();
-            ddog_telemetry_handle_wait_for_shutdown(handle);
+            stop_worker(handle, worker);
 
             let output = std::fs::read_to_string(f.path()).unwrap();
             let conf = find_sub_payloads(&output, "app-client-configuration-change");
@@ -568,7 +555,7 @@ mod tests {
     #[cfg_attr(miri, ignore)]
     fn test_add_dependency_preserves_version() {
         unsafe {
-            let (handle, f) = start_file_backed_worker();
+            let (handle, worker, f) = start_file_backed_worker();
 
             ddog_telemetry_handle_add_dependency(
                 &handle,
@@ -585,7 +572,7 @@ mod tests {
             .unwrap_none();
 
             ddog_telemetry_handle_stop(&handle).unwrap_none();
-            ddog_telemetry_handle_wait_for_shutdown(handle);
+            stop_worker(handle, worker);
 
             let output = std::fs::read_to_string(f.path()).unwrap();
             let dep_payloads = find_sub_payloads(&output, "app-dependencies-loaded");
@@ -626,7 +613,7 @@ mod tests {
     #[cfg_attr(miri, ignore)]
     fn test_add_integration_preserves_version() {
         unsafe {
-            let (handle, f) = start_file_backed_worker();
+            let (handle, worker, f) = start_file_backed_worker();
 
             ddog_telemetry_handle_add_integration(
                 &handle,
@@ -649,7 +636,7 @@ mod tests {
             .unwrap_none();
 
             ddog_telemetry_handle_stop(&handle).unwrap_none();
-            ddog_telemetry_handle_wait_for_shutdown(handle);
+            stop_worker(handle, worker);
 
             let output = std::fs::read_to_string(f.path()).unwrap();
             let int_payloads = find_sub_payloads(&output, "app-integrations-change");
@@ -690,7 +677,7 @@ mod tests {
     #[cfg_attr(miri, ignore)]
     fn test_add_log_preserves_stack_trace() {
         unsafe {
-            let (handle, f) = start_file_backed_worker();
+            let (handle, worker, f) = start_file_backed_worker();
 
             ddog_telemetry_handle_add_log(
                 &handle,
@@ -711,7 +698,7 @@ mod tests {
             .unwrap_none();
 
             ddog_telemetry_handle_stop(&handle).unwrap_none();
-            ddog_telemetry_handle_wait_for_shutdown(handle);
+            stop_worker(handle, worker);
 
             let output = std::fs::read_to_string(f.path()).unwrap();
             let log_payloads = find_sub_payloads(&output, "logs");

@@ -1,12 +1,10 @@
 // Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-use std::{
-    error::Error,
-    time::{Duration, Instant},
-};
+use std::{error::Error, time::Duration};
 
 use libdd_common::tag;
+use libdd_shared_runtime::{BasicRuntime, BlockingRuntime, SharedRuntime};
 use libdd_telemetry::{data, worker};
 
 macro_rules! timeit {
@@ -45,8 +43,12 @@ fn main() -> Result<(), Box<dyn Error>> {
         })
         .unwrap();
     builder.config.telemetry_heartbeat_interval = Duration::from_secs(1);
+    // Bound the final flush on shutdown.
+    builder.config.shutdown_timeout = Some(Duration::from_millis(10));
 
-    let handle = builder.run::<libdd_capabilities_impl::NativeCapabilities>()?;
+    let runtime = BasicRuntime::new()?;
+    let (handle, worker) = builder.build_worker::<libdd_capabilities_impl::NativeCapabilities>();
+    let worker_handle = runtime.spawn_worker(worker, false)?;
 
     let ping_metric = handle.register_metric_context(
         "test_telemetry.ping".into(),
@@ -118,8 +120,7 @@ fn main() -> Result<(), Box<dyn Error>> {
 
     // About 200ms (the time it takes to send a app-closing request)
     timeit!("shutdown", {
-        handle.send_stop().unwrap();
-        handle.wait_for_shutdown_deadline(Instant::now() + Duration::from_millis(10));
+        runtime.block_on(handle.stop_worker(worker_handle))??;
     });
 
     Ok(())
