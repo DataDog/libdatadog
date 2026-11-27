@@ -610,6 +610,9 @@ fn should_obfuscate_cc_key(key: &str, config: &ObfuscationConfig) -> bool {
 		 | "_sampling_priority_v1"
 		 | "account_id"
 		 | "aws_account"
+		 | "aws.account.id"
+		 | "aws.target.account.id"
+		 | "cloud.account.id"
 		 | "error"
 		 | "error.msg"
 		 | "error.type"
@@ -854,6 +857,28 @@ mod tests {
         let obf_config = obfuscation_config::ObfuscationConfig::default();
         obfuscate_pb_span(&mut span, &obf_config);
         assert_eq!(span.meta.get("env").unwrap(), "4111111111111111");
+    }
+
+    #[test]
+    fn obfuscate_credit_card_cloud_account_id_keys_skipped() {
+        // Cloud account ID attributes are in the built-in skip-list, matching the Agent's
+        // ShouldObfuscateCCKey.
+        let keys = [
+            "aws.account.id",
+            "aws.target.account.id",
+            "cloud.account.id",
+        ];
+        let mut span = test_utils::create_test_span(111, 222, 0, 1, true);
+        for key in keys {
+            span.meta
+                .insert(key.to_string(), "4111111111111111".to_string());
+        }
+        let obf_config = obfuscation_config::ObfuscationConfig::default();
+        assert!(obf_config.credit_cards.enabled);
+        obfuscate_pb_span(&mut span, &obf_config);
+        for key in keys {
+            assert_eq!(span.meta.get(key).unwrap(), "4111111111111111", "{key}");
+        }
     }
 
     fn sql_pb_span(span_type: &str, resource: &str) -> pb::Span {
