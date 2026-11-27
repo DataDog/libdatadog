@@ -24,6 +24,7 @@ std = [
 ]
 cbindgen = ["std", "build_common/cbindgen", "libdd-common-ffi/cbindgen"]
 catch_panic = []
+config-core = ["std", "dep:libdd-config-core"]
 # Provides a libc-backed #[global_allocator], #[panic_handler], and rust_eh_personality for
 # building a standalone no_std staticlib/cdylib. Must be built with panic=abort.
 standalone = ["dep:libc_alloc"]
@@ -31,6 +32,7 @@ regex-lite = ["libdd-regex/regex-lite"]
 
 [dependencies]
 libdd-common-ffi = { path = "../libdd-common-ffi", default-features = false }
+libdd-config-core = { path = "../libdd-config-core", optional = true }
 libdd-regex = { path = "../libdd-regex" }
 libdd-library-config = { path = "../libdd-library-config", default-features = false }
 anyhow = { workspace = true, optional = true }

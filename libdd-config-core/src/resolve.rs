@@ -63,6 +63,8 @@ pub struct ResolveInputs {
     pub layers: Vec<Layer>,
     /// Record attempts for telemetry, including overridden sources.
     pub report_sources: bool,
+    /// Resolve only the supplied layers, for callers that already have defaults.
+    pub skip_defaults: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize)]
@@ -104,6 +106,9 @@ pub struct SourceEvent {
     pub name: String,
     pub origin: Origin,
     pub input: Option<InputValue>,
+    /// The parsed input when validation or transformation changed or rejected it.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub parsed: Option<Value>,
     pub value: Option<Value>,
 }
 
@@ -182,6 +187,7 @@ struct Write {
     input_name: Option<String>,
     config_id: Option<String>,
     input: Option<InputValue>,
+    parsed: Option<Value>,
 }
 
 #[derive(Debug)]
@@ -264,6 +270,7 @@ impl PendingResolution {
                 name: rule.name.clone(),
                 origin: write.origin,
                 input: write.input,
+                parsed: write.parsed.filter(|parsed| Some(parsed) != value.as_ref()),
                 value: value.clone(),
             });
         }
@@ -297,22 +304,26 @@ impl ConfigSchema {
             report_sources: inputs.report_sources,
         };
 
-        for (slot, rule) in self.0.rules.iter().enumerate() {
-            let origin = Origin::Default;
-            let outcome = match &rule.default {
-                Some(value) => self.evaluate(rule, value.clone(), origin, &mut pending)?,
-                None => Outcome::ready(None),
-            };
-            pending.add(
-                Write {
-                    slot,
-                    origin,
-                    input_name: None,
-                    config_id: None,
-                    input: None,
-                },
-                outcome,
-            );
+        if !inputs.skip_defaults {
+            for (slot, rule) in self.0.rules.iter().enumerate() {
+                let origin = Origin::Default;
+                let outcome = match &rule.default {
+                    Some(value) => self.evaluate(rule, value.clone(), origin, &mut pending)?,
+                    None => Outcome::ready(None),
+                };
+                pending.add(
+                    Write {
+                        slot,
+                        origin,
+                        input_name: None,
+                        config_id: None,
+                        input: None,
+                        parsed: rule
+                            .parsed_for_source(rule.default.as_ref(), inputs.report_sources),
+                    },
+                    outcome,
+                );
+            }
         }
 
         for layer in inputs.layers {
@@ -381,6 +392,7 @@ impl ConfigSchema {
                 self.0.policy.coerce(rule.kind, rule.parse_options, passed)
             }
         };
+        let parsed_for_source = rule.parsed_for_source(parsed.as_ref(), pending.report_sources);
         let outcome = match parsed {
             Some(value) => self.evaluate(rule, value, origin, pending)?,
             None => Outcome::rejected(DiagnosticKind::InvalidValue),
@@ -392,6 +404,7 @@ impl ConfigSchema {
                 input_name: Some(entry.name),
                 config_id: entry.config_id,
                 input,
+                parsed: parsed_for_source,
             },
             outcome,
         );
@@ -433,6 +446,17 @@ impl ConfigSchema {
                 });
                 Ok(Outcome::Host(transform.output))
             }
+        }
+    }
+}
+
+impl Rule {
+    fn parsed_for_source(&self, value: Option<&Value>, report_sources: bool) -> Option<Value> {
+        if report_sources && !self.sensitive && (self.transform.is_some() || self.allowed.is_some())
+        {
+            value.cloned()
+        } else {
+            None
         }
     }
 }

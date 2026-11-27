@@ -5,7 +5,7 @@ use alloc::sync::Arc;
 use std::{collections::HashMap, fs, path::Path};
 
 use indexmap::IndexMap;
-use libdd_regex::{Regex, RegexBuilder};
+use libdd_regex::full::{Regex, RegexBuilder};
 use serde::Deserialize;
 use serde_json::value::RawValue;
 

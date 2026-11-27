@@ -112,15 +112,23 @@ impl WireResolver {
     /// # Errors
     /// Returns an error if the reply cannot be serialized.
     pub fn request(&mut self, request: &[u8]) -> Result<Vec<u8>, serde_json::Error> {
+        self.request_text(request).map(String::into_bytes)
+    }
+
+    /// Send a version 1 request and receive the reply as UTF-8 JSON text.
+    ///
+    /// # Errors
+    /// Returns an error if the reply cannot be serialized.
+    pub fn request_text(&mut self, request: &[u8]) -> Result<String, serde_json::Error> {
         match self.handle(request) {
             Ok(response) => Ok(response),
-            Err(error) => serde_json::to_vec(&Reply::Error {
+            Err(error) => serde_json::to_string(&Reply::Error {
                 message: error.to_string(),
             }),
         }
     }
 
-    fn handle(&mut self, request: &[u8]) -> Result<Vec<u8>, WireError> {
+    fn handle(&mut self, request: &[u8]) -> Result<String, WireError> {
         let request: Request = serde_json::from_slice(request)?;
         if request.version != 1 {
             return Err(WireError::Version(request.version));
@@ -170,16 +178,16 @@ impl WireResolver {
             }
             Operation::Cancel => {
                 self.pending = None;
-                Ok(serde_json::to_vec(&Reply::Cancelled)?)
+                Ok(serde_json::to_string(&Reply::Cancelled)?)
             }
         }
     }
 
-    fn reply(&mut self, resolution: Resolution) -> Result<Vec<u8>, serde_json::Error> {
+    fn reply(&mut self, resolution: Resolution) -> Result<String, serde_json::Error> {
         match resolution {
             Resolution::Complete(snapshot) => snapshot_reply(&snapshot),
             Resolution::Pending(pending) => {
-                let response = serde_json::to_vec(&Reply::Pending {
+                let response = serde_json::to_string(&Reply::Pending {
                     requests: pending.requests(),
                 })?;
                 self.pending = Some(pending);
@@ -189,8 +197,8 @@ impl WireResolver {
     }
 }
 
-fn snapshot_reply(snapshot: &ResolvedConfig) -> Result<Vec<u8>, serde_json::Error> {
-    serde_json::to_vec(&Reply::Complete {
+fn snapshot_reply(snapshot: &ResolvedConfig) -> Result<String, serde_json::Error> {
+    serde_json::to_string(&Reply::Complete {
         settings: Settings(snapshot),
         diagnostics: snapshot.diagnostics(),
         sources: snapshot.source_events(),

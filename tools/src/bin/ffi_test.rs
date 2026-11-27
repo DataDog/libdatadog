@@ -113,6 +113,7 @@ const FFI_FEATURES: &[&str] = &[
     "symbolizer",
     "crashtracker",
     "library-config",
+    "config-core",
     "log",
     "ddsketch",
     "ffe",

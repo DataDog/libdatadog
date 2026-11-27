@@ -50,7 +50,7 @@ pub enum Error {
     Regex {
         key: String,
         #[source]
-        source: libdd_regex::Error,
+        source: libdd_regex::full::Error,
     },
     #[error("allowed regexp requires a scalar setting for {0}")]
     UnsupportedValidationKind(String),

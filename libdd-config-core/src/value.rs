@@ -231,7 +231,7 @@ impl ParsePolicy {
         }
     }
 
-    pub(crate) fn pattern_matches(self, pattern: &libdd_regex::Regex, value: &Value) -> bool {
+    pub(crate) fn pattern_matches(self, pattern: &libdd_regex::full::Regex, value: &Value) -> bool {
         match value {
             Value::String(value) => pattern.is_match(value),
             Value::Boolean(true) => pattern.is_match("true"),
@@ -345,28 +345,59 @@ fn parse_radix_integer(digits: &str, radix: u32) -> Option<f64> {
 }
 
 fn number_text(value: Number, syntax: NumberSyntax) -> String {
-    match value {
-        Number::Integer(value) => value.to_string(),
-        Number::Infinite(Infinity::Positive) => "Infinity".to_owned(),
-        Number::Infinite(Infinity::Negative) => "-Infinity".to_owned(),
-        Number::Float(value) if matches!(syntax, NumberSyntax::EcmaScript) => {
-            let magnitude = value.abs();
-            if magnitude == 0.0 {
-                "0".to_owned()
-            } else if !(1e-6..1e21).contains(&magnitude) {
-                let mut text = format!("{value:e}");
-                if let Some(exponent) = text.find('e')
-                    && text.as_bytes()[exponent + 1] != b'-'
-                {
-                    text.insert(exponent + 1, '+');
-                }
-                text
-            } else {
-                value.to_string()
-            }
-        }
-        Number::Float(value) => value.to_string(),
+    match (value, syntax) {
+        (Number::Infinite(Infinity::Positive), _) => "Infinity".to_owned(),
+        (Number::Infinite(Infinity::Negative), _) => "-Infinity".to_owned(),
+        (value, NumberSyntax::EcmaScript) => ecmascript_number_text(value.as_float()),
+        (Number::Integer(value), _) => value.to_string(),
+        (Number::Float(value), _) => value.to_string(),
     }
+}
+
+fn ecmascript_number_text(value: f64) -> String {
+    if value == 0.0 {
+        return "0".to_owned();
+    }
+
+    let mut buffer = ryu::Buffer::new();
+    let formatted = buffer.format_finite(value);
+    let Some((mantissa, exponent)) = formatted.split_once('e') else {
+        return formatted.strip_suffix(".0").unwrap_or(formatted).to_owned();
+    };
+    let Ok(exponent) = exponent.parse::<i16>() else {
+        return formatted.to_owned();
+    };
+    if exponent < -6 {
+        return formatted.to_owned();
+    }
+    if exponent > 20 {
+        return format!("{mantissa}e+{exponent}");
+    }
+
+    // Ryu selects the shortest digits. ECMAScript uses fixed notation here.
+    let (sign, mantissa) = mantissa
+        .strip_prefix('-')
+        .map_or(("", mantissa), |unsigned| ("-", unsigned));
+    let (leading, trailing) = mantissa.split_once('.').unwrap_or((mantissa, ""));
+    let mut text = String::with_capacity(24);
+    let offset = usize::from(exponent.unsigned_abs());
+    text.push_str(sign);
+    if exponent < 0 {
+        text.push_str("0.");
+        text.extend(core::iter::repeat_n('0', offset - 1));
+        text.push_str(leading);
+        text.push_str(trailing);
+    } else {
+        let (integer, fraction) = trailing.split_at(offset.min(trailing.len()));
+        text.push_str(leading);
+        text.push_str(integer);
+        text.extend(core::iter::repeat_n('0', offset - integer.len()));
+        if !fraction.is_empty() {
+            text.push('.');
+            text.push_str(fraction);
+        }
+    }
+    text
 }
 
 fn trim(value: &str) -> &str {

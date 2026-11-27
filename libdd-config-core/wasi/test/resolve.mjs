@@ -104,18 +104,22 @@ const numericManifest = {
   supportedConfigurations: {
     DD_RADIX: [{ type: 'decimal' }],
     DD_TYPED: [{ type: 'decimal', configurationNames: ['typed'] }],
+    DD_TEXT: [{ type: 'string', configurationNames: ['text'] }],
   },
 }
 const numericInputs = {
   operation: 'initialize',
   manifest: { kind: 'json', value: JSON.stringify(numericManifest) },
-  policy: { numbers: 'ecma_script' },
+  policy: { numbers: 'ecma_script', coerce_code: true },
   inputs: {
     layers: [
       { origin: 'env_var', entries: [] },
       {
         origin: 'code',
-        entries: [{ name: 'typed', value: { kind: 'number', value: typedNumber } }],
+        entries: [
+          { name: 'typed', value: { kind: 'number', value: typedNumber } },
+          { name: 'text', value: { kind: 'number', value: 1571277825824000.25 } },
+        ],
       },
     ],
   },
@@ -135,4 +139,5 @@ for (const text of [
   assert.equal(reply.status, 'complete')
   assert.strictEqual(Number(reply.settings[0].resolved.value.value), Number(text), text)
   assert.strictEqual(reply.settings[1].resolved.value.value, typedNumber)
+  assert.strictEqual(reply.settings[2].resolved.value.value, String(1571277825824000.25))
 }

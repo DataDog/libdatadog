@@ -16,7 +16,8 @@ bench = false
 
 [dependencies]
 indexmap = { workspace = true, features = ["serde", "std"] }
-libdd-regex = { path = "../libdd-regex", version = "0.1.0", features = ["require-regex-full"] }
+libdd-regex = { path = "../libdd-regex", version = "0.1.0", default-features = false, features = ["full"] }
+ryu.workspace = true
 serde = { workspace = true, features = ["derive", "std"] }
 serde_json = { workspace = true, features = ["float_roundtrip", "raw_value", "std"] }
 thiserror = { workspace = true, features = ["std"] }

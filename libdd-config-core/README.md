@@ -41,6 +41,10 @@ sources. Sensitive entries stay available in the snapshot and are omitted
 from source events. The resolver clears detail from sensitive transform
 diagnostics.
 
+When a transform or regexp changes or rejects a parsed value, the source
+event includes that parsed value. Use `skip_defaults` when applying a new
+layer over defaults already materialized by the caller.
+
 ## WASI Preview 1
 
 Build the reactor with:

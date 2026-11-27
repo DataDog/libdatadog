@@ -28,6 +28,12 @@ compile_error!(
      dependency on this crate."
 );
 
+/// The full engine for callers that must accept its regexp syntax in every artifact.
+#[cfg(feature = "full")]
+pub mod full {
+    pub use regex::{Error, Regex, RegexBuilder};
+}
+
 #[cfg(all(feature = "regex-lite", not(feature = "require-regex-full")))]
 pub use regex_lite::{Captures, Error, Regex, RegexBuilder, Replacer, escape};
 

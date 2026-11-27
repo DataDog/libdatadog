@@ -60,6 +60,7 @@ crashtracker-collector = ["crashtracker-ffi", "libdd-crashtracker-ffi/collector"
 crashtracker-receiver = ["crashtracker-ffi", "libdd-crashtracker-ffi/receiver", "libdd-crashtracker-ffi/otel-thread-ctx"]
 demangler = ["crashtracker-ffi", "libdd-crashtracker-ffi/demangler"]
 datadog-library-config-ffi = ["dep:libdd-library-config-ffi", "libdd-library-config-ffi/std"]
+datadog-config-core-ffi = ["datadog-library-config-ffi", "libdd-library-config-ffi/config-core"]
 ddcommon-ffi = ["dep:libdd-common-ffi", "libdd-common-ffi/std"]
 ddsketch-ffi = ["dep:libdd-ddsketch-ffi"]
 libdd-ffe-ffi = ["dep:libdd-ffe-ffi"]

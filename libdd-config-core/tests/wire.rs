@@ -77,6 +77,57 @@ fn applies_parser_policy_on_raw_and_typed_inputs() {
 }
 
 #[test]
+fn formats_ecmascript_numbers_for_string_coercion_and_allowed_patterns() {
+    let mut resolver = WireResolver::default();
+    let midpoint = 1_571_277_825_824_000.0 + 0.25;
+    let result = invoke(
+        &mut resolver,
+        json!({
+            "operation": "initialize",
+            "manifest": {"kind": "json", "value": r#"{"version":"2","supportedConfigurations":{
+                "DD_TEXT":[{"type":"string","configurationNames":["text"]}],
+                "DD_DECIMAL":[{"type":"decimal","allowed":"1571277825824000\\.2"}]
+            }}"#},
+            "policy": {"numbers": "ecma_script", "coerce_code": true},
+            "inputs": {"layers": [{"origin": "env_var", "entries": [
+                {"name": "DD_DECIMAL", "value": "1571277825824000.25"}
+            ]}]},
+        }),
+    )
+    .unwrap();
+    assert_eq!(
+        result["settings"][1]["resolved"]["value"]["value"],
+        midpoint
+    );
+    assert_eq!(result["diagnostics"], json!([]));
+
+    for (number, expected) in [
+        (midpoint, "1571277825824000.2"),
+        (-midpoint, "-1571277825824000.2"),
+        (-0.0, "0"),
+        (1e-7, "1e-7"),
+        (1e-6, "0.000001"),
+        (1e20, "100000000000000000000"),
+        (1e21, "1e+21"),
+    ] {
+        let result = invoke(
+            &mut resolver,
+            json!({
+                "operation": "resolve",
+                "inputs": {"layers": [{"origin": "code", "entries": [
+                    {"name": "text", "value": {"kind": "number", "value": number}}
+                ]}]},
+            }),
+        )
+        .unwrap();
+        assert_eq!(
+            result["settings"][0]["resolved"]["value"]["value"],
+            expected
+        );
+    }
+}
+
+#[test]
 fn reports_later_unknown_options_after_pending_diagnostics() {
     let mut resolver = WireResolver::default();
     let pending = invoke(

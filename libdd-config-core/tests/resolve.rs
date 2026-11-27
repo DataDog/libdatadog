@@ -68,6 +68,7 @@ fn selects_and_validates_one_name_per_source() {
             layer(Origin::FleetStableConfig, &[("DD_MODE", "bad")]),
         ],
         report_sources: true,
+        ..ResolveInputs::default()
     };
     let Resolution::Complete(config) = schema.resolve(inputs).unwrap() else {
         panic!("all transforms are bound in Rust");
@@ -90,6 +91,20 @@ fn selects_and_validates_one_name_per_source() {
         DiagnosticKind::DisallowedValue
     );
     assert_eq!(config.source_events().len(), 4);
+    let events = config.source_events();
+    assert_eq!(
+        events[0].parsed.as_ref().and_then(Value::as_str),
+        Some("INFO")
+    );
+    assert_eq!(
+        events[1].parsed.as_ref().and_then(Value::as_str),
+        Some("DEBUG")
+    );
+    assert_eq!(
+        events[2].parsed.as_ref().and_then(Value::as_str),
+        Some("invalid")
+    );
+    assert_eq!(events[2].value, None);
     assert!(
         !config
             .source_events()
@@ -127,6 +142,7 @@ fn batches_host_values_and_resumes_in_source_order() {
             layer(Origin::FleetStableConfig, &[("DD_FILE", "denied")]),
         ],
         report_sources: true,
+        ..ResolveInputs::default()
     };
     let Resolution::Pending(pending) = schema.resolve(inputs).unwrap() else {
         panic!("file reads require the caller");
@@ -206,7 +222,7 @@ fn preserves_parsed_numbers_and_warns_on_adjustment() {
                 ),
                 layer(Origin::Code, &[("rate", "Infinity")]),
             ],
-            report_sources: false,
+            ..ResolveInputs::default()
         })
         .unwrap()
     else {
@@ -256,7 +272,7 @@ fn can_choose_aliases_by_declaration_or_input_order() {
         let Resolution::Complete(config) = schema
             .resolve(ResolveInputs {
                 layers: vec![environment],
-                report_sources: false,
+                ..ResolveInputs::default()
             })
             .unwrap()
         else {
@@ -294,7 +310,7 @@ fn checks_integer_transform_results() {
         let Resolution::Pending(pending) = schema
             .resolve(ResolveInputs {
                 layers: vec![layer(Origin::EnvVar, &[("DD_COUNT", "2")])],
-                report_sources: false,
+                ..ResolveInputs::default()
             })
             .unwrap()
         else {
@@ -361,7 +377,7 @@ fn parses_space_separated_tags_and_preserves_values_when_comma_separated() {
         let Resolution::Complete(config) = schema
             .resolve(ResolveInputs {
                 layers: vec![layer(Origin::EnvVar, &[("DD_TAGS", supplied)])],
-                report_sources: false,
+                ..ResolveInputs::default()
             })
             .unwrap()
         else {
@@ -374,4 +390,44 @@ fn parses_space_separated_tags_and_preserves_values_when_comma_separated() {
         assert_eq!(tags.get("service").map(String::as_str), Some("Demo"));
         assert_eq!(config.get("DD_MODE").unwrap().value.as_str(), Some("TEST"));
     }
+}
+
+#[test]
+fn resolves_layers_over_caller_owned_defaults() {
+    let mut transforms = TransformRegistry::default();
+    transforms
+        .register(
+            "fixture.lookup",
+            Transform::host(ValueKind::String, ValueKind::String, 5),
+        )
+        .unwrap();
+    let schema = ConfigSchema::from_bytes(
+        br#"{"version":"2","supportedConfigurations":{
+            "DD_LOOKUP":[{"type":"string","default":"test","transform":"fixture.lookup"}],
+            "DD_DEBUG":[{"type":"boolean","default":"false"}]
+        }}"#,
+        ParsePolicy::default(),
+        &transforms,
+    )
+    .unwrap();
+    let Resolution::Complete(snapshot) = schema
+        .resolve(ResolveInputs {
+            layers: vec![layer(Origin::EnvVar, &[("DD_DEBUG", "true")])],
+            skip_defaults: true,
+            report_sources: true,
+        })
+        .unwrap()
+    else {
+        panic!("the default transformer was skipped");
+    };
+    assert!(snapshot.get("DD_LOOKUP").is_none());
+    assert_eq!(
+        snapshot.get("DD_DEBUG").unwrap().value.as_bool(),
+        Some(true)
+    );
+    let [debug] = snapshot.source_events() else {
+        panic!("only the explicit environment setting was read");
+    };
+    assert!(debug.parsed.is_none());
+    assert_eq!(debug.origin, Origin::EnvVar);
 }
