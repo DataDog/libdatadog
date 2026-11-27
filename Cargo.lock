@@ -3037,6 +3037,7 @@ dependencies = [
  "libdd-data-pipeline",
  "libdd-regex",
  "libdd-shared-runtime",
+ "libdd-telemetry",
  "libdd-tinybytes",
  "libdd-trace-obfuscation",
  "libdd-trace-utils",

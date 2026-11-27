@@ -23,6 +23,10 @@ use libdd_data_pipeline::trace_exporter::{
 // directly.
 pub(crate) type TraceExporter = GenericTraceExporter<NativeCapabilities, ForkSafeRuntime>;
 
+/// FFI-facing alias: the C ABI surface is native-only, so the worker handle is
+/// always pinned to [`NativeCapabilities`].
+type TelemetryWorkerHandle = libdd_telemetry::worker::TelemetryWorkerHandle<NativeCapabilities>;
+
 use libdd_common::mutable_metadata::MutableMetadataHandle;
 use libdd_shared_runtime::ForkSafeRuntime;
 use std::{ptr::NonNull, sync::Arc, time::Duration};
@@ -1080,6 +1084,42 @@ pub unsafe extern "C" fn ddog_trace_exporter_send(
     }
 }
 
+/// Points health-metric reporting at the given telemetry worker, or at none.
+///
+/// The handle must come from the telemetry FFI (`ddog_telemetry_builder_run`).
+/// This lets the exporter share the tracer's telemetry worker instead of running
+/// its own. The exporter clones the handle, so the caller keeps ownership and
+/// must keep the worker alive while the exporter reports to it.
+///
+/// Pass a null handle to stop reporting, for example on telemetry shutdown.
+/// This stops reporting rather than targeting a dead worker.
+///
+/// This call has no effect when the exporter runs with external observations
+/// enabled. In that mode the caller collects observations for its own telemetry
+/// client.
+///
+/// # Safety
+///
+/// * `handle` must be null or a valid pointer to a live `TraceExporter` for the life of the call.
+/// * `telemetry_handle` must be null or a valid pointer to a live `TelemetryWorkerHandle` for the
+///   life of the call.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn ddog_trace_exporter_set_telemetry_handle(
+    handle: Option<&TraceExporter>,
+    telemetry_handle: Option<&TelemetryWorkerHandle>,
+) -> Option<Box<ExporterError>> {
+    catch_panic!(
+        match handle {
+            Some(exporter) => {
+                exporter.set_telemetry_handle(telemetry_handle.cloned());
+                None
+            }
+            None => gen_error!(ErrorCode::InvalidArgument),
+        },
+        gen_error!(ErrorCode::Panic)
+    )
+}
+
 #[cfg(test)]
 #[allow(deprecated)]
 mod tests {
@@ -1587,6 +1627,58 @@ mod tests {
             let exporter = ptr.assume_init();
 
             assert_eq!(ret, None);
+
+            ddog_trace_exporter_free(exporter);
+            ddog_trace_exporter_config_free(cfg);
+        }
+    }
+
+    #[test]
+    fn exporter_set_telemetry_handle_test() {
+        unsafe {
+            // The worker is never spawned: building the handle is enough to
+            // exercise the FFI layer.
+            let (telemetry_handle, _worker) = libdd_telemetry::worker::TelemetryWorkerBuilder::new(
+                "h".into(),
+                "svc".into(),
+                "lang".into(),
+                "1".into(),
+                "tv".into(),
+            )
+            .build_worker::<NativeCapabilities>(None);
+
+            // Null exporter -> InvalidArgument.
+            let error = ddog_trace_exporter_set_telemetry_handle(None, Some(&telemetry_handle));
+            assert_eq!(error.as_ref().unwrap().code, ErrorCode::InvalidArgument);
+            ddog_trace_exporter_error_free(error);
+
+            let mut config: MaybeUninit<Box<TraceExporterConfig>> = MaybeUninit::uninit();
+            ddog_trace_exporter_config_new(NonNull::new_unchecked(&mut config).cast());
+
+            let mut cfg = config.assume_init();
+            let error = ddog_trace_exporter_config_set_url(
+                Some(cfg.as_mut()),
+                CharSlice::from("http://localhost"),
+            );
+            assert_eq!(error, None);
+
+            let mut ptr: MaybeUninit<Box<TraceExporter>> = MaybeUninit::uninit();
+            let ret = ddog_trace_exporter_new(
+                NonNull::new_unchecked(&mut ptr).cast(),
+                Some(cfg.borrow()),
+            );
+            let exporter = ptr.assume_init();
+            assert_eq!(ret, None);
+
+            // Point the exporter at the telemetry worker, then clear it.
+            let error = ddog_trace_exporter_set_telemetry_handle(
+                Some(exporter.as_ref()),
+                Some(&telemetry_handle),
+            );
+            assert_eq!(error, None);
+
+            let error = ddog_trace_exporter_set_telemetry_handle(Some(exporter.as_ref()), None);
+            assert_eq!(error, None);
 
             ddog_trace_exporter_free(exporter);
             ddog_trace_exporter_config_free(cfg);
