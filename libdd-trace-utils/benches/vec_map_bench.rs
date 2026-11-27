@@ -148,25 +148,25 @@ fn bench_get_miss(c: &mut Criterion) {
     group.finish();
 }
 
-/// Get_mut (hit): mutable lookup of every key.
+/// Mutable lookup of every key. The map is built once and reused: `get_mut` mutates values only, so
+/// its structure (and thus its cost) is identical on every iteration. Batching was deliberately
+/// removed: it materialized thousands of map copies per batch on this ~100 ns routine, and
+/// allocation pressure messed with the cache and with the benchmark's stability.
 fn bench_get_mut(c: &mut Criterion) {
     let mut group = fast_group(c, "vec_map/get_mut");
 
     for &n in SIZES {
         group.throughput(criterion::Throughput::Elements(n as u64));
+        let mut map = populated_metrics(n);
         let lookups = keys(n);
         group.bench_with_input(BenchmarkId::from_parameter(n), &n, |b, _| {
-            b.iter_batched_ref(
-                || populated_metrics(n),
-                |map| {
-                    for k in &lookups {
-                        if let Some(v) = map.get_mut(black_box(k.as_str())) {
-                            *v += 1.0;
-                        }
+            b.iter(|| {
+                for k in &lookups {
+                    if let Some(v) = map.get_mut(black_box(k.as_str())) {
+                        *v += 1.0;
                     }
-                },
-                BatchSize::SmallInput,
-            )
+                }
+            })
         });
     }
     group.finish();
@@ -230,7 +230,9 @@ fn meta_with_duplicates(n: usize, period: usize) -> DetVecMap<BytesString, Bytes
 }
 
 /// dedup(): runs once per span on decode. `dedup` mutates and sets a flag, so we rebuild the
-/// (un-deduped) input each iteration. Benched both with and without duplicates.
+/// (un-deduped) input each iteration. `BatchSize::PerIteration` builds exactly one input per
+/// measured call: this keeps the working set at a single map resident in cache. Benched both with
+/// and without duplicates.
 fn bench_dedup(c: &mut Criterion) {
     let mut group = fast_group(c, "vec_map/dedup");
 
@@ -242,7 +244,7 @@ fn bench_dedup(c: &mut Criterion) {
                     map.dedup();
                     black_box(&*map);
                 },
-                BatchSize::SmallInput,
+                BatchSize::PerIteration,
             )
         });
         for &period in DUP_PERIODS {
@@ -256,7 +258,7 @@ fn bench_dedup(c: &mut Criterion) {
                             map.dedup();
                             black_box(&*map);
                         },
-                        BatchSize::SmallInput,
+                        BatchSize::PerIteration,
                     )
                 },
             );
