@@ -25,6 +25,8 @@ use crate::trace_exporter::{
     TraceExporter, agent_response::AgentResponse, error::TraceExporterError,
 };
 
+mod v1;
+
 /// Trait for span types that can report their approximate byte size.
 ///
 /// A [`TraceBuffer`] never handles spans directly. It buffers chunks, and a chunk
