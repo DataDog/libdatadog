@@ -558,25 +558,11 @@ impl<
 
         #[cfg(feature = "telemetry")]
         if let Some((handle, key)) = &self.telemetry {
-            if flush.collapsed_spans > 0 {
-                let _ = handle.add_point(
-                    flush.collapsed_spans as f64,
-                    key,
-                    vec![libdd_common::tag!("collapsed", "whole_key")],
-                );
-            }
             flush.collapsed_fields_metrics.emit_telemetry(handle, key);
         }
 
         #[cfg(feature = "dogstatsd")]
         if let Some(client) = &self.dogstatsd {
-            if flush.collapsed_spans > 0 {
-                client.send(vec![libdd_dogstatsd_client::DogStatsDAction::Count(
-                    COLLAPSED_SPANS_HEALTH_METRIC,
-                    flush.collapsed_spans as i64,
-                    [libdd_common::tag!("collapsed", "whole_key")].iter(),
-                )]);
-            }
             flush.collapsed_fields_metrics.emit_dogstatsd(client);
         }
 
@@ -1633,33 +1619,22 @@ mod tests {
 
         let mut buf = [0u8; 256];
 
-        // Whole-key metric emitted first
-        let n = socket
-            .recv(&mut buf)
-            .expect("expected a DogStatsD datagram");
-        let datagram = std::str::from_utf8(&buf[..n]).expect("valid utf-8");
+        let mut datagrams = Vec::new();
+        while let Ok(n) = socket.recv(&mut buf) {
+            datagrams.push(
+                std::str::from_utf8(&buf[..n])
+                    .expect("valid utf-8")
+                    .to_owned(),
+            );
+        }
+        // Spans collapsed on the whole key are reported as `collapsed:whole_key` only, not with
+        // the per-field tags they also hit.
         assert_eq!(
-            datagram, "datadog.tracer.stats.collapsed_spans:2|c|#collapsed:whole_key",
-            "DogStatsD datagram must match the expected format"
-        );
-
-        // Then comes the per-key collapse telemetry
-        let n = socket
-            .recv(&mut buf)
-            .expect("expected a DogStatsD datagram");
-        let datagram = std::str::from_utf8(&buf[..n]).expect("valid utf-8");
-        assert_eq!(
-            datagram, "datadog.tracer.stats.collapsed_spans:1|c|#collapsed:resource",
-            "DogStatsD datagram must match the expected format"
-        );
-        let n = socket
-            .recv(&mut buf)
-            .expect("expected a DogStatsD datagram");
-        let datagram = std::str::from_utf8(&buf[..n]).expect("valid utf-8");
-        assert_eq!(
-            datagram,
-            "datadog.tracer.stats.collapsed_spans:2|c|#collapsed:resource,collapsed:http_endpoint",
-            "DogStatsD datagram must match the expected format"
+            datagrams,
+            [
+                "datadog.tracer.stats.collapsed_spans:1|c|#collapsed:resource",
+                "datadog.tracer.stats.collapsed_spans:2|c|#collapsed:whole_key",
+            ]
         );
     }
 
@@ -1719,8 +1694,8 @@ mod tests {
             "exactly one metric context (COLLAPSED_SPANS_METRIC) should be registered"
         );
         assert_eq!(
-            stats.metric_buckets.buckets, 3,
-            "exactly 3 metric bucket expected after one whole-key collapsed-spans, one resource key collapsed-span and one resource key+http_endpoint key emissions"
+            stats.metric_buckets.buckets, 2,
+            "exactly 2 metric buckets expected: whole-key collapsed spans and one resource key collapsed span"
         );
     }
 }
