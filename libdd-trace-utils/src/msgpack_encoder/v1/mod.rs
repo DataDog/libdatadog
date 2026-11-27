@@ -5,7 +5,7 @@ mod span_v04;
 mod span_v1;
 
 use crate::span::TraceData;
-use crate::span::v1::TracerPayload;
+use crate::span::v1::{TraceChunk, TracerPayload};
 use crate::span::v04::Span;
 use crate::tracer_metadata::TracerMetadata;
 use hashbrown::{DefaultHashBuilder, HashMap};
@@ -520,9 +520,10 @@ pub fn to_encoded_byte_len_from_v04<T: TraceData, S: AsRef<[Span<T>]>>(
 }
 
 /// Encodes a [`TracerPayload`] (V1 data model) as a V1 msgpack payload.
-fn encode_payload_from_v1<W: RmpWrite, T: TraceData>(
+pub(super) fn encode_payload_from_v1<W: RmpWrite, T: TraceData>(
     writer: &mut W,
     payload: &TracerPayload<T>,
+    chunks: &[TraceChunk<T>],
 ) -> Result<(), ValueWriteError<W::Error>> {
     let mut table = StringTable::new();
 
@@ -542,8 +543,8 @@ fn encode_payload_from_v1<W: RmpWrite, T: TraceData>(
     write_map_len(writer, map_len)?;
 
     write_uint8(writer, trace_key::CHUNKS)?;
-    write_array_len(writer, payload.chunks.len() as u32)?;
-    for chunk in &payload.chunks {
+    write_array_len(writer, chunks.len() as u32)?;
+    for chunk in chunks {
         encode_chunk_from_v1(writer, chunk, &mut table)?;
     }
 
@@ -598,7 +599,7 @@ fn encode_payload_from_v1<W: RmpWrite, T: TraceData>(
 /// Encodes one V1 chunk (a group of spans sharing a trace ID).
 fn encode_chunk_from_v1<'a, W: RmpWrite, T: TraceData>(
     writer: &mut W,
-    chunk: &'a crate::span::v1::TraceChunk<T>,
+    chunk: &'a TraceChunk<T>,
     table: &mut StringTable<'a>,
 ) -> Result<(), ValueWriteError<W::Error>> {
     let origin = <T::Text as Borrow<str>>::borrow(&chunk.origin);
@@ -702,7 +703,7 @@ pub fn to_vec_with_capacity_from_v1<T: TraceData>(
     capacity: u32,
 ) -> Vec<u8> {
     let mut buf = ByteBuf::with_capacity(capacity as usize);
-    encode_payload_from_v1(&mut buf, payload)
+    encode_payload_from_v1(&mut buf, payload, &payload.chunks)
         .map_err(super::flatten_value_write_infallible)
         .unwrap_infallible();
     buf.into_vec()
@@ -742,7 +743,7 @@ pub fn write_to_slice_from_v1<T: TraceData>(
     slice: &mut &mut [u8],
     payload: &TracerPayload<T>,
 ) -> Result<(), ValueWriteError> {
-    encode_payload_from_v1(slice, payload)
+    encode_payload_from_v1(slice, payload, &payload.chunks)
 }
 
 /// Computes the number of bytes required to encode the given `TracerPayload`.
@@ -774,7 +775,7 @@ pub fn write_to_slice_from_v1<T: TraceData>(
 /// ```
 pub fn to_encoded_byte_len_from_v1<T: TraceData>(payload: &TracerPayload<T>) -> u32 {
     let mut counter = super::CountLength(0);
-    let _ = encode_payload_from_v1(&mut counter, payload);
+    let _ = encode_payload_from_v1(&mut counter, payload, &payload.chunks);
     counter.0
 }
 

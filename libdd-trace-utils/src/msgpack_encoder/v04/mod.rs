@@ -3,7 +3,7 @@
 
 use crate::span::TraceData;
 use crate::span::trace_utils::get_root_span_index;
-use crate::span::v1::TracerPayload;
+use crate::span::v1::{TraceChunk, TracerPayload};
 use crate::span::v04::Span;
 use libdd_common::ResultInfallibleExt;
 use rmp::encode::{ByteBuf, RmpWrite, ValueWriteError, write_array_len};
@@ -261,15 +261,16 @@ impl Default for V1DowngradeOptions {
 /// format produced by [`to_vec_from_v04`]. Payload-level
 /// `env`/`app_version`/`hostname`/`attributes` are propagated into the spans (see [`span_v1`]'s
 /// mapping table).
-fn encode_payload_from_v1<W: RmpWrite, T: TraceData>(
+pub(super) fn encode_payload_from_v1<W: RmpWrite, T: TraceData>(
     writer: &mut W,
     payload: &TracerPayload<T>,
+    chunks: &[TraceChunk<T>],
     opts: V1DowngradeOptions,
 ) -> Result<(), ValueWriteError<W::Error>> {
     use span_v1::{ChunkContext, encode_span};
 
-    write_array_len(writer, payload.chunks.len() as u32)?;
-    for chunk in &payload.chunks {
+    write_array_len(writer, chunks.len() as u32)?;
+    for chunk in chunks {
         // `dropped_trace` is agent-owned and not mapped, see `TraceChunk::dropped_trace`.
         let ctx = ChunkContext::new(
             &chunk.trace_id,
@@ -307,7 +308,7 @@ pub fn to_vec_from_v1_with<T: TraceData>(
     opts: V1DowngradeOptions,
 ) -> Vec<u8> {
     let mut buf = ByteBuf::new();
-    encode_payload_from_v1(&mut buf, payload, opts)
+    encode_payload_from_v1(&mut buf, payload, &payload.chunks, opts)
         .map_err(super::flatten_value_write_infallible)
         .unwrap_infallible();
     buf.into_vec()
@@ -321,7 +322,7 @@ pub fn to_vec_with_capacity_from_v1<T: TraceData>(
     capacity: u32,
 ) -> Vec<u8> {
     let mut buf = ByteBuf::with_capacity(capacity as usize);
-    encode_payload_from_v1(&mut buf, payload, V1DowngradeOptions::default())
+    encode_payload_from_v1(&mut buf, payload, &payload.chunks, Default::default())
         .map_err(super::flatten_value_write_infallible)
         .unwrap_infallible();
     buf.into_vec()
@@ -337,14 +338,14 @@ pub fn write_to_slice_from_v1<T: TraceData>(
     slice: &mut &mut [u8],
     payload: &TracerPayload<T>,
 ) -> Result<(), ValueWriteError> {
-    encode_payload_from_v1(slice, payload, V1DowngradeOptions::default())
+    encode_payload_from_v1(slice, payload, &payload.chunks, Default::default())
 }
 
 /// Returns the exact number of bytes [`to_vec_from_v1`] would write for `payload`. Walks
 /// the payload through a counting writer without allocating an output buffer.
 pub fn to_encoded_byte_len_from_v1<T: TraceData>(payload: &TracerPayload<T>) -> u32 {
     let mut counter = super::CountLength(0);
-    let _ = encode_payload_from_v1(&mut counter, payload, V1DowngradeOptions::default());
+    let _ = encode_payload_from_v1(&mut counter, payload, &payload.chunks, Default::default());
     counter.0
 }
 

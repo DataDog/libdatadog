@@ -12,12 +12,14 @@ pub static GLOBAL: ReportingAllocator<System> = ReportingAllocator::new(System);
 mod agentless_encoding;
 mod deserialization;
 mod deserialization_v05;
+mod encode_then_split;
 mod otlp_encoding;
 mod serialization;
 mod span_pool;
 mod span_pool_v1;
 
 criterion_main!(
+    encode_then_split::encode_then_split_benches,
     serialization::serialize_benches,
     deserialization::deserialize_benches,
     deserialization::deserialize_alloc_benches,
