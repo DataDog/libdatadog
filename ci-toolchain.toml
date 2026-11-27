@@ -9,7 +9,17 @@
 # `rust-toolchain.toml` and pass the value through `RUSTUP_TOOLCHAIN` or as an
 # explicit toolchain arg. The MSRV itself stays in `rust-toolchain.toml`,
 # which rustup reads for local development.
+#
+# nightly-2026-08-22 (rustc 1.100.0-nightly c656540d6) enabled the next trait
+# solver on nightly (https://blog.rust-lang.org/2026/08/21/enabling-next-solver-on-nightly/)
+# and every nightly since fails to compile `libdd-tuf 0.3.1` (the only published
+# release) with E0282 "type annotations needed" at src/client.rs:1117, see
+# https://github.com/rust-lang/rust/issues/161560 (fix tracked in #161414).
+# Stable 1.100.0 is unaffected. 2026-08-21 is the last nightly that builds
+# libdd-tuf; bump this pin once the inference regression is fixed upstream
+# (and a working nightly is available), or once libdd-tuf publishes a fixed
+# release.
 
 [toolchain]
-stable = "1.99.1"
-nightly = "nightly-2026-07-26"
+stable = "1.100.0"
+nightly = "nightly-2026-08-21"

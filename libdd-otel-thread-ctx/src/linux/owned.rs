@@ -299,8 +299,7 @@ impl Default for OwnedThreadContext {
 
 impl From<ThreadContextRecord> for OwnedThreadContext {
     fn from(record: ThreadContextRecord) -> Self {
-        // Safety: `Box::into_raw` returns a non-null pointer
-        unsafe { Self(NonNull::new_unchecked(Box::into_raw(Box::new(record)))) }
+        Self(NonNull::from_mut(Box::leak(Box::new(record))))
     }
 }
 
