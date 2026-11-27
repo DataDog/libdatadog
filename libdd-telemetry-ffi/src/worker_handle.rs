@@ -34,8 +34,27 @@ pub unsafe extern "C" fn ddog_telemetry_handle_add_dependency(
     MaybeError::None
 }
 
+/// Reports an integration to the telemetry worker. An integration is a component the tracer
+/// instruments, for example a library or framework.
+///
+/// * handle: telemetry worker that receives the integration
+/// * dependency_name: name of the integration
+/// * dependency_version: version of the integration. An empty slice means no version.
+/// * enabled: whether the integration is enabled
+/// * compatible: whether the integration is compatible with the runtime. `None` means the tracer
+///   does not know.
+/// * auto_enabled: whether the tracer enabled the integration automatically. `None` means the
+///   tracer does not know.
 /// * error_message: error message describing why the integration failed to load. An empty slice
 ///   means no error message.
+///
+/// # Safety
+///
+/// * `handle` must be a valid, non-null pointer to a live `TelemetryWorkerHandle`, not dropped
+///   during the call.
+/// * Every `CharSlice` must point to `len` readable bytes (the pointer may be null only when `len`
+///   is 0) and must not be mutated during the call. Strings that are not valid UTF-8 return an
+///   error.
 #[allow(clippy::missing_safety_doc)]
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ddog_telemetry_handle_add_integration(
