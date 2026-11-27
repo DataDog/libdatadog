@@ -1,14 +1,13 @@
 // Copyright 2026-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
+use crate::shared::Shared;
 use anyhow::{Context, Result, ensure};
 use bytes::Bytes;
 use futures_channel::oneshot;
 use libdd_capabilities::{HttpClientCapability, HttpError, SleepCapability};
 use serde::Serialize;
-use std::cell::RefCell;
 use std::collections::{BTreeMap, VecDeque};
-use std::rc::Rc;
 use std::time::Duration;
 
 pub(crate) const MAX_BUFFER: usize = 16 * 1024 * 1024;
@@ -95,7 +94,7 @@ struct Bridge {
 }
 
 #[derive(Clone, Default, Debug)]
-pub struct Host(Rc<RefCell<Bridge>>);
+pub struct Host(Shared<Bridge>);
 
 struct Operation {
     id: i32,
@@ -104,31 +103,34 @@ struct Operation {
 
 impl Drop for Operation {
     fn drop(&mut self) {
-        let mut bridge = self.host.0.borrow_mut();
-        if bridge.pending.remove(&self.id).is_some() {
-            let queued = bridge.events.iter().position(|event| match event {
-                Event::Http { id, .. } | Event::Sleep { id, .. } => *id == self.id,
-                Event::Cancel { .. } => false,
-            });
-            if let Some(index) = queued {
-                bridge.events.remove(index);
-            } else {
-                bridge.events.push_back(Event::Cancel { id: self.id });
+        self.host.0.write(|bridge| {
+            if bridge.pending.remove(&self.id).is_some() {
+                let queued = bridge.events.iter().position(|event| match event {
+                    Event::Http { id, .. } | Event::Sleep { id, .. } => *id == self.id,
+                    Event::Cancel { .. } => false,
+                });
+                if let Some(index) = queued {
+                    bridge.events.remove(index);
+                } else {
+                    bridge.events.push_back(Event::Cancel { id: self.id });
+                }
             }
-        }
+        });
     }
 }
 
 impl Host {
     fn start(&self, reply: Pending, event: impl FnOnce(i32) -> Event) -> Result<Operation> {
-        let mut bridge = self.0.borrow_mut();
-        let id = bridge
-            .next_id
-            .checked_add(1)
-            .context("operation IDs exhausted")?;
-        bridge.next_id = id;
-        bridge.pending.insert(id, reply);
-        bridge.events.push_back(event(id));
+        let id = self.0.write(|bridge| -> Result<i32> {
+            let id = bridge
+                .next_id
+                .checked_add(1)
+                .context("operation IDs exhausted")?;
+            bridge.next_id = id;
+            bridge.pending.insert(id, reply);
+            bridge.events.push_back(event(id));
+            Ok(id)
+        })?;
         Ok(Operation {
             id,
             host: self.clone(),
@@ -136,23 +138,26 @@ impl Host {
     }
 
     pub fn event(&self) -> Option<Event> {
-        self.0.borrow_mut().events.pop_front()
+        self.0.write(|bridge| bridge.events.pop_front())
     }
 
     pub fn restore_event(&self, event: Event) {
-        self.0.borrow_mut().events.push_front(event);
+        self.0.write(|bridge| bridge.events.push_front(event));
     }
 
     pub fn expects_http(&self, operation: i32) -> bool {
-        matches!(
-            self.0.borrow().pending.get(&operation),
-            Some(Pending::Http(_))
-        )
+        self.0
+            .read(|bridge| matches!(bridge.pending.get(&operation), Some(Pending::Http(_))))
     }
 
     pub fn complete_http(&self, operation: i32, reply: HttpResult) -> Result<()> {
-        ensure!(self.expects_http(operation), "not a pending HTTP operation");
-        let pending = self.0.borrow_mut().pending.remove(&operation);
+        let pending = self.0.write(|bridge| {
+            ensure!(
+                matches!(bridge.pending.get(&operation), Some(Pending::Http(_))),
+                "not a pending HTTP operation"
+            );
+            Ok(bridge.pending.remove(&operation))
+        })?;
         if let Some(Pending::Http(sender)) = pending {
             ensure!(
                 sender.send(reply).is_ok(),
@@ -163,13 +168,13 @@ impl Host {
     }
 
     pub fn complete_timer(&self, operation: i32) -> Result<()> {
-        let mut bridge = self.0.borrow_mut();
-        ensure!(
-            matches!(bridge.pending.get(&operation), Some(Pending::Timer(_))),
-            "not a pending timer operation"
-        );
-        let pending = bridge.pending.remove(&operation);
-        drop(bridge);
+        let pending = self.0.write(|bridge| {
+            ensure!(
+                matches!(bridge.pending.get(&operation), Some(Pending::Timer(_))),
+                "not a pending timer operation"
+            );
+            Ok(bridge.pending.remove(&operation))
+        })?;
         if let Some(Pending::Timer(sender)) = pending {
             ensure!(sender.send(()).is_ok(), "timer operation no longer active");
         }

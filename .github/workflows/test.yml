@@ -23,6 +23,7 @@ jobs:
       packages: ${{ steps.set-packages.outputs.packages }}
       crashtracker-feature: ${{ steps.set-packages.outputs.crashtracker-feature }}
       run-test-spawn: ${{ steps.set-packages.outputs.run-test-spawn }}
+      native-archive-inputs-changed: ${{ steps.native-archive-inputs.outputs.changed }}
     steps:
     - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # 4.2.2
       with:
@@ -30,6 +31,17 @@ jobs:
     - name: Get crates report
       id: changed-crates
       uses: ./.github/actions/crates-reporter
+    - name: Check the native archive's locked build inputs
+      if: github.event_name == 'pull_request'
+      id: native-archive-inputs
+      env:
+        BASE_SHA: ${{ github.event.pull_request.base.sha }}
+      run: |
+        changed=$(git diff --name-only "$BASE_SHA" HEAD -- \
+          Cargo.toml Cargo.lock rust-toolchain.toml .github/workflows/test.yml)
+        if [[ -n "$changed" ]]; then
+          echo "changed=true" >> "$GITHUB_OUTPUT"
+        fi
     - name: Set unit test packages
       id: set-packages
       env:
@@ -530,6 +542,168 @@ jobs:
           -w /workspace
           libdatadog-no-certs
           cargo test -p libdd-profiling --test exporter_e2e
+
+  native-remote-config:
+    name: Native Remote Config archive (${{ matrix.target }})
+    needs: setup
+    if: >-
+      needs.setup.outputs.native-archive-inputs-changed == 'true' ||
+      (needs.setup.outputs.packages-count != '0' &&
+      (needs.setup.outputs.packages == '' || contains(needs.setup.outputs.packages, '-p libdd-remote-config-wasm')))
+    runs-on: ${{ matrix.runner }}
+    permissions:
+      contents: read
+    env:
+      CARGO_PROFILE_RELEASE_OPT_LEVEL: 3
+      RC_NATIVE_TARGET: ${{ matrix.target }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-15
+            target: aarch64-apple-darwin
+          - runner: macos-15-intel
+            target: x86_64-apple-darwin
+          - runner: ubuntu-24.04
+            target: x86_64-unknown-linux-gnu
+            glibc-runtime: quay.io/centos/centos@sha256:e4ca2ed0202e76be184e75fb26d14bf974193579039d5573fb2348664deef76e
+          - runner: ubuntu-24.04-arm
+            target: aarch64-unknown-linux-gnu
+            glibc-runtime: docker.io/arm64v8/centos@sha256:73f11afcbb50d8bc70eab9f0850b3fa30e61a419bc48cf426e63527d14a8373b
+          - runner: ubuntu-24.04
+            target: x86_64-unknown-linux-musl
+          - runner: ubuntu-24.04-arm
+            target: aarch64-unknown-linux-musl
+          - runner: windows-2022
+            target: x86_64-pc-windows-msvc
+            msvc-arch: amd64
+          - runner: windows-2022
+            target: i686-pc-windows-msvc
+            msvc-arch: x86
+    steps:
+      - name: Checkout sources
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # 4.2.2
+        with:
+          submodules: recursive
+          persist-credentials: false
+      - name: Build and test the native Remote Config archive on Unix
+        if: runner.os != 'Windows' && !endsWith(matrix.target, '-musl')
+        shell: bash
+        run: |
+          bash libdd-remote-config-wasm/test/build-native-unix.sh "$RC_NATIVE_TARGET" "$RUNNER_TEMP" "$(git rev-parse HEAD)"
+      - name: Test the extracted native Remote Config ABI on glibc 2.17
+        if: endsWith(matrix.target, '-gnu')
+        shell: bash
+        env:
+          RC_GLIBC_RUNTIME: ${{ matrix.glibc-runtime }}
+        run: |
+          docker run --rm --network none \
+            --volume "$RUNNER_TEMP/remote-config-native-installed.moved:/installed:ro" \
+            "$RC_GLIBC_RUNTIME" sh -ec '
+              test "$(getconf GNU_LIBC_VERSION)" = "glibc 2.17"
+              cd /installed
+              sha256sum -c SHA256SUMS
+              exec env -u LD_LIBRARY_PATH ./native-check'
+      - name: Build the native Remote Config archive on Alpine
+        if: endsWith(matrix.target, '-musl')
+        shell: bash
+        run: |
+          channel=$(python3 -c 'import tomllib; print(tomllib.load(open("rust-toolchain.toml", "rb"))["toolchain"]["channel"])')
+          docker run --rm \
+            --volume "$PWD:/workspace:ro" --workdir /workspace \
+            --volume "$RUNNER_TEMP:/output" --env CARGO_PROFILE_RELEASE_OPT_LEVEL \
+            "docker.io/library/rust:$channel-alpine3.22" \
+            sh -ec 'apk add --no-cache bash build-base git
+              exec bash libdd-remote-config-wasm/test/build-native-unix.sh "$@"' \
+            sh "$RC_NATIVE_TARGET" /output "$(git rev-parse HEAD)"
+      - name: Test the extracted native Remote Config ABI on Alpine
+        if: endsWith(matrix.target, '-musl')
+        shell: bash
+        run: |
+          docker run --rm --network none \
+            --volume "$PWD:/workspace:ro" --workdir /workspace \
+            --volume "$RUNNER_TEMP/remote-config-native-installed.moved:/installed:ro" \
+            --env DD_RC_TEST_NATIVE=/installed/lib/liblibdd_remote_config_wasm.so \
+            docker.io/library/node:26-alpine \
+            sh -ec 'env -u LD_LIBRARY_PATH /installed/native-check
+              exec env -u LD_LIBRARY_PATH node --test --test-name-pattern=native.FFI libdd-remote-config-wasm/test/abi.test.mjs'
+      - name: Build and test the native Remote Config archive on Windows
+        if: runner.os == 'Windows'
+        shell: pwsh
+        env:
+          RC_MSVC_ARCH: ${{ matrix.msvc-arch }}
+          RUSTFLAGS: '-C target-feature=+crt-static'
+        run: |
+          $PSNativeCommandUseErrorActionPreference = $true
+          $vswhere = "${env:ProgramFiles(x86)}/Microsoft Visual Studio/Installer/vswhere.exe"
+          $vs = & $vswhere -latest -products '*' -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
+          if (-not $vs) { throw 'Visual Studio C++ tools are missing' }
+          & "$vs/Common7/Tools/Launch-VsDevShell.ps1" -Arch $env:RC_MSVC_ARCH -HostArch amd64 -SkipAutomaticLocation
+
+          $target = $env:RC_NATIVE_TARGET
+          $dll = 'libdd_remote_config_wasm.dll'
+          $buildDir = "$env:RUNNER_TEMP/remote-config-native-build"
+          $env:CARGO_TARGET_DIR = $buildDir
+          rustup target add $target
+          cargo build --locked --release -p libdd-remote-config-wasm --target $target
+          $release = "$buildDir/$target/release"
+          $headers = @(Get-ChildItem -LiteralPath "$release/build" -Recurse -File -Filter ddog_remote_config.h)
+          if ($headers.Count -ne 1) { throw 'Expected one generated Remote Config header' }
+          $stage = "$env:RUNNER_TEMP/remote-config-native-stage"
+          $null = New-Item -ItemType Directory -Path "$stage/include", "$stage/lib"
+          Copy-Item -LiteralPath $headers[0].FullName -Destination "$stage/include"
+          Copy-Item -LiteralPath "$release/$dll", "$release/$dll.lib" -Destination "$stage/lib"
+          Set-Content "$stage/SOURCE_COMMIT" -NoNewline -Value "$(git rev-parse HEAD)`n"
+          Set-Content "$stage/TARGET" -NoNewline -Value "$target`n"
+
+          $files = @("lib/$dll", "lib/$dll.lib", "include/ddog_remote_config.h", "SOURCE_COMMIT", "TARGET")
+          function Get-ArchiveChecksums($Directory) {
+            $checksums = foreach ($file in $files) {
+              $digest = (Get-FileHash -Algorithm SHA256 -LiteralPath "$Directory/$file").Hash.ToLowerInvariant()
+              "$digest  $file"
+            }
+            ($checksums -join "`n") + "`n"
+          }
+          Set-Content "$stage/SHA256SUMS" -NoNewline -Value (Get-ArchiveChecksums $stage)
+          $archive = "$env:RUNNER_TEMP/remote-config-native-$target.tar.gz"
+          tar.exe -czf $archive -C $stage include lib SOURCE_COMMIT TARGET SHA256SUMS
+          Move-Item $buildDir "$buildDir.parked"
+          $installed = "$env:RUNNER_TEMP/remote-config-native-installed"
+          $null = New-Item -ItemType Directory -Path $installed
+          tar.exe -xzf $archive -C $installed
+          if ((Get-ArchiveChecksums $installed) -cne (Get-Content "$installed/SHA256SUMS" -Raw)) {
+            throw 'Remote Config archive checksums differ'
+          }
+
+          $source = (Resolve-Path 'libdd-remote-config-wasm/test/native.c').Path
+          Push-Location $installed
+          try {
+            cl.exe /nologo /std:c11 /O2 /MT /W4 /WX /Iinclude $source "lib/$dll.lib" /Fe:native-check.exe
+            Copy-Item -LiteralPath "lib/$dll" -Destination .
+          } finally {
+            Pop-Location
+          }
+          Move-Item $installed "$installed.moved"
+          & "$installed.moved/native-check.exe"
+          Add-Content $env:GITHUB_ENV -Value "DD_RC_TEST_NATIVE=$installed.moved/lib/$dll"
+      - name: Install Node.js for native Remote Config conformance
+        # Node.js 26 has no Windows x86 distribution.
+        if: matrix.target != 'i686-pc-windows-msvc' && !endsWith(matrix.target, '-musl')
+        uses: actions/setup-node@1d0ff469b7ec7b3cb9d8673fde0c81c44821de2a # v4.2.0
+        with:
+          node-version: '>=26.9.0 <27'
+      - name: Test the extracted native Remote Config ABI
+        if: matrix.target != 'i686-pc-windows-msvc' && !endsWith(matrix.target, '-musl')
+        shell: bash
+        run: |
+          : "${DD_RC_TEST_NATIVE:?Missing extracted Remote Config library}"
+          node --test --test-name-pattern=native.FFI libdd-remote-config-wasm/test/abi.test.mjs
+      - name: Upload the tested native Remote Config reactor
+        uses: actions/upload-artifact@4cec3d8aa04e39d1a68397de0c4cd6fb9dce8ec1 # 4.6.1
+        with:
+          name: remote-config-native-${{ matrix.target }}-${{ github.sha }}
+          path: ${{ runner.temp }}/remote-config-native-${{ matrix.target }}.tar.gz
+          if-no-files-found: error
 
   wasm:
     name: "WASM checks and tests"

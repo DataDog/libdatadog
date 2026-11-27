@@ -1,0 +1,42 @@
+/* Copyright 2026-Present Datadog, Inc. https://www.datadoghq.com/
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
+#ifndef DDOG_REMOTE_CONFIG_H
+#define DDOG_REMOTE_CONFIG_H
+
+#include <stdint.h>
+
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+typedef struct ddog_rc_reactor ddog_rc_reactor;
+
+/* Native ABI version. This is independent of the WASI ABI version. */
+int32_t ddog_rc_version(void);
+
+/* The caller owns the handle. Calls can move between threads. No call or buffer
+ * borrow may overlap destruction. A null handle can be dropped. */
+ddog_rc_reactor *ddog_rc_reactor_new(void);
+void ddog_rc_reactor_drop(ddog_rc_reactor *reactor);
+
+/* Query the length before borrowing. End the borrow before the next call on
+ * this reactor. Only input buffers allocated by ddog_rc_alloc are writable.
+ * A null result indicates an error. The reactor still owns the bytes. */
+const uint8_t *ddog_rc_buffer_bytes(ddog_rc_reactor *reactor, int32_t buffer);
+uint8_t *ddog_rc_input_bytes(ddog_rc_reactor *reactor, int32_t buffer);
+
+/* Scalar operations use the reactor state of this handle only. Inputs and
+ * response metadata remain caller-owned buffer IDs. A successful HTTP
+ * completion consumes its body buffer ID, unless the ID is zero. Empty event,
+ * view and result slots return zero. Watch next and replay return -2 on
+ * ordered overflow. A successful watch finish consumes its update view.
+ * The plan buffer remains caller-owned. Failures return -1. Get a
+ * recoverable error with ddog_rc_error and free it with ddog_rc_free. */
+@DECLARATIONS@
+#ifdef __cplusplus
+}
+#endif
+
+#endif

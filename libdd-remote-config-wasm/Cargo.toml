@@ -12,7 +12,7 @@ publish = false
 [lib]
 crate-type = ["cdylib"]
 
-[target."cfg(target_os = \"wasi\")".dependencies]
+[dependencies]
 anyhow = { workspace = true, features = ["std"] }
 bytes = { workspace = true, features = ["std"] }
 futures-channel = { workspace = true, features = ["std"] }

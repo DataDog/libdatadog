@@ -2,8 +2,10 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use crate::host::Host;
+use crate::shared::Shared;
 use anyhow::{Context, Result, ensure};
 use futures_util::task::noop_waker_ref;
+use libdd_capabilities::MaybeSendFuture;
 use libdd_common::{Endpoint, parse_uri};
 use libdd_remote_config::fetch::{
     AgentlessConfig, AssignedFile, Assignment, ConfigApplyState, ConfigInvariants, ConfigOptions,
@@ -11,17 +13,14 @@ use libdd_remote_config::fetch::{
 };
 use libdd_remote_config::{RemoteConfigCapabilities, RemoteConfigProduct, Target};
 use serde::Deserialize;
-use std::cell::RefCell;
-use std::future::Future;
 use std::pin::Pin;
-use std::rc::Rc;
 use std::sync::Arc;
 use std::task::{Context as TaskContext, Poll};
 use std::time::Duration;
 
 const START_INTERVAL: Duration = Duration::from_secs(5);
-type SessionSlot = Rc<RefCell<SessionState>>;
-type PollFuture = Pin<Box<dyn Future<Output = SessionPoll>>>;
+type SessionSlot = Shared<SessionState>;
+type PollFuture = Pin<Box<dyn MaybeSendFuture<SessionPoll>>>;
 
 #[derive(Clone, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -184,7 +183,8 @@ struct Lease {
 
 impl Drop for Lease {
     fn drop(&mut self) {
-        self.slot.replace(std::mem::take(&mut self.state));
+        self.slot
+            .write(|slot| *slot = std::mem::take(&mut self.state));
     }
 }
 
@@ -263,7 +263,7 @@ impl Client {
                     capabilities: options.interest.capabilities,
                 },
             }),
-            slot: Rc::default(),
+            slot: SessionSlot::default(),
             host: Host::default(),
             pending: None,
             result: None,
@@ -280,8 +280,12 @@ impl Client {
         if let Some(setup) = &mut self.setup {
             setup.options.products = interest.products;
             setup.options.capabilities = interest.capabilities;
-        } else if let Some(session) = self.slot.borrow_mut().session.as_mut() {
-            session.set_interest(interest.products, interest.capabilities);
+        } else {
+            self.slot.write(|slot| {
+                if let Some(session) = slot.session.as_mut() {
+                    session.set_interest(interest.products, interest.capabilities);
+                }
+            });
         }
         Ok(())
     }
@@ -291,14 +295,18 @@ impl Client {
         if let Some(setup) = &mut self.setup {
             identity.apply_process_tags(&mut setup.target);
             setup.identity = identity;
-        } else if let Some(session) = self.slot.borrow_mut().session.as_mut() {
-            session.set_identity(
-                identity.client_id,
-                identity.runtime_id,
-                identity.tags,
-                identity.extra_services,
-                identity.process_tags,
-            );
+        } else {
+            self.slot.write(|slot| {
+                if let Some(session) = slot.session.as_mut() {
+                    session.set_identity(
+                        identity.client_id,
+                        identity.runtime_id,
+                        identity.tags,
+                        identity.extra_services,
+                        identity.process_tags,
+                    );
+                }
+            });
         }
         Ok(())
     }
@@ -315,24 +323,25 @@ impl Client {
             setup.identity = options.identity;
             return Ok(1);
         }
-        let mut slot = self.slot.borrow_mut();
-        let session = slot
-            .session
-            .as_mut()
-            .context("session is not initialized")?;
-        ensure!(
-            session.target_generation() < i32::MAX as u64,
-            "target generation exhausted"
-        );
-        let generation = session.retarget(options.target.into_target(Vec::new()))?;
-        session.set_identity(
-            options.identity.client_id,
-            options.identity.runtime_id,
-            options.identity.tags,
-            options.identity.extra_services,
-            None,
-        );
-        Ok(i32::try_from(generation)?)
+        self.slot.write(|slot| {
+            let session = slot
+                .session
+                .as_mut()
+                .context("session is not initialized")?;
+            ensure!(
+                session.target_generation() < i32::MAX as u64,
+                "target generation exhausted"
+            );
+            let generation = session.retarget(options.target.into_target(Vec::new()))?;
+            session.set_identity(
+                options.identity.client_id,
+                options.identity.runtime_id,
+                options.identity.tags,
+                options.identity.extra_services,
+                None,
+            );
+            Ok(i32::try_from(generation)?)
+        })
     }
 
     pub fn start(&mut self) -> Result<()> {
@@ -341,14 +350,13 @@ impl Client {
             self.result.is_none(),
             "previous poll result has not been read"
         );
-        let state = {
-            let mut slot = self.slot.borrow_mut();
+        let state = self.slot.write(|slot| {
             ensure!(
                 slot.session.is_some() || self.setup.is_some(),
                 "session is not initialized"
             );
-            std::mem::take(&mut *slot)
-        };
+            Ok(std::mem::take(slot))
+        })?;
         let lease = Lease {
             slot: self.slot.clone(),
             state,
@@ -398,7 +406,7 @@ impl Client {
         {
             self.pending = None;
             self.result = Some(result);
-            if self.slot.borrow().session.is_some() {
+            if self.slot.read(|slot| slot.session.is_some()) {
                 self.setup = None;
             }
         }
@@ -406,28 +414,25 @@ impl Client {
 
     pub fn result_flags(&self, poll: &SessionPoll) -> Result<(bool, bool)> {
         self.ensure_idle()?;
-        let slot = self.slot.borrow();
-        let Some(session) = slot.session.as_ref() else {
-            return Ok((false, false));
-        };
-        let fully_watched = poll
-            .result
-            .as_ref()
-            .ok()
-            .and_then(Option::as_ref)
-            .is_some_and(|batch| session.batch_fully_watched(batch));
-        Ok((session.snapshot().is_some(), fully_watched))
+        Ok(self.slot.read(|slot| {
+            let Some(session) = slot.session.as_ref() else {
+                return (false, false);
+            };
+            let fully_watched = poll
+                .result
+                .as_ref()
+                .ok()
+                .and_then(Option::as_ref)
+                .is_some_and(|batch| session.batch_fully_watched(batch));
+            (session.snapshot().is_some(), fully_watched)
+        }))
     }
 
     pub fn snapshot(&self) -> Result<Option<Arc<Assignment>>> {
         self.ensure_idle()?;
         Ok(self
             .slot
-            .borrow()
-            .session
-            .as_ref()
-            .and_then(Session::snapshot)
-            .cloned())
+            .read(|slot| slot.session.as_ref().and_then(Session::snapshot).cloned()))
     }
 
     pub fn apply(&self, file: &AssignedFile, state: ConfigApplyState) -> Result<bool> {
@@ -464,13 +469,14 @@ impl Client {
 
     fn count_applied(&self, apply: impl FnOnce(&Session<Host>) -> usize) -> Result<usize> {
         self.ensure_idle()?;
-        let slot = self.slot.borrow();
-        Ok(slot.session.as_ref().map_or(0, apply))
+        Ok(self
+            .slot
+            .read(|slot| slot.session.as_ref().map_or(0, apply)))
     }
 
     pub fn cancel(&mut self) -> Result<()> {
         drop(self.pending.take().context("no active poll")?);
-        if self.slot.borrow().session.is_some() {
+        if self.slot.read(|slot| slot.session.is_some()) {
             self.setup = None;
         }
         self.result = Some(SessionPoll {
@@ -489,11 +495,10 @@ impl Client {
                 max_pending,
             } => (products, WatchMode::OrderedState { max_pending }),
         };
-        let mut slot = self.slot.borrow_mut();
-        match &mut slot.session {
+        self.slot.write(|slot| match &mut slot.session {
             Some(session) => session.open_watch(products, mode),
             None => slot.initial_watches.prepare_watch(products, mode),
-        }
+        })
     }
 
     pub fn next_watch(
@@ -502,8 +507,7 @@ impl Client {
         reserve: impl FnOnce() -> Result<()>,
     ) -> Result<Option<WatchUpdate>> {
         self.ensure_idle()?;
-        let mut slot = self.slot.borrow_mut();
-        match &mut slot.session {
+        self.slot.write(|slot| match &mut slot.session {
             Some(session) => session.next_watch_with_reservation(watch, reserve),
             None => {
                 ensure!(
@@ -512,13 +516,12 @@ impl Client {
                 );
                 Ok(None)
             }
-        }
+        })
     }
 
     pub fn replay_watch(&self, watch: i32) -> Result<bool> {
         self.ensure_idle()?;
-        let mut slot = self.slot.borrow_mut();
-        match &mut slot.session {
+        self.slot.write(|slot| match &mut slot.session {
             Some(session) => session.replay_watch(watch),
             None => {
                 ensure!(
@@ -527,16 +530,15 @@ impl Client {
                 );
                 Ok(false)
             }
-        }
+        })
     }
 
     pub fn close_watch(&self, watch: i32) -> Result<bool> {
         self.ensure_idle()?;
-        let mut slot = self.slot.borrow_mut();
-        Ok(match &mut slot.session {
+        Ok(self.slot.write(|slot| match &mut slot.session {
             Some(session) => session.close_watch(watch),
             None => slot.initial_watches.close_watch(watch),
-        })
+        }))
     }
 
     pub fn finish_watch(
@@ -547,11 +549,11 @@ impl Client {
         decisions: &[WatchDecision<'_>],
     ) -> Result<usize> {
         self.ensure_idle()?;
-        self.slot
-            .borrow_mut()
-            .session
-            .as_mut()
-            .context("session is not initialized")?
-            .finish_watch(watch, ticket, outcome, decisions)
+        self.slot.write(|slot| {
+            slot.session
+                .as_mut()
+                .context("session is not initialized")?
+                .finish_watch(watch, ticket, outcome, decisions)
+        })
     }
 }

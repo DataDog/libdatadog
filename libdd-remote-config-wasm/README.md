@@ -2,9 +2,11 @@
 
 The reactor verifies and stores remote configuration. The tracer supplies HTTP, timers, and cancellation. Products apply the resulting configuration in the tracer runtime.
 
+See [Reactor architecture and rollout](architecture.md) for backend selection and release requirements.
+
 ## Tracer integration builds
 
-The WASM test job uploads the reactor that passed the ABI tests and the signed Agentless test fixture generator. Use the `remote-config-wasm-<sha>` artifact from a trusted workflow run for the source revision under review. Compare `SOURCE_COMMIT` with that revision and check the artifact files with `sha256sum -c SHA256SUMS`. The checksums detect content changes but do not establish trust in the run. This artifact is for integration tests, not release distribution.
+The WASM test job uploads the reactor that passed the ABI tests. Use the `remote-config-wasm-<sha>` artifact from a trusted workflow run for the source revision under review. Compare `SOURCE_COMMIT` with that revision and check the artifact files with `sha256sum -c SHA256SUMS`. The checksums detect content changes but do not establish trust in the run. This artifact is for integration tests, not release distribution.
 
 ## ABI and ownership
 
@@ -18,25 +20,45 @@ Control records use UTF-8 JSON. HTTP bodies and configuration payloads use separ
 
 An export returns `-1` for a contract error. Read `rc_error` before the next failed export. Some exports return `0` for absence, such as an empty event queue or a snapshot that is not ready.
 
+## Native integration builds
+
+The native test job runs the C smoke test against the extracted library after it moves the extraction directory. It also runs signed Agentless fixtures on targets with a Node.js FFI runner. Use an integration archive from a trusted workflow run. Check `SOURCE_COMMIT` and `TARGET` before checking its files against `SHA256SUMS`.
+
+The GNU/Linux bundle builder links against glibc 2.17 for x64 and ARM64. The native test job loads each extracted library on that baseline so clients can use the same archive on newer distributions.
+
+Build the same crate for the native host with `cargo build --locked --release -p libdd-remote-config-wasm`. Use the generated `ddog_remote_config.h` from the Cargo build script output for that artifact. Native ABI version 1 is independent of the WASI ABI version. These builds do not change release packaging.
+
+On macOS, the native library has a run-path-relative install name. When a tracer links a shim against it, package the two libraries together and set the shim’s run path to `@loader_path`. The loader then finds the packaged library relative to the shim, not in the Cargo build tree.
+
+On Linux, set the run path of the shim to `$ORIGIN` if both shared libraries are in the same directory. The core library has a `SONAME` without a directory so the linker does not record the build path.
+
+For a musl integration build on Alpine, set `RUSTFLAGS="-C target-feature=-crt-static"` when building for the matching musl target. The Alpine build uses `libgcc_s.so.1`. Install the `libgcc` package if the runtime image does not include it.
+
+On Windows, link C clients against the import library in the MSVC archive. Install the reactor DLL beside the executable. A tracer can also load the DLL by its full path.
+
+Create a reactor with `ddog_rc_reactor_new`. Pass that handle as the first argument to the scalar operations. The native exports use the same control records, assignments, and receipts as WASI. Native buffer pointers come from `ddog_rc_buffer_bytes` or `ddog_rc_input_bytes`, not from the WASI offset operation.
+
+Calls can move between host threads. Keep each buffer borrow within one serialized step. Rust does not run HTTP or schedule a worker. Stop host work and end all borrows before dropping the reactor. An unwinding Rust panic during an operation makes the handle unavailable. Drop it rather than retrying.
+
 ## Poll and cancellation
 
 For Agent polling, supply an HTTP(S) base URL. The session appends `/v0.7/config` to its path.
 
 Call `rc_poll`, then drain `rc_event` until the queue is empty. An HTTP event owns a separate request-body buffer. Release it after reading the request. A sleep event specifies a timer. A cancel event tells the host to stop the corresponding HTTP request or timer.
 
-Return HTTP status and headers with `rc_http_succeed`. That export takes the response-body buffer only when it accepts the completion. Use `rc_http_fail` for transport failures and `rc_timer_elapsed` for elapsed timers. After a completion, drain events again. Operation identifiers are local to the client. Do not log credentials from HTTP events.
+The Agent path checks the length and digest of changed file contents against the target metadata before storing them. If either check fails, the file keeps its previous verified contents and the next request reports the error.
+
+Return the original HTTP status and headers with `rc_http_succeed`. That export takes the response-body buffer only when it accepts the completion. Use `rc_http_fail` for transport failures and `rc_timer_elapsed` for elapsed timers. After a completion, drain events again. Operation identifiers are local to the client. Do not log credentials from HTTP events.
 
 Read `rc_result` when available. The result distinguishes polling errors, no change, and an accepted batch. The error diagnostic is limited to 4096 UTF-8 bytes. Use the result interval for the next poll. Apply changes to identity or interests before starting another poll.
 
 `batchFullyWatched: true` means all changes in a nonempty batch belong to live watches when the result is read. The raw view is still readable and must be released. A host that uses only those watches for these products can release the view without describing it. Keep any host-side raw receipt or retarget cleanup. An absent field never permits skipping the raw view.
 
-For Agent sessions, HTTP 204 and 404 report no change. They do not clear the current assignment or its application receipts. Send the original status rather than translating it in the host.
-
-HTTP 404 also keeps any processing error report pending for the next request.
+For Agent sessions, HTTP 204 and 404 preserve the current assignment and its application receipts. Before the first assignment, the session stays unready. HTTP 404 also keeps a pending processing error report for the next request. Agentless sessions use a separate response policy.
 
 The client sends complete receipt diagnostics when the encoded request fits in the transport buffer. If the request is too large, it omits diagnostic text without changing receipt states. If the other fields still exceed the limit, the poll returns an error without starting an HTTP operation.
 
-Set interests when opening a client or with `rc_set_interest`. Use `capabilities` for capability names. If the tracer already has a bitset, pass its set bit positions as `capabilityIndices` instead. Unknown indices or a request with both nonempty lists are errors.
+Set interests when opening a client or with `rc_set_interest`. Use `capabilities` for names or `capabilityIndices` for set bit positions. For example, `[12]` advertises `APM_TRACING_SAMPLE_RATE`. An omitted or empty list advertises no capabilities. Unknown indices or two nonempty lists are errors.
 
 Use `rc_cancel` to stop a pending poll without destroying the session. Drain cancellation events and read the cancelled result before restarting. When closing a client, stop its host work before releasing the guest client with `rc_close`.
 
@@ -62,11 +84,11 @@ The current payload handle from `rc_view_file` is also the application receipt. 
 
 Call `rc_apply` with the receipt after the product applies the configuration. The export accepts a current receipt and returns `0` for a stale receipt. A removed or previous revision cannot report an outcome. Release the receipt with `rc_free` when application ends.
 
-If the reactor exports `rc_apply_receipts`, raw consumers can report deferred outcomes without keeping a view or payload handle. Keep the raw descriptor’s `receiptOwner` and decimal string `generation` with each observed upsert or snapshot path. Release the payload once the consumer has read it. Keep receipts in the reactor that issued them; watch descriptors do not issue raw receipts.
+If the reactor exports `rc_apply_receipts` (`ddog_rc_apply_receipts` in native builds), raw consumers can report deferred outcomes without keeping a view or payload handle. Keep the raw descriptor’s `receiptOwner` and decimal string `generation` with each observed upsert or snapshot path. Release the payload once the consumer has read it. Keep receipts in the reactor that issued them; watch descriptors do not issue raw receipts.
 
 Between polls, pass a JSON buffer such as `{"receiptOwner":2,"outcomes":[{"path":"...","generation":"1","state":2}]}` to `rc_apply_receipts(client, plan)`. The states are `1` (unacknowledged), `2` (acknowledged), and `3` (error, with an optional `message`). Release the plan buffer after the call. Invalid states or generation encodings reject the plan before any outcome is recorded. The return value counts outcomes recorded for paths still assigned to the same revision and not owned by a watch. Replaced, removed, retargeted, and foreign-client receipts do not count.
 
-Use `rc_apply_plan(client, view, plan)` to complete a group of upserts in one call. The plan starts with one outcome byte: `0` (applied), `1` (retained), or `2` (failed). A failed outcome is followed by a diagnostic. After the outcome, repeat these fields until the end of the buffer:
+`rc_apply_plan` and `ddog_rc_apply_plan` complete a group of upserts in one call. The plan starts with one outcome byte: `0` (applied), `1` (retained), or `2` (failed). A failed outcome is followed by a diagnostic. After the outcome, repeat these fields until the end of the buffer:
 
 - The little-endian `u32` index of the upsert in `rc_view_describe`.
 - One decision byte: `0` (eligible), `1` (ignored), or `2` (rejected).

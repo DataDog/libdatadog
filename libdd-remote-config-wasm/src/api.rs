@@ -11,7 +11,6 @@ use libdd_remote_config::fetch::{
     AssignedFile, ConfigApplyState, SessionPoll, WatchDecision, WatchOutcome, WatchOverflow,
 };
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
-use std::cell::RefCell;
 use std::collections::BTreeMap;
 use std::fmt::{self, Write as _};
 use std::sync::Arc;
@@ -169,7 +168,7 @@ impl<'plan> ApplyPlan<'plan> {
 }
 
 #[derive(Default)]
-struct Registry {
+pub struct Registry {
     clients: BTreeMap<i32, Client>,
     buffers: BTreeMap<i32, Buffer>,
     views: BTreeMap<i32, View>,
@@ -300,44 +299,65 @@ impl Registry {
             _ => bail!("invalid reply body"),
         }
     }
-}
 
-thread_local! {
-    static REGISTRY: RefCell<Registry> = RefCell::new(Registry::default());
-}
-
-fn entry(operation: impl FnOnce(&mut Registry) -> Result<i32>) -> i32 {
-    REGISTRY.with_borrow_mut(|registry| match operation(registry) {
-        Ok(value) => value,
-        Err(error) => {
-            registry.error = format!("{error:#}");
-            -1
+    fn attempt<Value>(
+        &mut self,
+        operation: impl FnOnce(&mut Self) -> Result<Value>,
+    ) -> Option<Value> {
+        match operation(self) {
+            Ok(value) => Some(value),
+            Err(error) => {
+                self.error = format!("{error:#}");
+                None
+            }
         }
-    })
+    }
 }
 
-pub fn rc_version() -> i32 {
-    crate::ABI_VERSION
+fn entry(registry: &mut Registry, operation: impl FnOnce(&mut Registry) -> Result<i32>) -> i32 {
+    registry.attempt(operation).unwrap_or(-1)
 }
 
-pub fn rc_alloc(length: i32) -> i32 {
-    entry(|registry| {
+pub fn rc_alloc(registry: &mut Registry, length: i32) -> i32 {
+    entry(registry, |registry| {
         let length = usize::try_from(length)?;
         registry.check_buffer(length)?;
         registry.add_buffer(Buffer::Input(vec![0; length]))
     })
 }
 
-pub fn rc_buffer_ptr(buffer: i32) -> i32 {
-    entry(|registry| Ok(registry.buffer(buffer)?.as_ptr() as i32))
+#[cfg(target_os = "wasi")]
+pub fn rc_buffer_ptr(registry: &mut Registry, buffer: i32) -> i32 {
+    entry(registry, |registry| {
+        Ok(registry.buffer(buffer)?.as_ptr() as i32)
+    })
 }
 
-pub fn rc_buffer_len(buffer: i32) -> i32 {
-    entry(|registry| Ok(i32::try_from(registry.buffer(buffer)?.len())?))
+#[cfg(not(target_os = "wasi"))]
+pub fn read_bytes(registry: &mut Registry, buffer: i32) -> *const u8 {
+    registry
+        .attempt(|registry| Ok(registry.buffer(buffer)?.as_ptr()))
+        .unwrap_or(std::ptr::null())
 }
 
-pub fn rc_free(buffer: i32) -> i32 {
-    entry(|registry| {
+#[cfg(not(target_os = "wasi"))]
+pub fn write_bytes(registry: &mut Registry, buffer: i32) -> *mut u8 {
+    registry
+        .attempt(|registry| match registry.buffers.get_mut(&buffer) {
+            Some(Buffer::Input(bytes)) => Ok(bytes.as_mut_ptr()),
+            _ => bail!("invalid or read-only buffer"),
+        })
+        .unwrap_or(std::ptr::null_mut())
+}
+
+pub fn rc_buffer_len(registry: &mut Registry, buffer: i32) -> i32 {
+    entry(registry, |registry| {
+        Ok(i32::try_from(registry.buffer(buffer)?.len())?)
+    })
+}
+
+pub fn rc_free(registry: &mut Registry, buffer: i32) -> i32 {
+    entry(registry, |registry| {
         registry
             .remove_buffer(buffer)
             .context("invalid or freed buffer")?;
@@ -345,12 +365,14 @@ pub fn rc_free(buffer: i32) -> i32 {
     })
 }
 
-pub fn rc_error() -> i32 {
-    entry(|registry| registry.add_buffer(Buffer::Control(registry.error.as_bytes().to_vec())))
+pub fn rc_error(registry: &mut Registry) -> i32 {
+    entry(registry, |registry| {
+        registry.add_buffer(Buffer::Control(registry.error.as_bytes().to_vec()))
+    })
 }
 
-pub fn rc_open(options: i32) -> i32 {
-    entry(|registry| {
+pub fn rc_open(registry: &mut Registry, options: i32) -> i32 {
+    entry(registry, |registry| {
         ensure!(
             registry.clients.len() < MAX_CLIENT_COUNT,
             "client budget exhausted"
@@ -362,38 +384,38 @@ pub fn rc_open(options: i32) -> i32 {
     })
 }
 
-pub fn rc_set_interest(client: i32, options: i32) -> i32 {
-    entry(|registry| {
+pub fn rc_set_interest(registry: &mut Registry, client: i32, options: i32) -> i32 {
+    entry(registry, |registry| {
         let interest = registry.read_json(options)?;
         registry.client(client)?.set_interest(interest)?;
         Ok(0)
     })
 }
 
-pub fn rc_set_identity(client: i32, options: i32) -> i32 {
-    entry(|registry| {
+pub fn rc_set_identity(registry: &mut Registry, client: i32, options: i32) -> i32 {
+    entry(registry, |registry| {
         let identity = registry.read_json(options)?;
         registry.client(client)?.set_identity(identity)?;
         Ok(0)
     })
 }
 
-pub fn rc_retarget(client: i32, options: i32) -> i32 {
-    entry(|registry| {
+pub fn rc_retarget(registry: &mut Registry, client: i32, options: i32) -> i32 {
+    entry(registry, |registry| {
         let options = registry.read_json(options)?;
         registry.client(client)?.retarget(options)
     })
 }
 
-pub fn rc_poll(client: i32) -> i32 {
-    entry(|registry| {
+pub fn rc_poll(registry: &mut Registry, client: i32) -> i32 {
+    entry(registry, |registry| {
         registry.client(client)?.start()?;
         Ok(0)
     })
 }
 
-pub fn rc_event(client: i32) -> i32 {
-    entry(|registry| {
+pub fn rc_event(registry: &mut Registry, client: i32) -> i32 {
+    entry(registry, |registry| {
         let host = registry.client(client)?.host.clone();
         let Some(event) = host.event() else {
             return Ok(0);
@@ -406,15 +428,21 @@ pub fn rc_event(client: i32) -> i32 {
     })
 }
 
-pub fn rc_http_succeed(client: i32, operation: i32, response: i32, body: i32) -> i32 {
-    entry(|registry| {
+pub fn rc_http_succeed(
+    registry: &mut Registry,
+    client: i32,
+    operation: i32,
+    response: i32,
+    body: i32,
+) -> i32 {
+    entry(registry, |registry| {
         let reply: HttpReply = registry.read_json(response)?;
+        let host = registry.client(client)?.host.clone();
         let mut response = http::Response::builder().status(reply.status);
         for (name, value) in reply.headers {
             response = response.header(name, value);
         }
         let response = response.body(())?;
-        let host = registry.client(client)?.host.clone();
         ensure!(host.expects_http(operation), "not a pending HTTP operation");
         let bytes = registry.take_body(body)?;
         host.complete_http(operation, Ok(response.map(|()| bytes)))?;
@@ -423,8 +451,8 @@ pub fn rc_http_succeed(client: i32, operation: i32, response: i32, body: i32) ->
     })
 }
 
-pub fn rc_http_fail(client: i32, operation: i32, message: i32) -> i32 {
-    entry(|registry| {
+pub fn rc_http_fail(registry: &mut Registry, client: i32, operation: i32, message: i32) -> i32 {
+    entry(registry, |registry| {
         let error = std::str::from_utf8(registry.buffer(message)?)?.to_owned();
         let client = registry.client(client)?;
         client
@@ -435,8 +463,8 @@ pub fn rc_http_fail(client: i32, operation: i32, message: i32) -> i32 {
     })
 }
 
-pub fn rc_timer_elapsed(client: i32, operation: i32) -> i32 {
-    entry(|registry| {
+pub fn rc_timer_elapsed(registry: &mut Registry, client: i32, operation: i32) -> i32 {
+    entry(registry, |registry| {
         let client = registry.client(client)?;
         client.host.complete_timer(operation)?;
         client.drive();
@@ -444,8 +472,8 @@ pub fn rc_timer_elapsed(client: i32, operation: i32) -> i32 {
     })
 }
 
-pub fn rc_result(client: i32) -> i32 {
-    entry(|registry| {
+pub fn rc_result(registry: &mut Registry, client: i32) -> i32 {
+    entry(registry, |registry| {
         let slot = registry.client(client)?;
         let Some(poll) = slot.result.as_ref() else {
             return Ok(0);
@@ -460,29 +488,31 @@ pub fn rc_result(client: i32) -> i32 {
     })
 }
 
-pub fn rc_snapshot(client: i32) -> i32 {
-    entry(|registry| match registry.client(client)?.snapshot()? {
-        Some(desired) => registry.add_view(View::snapshot(client, desired)),
-        None => Ok(0),
+pub fn rc_snapshot(registry: &mut Registry, client: i32) -> i32 {
+    entry(registry, |registry| {
+        match registry.client(client)?.snapshot()? {
+            Some(desired) => registry.add_view(View::snapshot(client, desired)),
+            None => Ok(0),
+        }
     })
 }
 
-pub fn rc_view_snapshot(view: i32) -> i32 {
-    entry(|registry| {
+pub fn rc_view_snapshot(registry: &mut Registry, view: i32) -> i32 {
+    entry(registry, |registry| {
         let view = registry.view(view)?;
         registry.add_view(view.desired_view())
     })
 }
 
-pub fn rc_view_describe(view: i32) -> i32 {
-    entry(|registry| {
+pub fn rc_view_describe(registry: &mut Registry, view: i32) -> i32 {
+    entry(registry, |registry| {
         let descriptor = serde_json::to_vec(&registry.view(view)?.describe())?;
         registry.add_buffer(Buffer::Control(descriptor))
     })
 }
 
-pub fn rc_view_file(view: i32, index: i32, previous: i32) -> i32 {
-    entry(|registry| {
+pub fn rc_view_file(registry: &mut Registry, view: i32, index: i32, previous: i32) -> i32 {
+    entry(registry, |registry| {
         let view = registry.view(view)?;
         let record = view.record(index)?;
         let file = match previous {
@@ -501,8 +531,8 @@ pub fn rc_view_file(view: i32, index: i32, previous: i32) -> i32 {
     })
 }
 
-pub fn rc_view_release(view: i32) -> i32 {
-    entry(|registry| {
+pub fn rc_view_release(registry: &mut Registry, view: i32) -> i32 {
+    entry(registry, |registry| {
         ensure!(
             registry.view(view)?.watch.is_none(),
             "finish a watch update to release its view"
@@ -524,8 +554,14 @@ fn apply_state(state: i32, message: impl FnOnce() -> Result<String>) -> Result<C
     })
 }
 
-pub fn rc_apply(client: i32, receipt: i32, state: i32, message: i32) -> i32 {
-    entry(|registry| {
+pub fn rc_apply(
+    registry: &mut Registry,
+    client: i32,
+    receipt: i32,
+    state: i32,
+    message: i32,
+) -> i32 {
+    entry(registry, |registry| {
         let Some(Buffer::File {
             file,
             owner: Some(owner),
@@ -546,8 +582,8 @@ pub fn rc_apply(client: i32, receipt: i32, state: i32, message: i32) -> i32 {
     })
 }
 
-pub fn rc_apply_plan(client: i32, view: i32, plan: i32) -> i32 {
-    entry(|registry| {
+pub fn rc_apply_plan(registry: &mut Registry, client: i32, view: i32, plan: i32) -> i32 {
+    entry(registry, |registry| {
         let view = registry.view(view)?;
         let Some(client) = registry
             .clients
@@ -585,8 +621,8 @@ struct RawReceiptOutcome {
     message: String,
 }
 
-pub fn rc_apply_receipts(client: i32, plan: i32) -> i32 {
-    entry(|registry| {
+pub fn rc_apply_receipts(registry: &mut Registry, client: i32, plan: i32) -> i32 {
+    entry(registry, |registry| {
         let Some(owner) = registry.clients.get(&client) else {
             return Ok(0);
         };
@@ -612,15 +648,15 @@ pub fn rc_apply_receipts(client: i32, plan: i32) -> i32 {
     })
 }
 
-pub fn rc_watch_open(client: i32, options: i32) -> i32 {
-    entry(|registry| {
+pub fn rc_watch_open(registry: &mut Registry, client: i32, options: i32) -> i32 {
+    entry(registry, |registry| {
         let options = registry.read_json(options)?;
         registry.client(client)?.open_watch(options)
     })
 }
 
-pub fn rc_watch_next(client: i32, watch: i32) -> i32 {
-    entry(|registry| {
+pub fn rc_watch_next(registry: &mut Registry, client: i32, watch: i32) -> i32 {
+    entry(registry, |registry| {
         let slot = registry
             .clients
             .get(&client)
@@ -644,18 +680,24 @@ pub fn rc_watch_next(client: i32, watch: i32) -> i32 {
     })
 }
 
-pub fn rc_watch_replay(client: i32, watch: i32) -> i32 {
-    entry(
-        |registry| match registry.client(client)?.replay_watch(watch) {
+pub fn rc_watch_replay(registry: &mut Registry, client: i32, watch: i32) -> i32 {
+    entry(registry, |registry| {
+        match registry.client(client)?.replay_watch(watch) {
             Ok(queued) => Ok(i32::from(queued)),
             Err(error) if error.is::<WatchOverflow>() => Ok(-2),
             Err(error) => Err(error),
-        },
-    )
+        }
+    })
 }
 
-pub fn rc_watch_finish(client: i32, watch: i32, view: i32, plan: i32) -> i32 {
-    entry(|registry| {
+pub fn rc_watch_finish(
+    registry: &mut Registry,
+    client: i32,
+    watch: i32,
+    view: i32,
+    plan: i32,
+) -> i32 {
+    entry(registry, |registry| {
         let update = registry.view(view)?;
         let ticket = update
             .watch
@@ -675,19 +717,21 @@ pub fn rc_watch_finish(client: i32, watch: i32, view: i32, plan: i32) -> i32 {
     })
 }
 
-pub fn rc_watch_close(client: i32, watch: i32) -> i32 {
-    entry(|registry| Ok(i32::from(registry.client(client)?.close_watch(watch)?)))
+pub fn rc_watch_close(registry: &mut Registry, client: i32, watch: i32) -> i32 {
+    entry(registry, |registry| {
+        Ok(i32::from(registry.client(client)?.close_watch(watch)?))
+    })
 }
 
-pub fn rc_cancel(client: i32) -> i32 {
-    entry(|registry| {
+pub fn rc_cancel(registry: &mut Registry, client: i32) -> i32 {
+    entry(registry, |registry| {
         registry.client(client)?.cancel()?;
         Ok(0)
     })
 }
 
-pub fn rc_close(client: i32) -> i32 {
-    entry(|registry| {
+pub fn rc_close(registry: &mut Registry, client: i32) -> i32 {
+    entry(registry, |registry| {
         registry
             .clients
             .remove(&client)

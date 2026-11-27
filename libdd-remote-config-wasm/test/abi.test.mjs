@@ -13,7 +13,8 @@ const schema = JSON.parse(readFileSync(new URL("../abi.json", import.meta.url), 
 const artifact = process.env.DD_RC_TEST_WASM ?? new URL(
   "../../target/wasm32-wasip1/debug/libdd_remote_config_wasm.wasm", import.meta.url
 )
-const compiled = new WebAssembly.Module(readFileSync(artifact))
+const nativeArtifact = process.env.DD_RC_TEST_NATIVE
+let compiled
 const path = "datadog/2/APM_TRACING/wasm/config"
 const options = {
   target: { service: "test", env: "test", appVersion: "1" },
@@ -27,8 +28,20 @@ const options = {
 
 class Reactor {
   #exports
+  #native
 
-  constructor () {
+  /**
+   * @param {{ exports: Record<string, (...args: number[]) => number>,
+   *   read: (buffer: number, length: number) => Buffer,
+   *   write: (buffer: number, bytes: Uint8Array) => void }} [native]
+   */
+  constructor (native) {
+    if (native !== undefined) {
+      this.#native = native
+      this.#exports = native.exports
+      return
+    }
+    compiled ??= new WebAssembly.Module(readFileSync(artifact))
     const wasi = new WASI({ version: "preview1", args: [], env: {}, preopens: {}, returnOnExit: true })
     const instance = new WebAssembly.Instance(compiled, wasi.getImportObject())
     wasi.initialize(instance)
@@ -44,7 +57,7 @@ class Reactor {
     const result = this.#exports[name](...args)
     if (result === -1) {
       const error = this.#exports.rc_error()
-      throw new Error(error === -1 ? "cannot read guest error" : this.take(error).toString())
+      throw new Error(error === -1 ? "cannot read reactor error" : this.take(error).toString())
     }
     return result
   }
@@ -52,8 +65,12 @@ class Reactor {
   /** @param {Uint8Array} bytes */
   input (bytes) {
     const buffer = this.call("rc_alloc", bytes.length)
-    const offset = this.call("rc_buffer_ptr", buffer) >>> 0
-    new Uint8Array(this.#exports.memory.buffer, offset, bytes.length).set(bytes)
+    if (this.#native === undefined) {
+      const offset = this.call("rc_buffer_ptr", buffer) >>> 0
+      new Uint8Array(this.#exports.memory.buffer, offset, bytes.length).set(bytes)
+    } else {
+      this.#native.write(buffer, bytes)
+    }
     return buffer
   }
 
@@ -73,6 +90,9 @@ class Reactor {
       return Buffer.alloc(0)
     }
     try {
+      if (this.#native !== undefined) {
+        return this.#native.read(buffer, this.call("rc_buffer_len", buffer))
+      }
       const offset = this.call("rc_buffer_ptr", buffer) >>> 0
       const length = this.call("rc_buffer_len", buffer)
       return Buffer.from(new Uint8Array(this.#exports.memory.buffer, offset, length))
@@ -122,7 +142,12 @@ class Reactor {
   }
 }
 
-/** @param {bigint} version @param {Uint8Array} [contents] @param {string} [backendState] @param {number} [length] */
+/**
+ * @param {bigint} version
+ * @param {Uint8Array} [contents]
+ * @param {string} [backendState]
+ * @param {number} [length]
+ */
 function assignment (version, contents, backendState = "test-state", length = contents?.length) {
   const targets = contents === undefined ? {} : {
     [path]: { custom: { v: "FILE_VERSION" }, hashes: {
@@ -157,15 +182,13 @@ test("exports the generated scalar ABI and accepts only bounded buffers", () => 
   assert.throws(() => reactor.call("rc_free", limit), /invalid or freed/)
 })
 
-test("Agent session appends the config route to its HTTP base path", () => {
-  const reactor = new Reactor()
+testBackends("Agent session appends the config route to its HTTP base path", reactor => {
   const client = reactor.open({ ...options, url: "http://127.0.0.1:8126/prefix%2Ftenant/" })
   reactor.start(client, "/prefix%2Ftenant/v0.7/config")
   reactor.call("rc_close", client)
 })
 
-test("keeps an HTTP event queued when its output does not fit", () => {
-  const reactor = new Reactor()
+testBackends("keeps an HTTP event queued when its output does not fit", reactor => {
   const client = reactor.open()
   reactor.call("rc_poll", client)
   const pinned = Array.from({ length: 255 }, () => reactor.call("rc_alloc", 1))
@@ -174,14 +197,17 @@ test("keeps an HTTP event queued when its output does not fit", () => {
   const request = reactor.json("rc_event", client)
   assert.equal(request.kind, "http")
   assert.equal(JSON.parse(reactor.take(request.body).toString()).client.id, options.identity.clientId)
-  assert.equal(reactor.json("rc_event", client).kind, "sleep")
+  const timer = reactor.json("rc_event", client)
+  assert.equal(timer.kind, "sleep")
   assert.equal(reactor.call("rc_event", client), 0)
   for (const buffer of pinned) reactor.call("rc_free", buffer)
+  reactor.withJson({ status: 204 }, metadata => reactor.call("rc_http_succeed", client, request.id, metadata, 0))
+  assert.deepEqual(reactor.json("rc_event", client), { kind: "cancel", id: timer.id })
+  assert.equal(reactor.json("rc_result", client).error, undefined)
   reactor.call("rc_close", client)
 })
 
-test("keeps a poll result queued when its output does not fit", () => {
-  const reactor = new Reactor()
+testBackends("keeps a poll result queued when its output does not fit", reactor => {
   const client = reactor.open()
   const initial = reactor.poll(client, assignment(1n, Buffer.from("initial")))
   reactor.call("rc_view_release", initial.batch)
@@ -229,8 +255,17 @@ test("maps numeric capability indices to the same request bits as names", () => 
   reactor.call("rc_close", client)
 })
 
-test("refreshes process tags and retains outstanding receipts", () => {
-  const reactor = new Reactor()
+testBackends("preserves the Agent URL path prefix", reactor => {
+  const client = reactor.open({ ...options, url: `${options.url}/prefix%2Ftenant/?unused=1` })
+  reactor.call("rc_poll", client)
+  const request = reactor.json("rc_event", client)
+  assert.equal(request.kind, "http")
+  assert.equal(request.url, `${options.url}/prefix%2Ftenant/v0.7/config`)
+  reactor.call("rc_free", request.body)
+  reactor.call("rc_close", client)
+})
+
+testBackends("refreshes process tags and retains outstanding receipts", reactor => {
   const client = reactor.open({
     ...options, target: { ...options.target, processTags: ["svc.auto:initial"] }
   })
@@ -247,6 +282,7 @@ test("refreshes process tags and retains outstanding receipts", () => {
 
   setIdentity({ processTags: ["svc.user:true"] })
   assert.equal(reactor.call("rc_apply", client, receipt, 2, 0), 1)
+  reactor.call("rc_free", receipt)
   const refreshed = reactor.poll(client, {}, 204)
   assert.deepEqual(refreshed.request.client.client_tracer.process_tags, ["svc.user:true"])
   assert.equal(refreshed.request.client.state.config_states[0].apply_state, 2)
@@ -258,10 +294,10 @@ test("refreshes process tags and retains outstanding receipts", () => {
   setIdentity({ processTags: [] })
   const cleared = reactor.poll(client, {}, 204)
   assert.deepEqual(cleared.request.client.client_tracer.process_tags ?? [], [])
+  reactor.call("rc_close", client)
 })
 
-test("uses identity process tags for open and retarget", () => {
-  const reactor = new Reactor()
+testBackends("uses identity process tags for open and retarget", reactor => {
   const target = { ...options.target, processTags: ["svc.auto:target"] }
   const identity = { ...options.identity, processTags: ["svc.auto:identity"] }
   const client = reactor.open({ ...options, target, identity })
@@ -272,10 +308,10 @@ test("uses identity process tags for open and retarget", () => {
     input => reactor.call("rc_retarget", client, input))
   const retargeted = reactor.poll(client, {})
   assert.deepEqual(retargeted.request.client.client_tracer.process_tags, ["svc.user:true"])
+  reactor.call("rc_close", client)
 })
 
-test("distinguishes readiness from no change and retains revisions through memory growth", () => {
-  const reactor = new Reactor()
+testBackends("distinguishes readiness from no change and retains revisions", reactor => {
   const client = reactor.open()
   assert.equal(reactor.call("rc_snapshot", client), 0)
   const blank = reactor.poll(client, {})
@@ -299,7 +335,7 @@ test("distinguishes readiness from no change and retains revisions through memor
   const unchanged = reactor.poll(client, {})
   assert.equal(unchanged.request.client.state.config_states[0].apply_state, 1)
   assert.equal(unchanged.batch, 0)
-  reactor.exports.memory.grow(1)
+  reactor.exports.memory?.grow(1)
 
   const secondBytes = Buffer.from([0, 2, 255, 3])
   const replacement = reactor.poll(client, assignment(9007199254740993n, secondBytes))
@@ -336,8 +372,7 @@ test("distinguishes readiness from no change and retains revisions through memor
   }
 })
 
-test("completes deferred raw receipts without holding file or view handles", () => {
-  const reactor = new Reactor()
+testBackends("completes deferred raw receipts without holding file or view handles", reactor => {
   const client = reactor.open()
   const other = reactor.open()
   const first = assignment(1n, Buffer.from("first"))
@@ -401,8 +436,7 @@ test("completes deferred raw receipts without holding file or view handles", () 
   reactor.call("rc_close", other)
 })
 
-test("completes projected decisions together without opening payload handles", () => {
-  const reactor = new Reactor()
+testBackends("completes projected decisions together without opening payload handles", reactor => {
   const client = reactor.open()
   const other = reactor.open()
   const files = ["eligible", "ignored", "rejected"]
@@ -501,8 +535,47 @@ test("completes projected decisions together without opening payload handles", (
   reactor.call("rc_close", client)
 })
 
-test("marks only nonempty batches whose changes are covered by live watches", () => {
-  const reactor = new Reactor()
+function assertAgentIntegrity(reactor) {
+  const client = reactor.open()
+  const initialBytes = Buffer.from("initial")
+  const initial = reactor.poll(client, assignment(1n, initialBytes))
+  assert.notEqual(initial.batch, 0)
+  reactor.call("rc_view_release", initial.batch)
+
+  const changed = Buffer.from("verified-response")
+  const wrongHash = assignment(2n, changed)
+  wrongHash.target_files[0].raw = Buffer.alloc(changed.length).toString("base64")
+  const invalid = [
+    { reply: wrongHash, message: /Computed hash/ },
+    { reply: assignment(2n, changed, undefined, changed.length - 1), message: /Decoded length/ },
+    { reply: assignment(2n, changed, undefined, changed.length + 1), message: /Decoded length/ }
+  ]
+  for (const { reply, message } of invalid) {
+    const failed = reactor.poll(client, reply)
+    assert.equal(failed.batch, 0, message.source)
+    assert.equal(failed.ready, true)
+    const retained = reactor.call("rc_snapshot", client)
+    assert.deepEqual(reactor.file(retained), initialBytes)
+    reactor.call("rc_view_release", retained)
+
+    for (const status of [404, 204]) {
+      const report = reactor.poll(client, Buffer.alloc(0), status)
+      assert.equal(report.error, undefined)
+      assert.equal(report.request.client.state.has_error, true, `status ${status}`)
+      assert.match(report.request.client.state.error, message)
+      assert.equal(report.request.client.state.config_states[0].version, 1)
+    }
+    assert.equal(reactor.poll(client, {}).request.client.state.has_error, false)
+  }
+
+  const verified = reactor.poll(client, assignment(2n, changed))
+  assert.notEqual(verified.batch, 0)
+  assert.deepEqual(reactor.file(verified.batch), changed)
+  reactor.call("rc_view_release", verified.batch)
+  reactor.call("rc_close", client)
+}
+
+testBackends("marks only nonempty batches whose changes are covered by live watches", reactor => {
   const client = reactor.open()
   const initial = reactor.poll(client, assignment(1n, Buffer.from("initial")))
   assert.equal(initial.batchFullyWatched, undefined)
@@ -528,8 +601,7 @@ test("marks only nonempty batches whose changes are covered by live watches", ()
   reactor.call("rc_close", client)
 })
 
-test("drives a typed watch with scoped views and no low-level completion authority", () => {
-  const reactor = new Reactor()
+testBackends("drives a typed watch with scoped views and no low-level completion authority", reactor => {
   const client = reactor.open({
     ...options,
     interest: { ...options.interest, products: ["APM_TRACING", "LIVE_DEBUGGING"] }
@@ -615,8 +687,7 @@ test("drives a typed watch with scoped views and no low-level completion authori
   reactor.call("rc_close", client)
 })
 
-test("delivers watch upserts in response order while retaining snapshot positions", () => {
-  const reactor = new Reactor()
+testBackends("delivers watch upserts in response order while retaining snapshot positions", reactor => {
   const client = reactor.open()
   const watch = reactor.withJson({ delivery: "latestState", products: ["APM_TRACING"] },
     buffer => reactor.call("rc_watch_open", client, buffer))
@@ -676,8 +747,7 @@ test("delivers watch upserts in response order while retaining snapshot position
   reactor.call("rc_close", client)
 })
 
-test("signals ordered overflow and drains the old ticket after retarget", () => {
-  const reactor = new Reactor()
+testBackends("signals ordered overflow and drains the old ticket after retarget", reactor => {
   const client = reactor.open()
   const watch = reactor.withJson({ delivery: "orderedState", products: ["APM_TRACING"], maxPending: 1 },
     buffer => reactor.call("rc_watch_open", client, buffer))
@@ -707,8 +777,7 @@ test("signals ordered overflow and drains the old ticket after retarget", () => 
   assert.throws(() => reactor.json("rc_view_describe", reassigned), /invalid or released view/)
 })
 
-test("delivers a bounded result for a large HTTP error and can poll again", () => {
-  const reactor = new Reactor()
+testBackends("delivers a bounded result for a large HTTP error and can poll again", reactor => {
   const client = reactor.open()
   const response = Buffer.alloc(16 * 1024 * 1024, "\0é")
   response.write("upstream failure: ")
@@ -723,8 +792,7 @@ test("delivers a bounded result for a large HTTP error and can poll again", () =
   reactor.call("rc_close", client)
 })
 
-test("delivers a bounded result for a large transport error and can poll again", () => {
-  const reactor = new Reactor()
+testBackends("delivers a bounded result for a large transport error and can poll again", reactor => {
   const client = reactor.open()
   const { httpId, timerId } = reactor.start(client)
   const message = Buffer.alloc(16 * 1024 * 1024, "\0é")
@@ -744,14 +812,12 @@ test("delivers a bounded result for a large transport error and can poll again",
   reactor.call("rc_close", client)
 })
 
-test("reports the parse cause without echoing large malformed metadata", () => {
-  const reactor = new Reactor()
+testBackends("reports the parse cause for large malformed metadata without echoing the input", reactor => {
   const client = reactor.open()
   const malformed = Buffer.alloc(3 * 1024 * 1024).toString("base64")
   for (const kind of ["targets", "roots"]) {
     const response = assignment(0n)
     response[kind] = kind === "targets" ? malformed : [malformed]
-
     const rejected = reactor.poll(client, response)
     assert.equal(rejected.batch, 0)
     assert.equal(rejected.error.includes("\0"), false)
@@ -765,8 +831,7 @@ test("reports the parse cause without echoing large malformed metadata", () => {
   reactor.call("rc_close", client)
 })
 
-test("reports a large receipt diagnostic without blocking the next request", () => {
-  const reactor = new Reactor()
+testBackends("reports a large receipt diagnostic without blocking the next request", reactor => {
   const client = reactor.open()
   const { batch } = reactor.poll(client, assignment(1n, Buffer.from("assigned")))
   const receipt = reactor.call("rc_view_file", batch, 0, 0)
@@ -785,8 +850,7 @@ test("reports a large receipt diagnostic without blocking the next request", () 
   reactor.call("rc_close", client)
 })
 
-test("preserves complete structured receipt diagnostics that fit in the request", () => {
-  const reactor = new Reactor()
+testBackends("preserves complete structured receipt diagnostics that fit in the request", reactor => {
   const client = reactor.open()
   const { batch } = reactor.poll(client, assignment(1n, Buffer.from("assigned")))
   const receipt = reactor.call("rc_view_file", batch, 0, 0)
@@ -804,8 +868,7 @@ test("preserves complete structured receipt diagnostics that fit in the request"
   reactor.call("rc_close", client)
 })
 
-test("keeps receipt states when escaped diagnostics exceed the request limit", () => {
-  const reactor = new Reactor()
+testBackends("keeps receipt states when escaped diagnostics exceed the request limit", reactor => {
   const client = reactor.open()
   const { batch } = reactor.poll(client, assignment(1n, Buffer.from("assigned")))
   const receipt = reactor.call("rc_view_file", batch, 0, 0)
@@ -833,8 +896,7 @@ test("keeps receipt states when escaped diagnostics exceed the request limit", (
   reactor.call("rc_close", client)
 })
 
-test("reports oversized request metadata without enqueueing an HTTP event", () => {
-  const reactor = new Reactor()
+testBackends("reports oversized request metadata without enqueueing an HTTP event", reactor => {
   const client = reactor.open()
   const identity = { ...options.identity, extraServices: [""] }
   identity.extraServices[0] = "s".repeat(16 * 1024 * 1024 - JSON.stringify(identity).length)
@@ -848,48 +910,44 @@ test("reports oversized request metadata without enqueueing an HTTP event", () =
   reactor.call("rc_close", client)
 })
 
-test("keeps the last verified assignment when a file fails its integrity check", () => {
-  const reactor = new Reactor()
+testBackends("preserves multiple complete receipt diagnostics when they fit", reactor => {
   const client = reactor.open()
-  const initialBytes = Buffer.from("initial")
-  const initial = reactor.poll(client, assignment(1n, initialBytes))
-  assert.notEqual(initial.batch, 0)
-  reactor.call("rc_view_release", initial.batch)
-
-  const changed = Buffer.from("verified-response")
-  const wrongHash = assignment(2n, changed)
-  wrongHash.target_files[0].raw = Buffer.alloc(changed.length).toString("base64")
-  const rejected = [
-    { reply: wrongHash, message: /Computed hash/ },
-    { reply: assignment(2n, changed, undefined, changed.length - 1), message: /Decoded length/ },
-    { reply: assignment(2n, changed, undefined, changed.length + 1), message: /Decoded length/ }
-  ]
-  for (const { reply, message } of rejected) {
-    const failed = reactor.poll(client, reply)
-    assert.equal(failed.batch, 0, message.source)
-    assert.equal(failed.ready, true)
-    const retained = reactor.call("rc_snapshot", client)
-    assert.deepEqual(reactor.file(retained), initialBytes)
-    reactor.call("rc_view_release", retained)
-
-    for (const status of [404, 204]) {
-      const report = reactor.poll(client, Buffer.alloc(0), status)
-      assert.equal(report.error, undefined)
-      assert.equal(report.request.client.state.has_error, true, `status ${status}`)
-      assert.match(report.request.client.state.error, message)
-      assert.equal(report.request.client.state.config_states[0].version, 1)
-    }
-    assert.equal(reactor.poll(client, {}).request.client.state.has_error, false)
+  const response = assignment(1n, Buffer.from("assigned"))
+  const metadata = JSON.parse(Buffer.from(response.targets, "base64").toString())
+  const [original] = response.target_files
+  const count = 17
+  for (let index = 1; index < count; index++) {
+    const sibling = `datadog/2/APM_TRACING/sibling-${index}/config`
+    metadata.signed.targets[sibling] = metadata.signed.targets[path]
+    response.target_files.push({ path: sibling, raw: original.raw })
+    response.client_configs.push(sibling)
   }
+  response.targets = Buffer.from(JSON.stringify(metadata)).toString("base64")
 
-  const recovered = reactor.poll(client, assignment(2n, changed))
-  assert.deepEqual(reactor.file(recovered.batch), changed)
-  reactor.call("rc_view_release", recovered.batch)
+  const { batch } = reactor.poll(client, response)
+  const text = "é".repeat(2048)
+  const diagnostic = reactor.input(Buffer.from(text))
+  for (let index = 0; index < count; index++) {
+    const receipt = reactor.call("rc_view_file", batch, index, 0)
+    assert.equal(reactor.call("rc_apply", client, receipt, 3, diagnostic), 1)
+    reactor.call("rc_free", receipt)
+  }
+  reactor.call("rc_free", diagnostic)
+  reactor.call("rc_view_release", batch)
+
+  const report = reactor.poll(client, {}, 204)
+  const states = report.request.client.state.config_states
+  assert.equal(states.length, count)
+  for (const { apply_state, apply_error } of states) {
+    assert.equal(apply_state, 3)
+    assert.equal(apply_error, text)
+  }
   reactor.call("rc_close", client)
 })
 
-test("keeps the Agent assignment and receipts on HTTP 204 and 404", () => {
-  const reactor = new Reactor()
+testBackends("keeps the last verified assignment and retries integrity reports", assertAgentIntegrity)
+
+function assertAgentNoChange(reactor) {
   const client = reactor.open()
   for (const status of [204, 404]) {
     const cold = reactor.poll(client, Buffer.alloc(0), status)
@@ -897,7 +955,6 @@ test("keeps the Agent assignment and receipts on HTTP 204 and 404", () => {
     assert.equal(cold.ready, false)
     assert.equal(cold.batch, 0)
   }
-
   const initial = reactor.poll(client, assignment(1n, Buffer.from("verified")))
   const receipt = reactor.call("rc_view_file", initial.batch, 0, 0)
   assert.equal(reactor.call("rc_apply", client, receipt, 2, 0), 1)
@@ -912,50 +969,18 @@ test("keeps the Agent assignment and receipts on HTTP 204 and 404", () => {
     const next = reactor.poll(client, {})
     assert.equal(next.request.client.state.has_error, false)
     assert.deepEqual(next.request.client.state.config_states, retained.request.client.state.config_states)
+    assert.equal(next.request.client.state.config_states[0].apply_state, 2)
     const snapshot = reactor.call("rc_snapshot", client)
     assert.deepEqual(reactor.file(snapshot), Buffer.from("verified"))
     reactor.call("rc_view_release", snapshot)
   }
   reactor.call("rc_free", receipt)
   reactor.call("rc_close", client)
-})
+}
 
-test("accepts Agent assignments without cursor metadata", () => {
-  const reactor = new Reactor()
-  const client = reactor.open()
-  const initial = reactor.poll(client, assignment(1n, Buffer.from("original")))
-  reactor.call("rc_view_release", initial.batch)
+testBackends("retains the Agent assignment and receipts on HTTP 204 and 404", assertAgentNoChange)
 
-  const cursor = [...Buffer.from("test-state")]
-  const variants = [
-    { custom: { opaque_backend_state: 42 }, version: 2n, rejected: true },
-    { custom: undefined, version: 2n, rejected: false },
-    { custom: { agent_refresh_interval: 30 }, version: 3n, rejected: false }
-  ]
-  for (const { custom, version, rejected } of variants) {
-    const contents = Buffer.from(`revision ${version}`)
-    const response = assignment(version, contents)
-    const metadata = JSON.parse(Buffer.from(response.targets, "base64").toString())
-    metadata.signed.custom = custom
-    response.targets = Buffer.from(JSON.stringify(metadata)).toString("base64")
-    const result = reactor.poll(client, response)
-    if (rejected) {
-      assert.match(result.error, /invalid type/)
-      assert.equal(result.batch, 0)
-    } else {
-      assert.equal(result.error, undefined)
-      assert.deepEqual(reactor.file(result.batch), contents)
-      reactor.call("rc_view_release", result.batch)
-    }
-    const next = reactor.poll(client, {}).request.client.state
-    assert.deepEqual(next.backend_client_state, rejected ? cursor : [])
-    assert.equal(next.config_states[0].version, rejected ? 1 : Number(version))
-  }
-  reactor.call("rc_close", client)
-})
-
-test("Agent reissues the same cached payload at a new version", () => {
-  const reactor = new Reactor()
+testBackends("Agent reissues the same cached payload at a new version", reactor => {
   const client = reactor.open()
   const payload = Buffer.from("cached payload")
   const first = reactor.poll(client, assignment(1n, payload))
@@ -997,8 +1022,7 @@ test("Agent reissues the same cached payload at a new version", () => {
   reactor.call("rc_close", client)
 })
 
-test("preserves the current cache and receipt when the Agent assignment cannot be resolved", () => {
-  const reactor = new Reactor()
+testBackends("preserves the current cache and receipt when the Agent assignment cannot be resolved", reactor => {
   const client = reactor.open()
   const payload = Buffer.from("accepted payload")
   const first = reactor.poll(client, assignment(1n, payload))
@@ -1032,8 +1056,7 @@ test("preserves the current cache and receipt when the Agent assignment cannot b
   reactor.call("rc_close", client)
 })
 
-test("does not dispatch host operations cancelled before the host reads them", () => {
-  const reactor = new Reactor()
+testBackends("does not dispatch host operations cancelled before the host reads them", reactor => {
   const client = reactor.open()
   reactor.call("rc_poll", client)
   reactor.call("rc_cancel", client)
@@ -1051,8 +1074,7 @@ test("does not dispatch host operations cancelled before the host reads them", (
   reactor.call("rc_close", client)
 })
 
-test("cancels host operations and rejects late completions without consuming their input", () => {
-  const reactor = new Reactor()
+testBackends("cancels host operations and rejects late completions without consuming their input", reactor => {
   const client = reactor.open()
   const target = {
     target: { ...options.target, service: "new-service" },
@@ -1085,8 +1107,70 @@ test("cancels host operations and rejects late completions without consuming the
   reactor.call("rc_close", client)
 })
 
-test("Agentless verifies signed assignments and keeps the last trusted revision through failures", () => {
-  const reactor = new Reactor()
+testBackends("reports an HTTP transport failure and retains the verified revision", reactor => {
+  const client = reactor.open()
+  const previous = Buffer.from("verified-before-transport-failure")
+  const initial = reactor.poll(client, assignment(1n, previous))
+  reactor.call("rc_view_release", initial.batch)
+
+  const { httpId, timerId } = reactor.start(client)
+  const message = Buffer.from("fixture transport failure")
+  const messageId = reactor.input(message)
+  reactor.call("rc_http_fail", client, httpId, messageId)
+  assert.equal(reactor.call("rc_buffer_len", messageId), message.length)
+  reactor.call("rc_free", messageId)
+  assert.deepEqual(reactor.json("rc_event", client), { kind: "cancel", id: timerId })
+  const failed = reactor.json("rc_result", client)
+  assert.equal(failed.batch, 0)
+  assert.equal(failed.ready, true)
+  assert.match(failed.error, /fixture transport failure/)
+  const snapshot = reactor.call("rc_snapshot", client)
+  assert.deepEqual(reactor.file(snapshot), previous)
+  reactor.call("rc_view_release", snapshot)
+
+  const recovered = reactor.poll(client, {})
+  assert.equal(recovered.error, undefined)
+  assert.equal(recovered.ready, true)
+  assert.equal(recovered.batch, 0)
+  reactor.call("rc_close", client)
+})
+
+/** @param {Reactor} reactor */
+function assertOptionalAgentCursor (reactor) {
+  const client = reactor.open()
+  const initial = reactor.poll(client, assignment(1n, Buffer.from("original")))
+  reactor.call("rc_view_release", initial.batch)
+
+  const cursor = [...Buffer.from("test-state")]
+  const variants = [
+    { custom: { opaque_backend_state: 42 }, version: 2n, rejected: true },
+    { custom: undefined, version: 2n, rejected: false },
+    { custom: { agent_refresh_interval: 30 }, version: 3n, rejected: false }
+  ]
+  for (const { custom, version, rejected } of variants) {
+    const contents = Buffer.from(`revision ${version}`)
+    const response = assignment(version, contents)
+    const metadata = JSON.parse(Buffer.from(response.targets, "base64").toString())
+    metadata.signed.custom = custom
+    response.targets = Buffer.from(JSON.stringify(metadata)).toString("base64")
+    const result = reactor.poll(client, response)
+    if (rejected) {
+      assert.match(result.error, /invalid type/)
+      assert.equal(result.batch, 0)
+    } else {
+      assert.equal(result.error, undefined)
+      assert.deepEqual(reactor.file(result.batch), contents)
+      reactor.call("rc_view_release", result.batch)
+    }
+    const next = reactor.poll(client, {}).request.client.state
+    assert.deepEqual(next.backend_client_state, rejected ? cursor : [])
+    assert.equal(next.config_states[0].version, rejected ? 1 : Number(version))
+  }
+  reactor.call("rc_close", client)
+}
+
+/** @param {Reactor} reactor */
+function assertSignedAgentless (reactor) {
   const fixture = agentlessFixture(path)
   const client = reactor.open({ ...options, ...fixture.options })
   const requests = []
@@ -1264,4 +1348,70 @@ test("Agentless verifies signed assignments and keeps the last trusted revision 
   reactor.call("rc_view_release", assigned.batch)
   reactor.call("rc_view_release", delivered.batch)
   reactor.call("rc_close", client)
+}
+
+testBackends("does not start an Agentless request with an invalid trust root", reactor => {
+  const fixture = agentlessFixture(path)
+  const client = reactor.open({ ...options, ...fixture.options, directorRoot: "{" })
+  reactor.call("rc_poll", client)
+  assert.equal(reactor.call("rc_event", client), 0)
+  const failed = reactor.json("rc_result", client)
+  assert.equal(failed.ready, false)
+  assert.equal(failed.batch, 0)
+  assert.match(failed.error, /EOF/)
+  reactor.call("rc_close", client)
 })
+
+testBackends("Agentless verifies signed assignments and keeps the last trusted revision through failures",
+  assertSignedAgentless)
+testBackends("Agent accepts assignments without cursor metadata", assertOptionalAgentCursor)
+
+/** @param {string} name @param {(reactor: Reactor) => void} run */
+function testBackends (name, run) {
+  test(`${name} (WASI)`, () => run(new Reactor()))
+  test(`${name} (native FFI)`, {
+    skip: nativeArtifact === undefined && "Set DD_RC_TEST_NATIVE to a native reactor library"
+  }, () => withNativeReactor(run))
+}
+
+/** @param {(reactor: Reactor) => void} run */
+async function withNativeReactor (run) {
+  const ffi = await import("node:ffi")
+  const scalarNames = Object.keys(schema.exports).filter(name => name !== "rc_buffer_ptr" && name !== "rc_version")
+  const signatures = Object.fromEntries(scalarNames.map(name => [`ddog_${name}`, {
+    return: "int32", arguments: ["pointer", ...schema.exports[name].map(() => "int32")]
+  }]))
+  const { lib, functions } = ffi.dlopen(nativeArtifact, {
+    ...signatures,
+    ddog_rc_version: { return: "int32", arguments: [] },
+    ddog_rc_reactor_new: { return: "pointer", arguments: [] },
+    ddog_rc_reactor_drop: { return: "void", arguments: ["pointer"] },
+    ddog_rc_buffer_bytes: { return: "pointer", arguments: ["pointer", "int32"] },
+    ddog_rc_input_bytes: { return: "pointer", arguments: ["pointer", "int32"] }
+  })
+  try {
+    assert.equal(functions.ddog_rc_version(), 1)
+    const handle = functions.ddog_rc_reactor_new()
+    assert.notEqual(handle, 0n)
+    try {
+      const exports = Object.fromEntries(scalarNames.map(name => [name, functions[`ddog_${name}`].bind(undefined, handle)]))
+      run(new Reactor({
+        exports,
+        read (buffer, length) {
+          const pointer = functions.ddog_rc_buffer_bytes(handle, buffer)
+          assert.notEqual(pointer, 0n)
+          return ffi.toBuffer(pointer, length, true)
+        },
+        write (buffer, bytes) {
+          const pointer = functions.ddog_rc_input_bytes(handle, buffer)
+          assert.notEqual(pointer, 0n)
+          ffi.exportArrayBufferView(bytes, pointer, bytes.byteLength)
+        }
+      }))
+    } finally {
+      functions.ddog_rc_reactor_drop(handle)
+    }
+  } finally {
+    lib.close()
+  }
+}
