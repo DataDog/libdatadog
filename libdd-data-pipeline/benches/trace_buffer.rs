@@ -8,9 +8,7 @@ use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::time::{Duration, Instant};
 
 use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
-use libdd_data_pipeline::trace_buffer::{
-    BufferSize, Export, TraceBuffer, TraceBufferConfig, TraceChunk,
-};
+use libdd_data_pipeline::trace_buffer::{BufferSpan, Export, TraceBuffer, TraceBufferConfig};
 use libdd_data_pipeline::trace_exporter::{
     agent_response::AgentResponse, error::TraceExporterError,
 };
@@ -69,10 +67,10 @@ fn make_span() -> SpanBytes {
 #[derive(Debug)]
 struct NoopExport;
 
-impl Export<SpanBytes> for NoopExport {
+impl Export<Vec<SpanBytes>> for NoopExport {
     fn export_trace_chunks(
         &mut self,
-        _trace_chunks: Vec<TraceChunk<SpanBytes>>,
+        _trace_chunks: Vec<Vec<SpanBytes>>,
         _force_flush: bool,
     ) -> Pin<
         Box<
@@ -83,7 +81,9 @@ impl Export<SpanBytes> for NoopExport {
     }
 }
 
-fn setup_buffer(max_buffered_bytes: usize) -> (Arc<ForkSafeRuntime>, Arc<TraceBuffer<SpanBytes>>) {
+fn setup_buffer(
+    max_buffered_bytes: usize,
+) -> (Arc<ForkSafeRuntime>, Arc<TraceBuffer<Vec<SpanBytes>>>) {
     let rt = Arc::new(ForkSafeRuntime::new().expect("ForkSafeRuntime::new"));
     let cfg = TraceBufferConfig::new()
         .max_buffered_bytes(max_buffered_bytes)

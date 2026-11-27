@@ -18,18 +18,22 @@ use libdd_shared_runtime::{SharedRuntime, Worker};
 use libdd_trace_utils::span::{
     BytesData,
     span_pool::{PooledChunks, SpanPool},
+    v04::SpanBytes,
 };
 
 use crate::trace_exporter::{
     TraceExporter, agent_response::AgentResponse, error::TraceExporterError,
 };
 
-/// Trait for types stored in a [`TraceBuffer`] that can report their approximate byte size.
-pub trait BufferSize {
+/// Trait for span types that can report their approximate byte size.
+///
+/// A [`TraceBuffer`] never handles spans directly. It buffers chunks, and a chunk
+/// `Vec<T>` sums the size of its spans.
+pub trait BufferSpan {
     fn byte_size(&self) -> usize;
 }
 
-impl<T> BufferSize for libdd_trace_utils::span::v04::Span<T>
+impl<T> BufferSpan for libdd_trace_utils::span::v04::Span<T>
 where
     T: libdd_trace_utils::span::TraceData,
     T::Text: AsRef<str>,
@@ -91,6 +95,37 @@ where
         AttributeArrayValue::Boolean(_) => 1,
         AttributeArrayValue::Integer(_) => 8,
         AttributeArrayValue::Double(_) => 8,
+    }
+}
+
+/// A chunk of spans that a [`TraceBuffer`] batches and flushes.
+///
+/// The buffer handles whole chunks (`C`) and batches of chunks (`Vec<C>`). It never
+/// inspects the spans inside a chunk. All span knowledge lives in this trait.
+pub trait BufferChunk {
+    /// Approximate byte size of the whole chunk.
+    fn byte_size(&self) -> usize;
+
+    /// Number of spans in the chunk. The buffer reports this in queue metrics.
+    fn span_count(&self) -> usize;
+
+    /// Whether the chunk carries no span.
+    fn is_empty(&self) -> bool {
+        self.span_count() == 0
+    }
+}
+
+impl<T: BufferSpan> BufferChunk for Vec<T> {
+    fn byte_size(&self) -> usize {
+        self.as_slice().iter().map(|s| s.byte_size()).sum()
+    }
+
+    fn span_count(&self) -> usize {
+        self.as_slice().len()
+    }
+
+    fn is_empty(&self) -> bool {
+        self.as_slice().is_empty()
     }
 }
 
@@ -165,8 +200,6 @@ impl Default for TraceBufferConfig {
     }
 }
 
-pub type TraceChunk<T> = Vec<T>;
-
 /// Error that can occur when the batch has reached its maximum size
 /// and we can't add more data to it.
 ///
@@ -191,8 +224,8 @@ pub enum TraceBufferError {
     TraceExporter(TraceExporterError),
 }
 
-struct Batch<T> {
-    chunks: Vec<TraceChunk<T>>,
+struct Batch<C> {
+    chunks: Vec<C>,
     last_flush: Instant,
     byte_count: usize,
     max_buffered_bytes: usize,
@@ -200,10 +233,10 @@ struct Batch<T> {
 }
 
 // Pre-allocate the batch buffer to avoid reallocations on small sizes.
-// A trace chunk is 24 bytes, so this takes 24 * 400 = 9.6kB
+// For a Vec chunk, each element is 24 bytes, so this takes 24 * 400 = 9.6kB
 const PRE_ALLOCATE_CHUNKS: usize = 400;
 
-impl<T> Batch<T> {
+impl<C> Batch<C> {
     fn new(max_buffered_bytes: usize) -> Self {
         let mut batch_gen = BatchGeneration::default();
         batch_gen.incr();
@@ -242,20 +275,20 @@ impl<T> Batch<T> {
     /// batch. So the batch can be over the maximum size after this call.
     /// This is because we don't want to always drop traces that contain more bytes than the maximum
     /// size.
-    fn add_trace_chunk(&mut self, chunk: Vec<T>) -> Result<(), BatchFullError>
+    fn add_trace_chunk(&mut self, chunk: C) -> Result<(), BatchFullError>
     where
-        T: BufferSize,
+        C: BufferChunk,
     {
         if self.byte_count > self.max_buffered_bytes {
             return Err(BatchFullError {
-                spans_dropped: chunk.len(),
+                spans_dropped: chunk.span_count(),
             });
         }
         if chunk.is_empty() {
             return Ok(());
         }
 
-        self.byte_count += chunk.iter().map(|s| s.byte_size()).sum::<usize>();
+        self.byte_count += chunk.byte_size();
         self.chunks.push(chunk);
         Ok(())
     }
@@ -266,7 +299,7 @@ impl<T> Batch<T> {
     /// when the batch is empty, so that a caller waiting on [`Sender::flush_and_wait`] can
     /// observe the empty export's completion through the generation/ack handshake. An
     /// automatic flush with no chunks has no waiter, so it leaves the generation untouched.
-    fn export(&mut self, force: bool) -> Vec<TraceChunk<T>> {
+    fn export(&mut self, force: bool) -> Vec<C> {
         let chunks = if self.chunks.is_empty() {
             // Empty batch: keep the pre-allocated chunk buffer instead of swapping in a
             // fresh one, to avoid unnecessary allocations on empty flushes.
@@ -283,6 +316,8 @@ impl<T> Batch<T> {
     }
 }
 
+/// A buffer of trace chunks, generic over the chunk type `C`.
+///
 /// # TraceBuffer
 ///
 /// Creating an instance of the TraceBuffer will spawn a background task that
@@ -305,8 +340,8 @@ impl<T> Batch<T> {
 /// * Either until the chunks have been flushed to the agent
 /// * Or if `synchronous_writes_timeout` is Some, until the timeout is reached. At which point the
 ///   flush might continue in the background
-pub struct TraceBuffer<T> {
-    tx: Sender<T>,
+pub struct TraceBuffer<C> {
+    tx: Sender<C>,
     /// Enables synchronous exports
     ///
     /// Each batch in the queue will get a generation associated. Generations are strictly
@@ -320,12 +355,12 @@ pub struct TraceBuffer<T> {
 
 pub type ResponseHandler = Box<dyn Fn(Result<AgentResponse, TraceExporterError>) + Send + Sync>;
 
-impl<T: Send + BufferSize + 'static> TraceBuffer<T> {
+impl<C: Send + BufferChunk + 'static> TraceBuffer<C> {
     pub fn new(
         config: TraceBufferConfig,
         response_handler: ResponseHandler,
-        export_operation: Box<dyn Export<T> + Send + Sync>,
-    ) -> (Self, TraceExporterWorker<T>) {
+        export_operation: Box<dyn Export<C> + Send + Sync>,
+    ) -> (Self, TraceExporterWorker<C>) {
         let (tx, rx) = channel(
             config.flush_threshold_bytes,
             config.max_buffered_bytes,
@@ -342,12 +377,12 @@ impl<T: Send + BufferSize + 'static> TraceBuffer<T> {
         )
     }
 
-    pub fn send_chunk(&self, trace_chunk: Vec<T>) -> Result<(), TraceBufferError> {
-        if trace_chunk.is_empty() {
+    pub fn send_chunk(&self, chunk: C) -> Result<(), TraceBufferError> {
+        if chunk.is_empty() {
             return Ok(());
         }
 
-        match self.tx.add_trace_chunk(trace_chunk) {
+        match self.tx.add_trace_chunk(chunk) {
             Ok(flush_gen) => {
                 if self.synchronous_export {
                     self.tx
@@ -410,7 +445,7 @@ impl<T: Send + BufferSize + 'static> TraceBuffer<T> {
         self.tx.flush_and_close(timeout)
     }
 
-    pub fn queue_metrics(&self) -> QueueMetricsFetcher<T> {
+    pub fn queue_metrics(&self) -> QueueMetricsFetcher<C> {
         QueueMetricsFetcher {
             waiter: self.tx.waiter.clone(),
         }
@@ -421,17 +456,17 @@ impl<T: Send + BufferSize + 'static> TraceBuffer<T> {
     }
 }
 
-impl<T> fmt::Debug for TraceBuffer<T> {
+impl<C> fmt::Debug for TraceBuffer<C> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("TraceBuffer").finish()
     }
 }
 
-pub struct QueueMetricsFetcher<T> {
-    waiter: Arc<Waiter<T>>,
+pub struct QueueMetricsFetcher<C> {
+    waiter: Arc<Waiter<C>>,
 }
 
-impl<T> QueueMetricsFetcher<T> {
+impl<C> QueueMetricsFetcher<C> {
     pub fn get_metrics(&self) -> QueueMetrics {
         let Some(mut state) = self.waiter.state.lock().ok() else {
             return QueueMetrics::default();
@@ -446,11 +481,11 @@ pub struct QueueMetrics {
     pub spans_queued: usize,
 }
 
-fn channel<T>(
+fn channel<C>(
     flush_trigger_bytes: usize,
     max_buffered_bytes: usize,
     synchronous_write: bool,
-) -> (Sender<T>, Receiver<T>) {
+) -> (Sender<C>, Receiver<C>) {
     let waiter = Arc::new(Waiter {
         state: Mutex::new(SharedState {
             flush_needed: None,
@@ -472,19 +507,19 @@ fn channel<T>(
     )
 }
 
-struct Sender<T> {
-    waiter: Arc<Waiter<T>>,
+struct Sender<C> {
+    waiter: Arc<Waiter<C>>,
     flush_trigger_bytes: usize,
     synchronous_write: bool,
 }
 
-impl<T> Sender<T> {
+impl<C> Sender<C> {
     fn wait_flush_done(
         &self,
         flush_gen: BatchGeneration,
         timeout: Option<Duration>,
     ) -> Result<(), TraceBufferError> {
-        let cond = |state: &mut SharedState<T>| {
+        let cond = |state: &mut SharedState<C>| {
             state.last_flush_generation < flush_gen && state.channel_state != ChannelState::Stopped
         };
 
@@ -525,14 +560,14 @@ impl<T> Sender<T> {
         Ok(())
     }
 
-    fn lock_state(&self) -> Result<MutexGuard<'_, SharedState<T>>, TraceBufferError> {
+    fn lock_state(&self) -> Result<MutexGuard<'_, SharedState<C>>, TraceBufferError> {
         self.waiter
             .state
             .lock()
             .map_err(|_| TraceBufferError::MutexPoisoned)
     }
 
-    fn get_running_state(&self) -> Result<MutexGuard<'_, SharedState<T>>, TraceBufferError> {
+    fn get_running_state(&self) -> Result<MutexGuard<'_, SharedState<C>>, TraceBufferError> {
         let state = self.lock_state()?;
         if state.channel_state != ChannelState::Running {
             return Err(TraceBufferError::AlreadyClosed);
@@ -540,17 +575,17 @@ impl<T> Sender<T> {
         Ok(state)
     }
 
-    fn add_trace_chunk(&self, chunk: Vec<T>) -> Result<BatchGeneration, TraceBufferError>
+    fn add_trace_chunk(&self, chunk: C) -> Result<BatchGeneration, TraceBufferError>
     where
-        T: BufferSize,
+        C: BufferChunk,
     {
         let mut state = self.get_running_state()?;
-        let chunk_len = chunk.len();
+        let span_count = chunk.span_count();
         if let Err(e @ BatchFullError { spans_dropped }) = state.batch.add_trace_chunk(chunk) {
             state.metrics.spans_dropped_full_buffer += spans_dropped;
             return Err(TraceBufferError::BatchFull(e));
         }
-        state.metrics.spans_queued += chunk_len;
+        state.metrics.spans_queued += span_count;
         let r#gen = state.batch.batch_gen;
         if state.flush_needed.is_none()
             && (state.batch.byte_count > self.flush_trigger_bytes || self.synchronous_write)
@@ -610,12 +645,12 @@ impl<T> Sender<T> {
     }
 }
 
-struct Receiver<T> {
-    waiter: Arc<Waiter<T>>,
+struct Receiver<C> {
+    waiter: Arc<Waiter<C>>,
 }
 
-impl<T> Receiver<T> {
-    fn lock_state(&self) -> Result<MutexGuard<'_, SharedState<T>>, MutexPoisonedError> {
+impl<C> Receiver<C> {
+    fn lock_state(&self) -> Result<MutexGuard<'_, SharedState<C>>, MutexPoisonedError> {
         self.waiter.state.lock().map_err(|_| MutexPoisonedError)
     }
 
@@ -642,10 +677,7 @@ impl<T> Receiver<T> {
         Ok(())
     }
 
-    async fn receive(
-        &self,
-        timeout: Duration,
-    ) -> Result<(Vec<TraceChunk<T>>, FlushType), MutexPoisonedError> {
+    async fn receive(&self, timeout: Duration) -> Result<(Vec<C>, FlushType), MutexPoisonedError> {
         loop {
             // Enable the notify future BEFORE acquiring the lock to avoid lost wakeups:
             // any notify_waiters() call that fires between enable() and .await is captured.
@@ -681,7 +713,7 @@ impl<T> Receiver<T> {
         }
     }
 
-    fn take_batch(state: &mut SharedState<T>, flush_type: FlushType) -> Vec<TraceChunk<T>> {
+    fn take_batch(state: &mut SharedState<C>, flush_type: FlushType) -> Vec<C> {
         state.flush_needed = None;
         state.batch.export(matches!(flush_type, FlushType::Force))
     }
@@ -697,7 +729,7 @@ impl<T> Receiver<T> {
     /// The method refuses chunks and drains under one lock so that this drain is the last one.
     /// A chunk that arrives after the drain but before the export ends would otherwise stay in
     /// a batch that no exporter takes again.
-    fn close_and_drain(&self) -> Result<Vec<TraceChunk<T>>, MutexPoisonedError> {
+    fn close_and_drain(&self) -> Result<Vec<C>, MutexPoisonedError> {
         let mut state = self.lock_state()?;
         state.channel_state = ChannelState::Stopping;
         if state.batch.chunks.is_empty() {
@@ -741,42 +773,42 @@ enum FlushType {
     Force,
 }
 
-struct SharedState<T> {
+struct SharedState<C> {
     flush_needed: Option<FlushType>,
     last_flush_generation: BatchGeneration,
     channel_state: ChannelState,
-    batch: Batch<T>,
+    batch: Batch<C>,
     metrics: QueueMetrics,
 }
 
-struct Waiter<T> {
-    state: Mutex<SharedState<T>>,
+struct Waiter<C> {
+    state: Mutex<SharedState<C>>,
     sender_notifier: Condvar,
     receiver_notifier: tokio::sync::Notify,
 }
 
-impl<T> Waiter<T> {
-    fn notify_receiver(&self, state: MutexGuard<'_, SharedState<T>>) {
+impl<C> Waiter<C> {
+    fn notify_receiver(&self, state: MutexGuard<'_, SharedState<C>>) {
         drop(state);
         self.receiver_notifier.notify_one();
     }
 
     #[inline(always)]
-    fn notify_sender(&self, state: MutexGuard<'_, SharedState<T>>) {
+    fn notify_sender(&self, state: MutexGuard<'_, SharedState<C>>) {
         drop(state);
         self.sender_notifier.notify_all();
     }
 
-    fn mark_stopped(&self, mut state: MutexGuard<'_, SharedState<T>>) {
+    fn mark_stopped(&self, mut state: MutexGuard<'_, SharedState<C>>) {
         state.channel_state = ChannelState::Stopped;
         self.notify_sender(state);
     }
 }
 /// A pluggable export operation for the trace buffer
 ///
-/// This allows mapping from the buffered spans to another type, and
+/// This allows mapping from the buffered chunks to another type, and
 /// calling any export method to send traces.
-pub trait Export<T>: Send + Debug {
+pub trait Export<C>: Send + Debug {
     /// Export the trace chunks.
     /// If `force_flush` is true, the exporter should also export any buffered data (like
     /// metrics) before returning.
@@ -784,7 +816,7 @@ pub trait Export<T>: Send + Debug {
     /// the exporter should still flush buffered data and return `Ok`.
     fn export_trace_chunks(
         &mut self,
-        trace_chunks: Vec<TraceChunk<T>>,
+        trace_chunks: Vec<C>,
         force_flush: bool,
     ) -> Pin<
         Box<
@@ -828,14 +860,14 @@ where
     }
 }
 
-impl<C, R> Export<libdd_trace_utils::span::v04::SpanBytes> for DefaultExport<C, R>
+impl<C, R> Export<Vec<SpanBytes>> for DefaultExport<C, R>
 where
     C: HttpClientCapability + SleepCapability + LogWriterCapability + MaybeSend + Sync + 'static,
     R: SharedRuntime + std::fmt::Debug + Send + Sync + 'static,
 {
     fn export_trace_chunks(
         &mut self,
-        trace_chunks: Vec<TraceChunk<libdd_trace_utils::span::v04::SpanBytes>>,
+        trace_chunks: Vec<Vec<SpanBytes>>,
         force_flush: bool,
     ) -> Pin<
         Box<
@@ -878,20 +910,20 @@ where
 }
 
 #[derive(Debug)]
-struct TraceExporterRunInput<T> {
-    trace_chunks: Vec<TraceChunk<T>>,
+struct TraceExporterRunInput<C> {
+    trace_chunks: Vec<C>,
     flush_type: FlushType,
 }
 
-pub struct TraceExporterWorker<T> {
-    rx: Receiver<T>,
-    export_operation: Box<dyn Export<T> + Send + Sync>,
+pub struct TraceExporterWorker<C> {
+    rx: Receiver<C>,
+    export_operation: Box<dyn Export<C> + Send + Sync>,
     agent_response_handler: ResponseHandler,
     config: TraceBufferConfig,
-    run_input: Option<TraceExporterRunInput<T>>,
+    run_input: Option<TraceExporterRunInput<C>>,
 }
 
-impl<T: Debug> std::fmt::Debug for TraceExporterWorker<T> {
+impl<C: Debug> std::fmt::Debug for TraceExporterWorker<C> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("TraceExporterWorker")
             .field("export_operation", &self.export_operation)
@@ -901,11 +933,11 @@ impl<T: Debug> std::fmt::Debug for TraceExporterWorker<T> {
     }
 }
 
-impl<T: Send + 'static> TraceExporterWorker<T> {
+impl<C: Send + 'static> TraceExporterWorker<C> {
     fn new(
-        rx: Receiver<T>,
+        rx: Receiver<C>,
         agent_response_handler: ResponseHandler,
-        export_operation: Box<dyn Export<T> + Send + Sync>,
+        export_operation: Box<dyn Export<C> + Send + Sync>,
         config: TraceBufferConfig,
     ) -> Self {
         Self {
@@ -922,7 +954,7 @@ impl<T: Send + 'static> TraceExporterWorker<T> {
         TraceExporterRunInput {
             trace_chunks,
             flush_type,
-        }: TraceExporterRunInput<T>,
+        }: TraceExporterRunInput<C>,
     ) {
         let res = self
             .export_operation
@@ -931,7 +963,7 @@ impl<T: Send + 'static> TraceExporterWorker<T> {
         (self.agent_response_handler)(res);
     }
 
-    async fn export_and_ack(&mut self, export: TraceExporterRunInput<T>) {
+    async fn export_and_ack(&mut self, export: TraceExporterRunInput<C>) {
         // An automatic flush with no chunks has nothing to export, so skip the export and
         // the ack. A force flush still invokes the export operation even with no trace
         // chunks because the exporter uses that call to flush buffered client-side stats, which
@@ -950,7 +982,7 @@ impl<T: Send + 'static> TraceExporterWorker<T> {
 }
 
 #[async_trait::async_trait]
-impl<T: Send + Debug + 'static> Worker for TraceExporterWorker<T> {
+impl<C: Send + Debug + 'static> Worker for TraceExporterWorker<C> {
     async fn run(&mut self) {
         let Some(export) = self.run_input.take() else {
             // TODO: this should never happen if the shared runtime works correctly.
@@ -1014,14 +1046,14 @@ mod tests {
 
     use libdd_shared_runtime::{BlockingRuntime, ForkSafeRuntime, SharedRuntime};
 
-    use crate::trace_buffer::{BufferSize, Export, TraceBuffer, TraceBufferConfig};
+    use crate::trace_buffer::{BufferSpan, Export, TraceBuffer, TraceBufferConfig};
     use crate::trace_exporter::agent_response::AgentResponse;
     use crate::trace_exporter::error::TraceExporterError;
 
     use super::{BatchFullError, TraceBufferError};
 
     // Used for tests, 1 byte per item so size computations are easier
-    impl BufferSize for () {
+    impl BufferSpan for () {
         fn byte_size(&self) -> usize {
             1
         }
@@ -1038,10 +1070,10 @@ mod tests {
         }
     }
 
-    impl Export<()> for AssertExporter {
+    impl Export<Vec<()>> for AssertExporter {
         fn export_trace_chunks(
             &mut self,
-            trace_chunks: Vec<super::TraceChunk<()>>,
+            trace_chunks: Vec<Vec<()>>,
             force_flush: bool,
         ) -> std::pin::Pin<
             Box<
@@ -1074,10 +1106,10 @@ mod tests {
         }
     }
 
-    impl Export<()> for GateExporter {
+    impl Export<Vec<()>> for GateExporter {
         fn export_trace_chunks(
             &mut self,
-            trace_chunks: Vec<super::TraceChunk<()>>,
+            trace_chunks: Vec<Vec<()>>,
             force_flush: bool,
         ) -> std::pin::Pin<
             Box<
@@ -1108,7 +1140,7 @@ mod tests {
     ) -> (
         Arc<ForkSafeRuntime>,
         Arc<tokio::sync::Semaphore>,
-        TraceBuffer<()>,
+        TraceBuffer<Vec<()>>,
     ) {
         let rt = Arc::new(ForkSafeRuntime::new().unwrap());
         let sem: Arc<tokio::sync::Semaphore> = Arc::new(tokio::sync::Semaphore::new(0));
@@ -1128,7 +1160,7 @@ mod tests {
     fn make_buffer_with_pending_chunk() -> (
         Arc<ForkSafeRuntime>,
         Arc<tokio::sync::Semaphore>,
-        TraceBuffer<()>,
+        TraceBuffer<Vec<()>>,
     ) {
         let (rt, sem, sender) = make_buffer(
             Box::new(|chunks, force_flush| {
