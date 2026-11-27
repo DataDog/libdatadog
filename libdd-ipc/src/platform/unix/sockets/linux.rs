@@ -4,7 +4,7 @@
 //! Linux-specific IPC socket implementation using `AF_UNIX SOCK_SEQPACKET`.
 
 use super::{PeerCredentials, SeqpacketConn, SeqpacketListener, create_unix_socket};
-use nix::sys::socket::{Backlog, SockType, UnixAddr, accept, bind, connect, listen};
+use nix::sys::socket::{Backlog, SockFlag, SockType, UnixAddr, accept4, bind, connect, listen};
 use std::os::fd::RawFd;
 use std::{
     io,
@@ -48,7 +48,9 @@ impl SeqpacketListener {
     /// check if the peer has already closed the connection (EOF). If so, discard and loop.
     pub fn try_accept(&self) -> io::Result<SeqpacketConn> {
         loop {
-            let new_fd = accept(self.inner.as_raw_fd()).map_err(io::Error::from)?;
+            // Close-on-exec, or a child the server execs keeps the client connected.
+            let new_fd =
+                accept4(self.inner.as_raw_fd(), SockFlag::SOCK_CLOEXEC).map_err(io::Error::from)?;
             let owned = unsafe { OwnedFd::from_raw_fd(new_fd) };
             let conn = SeqpacketConn::from_owned(owned)?;
             // Peek to detect EOF phantom connections left by is_listening probes.
@@ -210,6 +212,64 @@ mod tests {
         let mut buf = [0; 10];
         assert_eq!(server.try_recv_raw(&mut buf).expect("recv").0, 10);
         assert_eq!(buf, [8; 10]);
+    }
+
+    /// Accepted connections must not outlive the server in the children it execs.
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn accepted_connections_are_close_on_exec() {
+        let name = format!("libdd-ipc-cloexec-{}", std::process::id()).into_bytes();
+        let listener = SeqpacketListener::bind_abstract(&name).expect("bind");
+        let _client = SeqpacketConn::connect_abstract(&name).expect("connect");
+        let accepted = listener.try_accept().expect("accept");
+        // SAFETY: F_GETFD only reads the descriptor flags.
+        let flags = unsafe { libc::fcntl(accepted.inner.as_raw_fd(), libc::F_GETFD) };
+        assert_ne!(
+            flags & libc::FD_CLOEXEC,
+            0,
+            "the accepted connection is inherited on exec"
+        );
+    }
+
+    /// More descriptors than a receive takes lose their message, and the ones that did arrive
+    /// are closed.
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn excess_descriptors_lose_their_message_and_do_not_leak() {
+        let (client, server) = SeqpacketConn::socketpair().expect("socketpair");
+        // SAFETY: the child only receives one message and leaves through _exit.
+        match unsafe { libc::fork() } {
+            -1 => panic!("fork failed"),
+            0 => {
+                drop(client);
+                let open = || std::fs::read_dir("/proc/self/fd").map_or(0, |fds| fds.count());
+                let before = open();
+                let result = server.recv_raw_blocking(&mut [0; 16]);
+                let rejected = matches!(&result, Err(e) if e.raw_os_error() == Some(libc::ENOBUFS));
+                let code = match (rejected, open() == before) {
+                    (true, true) => 0,
+                    (false, _) => 1,
+                    (true, false) => 2,
+                };
+                unsafe { libc::_exit(code) }
+            }
+            pid => {
+                drop(server);
+                let files: Vec<_> = (0..=crate::platform::message::MAX_FDS)
+                    .map(|_| std::fs::File::open("/dev/null").expect("open"))
+                    .collect();
+                let fds: Vec<_> = files.iter().map(|file| file.as_raw_fd()).collect();
+                client.send_raw_blocking(vec![1], &fds).expect("send");
+                let mut status = 0;
+                // SAFETY: waits for our own child.
+                assert_eq!(unsafe { libc::waitpid(pid, &mut status, 0) }, pid);
+                assert_eq!(
+                    libc::WEXITSTATUS(status),
+                    0,
+                    "1: not an ENOBUFS, 2: the received descriptors leaked"
+                );
+            }
+        }
     }
 }
 
