@@ -107,19 +107,20 @@ fn find_quoted_string_end(bytes: &[u8], start: usize) -> Option<usize> {
     short_end
 }
 
-/// Find the end of a dollar-quoted string $tag$...$tag$
-/// Returns (`inner_start`, `inner_end`, `outer_end`) or None if not a valid dollar quote
+/// Find the end of a dollar-quoted string $tag$...$tag$ as the default (`Unspecified`) mode scans
+/// it. Returns (`inner_start`, `inner_end`, `outer_end`), or None when the opening or closing tag
+/// is missing, in which case the string runs to the end of the input.
+///
+/// Like the Agent's legacy tokenizer, the tag is everything up to the next `$`, so it may hold
+/// spaces, symbols or newlines. Unlike it, the closing tag is matched on whole bytes, so a
+/// non-ASCII tag such as `$é$...$é$` closes.
 fn find_dollar_quote_end(bytes: &[u8], start: usize) -> Option<(usize, usize, usize)> {
     let n = bytes.len();
     if start >= n || bytes[start] != b'$' {
         return None;
     }
-    // Collect the tag: $<tag>$ — Go allows spaces and other chars in tags
     let mut tag_end = start + 1;
     while tag_end < n && bytes[tag_end] != b'$' {
-        if bytes[tag_end] == b'\n' {
-            return None; // tags don't span lines
-        }
         tag_end += 1;
     }
     if tag_end >= n {
@@ -140,8 +141,25 @@ fn find_dollar_quote_end(bytes: &[u8], start: usize) -> Option<(usize, usize, us
     None
 }
 
-/// Maximum recursion depth for nested dollar-quoted strings (`$tag$...$tag$`).
+/// The tag of the dollar-quoted strings whose body `dollar_quoted_func` obfuscates as SQL.
+const DOLLAR_QUOTED_FUNC_TAG: &str = "$func$";
+
+/// Maximum recursion depth for `$func$` bodies. A body ends at the first `$func$`, so it cannot
+/// nest another one; this bounds the recursion regardless.
 const MAX_DOLLAR_QUOTE_DEPTH: usize = 64;
+
+/// go-sqllexer's `isLetter`: an ASCII letter, `_`, or a non-ASCII letter.
+fn is_sqllexer_letter(c: char) -> bool {
+    c.is_ascii_alphabetic() || c == '_' || (!c.is_ascii() && c.is_alphabetic())
+}
+
+/// A character of a dollar-quote tag in the go-sqllexer modes: an ASCII letter, digit or `_`, or
+/// any non-ASCII character, as `PostgreSQL` accepts. go-sqllexer v0.2.7 only takes non-ASCII
+/// letters and numbers (`isAlphaNumeric`), so it emits a string such as `$€$secret$€$` as sent;
+/// we replace it instead.
+const fn is_dollar_tag_char(c: char) -> bool {
+    c.is_ascii_alphanumeric() || c == '_' || !c.is_ascii()
+}
 
 struct Tokenizer<'a> {
     s: &'a str,
@@ -577,8 +595,123 @@ impl<'a> Tokenizer<'a> {
         }
     }
 
+    /// A `$` that is not a positional parameter in the default (`Unspecified`) mode, which mirrors
+    /// the Agent's legacy tokenizer: every such `$` opens a dollar-quoted string whose tag runs up
+    /// to the next `$`, and one that never closes (e.g. in a truncated query) is an error.
+    ///
+    /// The string becomes `?`, except that with `dollar_quoted_func` the body of a `$func$` string
+    /// (case-sensitive) is obfuscated as SQL. A body that fails to obfuscate, or obfuscates to
+    /// nothing, becomes `?` like any other string.
+    fn legacy_dollar_quote(&mut self) -> Result<(), SqlObfuscationError> {
+        let start = self.pos;
+        let Some((inner_start, inner_end, outer_end)) = find_dollar_quote_end(self.bytes, start)
+        else {
+            return Err(SqlObfuscationError::UnterminatedDollarQuote);
+        };
+        self.pos = outer_end;
+        if self.maybe_consume_alias_next() {
+            return Ok(());
+        }
+        if self.config.dollar_quoted_func && &self.s[start..inner_start] == DOLLAR_QUOTED_FUNC_TAG {
+            match self.obfuscate_dollar_quoted_func_body(&self.s[inner_start..inner_end]) {
+                Some(Ok(body)) if !body.is_empty() => {
+                    self.emit_dollar_quoted_func(&body);
+                    return Ok(());
+                }
+                _ => {}
+            }
+        }
+        self.emit_placeholder();
+        Ok(())
+    }
+
+    /// A `$` that is not a positional parameter in the go-sqllexer modes (`ObfuscateOnly`,
+    /// `ObfuscateAndNormalize` and `NormalizeOnly`), matching go-sqllexer v0.2.7.
+    ///
+    /// The tag is ASCII letters, digits, `_` and non-ASCII characters (see
+    /// [`is_dollar_tag_char`]); a `$` not followed by such a tag and a second `$` does not open a
+    /// dollar-quoted string, and is lexed as a `$identifier` or a lone `$`. A dollar-quoted string
+    /// with no closing tag (e.g. in a truncated query) runs to the end of the input. Strings
+    /// become `?`, except that the body of a `$func$` string is obfuscated as SQL with
+    /// `dollar_quoted_func`. `NormalizeOnly` keeps strings as sent, normalizing only the body
+    /// of a closed `$func$` string.
+    fn sqllexer_dollar(&mut self) {
+        let start = self.pos;
+        let rest = &self.s[start + 1..];
+        let tag_end = start + 1 + rest.find(|c| !is_dollar_tag_char(c)).unwrap_or(rest.len());
+        if self.bytes.get(tag_end) != Some(&b'$') {
+            // Not a dollar-quoted string, e.g. `$foo` or `$(`.
+            self.pos += 1;
+            if rest.chars().next().is_some_and(is_sqllexer_letter) {
+                while !self.at_end()
+                    && (is_ident_char(self.bytes[self.pos]) || self.bytes[self.pos] == b'.')
+                {
+                    self.pos += 1;
+                }
+                self.emit_identifier(&self.s[start..self.pos]);
+            } else {
+                self.before_as_len = None;
+                self.emit("$");
+            }
+            return;
+        }
+        // go-sqllexer does not drop a string that follows `AS`.
+        self.before_as_len = None;
+        let tag = &self.s[start..=tag_end];
+        let inner_start = tag_end + 1;
+        let Some(inner_len) = self.s[inner_start..].find(tag) else {
+            // Unterminated: the string runs to the end of the input.
+            self.pos = self.bytes.len();
+            if self.is_normalize_only() {
+                self.emit(&self.s[start..]);
+            } else {
+                self.emit_placeholder();
+            }
+            return;
+        };
+        let inner = &self.s[inner_start..inner_start + inner_len];
+        self.pos = inner_start + inner_len + tag.len();
+        if tag == DOLLAR_QUOTED_FUNC_TAG
+            && (self.is_normalize_only() || self.config.dollar_quoted_func)
+        {
+            match self.obfuscate_dollar_quoted_func_body(inner) {
+                Some(Ok(body)) => self.emit_dollar_quoted_func(&body),
+                _ => self.emit_placeholder(),
+            }
+        } else if self.is_normalize_only() {
+            self.emit(&self.s[start..self.pos]);
+        } else {
+            self.emit_placeholder();
+        }
+    }
+
+    /// Obfuscates the body of a `$func$` dollar-quoted string with the same configuration, or
+    /// returns `None` past [`MAX_DOLLAR_QUOTE_DEPTH`].
+    fn obfuscate_dollar_quoted_func_body(
+        &self,
+        body: &str,
+    ) -> Option<Result<String, SqlObfuscationError>> {
+        (self.dollar_recursion_depth + 1 < MAX_DOLLAR_QUOTE_DEPTH).then(|| {
+            obfuscate_sql_at_depth(
+                body,
+                self.config,
+                self.dbms,
+                self.dollar_recursion_depth + 1,
+            )
+        })
+    }
+
+    fn emit_dollar_quoted_func(&mut self, body: &str) {
+        self.space();
+        self.result.push_str(DOLLAR_QUOTED_FUNC_TAG);
+        self.result.push_str(body);
+        self.result.push_str(DOLLAR_QUOTED_FUNC_TAG);
+        self.last_was_placeholder = false;
+        self.last_was_assign = false;
+    }
+
     #[allow(clippy::too_many_lines, reason = "FIXME: split this function")]
-    fn process(&mut self) {
+    fn process(&mut self) -> Result<(), SqlObfuscationError> {
         while !self.at_end() {
             let b = self.bytes[self.pos];
 
@@ -984,87 +1117,13 @@ impl<'a> Tokenizer<'a> {
                                 self.emit_placeholder();
                             }
                         }
-                        // Dollar-quoted string: $tag$...$tag$ or $$...$$
-                        _ if next == Some(b'$')
-                            || next.is_some_and(|c| c.is_ascii_alphabetic() || c == b'_') =>
+                        // SQL Server identifier such as `$action` in a MERGE's OUTPUT clause,
+                        // as in Go: a `$` followed by a letter (Go's isLetter).
+                        _ if matches!(self.dbms, DbmsKind::Mssql)
+                            && self.s[self.pos + 1..].chars().next().is_some_and(|c| {
+                                c.is_alphabetic() || matches!(c, '_' | '@' | '#')
+                            }) =>
                         {
-                            let start = self.pos;
-                            if let Some((inner_start, inner_end, outer_end)) =
-                                find_dollar_quote_end(self.bytes, start)
-                            {
-                                if self.maybe_consume_alias_next() {
-                                    self.pos = outer_end;
-                                    continue;
-                                }
-                                if self.is_normalize_only() {
-                                    // In normalize mode: process inner content with same config
-                                    let tag_str = &self.s[start..inner_start];
-                                    let inner = &self.s[inner_start..inner_end];
-                                    let close_tag = &self.s[inner_end..outer_end];
-                                    let normalized_inner = obfuscate_sql_at_depth(
-                                        inner,
-                                        self.config,
-                                        self.dbms,
-                                        self.dollar_recursion_depth + 1,
-                                    );
-                                    self.space();
-                                    self.result.push_str(tag_str);
-                                    self.result.push_str(&normalized_inner);
-                                    self.result.push_str(close_tag);
-                                } else if self.config.dollar_quoted_func {
-                                    // Obfuscate the content inside dollar quotes.
-                                    // Past MAX_DOLLAR_QUOTE_DEPTH, use a placeholder directly
-                                    // rather than recursing, so the nested literal can't leak.
-                                    let tag_str = &self.s[start..inner_start];
-                                    let inner = &self.s[inner_start..inner_end];
-                                    let close_tag = &self.s[inner_end..outer_end];
-                                    if self.dollar_recursion_depth + 1 >= MAX_DOLLAR_QUOTE_DEPTH {
-                                        self.emit_placeholder();
-                                        self.pos = outer_end;
-                                        continue;
-                                    }
-                                    let obfuscated_inner = obfuscate_sql_at_depth(
-                                        inner,
-                                        self.config,
-                                        self.dbms,
-                                        self.dollar_recursion_depth + 1,
-                                    );
-                                    // If inner collapses to just '?' (trivial content), emit ?
-                                    // directly
-                                    if obfuscated_inner.trim() == "?" {
-                                        self.emit_placeholder();
-                                    } else {
-                                        self.space();
-                                        self.result.push_str(tag_str);
-                                        self.result.push_str(&obfuscated_inner);
-                                        self.result.push_str(close_tag);
-                                    }
-                                } else {
-                                    // Replace whole thing with ?
-                                    self.emit_placeholder();
-                                }
-                                self.pos = outer_end;
-                            } else {
-                                // Not a valid dollar quote, check if it's an identifier starting
-                                // with $
-                                self.pos += 1; // skip '$'
-                                let id_start_pos = self.pos;
-                                while !self.at_end()
-                                    && (is_ident_char(self.bytes[self.pos])
-                                        || self.bytes[self.pos] == b'$')
-                                {
-                                    self.pos += 1;
-                                }
-                                let ident = &self.s[id_start_pos - 1..self.pos]; // include '$'
-                                if self.maybe_consume_alias_next() {
-                                    continue;
-                                }
-                                self.emit(ident);
-                            }
-                            let _ = b; // suppress unused warning
-                        }
-                        _ => {
-                            // $identifier like $action - keep as-is
                             let start = self.pos;
                             self.pos += 1; // skip '$'
                             while !self.at_end()
@@ -1079,6 +1138,10 @@ impl<'a> Tokenizer<'a> {
                             }
                             self.emit(token);
                         }
+                        // Anything else: a dollar-quoted string, or in the go-sqllexer modes,
+                        // possibly a `$identifier` or a lone `$`.
+                        _ if self.is_unspecified_obfuscate_mode() => self.legacy_dollar_quote()?,
+                        _ => self.sqllexer_dollar(),
                     }
                 }
 
@@ -1951,6 +2014,7 @@ impl<'a> Tokenizer<'a> {
                 }
             }
         }
+        Ok(())
     }
 
     fn finalize(mut self) -> String {
@@ -2160,15 +2224,22 @@ pub enum SqlObfuscationError {
     /// Obfuscation produced nothing, so there is no query to report.
     #[error("obfuscation result is empty")]
     EmptyResult,
+    /// In the default (`Unspecified`) mode, a dollar-quoted string (`$tag$...$tag$`) has no
+    /// closing tag, for example because the query was truncated. In that mode, as in the Agent's
+    /// legacy tokenizer, a `$` that does not start a positional parameter (`$1`) opens one. The
+    /// other modes replace an unterminated dollar-quoted string instead, as go-sqllexer does.
+    #[error("unexpected EOF in dollar-quoted string")]
+    UnterminatedDollarQuote,
 }
 
 /// Obfuscates a SQL string using a proper tokenizer.
 ///
 /// # Errors
 ///
-/// Returns [`SqlObfuscationError::EmptyResult`] when obfuscation leaves nothing behind. A failed
-/// query must never be forwarded as sent: callers replace it with a marker for their context,
-/// either [`SQL_NON_PARSABLE_REPLACEMENT`] for a span or stats resource (see
+/// Returns [`SqlObfuscationError::EmptyResult`] when obfuscation leaves nothing behind, and
+/// [`SqlObfuscationError::UnterminatedDollarQuote`] when a dollar-quoted string never closes in the
+/// default mode. A failed query must never be forwarded as sent: callers replace it with a marker
+/// for their context, either [`SQL_NON_PARSABLE_REPLACEMENT`] for a span or stats resource (see
 /// [`obfuscate_sql_resource`]) or [`SQL_OBFUSCATION_FAILURE_REPLACEMENT`] for a value inside a JSON
 /// document.
 pub fn obfuscate_sql(
@@ -2176,32 +2247,31 @@ pub fn obfuscate_sql(
     config: &SqlConfig,
     dbms: DbmsKind,
 ) -> Result<String, SqlObfuscationError> {
-    let obfuscated = obfuscate_sql_at_depth(s, config, dbms, 0);
+    let obfuscated = obfuscate_sql_at_depth(s, config, dbms, 0)?;
     if obfuscated.is_empty() {
         return Err(SqlObfuscationError::EmptyResult);
     }
     Ok(obfuscated)
 }
 
-/// Same as `obfuscate_sql`, tracking recursion depth for nested dollar-quoted strings.
-/// Once `MAX_DOLLAR_QUOTE_DEPTH` is reached, this returns the content unmodified rather than
-/// recursing further, so pathologically nested input can't overflow the stack. The
-/// `dollar_quoted_func` obfuscate branch guards against this itself (see its call site) so it
-/// never leaks a literal this way; only the `NormalizeOnly` caller relies on this fallback.
+/// Same as `obfuscate_sql`, tracking recursion depth for `$func$` bodies. Once
+/// `MAX_DOLLAR_QUOTE_DEPTH` is reached, this returns the content unmodified rather than recursing
+/// further. Callers never get there: `Tokenizer::obfuscate_dollar_quoted_func_body` stops one level
+/// earlier, so the body is replaced instead.
 fn obfuscate_sql_at_depth(
     s: &str,
     config: &SqlConfig,
     dbms: DbmsKind,
     dollar_recursion_depth: usize,
-) -> String {
+) -> Result<String, SqlObfuscationError> {
     if s.is_empty() {
-        return String::new();
+        return Ok(String::new());
     }
     if dollar_recursion_depth >= MAX_DOLLAR_QUOTE_DEPTH {
-        return s.to_string();
+        return Ok(s.to_string());
     }
     let mut tokenizer = Tokenizer::new(s, config, dbms, dollar_recursion_depth);
-    tokenizer.process();
+    tokenizer.process()?;
     let raw = tokenizer.finalize();
     // collapse_grouped_values applies in legacy mode and obfuscate_and_normalize mode.
     // In obfuscate_only and normalize_only modes, values are NOT collapsed.
@@ -2210,11 +2280,11 @@ fn obfuscate_sql_at_depth(
         config.obfuscation_mode,
         SqlObfuscationMode::Unspecified | SqlObfuscationMode::ObfuscateAndNormalize
     );
-    if should_collapse {
+    Ok(if should_collapse {
         collapse_grouped_values(&raw, config.obfuscation_mode)
     } else {
         raw
-    }
+    })
 }
 
 /// Obfuscates a non-empty SQL span or stats-group resource, applying our failure policy.
@@ -2404,53 +2474,432 @@ mod tests {
         );
     }
 
-    #[cfg_attr(miri, ignore)] // huge nested input, prohibitively slow under Miri
+    /// A query with many `$func$` strings in a row must not overflow the stack. A `$func$` body
+    /// ends at the first `$func$`, so the strings cannot nest.
+    #[cfg_attr(miri, ignore)] // huge input, prohibitively slow under Miri
     #[test]
-    fn test_dollar_quote_nesting_does_not_overflow_stack() {
+    fn test_dollar_quoted_func_does_not_overflow_stack() {
         const NESTING: usize = 20_000;
-        let mut sql = String::new();
-        for i in 0..NESTING {
-            let _ = write!(sql, "$a{i}$");
+        let secret = "'123-45-6789'";
+        let mut sql = "SELECT $func$".repeat(NESTING);
+        sql.push_str(secret);
+        sql.push_str(&"$func$".repeat(NESTING));
+        for (column, &(obfuscation_mode, dollar_quoted_func)) in
+            GO_DOLLAR_PARITY_CONFIGS.iter().enumerate()
+        {
+            let config = SqlConfig {
+                dollar_quoted_func,
+                obfuscation_mode,
+                ..Default::default()
+            };
+            let got = obfuscate_sql(&sql, &config, DbmsKind::Postgresql);
+            if column != NORMALIZE_ONLY && column != NORMALIZE_ONLY_DQF {
+                assert!(
+                    !got.as_ref().is_ok_and(|got| got.contains(secret)),
+                    "{obfuscation_mode:?} dollar_quoted_func={dollar_quoted_func}: the nested \
+                     literal leaked"
+                );
+            }
         }
-        sql.push_str("SELECT 1");
-        for i in (0..NESTING).rev() {
-            let _ = write!(sql, "$a{i}$");
+    }
+
+    /// Past `MAX_DOLLAR_QUOTE_DEPTH`, a `$func$` body is replaced rather than obfuscated, so its
+    /// literals cannot leak.
+    #[test]
+    fn test_dollar_quoted_func_past_depth_limit_does_not_leak_literal() {
+        for obfuscation_mode in [
+            SqlObfuscationMode::ObfuscateOnly,
+            SqlObfuscationMode::ObfuscateAndNormalize,
+            #[allow(deprecated)]
+            SqlObfuscationMode::Unspecified,
+        ] {
+            let config = SqlConfig {
+                obfuscation_mode,
+                dollar_quoted_func: true,
+                ..Default::default()
+            };
+            let input = "SELECT $func$SELECT '123-45-6789'$func$";
+            let got = super::obfuscate_sql_at_depth(
+                input,
+                &config,
+                DbmsKind::Postgresql,
+                super::MAX_DOLLAR_QUOTE_DEPTH - 1,
+            );
+            assert_eq!(got.as_deref(), Ok("SELECT ?"), "{obfuscation_mode:?}");
+            // One level up, the body is obfuscated as usual.
+            let got = super::obfuscate_sql_at_depth(
+                input,
+                &config,
+                DbmsKind::Postgresql,
+                super::MAX_DOLLAR_QUOTE_DEPTH - 2,
+            );
+            assert_eq!(
+                got.as_deref(),
+                Ok("SELECT $func$SELECT ?$func$"),
+                "{obfuscation_mode:?}"
+            );
         }
+    }
 
-        let config = SqlConfig {
-            dollar_quoted_func: true,
-            ..Default::default()
-        };
-        let _ = obfuscate_sql(&sql, &config, DbmsKind::Postgresql);
+    // Columns of `GO_DOLLAR_PARITY`, in the order of `GO_DOLLAR_PARITY_CONFIGS`.
+    const DEFAULT: usize = 0;
+    const DEFAULT_DQF: usize = 1;
+    const OBFUSCATE_ONLY: usize = 2;
+    const OBFUSCATE_AND_NORMALIZE: usize = 3;
+    const NORMALIZE_ONLY: usize = 4;
+    const OBFUSCATE_ONLY_DQF: usize = 5;
+    const OBFUSCATE_AND_NORMALIZE_DQF: usize = 6;
+    const NORMALIZE_ONLY_DQF: usize = 7;
 
-        let normalize_config = SqlConfig {
-            obfuscation_mode: SqlObfuscationMode::NormalizeOnly,
-            ..Default::default()
-        };
-        let _ = obfuscate_sql(&sql, &normalize_config, DbmsKind::Postgresql);
+    /// `(obfuscation_mode, dollar_quoted_func)` for each column of `GO_DOLLAR_PARITY`.
+    #[allow(deprecated)]
+    const GO_DOLLAR_PARITY_CONFIGS: [(SqlObfuscationMode, bool); 8] = [
+        (SqlObfuscationMode::Unspecified, false),
+        (SqlObfuscationMode::Unspecified, true),
+        (SqlObfuscationMode::ObfuscateOnly, false),
+        (SqlObfuscationMode::ObfuscateAndNormalize, false),
+        (SqlObfuscationMode::NormalizeOnly, false),
+        (SqlObfuscationMode::ObfuscateOnly, true),
+        (SqlObfuscationMode::ObfuscateAndNormalize, true),
+        (SqlObfuscationMode::NormalizeOnly, true),
+    ];
+
+    /// An error, which the trace-agent reports as `Non-parsable SQL query`.
+    const ERR: Option<&str> = None;
+    const Q: Option<&str> = Some("SELECT ?");
+    use DbmsKind::{Generic as Gen, Mssql as Ms, Postgresql as Pg};
+
+    /// What the Agent's Go obfuscator (`pkg/obfuscate` on datadog-agent `main`) returns for queries
+    /// with a `$`, in each column of `GO_DOLLAR_PARITY_CONFIGS`: `[default, default +
+    /// dollar_quoted_func, obfuscate_only, obfuscate_and_normalize, normalize_only, then the last
+    /// three with dollar_quoted_func]`.
+    ///
+    /// The default mode is the Agent's legacy tokenizer, where the DBMS is set in the SQL config.
+    /// The other modes are go-sqllexer v0.2.7, which DataDog/datadog-agent#61070 moves the Agent
+    /// to (v0.2.6 emits an unterminated dollar-quoted string as sent). Where we differ on purpose,
+    /// `GO_DOLLAR_PARITY_EXCEPTIONS` says what we return instead, and why.
+    #[rustfmt::skip]
+    const GO_DOLLAR_PARITY: &[(DbmsKind, &str, [Option<&str>; 8])] = &[
+        (Pg, "SELECT $tag$abc$tag$",
+            [Q, Q, Q, Q, Some("SELECT $tag$abc$tag$"), Q, Q, Some("SELECT $tag$abc$tag$")]),
+        (Pg, "SELECT $$abc$$",
+            [Q, Q, Q, Q, Some("SELECT $$abc$$"), Q, Q, Some("SELECT $$abc$$")]),
+        (Pg, "SELECT $tag$$tag$",
+            [Q, Q, Q, Q, Some("SELECT $tag$$tag$"), Q, Q, Some("SELECT $tag$$tag$")]),
+        (Pg, "SELECT $tag$$5.00$tag$",
+            [Q, Q, Q, Q, Some("SELECT $tag$$5.00$tag$"), Q, Q, Some("SELECT $tag$$5.00$tag$")]),
+        (Pg, "SELECT $tag$$$tag$",
+            [Q, Q, Q, Q, Some("SELECT $tag$$$tag$"), Q, Q, Some("SELECT $tag$$$tag$")]),
+        (Pg, "SELECT $$$$",
+            [Q, Q, Q, Q, Some("SELECT $$$$"), Q, Q, Some("SELECT $$$$")]),
+        (Pg, "SELECT $eEGKEwMKHi$$eEGKEwMKHi$",
+            [Q, Q, Q, Q, Some("SELECT $eEGKEwMKHi$$eEGKEwMKHi$"), Q, Q, Some("SELECT $eEGKEwMKHi$$eEGKEwMKHi$")]),
+        (Pg, "SELECT $tag$ab$tactac$tx$tag$",
+            [Q, Q, Q, Q, Some("SELECT $tag$ab$tactac$tx$tag$"), Q, Q, Some("SELECT $tag$ab$tactac$tx$tag$")]),
+        (Pg, "SELECT $_t$secret$_t$",
+            [Q, Q, Q, Q, Some("SELECT $_t$secret$_t$"), Q, Q, Some("SELECT $_t$secret$_t$")]),
+        (Pg, "SELECT $t1$secret$t1$",
+            [Q, Q, Q, Q, Some("SELECT $t1$secret$t1$"), Q, Q, Some("SELECT $t1$secret$t1$")]),
+        (Pg, "SELECT * FROM users WHERE name = $eEGKEwMKHi$$eEGKEwMKHi$",
+            [Some("SELECT * FROM users WHERE name = ?"), Some("SELECT * FROM users WHERE name = ?"), Some("SELECT * FROM users WHERE name = ?"), Some("SELECT * FROM users WHERE name = ?"), Some("SELECT * FROM users WHERE name = $eEGKEwMKHi$$eEGKEwMKHi$"), Some("SELECT * FROM users WHERE name = ?"), Some("SELECT * FROM users WHERE name = ?"), Some("SELECT * FROM users WHERE name = $eEGKEwMKHi$$eEGKEwMKHi$")]),
+        (Pg, "SELECT $tag$abc$tag$ FROM t WHERE x = 'y' AND z = 2",
+            [Some("SELECT ? FROM t WHERE x = ? AND z = ?"), Some("SELECT ? FROM t WHERE x = ? AND z = ?"), Some("SELECT ? FROM t WHERE x = ? AND z = ?"), Some("SELECT ? FROM t WHERE x = ? AND z = ?"), Some("SELECT $tag$abc$tag$ FROM t WHERE x = 'y' AND z = 2"), Some("SELECT ? FROM t WHERE x = ? AND z = ?"), Some("SELECT ? FROM t WHERE x = ? AND z = ?"), Some("SELECT $tag$abc$tag$ FROM t WHERE x = 'y' AND z = 2")]),
+        (Pg, "SELECT $tag$abc$tag$, $$def$$ FROM t WHERE id = 5",
+            [Some("SELECT ? FROM t WHERE id = ?"), Some("SELECT ? FROM t WHERE id = ?"), Some("SELECT ?, ? FROM t WHERE id = ?"), Some("SELECT ?, ? FROM t WHERE id = ?"), Some("SELECT $tag$abc$tag$, $$def$$ FROM t WHERE id = 5"), Some("SELECT ?, ? FROM t WHERE id = ?"), Some("SELECT ?, ? FROM t WHERE id = ?"), Some("SELECT $tag$abc$tag$, $$def$$ FROM t WHERE id = 5")]),
+        (Pg, "SELECT 'a' AS $tag$x$tag$",
+            [Q, Q, Some("SELECT ? AS ?"), Some("SELECT ? AS ?"), Some("SELECT 'a' AS $tag$x$tag$"), Some("SELECT ? AS ?"), Some("SELECT ? AS ?"), Some("SELECT 'a' AS $tag$x$tag$")]),
+        (Pg, "CREATE FUNCTION f RETURNS int AS $$ SELECT 1 $$ LANGUAGE sql",
+            [Some("CREATE FUNCTION f RETURNS int LANGUAGE sql"), Some("CREATE FUNCTION f RETURNS int LANGUAGE sql"), Some("CREATE FUNCTION f RETURNS int AS ? LANGUAGE sql"), Some("CREATE FUNCTION f RETURNS int AS ? LANGUAGE sql"), Some("CREATE FUNCTION f RETURNS int AS $$ SELECT 1 $$ LANGUAGE sql"), Some("CREATE FUNCTION f RETURNS int AS ? LANGUAGE sql"), Some("CREATE FUNCTION f RETURNS int AS ? LANGUAGE sql"), Some("CREATE FUNCTION f RETURNS int AS $$ SELECT 1 $$ LANGUAGE sql")]),
+        (Pg, "SELECT $a b$secret$a b$",
+            [Q, Q, Some("SELECT $a b$secret$a b$"), Some("SELECT $a b$secret$a b$"), Some("SELECT $a b$secret$a b$"), Some("SELECT $a b$secret$a b$"), Some("SELECT $a b$secret$a b$"), Some("SELECT $a b$secret$a b$")]),
+        (Pg, "SELECT $ x$abc$ x$",
+            [Q, Q, Some("SELECT $ x$abc$ x$"), Some("SELECT $ x$abc$ x$"), Some("SELECT $ x$abc$ x$"), Some("SELECT $ x$abc$ x$"), Some("SELECT $ x$abc$ x$"), Some("SELECT $ x$abc$ x$")]),
+        (Pg, "SELECT $a.b$secret$a.b$",
+            [Q, Q, Some("SELECT $a.b$secret$a.b$"), Some("SELECT $a.b$secret$a.b$"), Some("SELECT $a.b$secret$a.b$"), Some("SELECT $a.b$secret$a.b$"), Some("SELECT $a.b$secret$a.b$"), Some("SELECT $a.b$secret$a.b$")]),
+        (Pg, "SELECT $é$secret$é$",
+            [ERR, ERR, Q, Q, Some("SELECT $é$secret$é$"), Q, Q, Some("SELECT $é$secret$é$")]),
+        (Pg, "SELECT $é$'secret'$é$",
+            [ERR, ERR, Q, Q, Some("SELECT $é$'secret'$é$"), Q, Q, Some("SELECT $é$'secret'$é$")]),
+        (Pg, "SELECT $tag$secret",
+            [ERR, ERR, Q, Q, Some("SELECT $tag$secret"), Q, Q, Some("SELECT $tag$secret")]),
+        (Pg, "SELECT $tag$secret$other$",
+            [ERR, ERR, Q, Q, Some("SELECT $tag$secret$other$"), Q, Q, Some("SELECT $tag$secret$other$")]),
+        (Pg, "SELECT $tag$secret$TAG$",
+            [ERR, ERR, Q, Q, Some("SELECT $tag$secret$TAG$"), Q, Q, Some("SELECT $tag$secret$TAG$")]),
+        (Pg, "SELECT $tag$secret$tag",
+            [ERR, ERR, Q, Q, Some("SELECT $tag$secret$tag"), Q, Q, Some("SELECT $tag$secret$tag")]),
+        (Pg, "SELECT $tag$secret$é$",
+            [ERR, ERR, Q, Q, Some("SELECT $tag$secret$é$"), Q, Q, Some("SELECT $tag$secret$é$")]),
+        (Pg, "SELECT * FROM t WHERE a = $$secret' AND b = 1",
+            [ERR, ERR, Some("SELECT * FROM t WHERE a = ?"), Some("SELECT * FROM t WHERE a = ?"), Some("SELECT * FROM t WHERE a = $$secret' AND b = 1"), Some("SELECT * FROM t WHERE a = ?"), Some("SELECT * FROM t WHERE a = ?"), Some("SELECT * FROM t WHERE a = $$secret' AND b = 1")]),
+        (Pg, "SELECT $$",
+            [ERR, ERR, Q, Q, Some("SELECT $$"), Q, Q, Some("SELECT $$")]),
+        (Pg, "SELECT $é1_$secret",
+            [ERR, ERR, Q, Q, Some("SELECT $é1_$secret"), Q, Q, Some("SELECT $é1_$secret")]),
+        (Pg, "SELECT $é$secret",
+            [ERR, ERR, Q, Q, Some("SELECT $é$secret"), Q, Q, Some("SELECT $é$secret")]),
+        (Pg, "SELECT $a$b",
+            [ERR, ERR, Q, Q, Some("SELECT $a$b"), Q, Q, Some("SELECT $a$b")]),
+        (Pg, "SELECT $foo$ FROM t",
+            [ERR, ERR, Q, Q, Some("SELECT $foo$ FROM t"), Q, Q, Some("SELECT $foo$ FROM t")]),
+        (Pg, "SELECT $foo FROM t",
+            [ERR, ERR, Some("SELECT $foo FROM t"), Some("SELECT $foo FROM t"), Some("SELECT $foo FROM t"), Some("SELECT $foo FROM t"), Some("SELECT $foo FROM t"), Some("SELECT $foo FROM t")]),
+        (Pg, "SELECT $foo, bar$baz FROM t WHERE id = 1",
+            [ERR, ERR, Some("SELECT $foo, bar$baz FROM t WHERE id = ?"), Some("SELECT $foo, bar$baz FROM t WHERE id = ?"), Some("SELECT $foo, bar$baz FROM t WHERE id = 1"), Some("SELECT $foo, bar$baz FROM t WHERE id = ?"), Some("SELECT $foo, bar$baz FROM t WHERE id = ?"), Some("SELECT $foo, bar$baz FROM t WHERE id = 1")]),
+        (Pg, "SELECT $a b$secret",
+            [ERR, ERR, Some("SELECT $a b$secret"), Some("SELECT $a b$secret"), Some("SELECT $a b$secret"), Some("SELECT $a b$secret"), Some("SELECT $a b$secret"), Some("SELECT $a b$secret")]),
+        (Pg, "SELECT $a.b$secret",
+            [ERR, ERR, Some("SELECT $a.b$secret"), Some("SELECT $a.b$secret"), Some("SELECT $a.b$secret"), Some("SELECT $a.b$secret"), Some("SELECT $a.b$secret"), Some("SELECT $a.b$secret")]),
+        (Pg, "SELECT $",
+            [ERR, ERR, Some("SELECT $"), Some("SELECT $"), Some("SELECT $"), Some("SELECT $"), Some("SELECT $"), Some("SELECT $")]),
+        (Pg, "SELECT $ FROM t",
+            [ERR, ERR, Some("SELECT $ FROM t"), Some("SELECT $ FROM t"), Some("SELECT $ FROM t"), Some("SELECT $ FROM t"), Some("SELECT $ FROM t"), Some("SELECT $ FROM t")]),
+        (Pg, "OUTPUT $action, inserted.id",
+            [ERR, ERR, Some("OUTPUT $action, inserted.id"), Some("OUTPUT $action, inserted.id"), Some("OUTPUT $action, inserted.id"), Some("OUTPUT $action, inserted.id"), Some("OUTPUT $action, inserted.id"), Some("OUTPUT $action, inserted.id")]),
+        (Pg, "SELECT a$b FROM t",
+            [Some("SELECT a$b FROM t"), Some("SELECT a$b FROM t"), Some("SELECT a$b FROM t"), Some("SELECT a$b FROM t"), Some("SELECT a$b FROM t"), Some("SELECT a$b FROM t"), Some("SELECT a$b FROM t"), Some("SELECT a$b FROM t")]),
+        (Pg, "SELECT * FROM t WHERE a = $1 AND b = $2",
+            [Some("SELECT * FROM t WHERE a = ? AND b = ?"), Some("SELECT * FROM t WHERE a = ? AND b = ?"), Some("SELECT * FROM t WHERE a = ? AND b = ?"), Some("SELECT * FROM t WHERE a = ? AND b = ?"), Some("SELECT * FROM t WHERE a = $1 AND b = $2"), Some("SELECT * FROM t WHERE a = ? AND b = ?"), Some("SELECT * FROM t WHERE a = ? AND b = ?"), Some("SELECT * FROM t WHERE a = $1 AND b = $2")]),
+        (Pg, "select * from dollarField$ as df from some$dollar$filled_thing$$",
+            [Some("select * from dollarField$ from some$dollar$filled_thing$$"), Some("select * from dollarField$ from some$dollar$filled_thing$$"), Some("select * from dollarField$ as df from some$dollar$filled_thing$$"), Some("select * from dollarField$ from some$dollar$filled_thing$$"), Some("select * from dollarField$ from some$dollar$filled_thing$$"), Some("select * from dollarField$ as df from some$dollar$filled_thing$$"), Some("select * from dollarField$ from some$dollar$filled_thing$$"), Some("select * from dollarField$ from some$dollar$filled_thing$$")]),
+        (Pg, "SELECT $func$INSERT INTO t VALUES ('a', 1)$func$ FROM users",
+            [Some("SELECT ? FROM users"), Some("SELECT $func$INSERT INTO t VALUES ( ? )$func$ FROM users"), Some("SELECT ? FROM users"), Some("SELECT ? FROM users"), Some("SELECT $func$INSERT INTO t VALUES ( 'a', 1 )$func$ FROM users"), Some("SELECT $func$INSERT INTO t VALUES (?, ?)$func$ FROM users"), Some("SELECT $func$INSERT INTO t VALUES ( ? )$func$ FROM users"), Some("SELECT $func$INSERT INTO t VALUES ( 'a', 1 )$func$ FROM users")]),
+        (Pg, "SELECT $func$SELECT $tag$secret$func$ FROM users",
+            [Some("SELECT ? FROM users"), Some("SELECT ? FROM users"), Some("SELECT ? FROM users"), Some("SELECT ? FROM users"), Some("SELECT $func$SELECT $tag$secret$func$ FROM users"), Some("SELECT $func$SELECT ?$func$ FROM users"), Some("SELECT $func$SELECT ?$func$ FROM users"), Some("SELECT $func$SELECT $tag$secret$func$ FROM users")]),
+        (Pg, "SELECT $func$SELECT 'a', $tag$x$tag$$func$ FROM t",
+            [Some("SELECT ? FROM t"), Some("SELECT $func$SELECT ?$func$ FROM t"), Some("SELECT ? FROM t"), Some("SELECT ? FROM t"), Some("SELECT $func$SELECT 'a', $tag$x$tag$$func$ FROM t"), Some("SELECT $func$SELECT ?, ?$func$ FROM t"), Some("SELECT $func$SELECT ?, ?$func$ FROM t"), Some("SELECT $func$SELECT 'a', $tag$x$tag$$func$ FROM t")]),
+        (Pg, "SELECT $func$SELECT $func$, $func$SELECT 'x'$func$ FROM t",
+            [Some("SELECT ? FROM t"), Some("SELECT $func$SELECT$func$, $func$SELECT ?$func$ FROM t"), Some("SELECT ?, ? FROM t"), Some("SELECT ?, ? FROM t"), Some("SELECT $func$SELECT$func$, $func$SELECT 'x'$func$ FROM t"), Some("SELECT $func$SELECT$func$, $func$SELECT ?$func$ FROM t"), Some("SELECT $func$SELECT$func$, $func$SELECT ?$func$ FROM t"), Some("SELECT $func$SELECT$func$, $func$SELECT 'x'$func$ FROM t")]),
+        (Pg, "SELECT $FUNC$SELECT 'secret'$FUNC$ FROM t",
+            [Some("SELECT ? FROM t"), Some("SELECT ? FROM t"), Some("SELECT ? FROM t"), Some("SELECT ? FROM t"), Some("SELECT $FUNC$SELECT 'secret'$FUNC$ FROM t"), Some("SELECT ? FROM t"), Some("SELECT ? FROM t"), Some("SELECT $FUNC$SELECT 'secret'$FUNC$ FROM t")]),
+        (Pg, "SELECT $Func$SELECT 'secret'$Func$ FROM t",
+            [Some("SELECT ? FROM t"), Some("SELECT ? FROM t"), Some("SELECT ? FROM t"), Some("SELECT ? FROM t"), Some("SELECT $Func$SELECT 'secret'$Func$ FROM t"), Some("SELECT ? FROM t"), Some("SELECT ? FROM t"), Some("SELECT $Func$SELECT 'secret'$Func$ FROM t")]),
+        (Pg, "SELECT $func$SELECT 'secret' FROM t",
+            [ERR, ERR, Q, Q, Some("SELECT $func$SELECT 'secret' FROM t"), Q, Q, Some("SELECT $func$SELECT 'secret' FROM t")]),
+        (Pg, "SELECT $func$$func$ FROM t",
+            [Some("SELECT ? FROM t"), Some("SELECT ? FROM t"), Some("SELECT ? FROM t"), Some("SELECT ? FROM t"), Some("SELECT $func$$func$ FROM t"), Some("SELECT $func$$func$ FROM t"), Some("SELECT $func$$func$ FROM t"), Some("SELECT $func$$func$ FROM t")]),
+        (Pg, "SELECT $func$ $func$ FROM t",
+            [Some("SELECT ? FROM t"), Some("SELECT ? FROM t"), Some("SELECT ? FROM t"), Some("SELECT ? FROM t"), Some("SELECT $func$$func$ FROM t"), Some("SELECT $func$$func$ FROM t"), Some("SELECT $func$$func$ FROM t"), Some("SELECT $func$$func$ FROM t")]),
+        (Pg, "SELECT $func$1$func$ FROM t",
+            [Some("SELECT ? FROM t"), Some("SELECT $func$?$func$ FROM t"), Some("SELECT ? FROM t"), Some("SELECT ? FROM t"), Some("SELECT $func$1$func$ FROM t"), Some("SELECT $func$?$func$ FROM t"), Some("SELECT $func$?$func$ FROM t"), Some("SELECT $func$1$func$ FROM t")]),
+        (Pg, "SELECT $func$abc$func$ FROM t",
+            [Some("SELECT ? FROM t"), Some("SELECT $func$abc$func$ FROM t"), Some("SELECT ? FROM t"), Some("SELECT ? FROM t"), Some("SELECT $func$abc$func$ FROM t"), Some("SELECT $func$abc$func$ FROM t"), Some("SELECT $func$abc$func$ FROM t"), Some("SELECT $func$abc$func$ FROM t")]),
+        (Pg, "SELECT $func$SELECT 1$func$ FROM t",
+            [Some("SELECT ? FROM t"), Some("SELECT $func$SELECT ?$func$ FROM t"), Some("SELECT ? FROM t"), Some("SELECT ? FROM t"), Some("SELECT $func$SELECT 1$func$ FROM t"), Some("SELECT $func$SELECT ?$func$ FROM t"), Some("SELECT $func$SELECT ?$func$ FROM t"), Some("SELECT $func$SELECT 1$func$ FROM t")]),
+        (Ms, "SELECT $foo FROM t",
+            [Some("SELECT $foo FROM t"), Some("SELECT $foo FROM t"), Some("SELECT $foo FROM t"), Some("SELECT $foo FROM t"), Some("SELECT $foo FROM t"), Some("SELECT $foo FROM t"), Some("SELECT $foo FROM t"), Some("SELECT $foo FROM t")]),
+        (Ms, "OUTPUT $action, inserted.id",
+            [Some("OUTPUT $action, inserted.id"), Some("OUTPUT $action, inserted.id"), Some("OUTPUT $action, inserted.id"), Some("OUTPUT $action, inserted.id"), Some("OUTPUT $action, inserted.id"), Some("OUTPUT $action, inserted.id"), Some("OUTPUT $action, inserted.id"), Some("OUTPUT $action, inserted.id")]),
+        (Ms, "SELECT $_x FROM t",
+            [Some("SELECT $_x FROM t"), Some("SELECT $_x FROM t"), Some("SELECT $_x FROM t"), Some("SELECT $_x FROM t"), Some("SELECT $_x FROM t"), Some("SELECT $_x FROM t"), Some("SELECT $_x FROM t"), Some("SELECT $_x FROM t")]),
+        (Ms, "SELECT $@x FROM t",
+            [Some("SELECT $@x FROM t"), Some("SELECT $@x FROM t"), Some("SELECT $@x FROM t"), Some("SELECT $ @x FROM t"), Some("SELECT $ @x FROM t"), Some("SELECT $@x FROM t"), Some("SELECT $ @x FROM t"), Some("SELECT $ @x FROM t")]),
+        (Ms, "SELECT $tag$secret",
+            [Some("SELECT $tag$secret"), Some("SELECT $tag$secret"), Some("SELECT $tag$secret"), Some("SELECT $tag$secret"), Some("SELECT $tag$secret"), Some("SELECT $tag$secret"), Some("SELECT $tag$secret"), Some("SELECT $tag$secret")]),
+        (Ms, "SELECT $tag$abc$tag$",
+            [Some("SELECT $tag$abc$tag$"), Some("SELECT $tag$abc$tag$"), Some("SELECT $tag$abc$tag$"), Some("SELECT $tag$abc$tag$"), Some("SELECT $tag$abc$tag$"), Some("SELECT $tag$abc$tag$"), Some("SELECT $tag$abc$tag$"), Some("SELECT $tag$abc$tag$")]),
+        (Ms, "SELECT $$abc$$",
+            [Q, Q, Q, Q, Some("SELECT $$abc$$"), Q, Q, Some("SELECT $$abc$$")]),
+        (Gen, "SELECT $foo FROM t",
+            [ERR, ERR, Some("SELECT $foo FROM t"), Some("SELECT $foo FROM t"), Some("SELECT $foo FROM t"), Some("SELECT $foo FROM t"), Some("SELECT $foo FROM t"), Some("SELECT $foo FROM t")]),
+        (Gen, "SELECT $tag$secret",
+            [ERR, ERR, Q, Q, Some("SELECT $tag$secret"), Q, Q, Some("SELECT $tag$secret")]),
+        (Gen, "SELECT $tag$abc$tag$",
+            [Q, Q, Q, Q, Some("SELECT $tag$abc$tag$"), Q, Q, Some("SELECT $tag$abc$tag$")]),
+        (Pg, "SELECT $€$secret value$€$",
+            [ERR, ERR, Some("SELECT $€$secret value$€$"), Some("SELECT $ € $secret value$ € $"), Some("SELECT $ € $secret value$ € $"), Some("SELECT $€$secret value$€$"), Some("SELECT $ € $secret value$ € $"), Some("SELECT $ € $secret value$ € $")]),
+        (Pg, "SELECT $का$secret value$का$",
+            [ERR, ERR, Some("SELECT $का$secret value$का$"), Some("SELECT $क ा $secret value$क ा $"), Some("SELECT $क ा $secret value$क ा $"), Some("SELECT $का$secret value$का$"), Some("SELECT $क ा $secret value$क ा $"), Some("SELECT $क ा $secret value$क ा $")]),
+        (Pg, "SELECT $a\u{2003}b$secret value$a\u{2003}b$",
+            [ERR, ERR, Some("SELECT $a\u{2003}b$secret value$a\u{2003}b$"), Some("SELECT $a \u{2003} b$secret value$a \u{2003} b$"), Some("SELECT $a \u{2003} b$secret value$a \u{2003} b$"), Some("SELECT $a\u{2003}b$secret value$a\u{2003}b$"), Some("SELECT $a \u{2003} b$secret value$a \u{2003} b$"), Some("SELECT $a \u{2003} b$secret value$a \u{2003} b$")]),
+        (Pg, "SELECT $€$secret value",
+            [ERR, ERR, Some("SELECT $€$secret value"), Some("SELECT $ € $secret value"), Some("SELECT $ € $secret value"), Some("SELECT $€$secret value"), Some("SELECT $ € $secret value"), Some("SELECT $ € $secret value")]),
+    ];
+
+    /// Where we differ from `GO_DOLLAR_PARITY` on purpose: `(dbms, input, [(column, our output)],
+    /// reason)`.
+    #[allow(clippy::type_complexity)]
+    const GO_DOLLAR_PARITY_EXCEPTIONS: &[(DbmsKind, &str, &[(usize, Option<&str>)], &str)] = &[
+        (
+            Pg,
+            "SELECT $é$secret$é$",
+            &[(DEFAULT, Q), (DEFAULT_DQF, Q)],
+            "the legacy tokenizer compares the closing tag against single bytes, so it never finds a non-ASCII one",
+        ),
+        (
+            Pg,
+            "SELECT $é$'secret'$é$",
+            &[(DEFAULT, Q), (DEFAULT_DQF, Q)],
+            "the legacy tokenizer compares the closing tag against single bytes, so it never finds a non-ASCII one",
+        ),
+        (
+            Pg,
+            "SELECT * FROM t WHERE a = $1 AND b = $2",
+            &[
+                (
+                    OBFUSCATE_ONLY,
+                    Some("SELECT * FROM t WHERE a = $1 AND b = $2"),
+                ),
+                (
+                    OBFUSCATE_ONLY_DQF,
+                    Some("SELECT * FROM t WHERE a = $1 AND b = $2"),
+                ),
+            ],
+            "not dollar quoting: obfuscate_only keeps positional parameters, to be fixed separately",
+        ),
+        (
+            Pg,
+            "select * from dollarField$ as df from some$dollar$filled_thing$$",
+            &[
+                (
+                    NORMALIZE_ONLY,
+                    Some("select * from dollarField$ as df from some$dollar$filled_thing$$"),
+                ),
+                (
+                    NORMALIZE_ONLY_DQF,
+                    Some("select * from dollarField$ as df from some$dollar$filled_thing$$"),
+                ),
+            ],
+            "not dollar quoting: normalize_only keeps `AS` aliases",
+        ),
+        (
+            Ms,
+            "SELECT $@x FROM t",
+            &[
+                (OBFUSCATE_AND_NORMALIZE, Some("SELECT $@x FROM t")),
+                (NORMALIZE_ONLY, Some("SELECT $@x FROM t")),
+                (OBFUSCATE_AND_NORMALIZE_DQF, Some("SELECT $@x FROM t")),
+                (NORMALIZE_ONLY_DQF, Some("SELECT $@x FROM t")),
+            ],
+            "`$@x` is one SQL Server identifier here, while go-sqllexer splits off the `$`",
+        ),
+        (
+            Pg,
+            "SELECT $€$secret value$€$",
+            &[
+                (DEFAULT, Q),
+                (DEFAULT_DQF, Q),
+                (OBFUSCATE_ONLY, Q),
+                (OBFUSCATE_AND_NORMALIZE, Q),
+                (NORMALIZE_ONLY, Some("SELECT $€$secret value$€$")),
+                (OBFUSCATE_ONLY_DQF, Q),
+                (OBFUSCATE_AND_NORMALIZE_DQF, Q),
+                (NORMALIZE_ONLY_DQF, Some("SELECT $€$secret value$€$")),
+            ],
+            LEAK_GUARD,
+        ),
+        (
+            Pg,
+            "SELECT $का$secret value$का$",
+            &[
+                (DEFAULT, Q),
+                (DEFAULT_DQF, Q),
+                (OBFUSCATE_ONLY, Q),
+                (OBFUSCATE_AND_NORMALIZE, Q),
+                (NORMALIZE_ONLY, Some("SELECT $का$secret value$का$")),
+                (OBFUSCATE_ONLY_DQF, Q),
+                (OBFUSCATE_AND_NORMALIZE_DQF, Q),
+                (NORMALIZE_ONLY_DQF, Some("SELECT $का$secret value$का$")),
+            ],
+            LEAK_GUARD,
+        ),
+        (
+            Pg,
+            "SELECT $a\u{2003}b$secret value$a\u{2003}b$",
+            &[
+                (DEFAULT, Q),
+                (DEFAULT_DQF, Q),
+                (OBFUSCATE_ONLY, Q),
+                (OBFUSCATE_AND_NORMALIZE, Q),
+                (
+                    NORMALIZE_ONLY,
+                    Some("SELECT $a\u{2003}b$secret value$a\u{2003}b$"),
+                ),
+                (OBFUSCATE_ONLY_DQF, Q),
+                (OBFUSCATE_AND_NORMALIZE_DQF, Q),
+                (
+                    NORMALIZE_ONLY_DQF,
+                    Some("SELECT $a\u{2003}b$secret value$a\u{2003}b$"),
+                ),
+            ],
+            LEAK_GUARD,
+        ),
+        (
+            Pg,
+            "SELECT $€$secret value",
+            &[
+                (OBFUSCATE_ONLY, Q),
+                (OBFUSCATE_AND_NORMALIZE, Q),
+                (NORMALIZE_ONLY, Some("SELECT $€$secret value")),
+                (OBFUSCATE_ONLY_DQF, Q),
+                (OBFUSCATE_AND_NORMALIZE_DQF, Q),
+                (NORMALIZE_ONLY_DQF, Some("SELECT $€$secret value")),
+            ],
+            LEAK_GUARD,
+        ),
+    ];
+
+    /// `PostgreSQL` accepts any non-ASCII character in a dollar-quote tag, but go-sqllexer only
+    /// non-ASCII letters and numbers, so it emits such a string literal as sent, where we replace
+    /// it. As with `$é$`, the legacy tokenizer fails to find the closing tag.
+    const LEAK_GUARD: &str =
+        "go-sqllexer does not see a dollar-quoted string and leaks its contents";
+
+    #[test]
+    fn test_dollar_quotes_match_go() {
+        let mut errors = String::new();
+        for &(dbms, input, go) in GO_DOLLAR_PARITY {
+            let exceptions = GO_DOLLAR_PARITY_EXCEPTIONS
+                .iter()
+                .find(|&&(d, i, _, _)| d == dbms && i == input)
+                .map_or(&[][..], |&(_, _, exceptions, _)| exceptions);
+            for (column, &(obfuscation_mode, dollar_quoted_func)) in
+                GO_DOLLAR_PARITY_CONFIGS.iter().enumerate()
+            {
+                let exception = exceptions.iter().find(|&&(c, _)| c == column);
+                if exception.is_some_and(|&(_, ours)| ours == go[column]) {
+                    let _ = writeln!(errors, "{dbms:?} {input:?}: exception {column} matches Go");
+                }
+                let want = exception.map_or(go[column], |&(_, ours)| ours);
+                let config = SqlConfig {
+                    dollar_quoted_func,
+                    obfuscation_mode,
+                    ..Default::default()
+                };
+                let got = obfuscate_sql(input, &config, dbms);
+                let ok = match want {
+                    Some(want) => got.as_deref() == Ok(want),
+                    None => got == Err(SqlObfuscationError::UnterminatedDollarQuote),
+                };
+                if !ok {
+                    let _ = writeln!(
+                        errors,
+                        "{dbms:?} {obfuscation_mode:?} dollar_quoted_func={dollar_quoted_func}: \
+                         {input:?}\n  expected {want:?}\n  got      {got:?}"
+                    );
+                }
+            }
+        }
+        for &(dbms, input, _, _) in GO_DOLLAR_PARITY_EXCEPTIONS {
+            if !GO_DOLLAR_PARITY
+                .iter()
+                .any(|&(d, i, _)| d == dbms && i == input)
+            {
+                let _ = writeln!(errors, "{dbms:?} {input:?}: exception without a Go result");
+            }
+        }
+        assert!(errors.is_empty(), "{errors}");
     }
 
     #[test]
-    fn test_dollar_quote_nesting_past_depth_limit_does_not_leak_literal() {
-        const NESTING: usize = 100; // comfortably past MAX_DOLLAR_QUOTE_DEPTH (64)
-        let secret = "'123-45-6789'";
-        let mut sql = String::new();
-        for i in 0..NESTING {
-            let _ = write!(sql, "$a{i}$");
-        }
-        sql.push_str(secret);
-        for i in (0..NESTING).rev() {
-            let _ = write!(sql, "$a{i}$");
-        }
-
-        let config = SqlConfig {
-            dollar_quoted_func: true,
-            ..Default::default()
-        };
-        let got = obfuscate_sql(&sql, &config, DbmsKind::Postgresql).unwrap();
-        assert!(
-            !got.contains(secret),
-            "obfuscated SQL must not contain the nested literal: {got:?}"
+    fn test_unterminated_dollar_quote_resource_is_non_parsable() {
+        assert_eq!(
+            super::obfuscate_sql_resource(
+                "SELECT $tag$secret",
+                &SqlConfig::default(),
+                DbmsKind::Postgresql
+            ),
+            super::SQL_NON_PARSABLE_REPLACEMENT
         );
     }
 
@@ -3072,7 +3521,7 @@ mod tests {
 
     #[test]
     fn test_dollar_quoted_func_trivial_collapse() {
-        // When dollar_quoted_func=true and inner content obfuscates to a single ?, collapse to ?
+        // dollar_quoted_func only obfuscates the body of `$func$` strings: others become ?
         let config = SqlConfig {
             dollar_quoted_func: true,
             replace_digits: true,
@@ -3158,7 +3607,7 @@ mod tests {
         let input = "SELECT * FROM public.table ( array [ ROW ( array [ 'magic', 'foo',";
         // First check raw (pre-collapse) output
         let mut tok = super::Tokenizer::new(input, &config, DbmsKind::Generic, 0);
-        tok.process();
+        tok.process().unwrap();
         let raw = tok.finalize();
         eprintln!("RAW: {raw:?}");
         let got = obfuscate_sql(input, &config, DbmsKind::Generic);
