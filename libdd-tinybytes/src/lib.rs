@@ -191,6 +191,7 @@ impl Bytes {
     /// let invalid_subset = b"invalid";
     /// assert!(bytes.slice_ref(invalid_subset).is_none());
     /// ```
+    #[inline]
     pub fn slice_ref(&self, subset: &[u8]) -> Option<Bytes> {
         // An empty slice can be a subset of any slice.
         if subset.is_empty() {

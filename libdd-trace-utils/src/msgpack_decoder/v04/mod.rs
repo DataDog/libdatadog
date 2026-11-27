@@ -3,7 +3,7 @@
 
 pub(crate) mod span;
 
-use self::span::decode_span;
+use self::span::decode_span_into;
 use crate::msgpack_decoder::decode::buffer::Buffer;
 use crate::msgpack_decoder::decode::error::DecodeError;
 use crate::span::DeserializableTraceData;
@@ -114,42 +114,27 @@ pub fn from_buffer<T: DeserializableTraceData>(
     // Intentionally skip the size of the array (as it will be recomputed after coalescing).
     let start_len = data.len();
 
-    #[allow(clippy::expect_used)]
-    Ok((
-        (0..trace_count).try_fold(
-            Vec::with_capacity(
-                trace_count
-                    .try_into()
-                    .expect("Unable to cast trace_count to usize"),
-            ),
-            |mut traces, _| {
-                let span_count =
-                    rmp::decode::read_array_len(data.as_mut_slice()).map_err(|_| {
-                        DecodeError::InvalidFormat(
-                            "Unable to read array len for span count".to_owned(),
-                        )
-                    })?;
+    let trace_count_usize = usize::try_from(trace_count)
+        .map_err(|_| DecodeError::InvalidFormat("trace_count overflows usize".to_owned()))?;
+    let mut traces = Vec::with_capacity(data.capped_capacity(trace_count_usize));
+    for _ in 0..trace_count_usize {
+        let span_count = rmp::decode::read_array_len(data.as_mut_slice()).map_err(|_| {
+            DecodeError::InvalidFormat("Unable to read array len for span count".to_owned())
+        })?;
 
-                let trace = (0..span_count).try_fold(
-                    Vec::with_capacity(
-                        span_count
-                            .try_into()
-                            .expect("Unable to cast span_count to usize"),
-                    ),
-                    |mut trace, _| {
-                        let span = decode_span(data)?;
-                        trace.push(span);
-                        Ok(trace)
-                    },
-                )?;
+        let span_count_usize = usize::try_from(span_count)
+            .map_err(|_| DecodeError::InvalidFormat("span_count overflows usize".to_owned()))?;
+        let mut trace = Vec::with_capacity(data.capped_capacity(span_count_usize));
+        for _ in 0..span_count_usize {
+            let idx = trace.len();
+            trace.push(Span::default());
+            decode_span_into(data, &mut trace[idx])?;
+        }
 
-                traces.push(trace);
+        traces.push(trace);
+    }
 
-                Ok(traces)
-            },
-        )?,
-        start_len - data.len(),
-    ))
+    Ok((traces, start_len - data.len()))
 }
 
 #[cfg(test)]

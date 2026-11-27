@@ -95,6 +95,7 @@ impl BytesString {
     ///
     /// * `bytes` - A `tinybytes::Bytes` instance that will be converted into a `BytesString`.
     /// * `slice` - The string slice pointing into the given bytes that will form the `BytesString`.
+    #[inline]
     pub fn from_bytes_slice(bytes: &Bytes, slice: &str) -> Self {
         // SAFETY: This is safe as a str slice is definitely a valid UTF-8 slice.
         #[allow(clippy::expect_used)]

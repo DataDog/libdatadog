@@ -36,10 +36,10 @@ pub fn read_nullable_string<T: DeserializableTraceData>(
 pub fn read_str_map_to_vecmap<T: DeserializableTraceData>(
     buf: &mut Buffer<T>,
 ) -> Result<VecMap<T::Text, T::Text>, DecodeError> {
-    let len = decode::read_map_len(buf.as_mut_slice())
+    let len = crate::msgpack_decoder::decode::map::read_map_len(buf)
         .map_err(|_| DecodeError::InvalidFormat("Unable to get map len for str map".to_owned()))?;
 
-    let mut map = VecMap::with_capacity(len.try_into().unwrap_or_default());
+    let mut map = VecMap::with_capacity(len);
     for _ in 0..len {
         let key = buf.read_string()?;
         // Only insert if value is not null

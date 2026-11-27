@@ -4,7 +4,6 @@
 use crate::msgpack_decoder::decode::{buffer::Buffer, error::DecodeError};
 use crate::span::DeserializableTraceData;
 use crate::span::vec_map::VecMap;
-use rmp::{Marker, decode, decode::RmpRead};
 use std::collections::HashMap;
 
 /// Reads a map from the buffer and returns it as a `HashMap`.
@@ -89,23 +88,32 @@ where
 /// This function will return an error if:
 /// - The buffer does not contain a map.
 /// - There is an error reading from the buffer.
-#[inline]
+#[inline(always)]
 pub fn read_map_len<T: DeserializableTraceData>(buf: &mut Buffer<T>) -> Result<usize, DecodeError> {
-    let buf = buf.as_mut_slice();
-    match decode::read_marker(buf)
-        .map_err(|_| DecodeError::InvalidFormat("Unable to read marker for map".to_owned()))?
-    {
-        Marker::FixMap(len) => Ok(len as usize),
-        Marker::Map16 => buf
-            .read_data_u16()
-            .map_err(|_| DecodeError::IOError)
-            .map(|len| len as usize),
-        Marker::Map32 => buf
-            .read_data_u32()
-            .map_err(|_| DecodeError::IOError)
-            .map(|len| len as usize),
-        _ => Err(DecodeError::InvalidType(
+    let slice = buf.as_mut_slice();
+    let (&marker, rest) = slice
+        .split_first()
+        .ok_or_else(|| DecodeError::InvalidFormat("Unable to read marker for map".to_owned()))?;
+    if (marker & 0xf0) == 0x80 {
+        *slice = rest;
+        Ok((marker & 0x0f) as usize)
+    } else if marker == 0xde {
+        if rest.len() < 2 {
+            return Err(DecodeError::IOError);
+        }
+        let len = u16::from_be_bytes([rest[0], rest[1]]) as usize;
+        *slice = &rest[2..];
+        Ok(len)
+    } else if marker == 0xdf {
+        if rest.len() < 4 {
+            return Err(DecodeError::IOError);
+        }
+        let len = u32::from_be_bytes([rest[0], rest[1], rest[2], rest[3]]) as usize;
+        *slice = &rest[4..];
+        Ok(len)
+    } else {
+        Err(DecodeError::InvalidType(
             "Unable to read map from buffer".to_owned(),
-        )),
+        ))
     }
 }

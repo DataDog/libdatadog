@@ -4,7 +4,6 @@
 use crate::msgpack_decoder::decode::buffer::Buffer;
 use crate::msgpack_decoder::decode::error::DecodeError;
 use crate::span::DeserializableTraceData;
-use rmp::{Marker, decode::RmpRead};
 use std::fmt;
 
 #[derive(Debug, PartialEq)]
@@ -81,6 +80,7 @@ impl Number {
 
 impl TryFrom<Number> for i8 {
     type Error = DecodeError;
+    #[inline]
     fn try_from(value: Number) -> Result<Self, Self::Error> {
         value.bounded_int_conversion(i8::MIN, Some(i8::MAX))
     }
@@ -88,20 +88,41 @@ impl TryFrom<Number> for i8 {
 
 impl TryFrom<Number> for i32 {
     type Error = DecodeError;
+    #[inline]
     fn try_from(value: Number) -> Result<Self, Self::Error> {
-        value.bounded_int_conversion(i32::MIN, Some(i32::MAX))
+        match value {
+            Number::Unsigned(val) => i32::try_from(val).map_err(|_| {
+                DecodeError::InvalidConversion(format!("{val} is out of bounds for conversion"))
+            }),
+            Number::Signed(val) => i32::try_from(val).map_err(|_| {
+                DecodeError::InvalidConversion(format!("{val} is out of bounds for conversion"))
+            }),
+            Number::Float(_) => Err(DecodeError::InvalidConversion(
+                "Cannot convert float to int".to_owned(),
+            )),
+        }
     }
 }
 
 impl TryFrom<Number> for i64 {
     type Error = DecodeError;
+    #[inline]
     fn try_from(value: Number) -> Result<Self, Self::Error> {
-        value.bounded_int_conversion(i64::MIN, Some(i64::MAX))
+        match value {
+            Number::Signed(val) => Ok(val),
+            Number::Unsigned(val) => i64::try_from(val).map_err(|_| {
+                DecodeError::InvalidConversion(format!("{val} is out of bounds for conversion"))
+            }),
+            Number::Float(_) => Err(DecodeError::InvalidConversion(
+                "Cannot convert float to int".to_owned(),
+            )),
+        }
     }
 }
 
 impl TryFrom<Number> for u8 {
     type Error = DecodeError;
+    #[inline]
     fn try_from(value: Number) -> Result<Self, Self::Error> {
         value.bounded_int_conversion(u8::MIN, Some(u8::MAX))
     }
@@ -109,6 +130,7 @@ impl TryFrom<Number> for u8 {
 
 impl TryFrom<Number> for u32 {
     type Error = DecodeError;
+    #[inline]
     fn try_from(value: Number) -> Result<Self, Self::Error> {
         value.bounded_int_conversion(u32::MIN, Some(u32::MAX))
     }
@@ -116,86 +138,158 @@ impl TryFrom<Number> for u32 {
 
 impl TryFrom<Number> for u64 {
     type Error = DecodeError;
+    #[inline]
     fn try_from(value: Number) -> Result<Self, Self::Error> {
-        value.bounded_int_conversion(u64::MIN, None)
+        match value {
+            Number::Unsigned(val) => Ok(val),
+            Number::Signed(val) => u64::try_from(val).map_err(|_| {
+                DecodeError::InvalidConversion(format!("{val} is out of bounds for conversion"))
+            }),
+            Number::Float(_) => Err(DecodeError::InvalidConversion(
+                "Cannot convert float to int".to_owned(),
+            )),
+        }
     }
 }
 
 impl TryFrom<Number> for f64 {
     type Error = DecodeError;
+    #[inline]
     fn try_from(value: Number) -> Result<Self, Self::Error> {
         match value {
-            Number::Unsigned(val) => {
-                if val <= f64::MAX as u64 {
-                    Ok(val as f64)
-                } else {
-                    Err(DecodeError::InvalidConversion(format!(
-                        "{val} is out of bounds for conversion"
-                    )))
-                }
-            }
-            Number::Signed(val) => {
-                if val >= f64::MIN as i64 && val <= f64::MAX as i64 {
-                    Ok(val as f64)
-                } else {
-                    Err(DecodeError::InvalidConversion(format!(
-                        "{val} is out of bounds for conversion"
-                    )))
-                }
-            }
+            Number::Unsigned(val) => Ok(val as f64),
+            Number::Signed(val) => Ok(val as f64),
             Number::Float(val) => Ok(val),
         }
     }
 }
 
+#[cold]
+#[inline(never)]
+fn invalid_number_marker_err() -> DecodeError {
+    DecodeError::InvalidFormat("Unable to read marker for number".to_owned())
+}
+
+#[cold]
+#[inline(never)]
+fn invalid_number_type_err() -> DecodeError {
+    DecodeError::InvalidType("Invalid number type".to_owned())
+}
+
+#[inline(always)]
 fn read_num(buf: &mut &[u8], allow_null: bool) -> Result<Number, DecodeError> {
-    match rmp::decode::read_marker(buf)
-        .map_err(|_| DecodeError::InvalidFormat("Unable to read marker for number".to_owned()))?
-    {
-        Marker::FixPos(val) => Ok(Number::Unsigned(val as u64)),
-        Marker::FixNeg(val) => Ok(Number::Signed(val as i64)),
-        Marker::U8 => Ok(Number::Unsigned(
-            buf.read_data_u8().map_err(|_| DecodeError::IOError)? as u64,
-        )),
-        Marker::U16 => Ok(Number::Unsigned(
-            buf.read_data_u16().map_err(|_| DecodeError::IOError)? as u64,
-        )),
-        Marker::U32 => Ok(Number::Unsigned(
-            buf.read_data_u32().map_err(|_| DecodeError::IOError)? as u64,
-        )),
-        Marker::U64 => Ok(Number::Unsigned(
-            buf.read_data_u64().map_err(|_| DecodeError::IOError)?,
-        )),
-        Marker::I8 => Ok(Number::Signed(
-            buf.read_data_i8().map_err(|_| DecodeError::IOError)? as i64,
-        )),
-        Marker::I16 => Ok(Number::Signed(
-            buf.read_data_i16().map_err(|_| DecodeError::IOError)? as i64,
-        )),
-        Marker::I32 => Ok(Number::Signed(
-            buf.read_data_i32().map_err(|_| DecodeError::IOError)? as i64,
-        )),
-        Marker::I64 => Ok(Number::Signed(
-            buf.read_data_i64().map_err(|_| DecodeError::IOError)?,
-        )),
-        Marker::F32 => Ok(Number::Float(
-            buf.read_data_f32().map_err(|_| DecodeError::IOError)? as f64,
-        )),
-        Marker::F64 => Ok(Number::Float(
-            buf.read_data_f64().map_err(|_| DecodeError::IOError)?,
-        )),
-        Marker::Null => {
-            if allow_null {
-                Ok(Number::Unsigned(0))
-            } else {
-                Err(DecodeError::InvalidType("Invalid number type".to_owned()))
-            }
+    let (&marker, rest) = buf.split_first().ok_or_else(invalid_number_marker_err)?;
+    // Positive fixint: 0x00..=0x7f
+    if marker <= 0x7f {
+        *buf = rest;
+        return Ok(Number::Unsigned(marker as u64));
+    }
+    // Negative fixint: 0xe0..=0xff
+    if marker >= 0xe0 {
+        *buf = rest;
+        return Ok(Number::Signed((marker as i8) as i64));
+    }
+    match marker {
+        0xcc => {
+            // U8
+            let (&val, rem) = rest.split_first().ok_or(DecodeError::IOError)?;
+            *buf = rem;
+            Ok(Number::Unsigned(val as u64))
         }
-        _ => Err(DecodeError::InvalidType("Invalid number type".to_owned())),
+        0xcd => {
+            // U16
+            if rest.len() < 2 {
+                return Err(DecodeError::IOError);
+            }
+            let val = u16::from_be_bytes([rest[0], rest[1]]) as u64;
+            *buf = &rest[2..];
+            Ok(Number::Unsigned(val))
+        }
+        0xce => {
+            // U32
+            if rest.len() < 4 {
+                return Err(DecodeError::IOError);
+            }
+            let val = u32::from_be_bytes([rest[0], rest[1], rest[2], rest[3]]) as u64;
+            *buf = &rest[4..];
+            Ok(Number::Unsigned(val))
+        }
+        0xcf => {
+            // U64
+            if rest.len() < 8 {
+                return Err(DecodeError::IOError);
+            }
+            let val = u64::from_be_bytes([
+                rest[0], rest[1], rest[2], rest[3], rest[4], rest[5], rest[6], rest[7],
+            ]);
+            *buf = &rest[8..];
+            Ok(Number::Unsigned(val))
+        }
+        0xd0 => {
+            // I8
+            let (&val, rem) = rest.split_first().ok_or(DecodeError::IOError)?;
+            *buf = rem;
+            Ok(Number::Signed((val as i8) as i64))
+        }
+        0xd1 => {
+            // I16
+            if rest.len() < 2 {
+                return Err(DecodeError::IOError);
+            }
+            let val = i16::from_be_bytes([rest[0], rest[1]]) as i64;
+            *buf = &rest[2..];
+            Ok(Number::Signed(val))
+        }
+        0xd2 => {
+            // I32
+            if rest.len() < 4 {
+                return Err(DecodeError::IOError);
+            }
+            let val = i32::from_be_bytes([rest[0], rest[1], rest[2], rest[3]]) as i64;
+            *buf = &rest[4..];
+            Ok(Number::Signed(val))
+        }
+        0xd3 => {
+            // I64
+            if rest.len() < 8 {
+                return Err(DecodeError::IOError);
+            }
+            let val = i64::from_be_bytes([
+                rest[0], rest[1], rest[2], rest[3], rest[4], rest[5], rest[6], rest[7],
+            ]);
+            *buf = &rest[8..];
+            Ok(Number::Signed(val))
+        }
+        0xca => {
+            // F32
+            if rest.len() < 4 {
+                return Err(DecodeError::IOError);
+            }
+            let val = f32::from_be_bytes([rest[0], rest[1], rest[2], rest[3]]) as f64;
+            *buf = &rest[4..];
+            Ok(Number::Float(val))
+        }
+        0xcb => {
+            // F64
+            if rest.len() < 8 {
+                return Err(DecodeError::IOError);
+            }
+            let val = f64::from_be_bytes([
+                rest[0], rest[1], rest[2], rest[3], rest[4], rest[5], rest[6], rest[7],
+            ]);
+            *buf = &rest[8..];
+            Ok(Number::Float(val))
+        }
+        0xc0 if allow_null => {
+            *buf = rest;
+            Ok(Number::Unsigned(0))
+        }
+        _ => Err(invalid_number_type_err()),
     }
 }
 
 /// Read a msgpack encoded number from `buf`.
+#[inline(always)]
 pub fn read_number<T: DeserializableTraceData, R: TryFrom<Number, Error = DecodeError>>(
     buf: &mut Buffer<T>,
 ) -> Result<R, DecodeError> {
@@ -203,6 +297,7 @@ pub fn read_number<T: DeserializableTraceData, R: TryFrom<Number, Error = Decode
 }
 
 /// Read a msgpack encoded number from `buf` and return 0 if null.
+#[inline(always)]
 pub fn read_nullable_number<T: DeserializableTraceData, R: TryFrom<Number, Error = DecodeError>>(
     buf: &mut Buffer<T>,
 ) -> Result<R, DecodeError> {

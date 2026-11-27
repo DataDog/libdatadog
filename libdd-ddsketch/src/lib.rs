@@ -58,12 +58,29 @@ impl DDSketch {
 
     /// Add a point with value `point` to the sketch
     /// `point` must be positive
+    #[inline]
     pub fn add(&mut self, point: f64) -> Result<(), Box<dyn std::error::Error>> {
-        self.add_with_count(point, 1.0)
+        if point >= self.mapping.min_indexable_value && point.is_finite() {
+            let index = self.mapping.index(point);
+            *self.store.bin_mut(index) += 1.0;
+            return Ok(());
+        }
+        self.add_with_count_cold(point, 1.0)
+    }
+
+    #[cold]
+    #[inline(never)]
+    fn add_with_count_cold(
+        &mut self,
+        point: f64,
+        count: f64,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        self.add_with_count(point, count)
     }
 
     /// Add `count` point with value `point` to the sketch
     /// `count` and `point` must be positive
+    #[inline]
     pub fn add_with_count(
         &mut self,
         point: f64,
@@ -218,7 +235,21 @@ impl LowCollapsingDenseStore {
     }
 
     /// Return a mutable reference to the bin at index `bin_index`
+    #[inline]
     fn bin_mut(&mut self, bin_index: i32) -> &mut f64 {
+        // Fast path: `bin_index` already lies inside `[offset, offset + bins.len())`.
+        // When `bins` is empty, `bins.len() == 0` so `idx < 0` is false.
+        // When `bin_index < offset`, `wrapping_sub` produces a negative i32 whose u32 cast is
+        // >= 2^31, which is always >= `bins.len()` (capped at `max_size` = 2048).
+        let idx = bin_index.wrapping_sub(self.offset) as u32 as usize;
+        if idx < self.bins.len() {
+            return &mut self.bins[idx];
+        }
+        self.bin_mut_slow(bin_index)
+    }
+
+    #[inline(never)]
+    fn bin_mut_slow(&mut self, bin_index: i32) -> &mut f64 {
         let store_index = self.bin_idx_to_store_idx(bin_index);
         &mut self.bins[store_index]
     }
@@ -261,8 +292,9 @@ impl LowCollapsingDenseStore {
             debug_assert!(self.bins.len() as i32 <= self.max_size);
 
             let store_index = bin_index - self.offset;
-            for _ in 0..(store_index - self.bins.len() as i32 + 1) {
-                self.bins.push_back(0.0);
+            let new_len = store_index as usize + 1;
+            if new_len > self.bins.len() {
+                self.bins.resize(new_len, 0.0);
             }
             store_index as usize
         }
@@ -333,6 +365,7 @@ impl LogMapping {
     }
 
     /// Returns the index of the bucket containing `value`
+    #[inline]
     fn index(&self, value: f64) -> i32 {
         (value.ln() * self.multiplier + self.index_offset).floor() as i32
     }
