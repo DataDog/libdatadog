@@ -1,0 +1,25 @@
+# Copyright 2026-Present Datadog, Inc. https://www.datadoghq.com/
+# SPDX-License-Identifier: Apache-2.0
+
+[package]
+name = "libdd-weak-waker"
+version = "0.1.0"
+rust-version.workspace = true
+edition.workspace = true
+license.workspace = true
+homepage = "https://github.com/DataDog/libdatadog/tree/main/libdd-weak-waker"
+repository = "https://github.com/DataDog/libdatadog/tree/main/libdd-weak-waker"
+description = "Future wrapper that holds the task waker weakly, so dropping an async runtime frees its resources"
+
+[lib]
+bench = false
+
+[dependencies]
+futures-util = { workspace = true, features = ["alloc"] }
+
+[dev-dependencies]
+futures = { workspace = true, features = ["std"] }
+
+[lints.clippy]
+std_instead_of_alloc = "warn"
+std_instead_of_core = "warn"

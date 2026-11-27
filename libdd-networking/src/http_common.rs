@@ -87,6 +87,38 @@ mod native {
     use hyper_util::rt::TokioTimer;
     use pin_project::pin_project;
 
+    /// Hyper executor that spawns tasks on the current tokio runtime and gives them a weak waker.
+    ///
+    /// The client spawns its connection tasks and pool tasks with this executor. Pool state
+    /// outlives the runtime, because it lives in the client. When a connection task waits on the
+    /// request channel, the channel keeps a clone of the task waker. With a plain tokio waker,
+    /// that clone keeps the task cell alive after the runtime drops. The task cell holds the
+    /// scheduler handle, which holds the I/O driver and its epoll fd and eventfd.
+    ///
+    /// Each task is wrapped in a [`WeakWakerFuture`](libdd_weak_waker::WeakWakerFuture). Shared
+    /// state then only sees the weak waker, and the real waker is released when the runtime
+    /// drops the task.
+    ///
+    /// Unlike [`hyper_util::rt::TokioExecutor`], this executor does not panic outside a tokio
+    /// runtime. It drops the task instead. Hyper then reports the connection as closed, or
+    /// skips pool cleanup for the idle task.
+    ///
+    /// The client builders of this module use it.
+    #[derive(Clone, Copy, Debug, Default)]
+    pub struct WeakWakerExecutor;
+
+    impl<F> hyper::rt::Executor<F> for WeakWakerExecutor
+    where
+        F: Future + Send + 'static,
+        F::Output: Send + 'static,
+    {
+        fn execute(&self, fut: F) {
+            if let Ok(handle) = tokio::runtime::Handle::try_current() {
+                handle.spawn(libdd_weak_waker::WeakWakerFuture::new(fut));
+            }
+        }
+    }
+
     impl From<hyper::Error> for ClientError {
         fn from(source: hyper::Error) -> Self {
             use ErrorKind::*;
@@ -139,7 +171,7 @@ mod native {
     ///
     /// This is in general not a problem if we use the client once every tens of seconds.
     pub fn new_client_periodic() -> GenericHttpClient<Connector> {
-        hyper_util::client::legacy::Client::builder(hyper_util::rt::TokioExecutor::default())
+        client_builder()
             .pool_timer(TokioTimer::new())
             .pool_idle_timeout(PERIODIC_POOL_IDLE_TIMEOUT)
             .pool_max_idle_per_host(POOL_MAX_IDLE)
@@ -150,7 +182,7 @@ mod native {
     ///
     /// It will keep connections open for a longer time and reuse them.
     pub fn new_default_client() -> GenericHttpClient<Connector> {
-        hyper_util::client::legacy::Client::builder(hyper_util::rt::TokioExecutor::default())
+        client_builder()
             .pool_max_idle_per_host(POOL_MAX_IDLE)
             .build(Connector::default())
     }
@@ -317,8 +349,9 @@ mod native {
 
     pub type GenericHttpClient<C> = hyper_util::client::legacy::Client<C, Body>;
 
+    /// Create a hyper client builder that spawns its tasks with [`WeakWakerExecutor`].
     pub fn client_builder() -> hyper_util::client::legacy::Builder {
-        hyper_util::client::legacy::Client::builder(hyper_util::rt::TokioExecutor::default())
+        hyper_util::client::legacy::Client::builder(WeakWakerExecutor)
     }
 }
 

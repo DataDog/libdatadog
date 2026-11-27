@@ -73,6 +73,7 @@ members = [
   "libdd-trace-model",
   "libdd-trace-semantics",
   "libdd-networking",
+  "libdd-weak-waker",
 ]
 
 # https://doc.rust-lang.org/cargo/reference/resolver.html

@@ -13,7 +13,7 @@ jobs:
         steps:
           - uses: wechuli/allcheckspassed@f4669eca31dbad8fea1a0eb91c419d02c5b42200 # 1.1.1
             with:
-                delay: '3'
-                retries: '45'
+                delay: '1'
+                retries: '90'
                 polling_interval: '1'
                 checks_exclude: 'devflow/merge,dd-gitlab/default-pipeline,Rustfmt Auto / rustfmt,Rustfmt Auto / rustfmt-commit'

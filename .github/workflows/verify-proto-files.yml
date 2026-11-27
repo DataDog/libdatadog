@@ -59,3 +59,9 @@ jobs:
         run: |
           cargo build --features generate-protobuf
           git diff --exit-code -- src/pb.rs src/pb.idx.rs
+      - name: diff generated ddsketch protobuf file
+        if: success() || failure()
+        working-directory: libdd-ddsketch
+        run: |
+          cargo build --features generate-protobuf
+          git diff --exit-code -- src/pb.rs

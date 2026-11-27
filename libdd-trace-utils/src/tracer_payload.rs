@@ -1,6 +1,7 @@
 // Copyright 2024-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
+#[cfg(feature = "send")]
 use crate::span::vec_map::VecMap;
 use crate::span::{BytesData, SharedDictBytes, TraceData, v1, v04, v05};
 use crate::trace_utils::convert_trace_chunks_v04_to_v05;
@@ -8,9 +9,12 @@ use crate::{msgpack_decoder, trace_utils::cmp_send_data_payloads};
 use libdd_tinybytes::BytesString;
 use libdd_trace_protobuf::pb;
 use std::cmp::Ordering;
-use std::collections::hash_map::RandomState;
-use std::hash::{BuildHasher, Hash, Hasher};
 use std::iter::Iterator;
+#[cfg(feature = "send")]
+use std::{
+    collections::hash_map::RandomState,
+    hash::{BuildHasher, Hash, Hasher},
+};
 use tracing::debug;
 
 pub type TracerPayloadV04 = Vec<v04::SpanBytes>;
@@ -133,6 +137,7 @@ impl TracerPayloadCollection {
     /// are moved to span attributes.
     ///
     /// The coalescer caches this key so each payload's attributes are hashed only once.
+    #[cfg(feature = "send")]
     pub(crate) fn v1_group_key(&self, hashers: &[RandomState; 2]) -> Option<[u64; 2]> {
         match self {
             TracerPayloadCollection::V1(payload) => {
@@ -349,6 +354,7 @@ fn metadata_matches_v1(
     true
 }
 
+#[cfg(feature = "send")]
 fn hash_attribute_map(
     attributes: &VecMap<BytesString, v1::AttributeValueBytes>,
     hasher: &mut impl Hasher,
@@ -363,6 +369,7 @@ fn hash_attribute_map(
     }
 }
 
+#[cfg(feature = "send")]
 fn hash_attribute_value(value: &v1::AttributeValueBytes, hasher: &mut impl Hasher) {
     std::mem::discriminant(value).hash(hasher);
     match value {

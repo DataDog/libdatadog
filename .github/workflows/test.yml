@@ -193,6 +193,11 @@ jobs:
               cargo nextest run -p libdd-http-client-ffi --no-default-features --features cbindgen,catch_panic,hyper-backend,https --profile ci --verbose
               cargo nextest run -p libdd-http-client-ffi --no-default-features --features cbindgen,catch_panic,reqwest-backend,https --profile ci --verbose
             fi
+            if echo "$PACKAGES" | grep -q "libdd-http-client-ffi"; then
+              # Alone, once per backend, so that feature unification does not pick one for it.
+              cargo nextest run -p libdd-http-client-ffi --no-default-features --features cbindgen,catch_panic,hyper-backend,https --profile ci --verbose
+              cargo nextest run -p libdd-http-client-ffi --no-default-features --features cbindgen,catch_panic,reqwest-backend,https --profile ci --verbose
+            fi
             if echo "$PACKAGES" | grep -q "libdd-otel-thread-ctx"; then
               # The `shared-context` ownership mode is mutually exclusive with the default
               # `owned-context` one, so its tests need their own run. The crate's functionality
