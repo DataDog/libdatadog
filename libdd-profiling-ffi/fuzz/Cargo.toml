@@ -1,0 +1,28 @@
+# Copyright 2026-Present Datadog, Inc. https://www.datadoghq.com/
+# SPDX-License-Identifier: Apache-2.0
+
+[package]
+name = "libdd-profiling-ffi-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2024"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+datadog-profiling-ffi = { package = "libdd-profiling-ffi", path = ".." }
+libdd-common = { path = "../../libdd-common" }
+libdd-common-ffi = { path = "../../libdd-common-ffi", features = ["std"] }
+libdd-profiling = { path = "../../libdd-profiling" }
+
+# Prevent this from interfering with workspaces
+[workspace]
+members = ["."]
+
+[[bin]]
+name = "profile_sequence"
+path = "fuzz_targets/profile_sequence.rs"
+test = false
+doc = false

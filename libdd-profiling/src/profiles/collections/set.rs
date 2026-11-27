@@ -3,10 +3,11 @@
 
 use super::SetError;
 use super::SetHasher as Hasher;
+use crate::arena::{ProfilingArena, profiling_arena};
 use core::hint::unreachable_unchecked;
 use core::{fmt, mem, ptr};
 use hashbrown::HashTable;
-use libdd_alloc::{Allocator, ChainAllocator, VirtualAllocator};
+use libdd_alloc::Allocator;
 use std::ffi::c_void;
 use std::hash::{BuildHasher, Hash};
 
@@ -56,7 +57,7 @@ impl<T: Hash + Eq + 'static> fmt::Debug for Set<T> {
 }
 
 pub struct Set<T: Hash + Eq + 'static> {
-    pub(crate) arena: ChainAllocator<VirtualAllocator>,
+    pub(crate) arena: ProfilingArena,
     pub(crate) table: HashTable<ptr::NonNull<T>>,
 }
 
@@ -158,7 +159,7 @@ impl<T: Hash + Eq + 'static> Drop for Set<T> {
 
 impl<T: Hash + Eq + 'static> Set<T> {
     pub(crate) fn try_with_capacity(capacity: usize) -> Result<Self, SetError> {
-        let arena = ChainAllocator::new_in(Self::SIZE_HINT, VirtualAllocator {});
+        let arena = profiling_arena(Self::SIZE_HINT);
         let mut table = HashTable::new();
 
         // SAFETY: new empty table cannot require rehash, callback unreachable.

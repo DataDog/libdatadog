@@ -344,6 +344,56 @@ jobs:
         shell: bash
         run: sccache --show-stats
 
+  allocation-failure-windows:
+    # Experimental allocation-failure harness (report-only): keeps the per-scenario reports of
+    # the committed scenarios, which the generic nextest output hides, for both build modes.
+    name: "allocation failure reports #windows-latest"
+    needs: setup
+    if: needs.setup.outputs.packages-count != '0' && (needs.setup.outputs.packages == '' || contains(needs.setup.outputs.packages, 'libdd-profiling-ffi'))
+    runs-on: windows-latest
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      CARGO_INCREMENTAL: 0
+    steps:
+      - name: Checkout sources
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # 4.2.2
+        with:
+          submodules: recursive
+      - name: Install cargo nextest
+        uses: taiki-e/install-action@2c41309d51ede152b6f2ee6bf3b71e6dc9a8b7df # 2.49.27
+        with:
+          tool: nextest@0.9.96
+      - name: sccache
+        id: sccache
+        uses: ./.github/actions/setup-sccache
+      - name: Configure git long paths (Windows)
+        run: git config --global core.longpaths true
+      - name: allocation_failure (normal build)
+        shell: bash
+        run: cargo nextest run -p libdd-profiling-ffi --test allocation_failure --no-fail-fast
+        env:
+          ALLOC_CHAOS_REPORT_DIR: ${{ github.workspace }}/alloc-chaos-reports/normal
+      - name: allocation_failure (arena chaos build)
+        if: success() || failure()
+        shell: bash
+        run: cargo nextest run -p libdd-profiling-ffi --test allocation_failure --no-fail-fast
+        env:
+          LIBDD_ALLOCATION_CHAOS_TEST: "1"
+          ALLOC_CHAOS_REPORT_DIR: ${{ github.workspace }}/alloc-chaos-reports/arena-chaos
+      - name: Upload per-scenario reports
+        if: success() || failure()
+        uses: actions/upload-artifact@4cec3d8aa04e39d1a68397de0c4cd6fb9dce8ec1 # 4.6.1
+        with:
+          name: allocation-failure-reports-windows
+          path: alloc-chaos-reports/
+          if-no-files-found: error
+      - name: sccache statistics
+        if: always() && steps.sccache.outputs.enabled == 'true'
+        shell: bash
+        run: sccache --show-stats
+
   cross-centos7:
     name: Test x86_64-unknown-linux-gnu on centOS7 docker image
     needs: setup

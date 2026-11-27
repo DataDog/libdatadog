@@ -273,6 +273,25 @@ mod tests {
         assert_eq!(features, vec!["cbindgen", "ddcommon-ffi"]);
     }
 
+    /// Allocation chaos is not a Cargo feature. No selection may emit it, or feature
+    /// unification could turn it on in a shipped `datadog_profiling_ffi`.
+    #[cfg_attr(miri, ignore)] // exhaustive feature combinations are prohibitively slow under Miri
+    #[test]
+    fn allocation_chaos_is_never_a_release_feature() {
+        for bits in 0..(1u32 << MODULE_SETTERS.len()) {
+            for catch_panic in [false, true] {
+                let mut selection = selection_from_bits(bits);
+                selection.catch_panic = catch_panic;
+                assert!(
+                    !profiling_features(&selection)
+                        .iter()
+                        .any(|feature| feature == "allocation-chaos-test"),
+                    "{selection:?}"
+                );
+            }
+        }
+    }
+
     #[cfg_attr(miri, ignore)] // exhaustive feature combinations are prohibitively slow under Miri
     #[test]
     fn emitted_list_has_no_duplicates() {
