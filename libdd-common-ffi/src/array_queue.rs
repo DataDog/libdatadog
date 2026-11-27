@@ -88,9 +88,9 @@ pub extern "C" fn ddog_ArrayQueue_new(
 ) -> ArrayQueueNewResult {
     match ArrayQueue::new(capacity, item_delete_fn) {
         Ok(queue) => ArrayQueueNewResult::Ok(
-            // # Safety: ptr is not null and points to a valid memory location holding an
-            // ArrayQueue
-            unsafe { NonNull::new_unchecked(Box::into_raw(Box::new(queue))) },
+            // Leaking the Box hands ownership to the caller; the returned pointer
+            // is never null and points to a valid ArrayQueue.
+            NonNull::from_mut(Box::leak(Box::new(queue))),
         ),
         Err(err) => ArrayQueueNewResult::Err(err.into()),
     }
