@@ -11,11 +11,13 @@ use libdd_trace_protobuf::pb;
 use std::{
     borrow::{Borrow, Cow},
     hash::{DefaultHasher, Hash, Hasher as _},
+    ops::Range,
 };
 use tracing::warn;
 
 use crate::span_concentrator::cardinality_limit_telemetry::CollapsedFieldSet;
 use libdd_trace_model::{Attributes as _, ChunkSpanView, Span, TraceChunk};
+use libdd_trace_semantics::{Concept, LookupValue, lookup_i64, lookup_str, lookup_value};
 
 use super::{
     CardinalityLimitConfig,
@@ -25,35 +27,19 @@ use super::{
 /// Sentinel value used for cardinality limiting.
 pub const TRACER_BLOCKED_VALUE: &str = "tracer_blocked_value";
 
-const TAG_STATUS_CODE: &str = "http.status_code";
-const TAG_METHOD: &str = "http.method";
-// OpenTelemetry HTTP semantic-convention names for the two attributes above. A tracer running in
-// OTel semantics mode (DD_TRACE_OTEL_SEMANTICS_ENABLED) emits these instead of the Datadog names,
-// so reading only the Datadog names silently drops the status and method stats dimensions: the
-// bucket reports status 0 and an empty method while the span itself is correct.
-// http.endpoint and http.route need no equivalent: http.route is already the OTel name, and
-// http.endpoint is Datadog-only and retained in that mode.
-const TAG_STATUS_CODE_OTEL: &str = "http.response.status_code";
-const TAG_METHOD_OTEL: &str = "http.request.method";
 /// Maximum number of characters of an additional metric tag value, longer values are replaced by
 /// [`TRACER_BLOCKED_VALUE`].
 pub const ADDITIONAL_METRIC_TAG_VALUE_MAX_LEN: usize = 200;
 const TAG_SYNTHETICS: &str = "synthetics";
-const TAG_BASE_SERVICE: &str = "_dd.base_service";
 const TAG_SVC_SRC: &str = "_dd.svc_src";
-const GRPC_STATUS_CODE_FIELD: &[&str] = &[
-    "rpc.grpc.status_code",
-    "grpc.code",
-    "rpc.grpc.status.code",
-    "grpc.status.code",
-];
 
 /// Aggregation key fields shared across all concentrator implementations — everything
 /// **except** peer tags.
 ///
 /// `T` is the string representation:
-/// * `&'a str`   — borrowed references used in `BorrowedAggregationKey`
-/// * `String`    — owned values used in `OwnedAggregationKey`
+/// * `Cow<'a, str>` — borrowed/copy-on-write values used in `BorrowedAggregationKey`
+/// * `&'a str`      — borrowed references (e.g. in `libdd-ipc`)
+/// * `String`       — owned values used in `OwnedAggregationKey`
 #[derive(
     Clone, Default, Hash, Eq, PartialEq, Debug, PartialOrd, serde::Serialize, serde::Deserialize,
 )]
@@ -101,7 +87,7 @@ impl<T> FixedAggregationKey<T> {
 #[derive(Clone, Hash, PartialEq, Eq)]
 /// Represent a stats aggregation key borrowed from span data
 pub(super) struct BorrowedAggregationKey<'a> {
-    fixed: FixedAggregationKey<&'a str>,
+    fixed: FixedAggregationKey<Cow<'a, str>>,
     peer_tags: Vec<(&'a str, Cow<'a, str>)>,
     additional_metric_tags: Vec<(&'a str, &'a str)>,
 }
@@ -109,7 +95,7 @@ pub(super) struct BorrowedAggregationKey<'a> {
 impl hashbrown::Equivalent<OwnedAggregationKey> for BorrowedAggregationKey<'_> {
     #[inline]
     fn equivalent(&self, other: &OwnedAggregationKey) -> bool {
-        self.fixed == other.fixed.convert(|s| s)
+        self.fixed.convert::<&str, str, _>(|s| s) == other.fixed.convert(|s| s)
             && self.peer_tags.len() == other.peer_tags.len()
             && self
                 .peer_tags
@@ -157,24 +143,6 @@ impl From<&BorrowedAggregationKey<'_>> for OwnedAggregationKey {
     }
 }
 
-fn float_to_int(f: f64) -> Option<u8> {
-    if f.floor() != f {
-        return None;
-    }
-    if f < 0.0 || (u8::MAX as f64) < f {
-        return None;
-    }
-    Some(f as u8)
-}
-
-fn float_to_u32(f: f64) -> Option<u32> {
-    if !f.is_finite() || f.floor() != f || f < 0.0 || (u32::MAX as f64) < f {
-        return None;
-    }
-    // The checks above guarantee the finite integral value is representable without loss.
-    Some(f as u32)
-}
-
 /// Return true if `value` has more than [`ADDITIONAL_METRIC_TAG_VALUE_MAX_LEN`] characters.
 pub fn additional_metric_tag_value_too_long(value: &str) -> bool {
     // Byte length >= char count, so skip the char walk when byte length alone is within the max
@@ -186,75 +154,37 @@ pub fn additional_metric_tag_value_too_long(value: &str) -> bool {
             .is_some()
 }
 
-fn is_valid_http_status_code(code: &u32) -> bool {
-    (100..600).contains(code)
-}
+const VALID_HTTP_STATUS_CODES: Range<i64> = 100..600;
 
-/// The HTTP method, under either naming convention, or "" when the span carries neither.
+/// The HTTP status code from the trace semantics registry: the first value readable as an integer,
+/// or 0 when there is none or it is outside `100..=599`.
 ///
-/// The Datadog name is canonical in the Agent semantic registry and is preferred when both names
-/// are present.
-fn get_http_method(span: &impl Span) -> &str {
-    for key in [TAG_METHOD, TAG_METHOD_OTEL] {
-        if let Some(value) = span.attribute_str(key)
-            && !value.is_empty()
-        {
-            return value;
-        }
-    }
-
-    ""
-}
-
-/// The HTTP status code, under either naming convention, or 0 when the span carries neither.
-///
-/// `metrics` is checked before `meta` for each name because a numeric attribute is routed there
-/// by the tracer's own setter, and OTel types `http.response.status_code` as an int. The Datadog
-/// key retains its existing conversion and precedence behavior. Invalid OTel values are ignored.
+/// Deliberately stricter than the Agent's `getStatusCode` (which keeps `0..=u32::MAX`), since valid
+/// HTTP status codes are `100..=599` (RFC 9110). The Agent's normalizer uses the same range, but
+/// it deletes an invalid `http.status_code` meta string, so the Agent can fall through to the OTel
+/// name where this returns 0.
 fn get_http_status_code(span: &impl Span) -> u32 {
-    for key in [TAG_STATUS_CODE, TAG_STATUS_CODE_OTEL] {
-        if let Some(value) = span.attribute_f64(key) {
-            if key == TAG_STATUS_CODE {
-                // Preserve the existing Datadog-key conversion behavior.
-                return value as u32;
-            }
-            if let Some(code) = float_to_u32(value).filter(is_valid_http_status_code) {
-                return code;
-            }
-        }
-
-        if let Some(value) = span.attribute_str(key) {
-            if key == TAG_STATUS_CODE {
-                // Preserve the existing Datadog-key parse-or-zero behavior.
-                return value.parse().unwrap_or_default();
-            }
-            if let Some(code) = value.parse().ok().filter(is_valid_http_status_code) {
-                return code;
-            }
-        }
-    }
-
-    0
+    lookup_i64(span, Concept::HttpStatusCode)
+        .filter(|v| VALID_HTTP_STATUS_CODES.contains(v))
+        .and_then(|v| u32::try_from(v).ok())
+        .unwrap_or_default()
 }
 
+/// The gRPC status code from the trace semantics registry.
+///
+/// The first non-empty value found wins. Non-integer numbers are skipped like missing values, as
+/// `int64` entries read [`libdd_trace_model::Attributes::attribute_i64`]. Strings are parsed as a
+/// number or a status name; an unparseable string or an integer outside the `u8` range yields
+/// `None` without falling through.
 fn get_grpc_status_code(span: &impl Span) -> Option<u8> {
-    for key in GRPC_STATUS_CODE_FIELD {
-        if let Some(val) = span.attribute_str(key)
-            && let Some(code) = grpc_status_str_to_int_value(val)
-        {
-            return Some(code);
+    match lookup_value(span, Concept::RpcGrpcStatusCode)? {
+        LookupValue::String(s) => grpc_status_str_to_int_value(s),
+        LookupValue::Int(i) => u8::try_from(i).ok(),
+        LookupValue::Float(f) => {
+            libdd_trace_model::f64_to_exact_i64(f).and_then(|i| u8::try_from(i).ok())
         }
+        _ => None,
     }
-
-    for key in GRPC_STATUS_CODE_FIELD {
-        if let Some(val) = span.attribute_f64(key)
-            && let Some(code) = float_to_int(val)
-        {
-            return Some(code);
-        }
-    }
-
-    None
 }
 
 fn grpc_status_str_to_int_value(v: &str) -> Option<u8> {
@@ -337,7 +267,6 @@ impl<'a> BorrowedAggregationKey<'a> {
         // name a promoted tag.
         let compat = span.compat();
         let span_kind = span.span_kind().unwrap_or_default();
-        let base_service = span.attribute_str(TAG_BASE_SERVICE).unwrap_or_default();
         // Mirrors the Go trace-agent's peerTagKeysToAggregateForSpan: peer tags are collected
         // only when peer-tag aggregation is configured, and then either from the configured
         // keys (client/producer/consumer spans) or, for internal spans (or spans without a
@@ -358,26 +287,21 @@ impl<'a> BorrowedAggregationKey<'a> {
                 })
                 .collect()
         } else if (span_kind.is_empty() || span_kind.eq_ignore_ascii_case("internal"))
-            && !base_service.is_empty()
+            && let Some(base_service) = lookup_str(span, Concept::DdBaseService)
         {
             // Internal spans with a base service override use only _dd.base_service as peer tag
-            vec![(TAG_BASE_SERVICE, Cow::Borrowed(base_service))]
+            vec![(Concept::DdBaseService.name(), base_service)]
         } else {
             vec![]
         };
 
-        // The Datadog name wins when both are present. An empty value counts as absent, so a
-        // tracer that writes the key unconditionally cannot shadow a real value under the other
-        // name, which is the mistake get_grpc_status_code above already avoids.
-        let http_method = get_http_method(span);
+        let http_method = lookup_str(span, Concept::HttpMethod).unwrap_or_default();
 
         let http_endpoint = span
             .attribute_str("http.endpoint")
             .filter(|value| !value.is_empty())
-            .or_else(|| {
-                span.attribute_str("http.route")
-                    .filter(|value| !value.is_empty())
-            })
+            .map(Cow::Borrowed)
+            .or_else(|| lookup_str(span, Concept::HttpRoute))
             .unwrap_or_default();
 
         let status_code = get_http_status_code(span);
@@ -405,14 +329,14 @@ impl<'a> BorrowedAggregationKey<'a> {
 
         Self {
             fixed: FixedAggregationKey {
-                resource_name,
-                service_name: span.service(),
-                operation_name: span.name(),
-                span_type: span.typ(),
-                span_kind,
+                resource_name: Cow::Borrowed(resource_name),
+                service_name: Cow::Borrowed(span.service()),
+                operation_name: Cow::Borrowed(span.name()),
+                span_type: Cow::Borrowed(span.typ()),
+                span_kind: Cow::Borrowed(span_kind),
                 http_method,
                 http_endpoint,
-                service_source,
+                service_source: Cow::Borrowed(service_source),
                 http_status_code: status_code,
                 grpc_status_code,
                 is_synthetics_request: span.chunk.origin().starts_with(TAG_SYNTHETICS),
@@ -433,10 +357,21 @@ impl<'a> BorrowedAggregationKey<'a> {
     #[cfg_attr(not(feature = "stats-obfuscation"), allow(unused))]
     pub(crate) fn truncate(&mut self, big_resource: bool) {
         let resource_length_limit = if big_resource { 15_000 } else { 5000 };
-        self.fixed.resource_name = slice_up_to(self.fixed.resource_name, resource_length_limit);
-        self.fixed.service_name = slice_up_to(self.fixed.service_name, 100);
-        self.fixed.operation_name = slice_up_to(self.fixed.operation_name, 100);
-        self.fixed.span_type = slice_up_to(self.fixed.span_type, 100);
+        truncate_cow(&mut self.fixed.resource_name, resource_length_limit);
+        truncate_cow(&mut self.fixed.service_name, 100);
+        truncate_cow(&mut self.fixed.operation_name, 100);
+        truncate_cow(&mut self.fixed.span_type, 100);
+    }
+}
+
+/// Truncate `s` to at most `max_len` bytes in place
+fn truncate_cow(s: &mut Cow<'_, str>, max_len: usize) {
+    match s {
+        Cow::Borrowed(b) => *b = slice_up_to(b, max_len),
+        Cow::Owned(o) => {
+            let new_len = slice_up_to(o, max_len).len();
+            o.truncate(new_len);
+        }
     }
 }
 
@@ -716,7 +651,7 @@ impl StatsBucket {
         let resources_count = self.distinct_resources.len();
         if let Entry::Vacant(slot) = self.distinct_resources.entry(resource_hash) {
             if resources_count >= self.cardinality_limits.resource_limit {
-                key.fixed.resource_name = TRACER_BLOCKED_VALUE;
+                key.fixed.resource_name = Cow::Borrowed(TRACER_BLOCKED_VALUE);
                 collapsed_fields.add(CollapsedFieldSet::RESOURCE_NAME);
             } else {
                 slot.insert();
@@ -727,7 +662,7 @@ impl StatsBucket {
         let http_endpoints_count = self.distinct_http_endpoints.len();
         if let Entry::Vacant(slot) = self.distinct_http_endpoints.entry(http_endpoint_hash) {
             if http_endpoints_count >= self.cardinality_limits.http_endpoint_limit {
-                key.fixed.http_endpoint = TRACER_BLOCKED_VALUE;
+                key.fixed.http_endpoint = Cow::Borrowed(TRACER_BLOCKED_VALUE);
                 collapsed_fields.add(CollapsedFieldSet::HTTP_ENDPOINT);
             } else {
                 slot.insert();
@@ -856,7 +791,8 @@ mod tests {
     use libdd_trace_protobuf::pb;
     use std::hash::Hash;
 
-    /// Builds the aggregation key of `view`, checking that the borrowed and owned keys hash alike.
+    /// Builds the aggregation key of `view`, checking that the borrowed and owned keys hash alike
+    /// and are equivalent.
     fn key_of<C: TraceChunk>(
         view: &ChunkSpanView<'_, C>,
         peer_tag_keys: &[String],
@@ -867,6 +803,10 @@ mod tests {
             get_hash(&borrowed),
             get_hash(&owned),
             "borrowed/owned hash mismatch"
+        );
+        assert!(
+            hashbrown::Equivalent::equivalent(&borrowed, &owned),
+            "borrowed/owned equivalence mismatch"
         );
         owned
     }
@@ -918,18 +858,6 @@ mod tests {
     }
 
     #[test]
-    fn test_float_to_u32_rejects_malformed_values() {
-        assert_eq!(float_to_u32(0.0), Some(0));
-        assert_eq!(float_to_u32(500.0), Some(500));
-        assert_eq!(float_to_u32(u32::MAX as f64), Some(u32::MAX));
-        assert_eq!(float_to_u32(f64::NAN), None);
-        assert_eq!(float_to_u32(f64::INFINITY), None);
-        assert_eq!(float_to_u32(-1.0), None);
-        assert_eq!(float_to_u32(1.5), None);
-        assert_eq!(float_to_u32((u32::MAX as f64) + 1.0), None);
-    }
-
-    #[test]
     fn test_aggregation_key_from_span() {
         let test_cases: Vec<(SpanBytes, OwnedAggregationKey)> = vec![
             // Root span
@@ -951,7 +879,7 @@ mod tests {
                 }
                 .into_key(),
             ),
-            // Datadog-key numeric conversion retains its existing cast behavior.
+            // NaN Datadog status code falls through to the next registry entry.
             (
                 SpanBytes {
                     service: "service".into(),
@@ -969,12 +897,12 @@ mod tests {
                     resource_name: "res".into(),
                     is_synthetics_request: false,
                     is_trace_root: pb::Trilean::True,
-                    http_status_code: 0,
+                    http_status_code: 418,
                     ..Default::default()
                 }
                 .into_key(),
             ),
-            // The Datadog key keeps its existing u32 behavior and wins over the OTel key.
+            // Out-of-range Datadog status code yields 0 without falling through to OTel.
             (
                 SpanBytes {
                     service: "service".into(),
@@ -992,12 +920,12 @@ mod tests {
                     resource_name: "res".into(),
                     is_synthetics_request: false,
                     is_trace_root: pb::Trilean::True,
-                    http_status_code: 600,
+                    http_status_code: 0,
                     ..Default::default()
                 }
                 .into_key(),
             ),
-            // Datadog-key numeric conversion keeps the existing Rust cast behavior.
+            // Fractional Datadog status code falls through to the next registry entry.
             (
                 SpanBytes {
                     service: "service".into(),
@@ -1015,12 +943,13 @@ mod tests {
                     resource_name: "res".into(),
                     is_synthetics_request: false,
                     is_trace_root: pb::Trilean::True,
-                    http_status_code: 1,
+                    http_status_code: 418,
                     ..Default::default()
                 }
                 .into_key(),
             ),
-            // The Datadog key also keeps its existing u32 behavior when stored as metadata.
+            // Out-of-range Datadog status code in meta yields 0 without falling through to OTel in
+            // metrics.
             (
                 SpanBytes {
                     service: "service".into(),
@@ -1038,12 +967,12 @@ mod tests {
                     resource_name: "res".into(),
                     is_synthetics_request: false,
                     is_trace_root: pb::Trilean::True,
-                    http_status_code: 99,
+                    http_status_code: 0,
                     ..Default::default()
                 }
                 .into_key(),
             ),
-            // An out-of-range OTel status is not a valid HTTP response status.
+            // OTel status codes outside 100..600 yield 0.
             (
                 SpanBytes {
                     service: "service".into(),
@@ -1322,7 +1251,7 @@ mod tests {
                 }
                 .into_key(),
             ),
-            // An unparseable Datadog status retains its existing parse-or-zero behavior.
+            // Non-numeric Datadog status in meta falls through to the next registry entry.
             (
                 SpanBytes {
                     service: "service".into(),
@@ -1343,12 +1272,12 @@ mod tests {
                     resource_name: "res".into(),
                     is_synthetics_request: false,
                     is_trace_root: pb::Trilean::True,
-                    http_status_code: 0,
+                    http_status_code: 418,
                     ..Default::default()
                 }
                 .into_key(),
             ),
-            // Datadog metrics retain their existing precedence and cast behavior.
+            // NaN in Datadog metrics falls through to the string entry for the same key.
             (
                 SpanBytes {
                     service: "service".into(),
@@ -1366,12 +1295,12 @@ mod tests {
                     resource_name: "res".into(),
                     is_synthetics_request: false,
                     is_trace_root: pb::Trilean::True,
-                    http_status_code: 0,
+                    http_status_code: 500,
                     ..Default::default()
                 }
                 .into_key(),
             ),
-            // An empty Datadog method counts as absent, so it cannot shadow the OTel name
+            // An empty OTel method counts as absent, falling through to http.method.
             (
                 SpanBytes {
                     service: "service".into(),
@@ -1380,8 +1309,8 @@ mod tests {
                     span_id: 1,
                     parent_id: 0,
                     meta: vec![
-                        ("http.method".into(), "".into()),
-                        ("http.request.method".into(), "GET".into()),
+                        ("http.request.method".into(), "".into()),
+                        ("http.method".into(), "GET".into()),
                     ]
                     .into(),
                     ..Default::default()
@@ -1397,7 +1326,8 @@ mod tests {
                 }
                 .into_key(),
             ),
-            // Both names present: the canonical Datadog names win.
+            // Both names present: registry order applies (Datadog wins for status code, OTel wins
+            // for method).
             (
                 SpanBytes {
                     service: "service".into(),
@@ -1421,7 +1351,7 @@ mod tests {
                     is_synthetics_request: false,
                     is_trace_root: pb::Trilean::True,
                     http_status_code: 500,
-                    http_method: "GET".into(),
+                    http_method: "POST".into(),
                     ..Default::default()
                 }
                 .into_key(),
@@ -1588,7 +1518,7 @@ mod tests {
                 }
                 .into_key(),
             ),
-            // Span with grpc status from metrics takes precedence over meta
+            // Span with grpc status in meta takes precedence over metrics for the same key
             (
                 SpanBytes {
                     meta: vec![("rpc.grpc.status_code".into(), "PERMISSION_DENIED".into())].into(),
@@ -2231,5 +2161,543 @@ mod tests {
 
         // Non ascii
         assert_eq!(grpc_status_str_to_int_value("🤣"), None);
+    }
+
+    fn v1_key_of(
+        attrs: Vec<(
+            &'static str,
+            libdd_trace_utils::span::v1::AttributeValueBytes,
+        )>,
+    ) -> OwnedAggregationKey {
+        use libdd_trace_utils::span::v1::{SpanBytes as SpanBytesV1, TraceChunkBytes};
+
+        let chunk = TraceChunkBytes {
+            spans: vec![SpanBytesV1 {
+                attributes: attrs.into_iter().map(|(k, v)| (k.into(), v)).collect(),
+                ..Default::default()
+            }],
+            ..Default::default()
+        };
+        let view = ChunkSpanView {
+            span: &chunk.spans[0],
+            chunk: &chunk,
+        };
+        key_of(&view, &[])
+    }
+
+    #[test]
+    fn test_http_method_registry_precedence() {
+        use libdd_trace_utils::span::v1::AttributeValue;
+
+        // v0.4: OTel name wins when both are set.
+        let both = SpanBytes {
+            meta: vec![
+                ("http.method".into(), "GET".into()),
+                ("http.request.method".into(), "POST".into()),
+            ]
+            .into(),
+            ..Default::default()
+        };
+        assert_eq!(v04_key_of(&both, &[]).fixed.http_method, "POST");
+
+        // v0.4: empty OTel name falls through to http.method.
+        let empty_otel = SpanBytes {
+            meta: vec![
+                ("http.request.method".into(), "".into()),
+                ("http.method".into(), "DELETE".into()),
+            ]
+            .into(),
+            ..Default::default()
+        };
+        assert_eq!(v04_key_of(&empty_otel, &[]).fixed.http_method, "DELETE");
+
+        // V1: OTel name wins when both are set.
+        assert_eq!(
+            v1_key_of(vec![
+                ("http.method", AttributeValue::String("GET".into())),
+                ("http.request.method", AttributeValue::String("POST".into())),
+            ])
+            .fixed
+            .http_method,
+            "POST"
+        );
+
+        // V1: empty OTel name falls through to http.method.
+        assert_eq!(
+            v1_key_of(vec![
+                ("http.request.method", AttributeValue::String("".into())),
+                ("http.method", AttributeValue::String("PATCH".into())),
+            ])
+            .fixed
+            .http_method,
+            "PATCH"
+        );
+    }
+
+    #[test]
+    fn test_http_endpoint_precedence() {
+        use libdd_trace_utils::span::v1::AttributeValue;
+
+        // v0.4: http.endpoint wins over http.route, empty http.endpoint falls through.
+        let both = SpanBytes {
+            meta: vec![
+                ("http.endpoint".into(), "/v1/items".into()),
+                ("http.route".into(), "/v1/items/:id".into()),
+            ]
+            .into(),
+            ..Default::default()
+        };
+        assert_eq!(v04_key_of(&both, &[]).fixed.http_endpoint, "/v1/items");
+
+        let route_only = SpanBytes {
+            meta: vec![("http.route".into(), "/v1/items/:id".into())].into(),
+            ..Default::default()
+        };
+        assert_eq!(
+            v04_key_of(&route_only, &[]).fixed.http_endpoint,
+            "/v1/items/:id"
+        );
+
+        let empty_endpoint = SpanBytes {
+            meta: vec![
+                ("http.endpoint".into(), "".into()),
+                ("http.route".into(), "/v1/items/:id".into()),
+            ]
+            .into(),
+            ..Default::default()
+        };
+        assert_eq!(
+            v04_key_of(&empty_endpoint, &[]).fixed.http_endpoint,
+            "/v1/items/:id"
+        );
+
+        // V1: http.endpoint wins over http.route, empty http.endpoint falls through.
+        assert_eq!(
+            v1_key_of(vec![
+                ("http.endpoint", AttributeValue::String("/v1/items".into())),
+                ("http.route", AttributeValue::String("/v1/items/:id".into())),
+            ])
+            .fixed
+            .http_endpoint,
+            "/v1/items"
+        );
+        assert_eq!(
+            v1_key_of(vec![
+                ("http.endpoint", AttributeValue::String("".into())),
+                ("http.route", AttributeValue::String("/v1/items/:id".into())),
+            ])
+            .fixed
+            .http_endpoint,
+            "/v1/items/:id"
+        );
+    }
+
+    #[test]
+    fn test_http_status_code_registry_behavior() {
+        use libdd_trace_utils::span::v1::AttributeValue;
+
+        // v0.4: valid HTTP status code boundaries (100 and 599) are kept for both names.
+        for key in ["http.status_code", "http.response.status_code"] {
+            for code in [100u32, 599] {
+                let metric_span = SpanBytes {
+                    metrics: vec![(key.into(), f64::from(code))].into(),
+                    ..Default::default()
+                };
+                assert_eq!(
+                    v04_key_of(&metric_span, &[]).fixed.http_status_code,
+                    code,
+                    "v0.4 metric {key}={code}"
+                );
+                let meta_span = SpanBytes {
+                    meta: vec![(key.into(), code.to_string().into())].into(),
+                    ..Default::default()
+                };
+                assert_eq!(
+                    v04_key_of(&meta_span, &[]).fixed.http_status_code,
+                    code,
+                    "v0.4 meta {key}={code}"
+                );
+            }
+        }
+
+        // v0.4: status codes outside 100..600 yield 0 for both names.
+        for key in ["http.status_code", "http.response.status_code"] {
+            for code in [0u32, 99, 600, 999, u32::MAX] {
+                let span = SpanBytes {
+                    metrics: vec![(key.into(), f64::from(code))].into(),
+                    ..Default::default()
+                };
+                assert_eq!(
+                    v04_key_of(&span, &[]).fixed.http_status_code,
+                    0,
+                    "v0.4 metric {key}={code}"
+                );
+            }
+        }
+
+        // v0.4: an out-of-range metric yields 0 without falling through to the meta string under
+        // the same name.
+        let span = SpanBytes {
+            metrics: vec![("http.response.status_code".into(), 600.0)].into(),
+            meta: vec![("http.response.status_code".into(), "418".into())].into(),
+            ..Default::default()
+        };
+        assert_eq!(v04_key_of(&span, &[]).fixed.http_status_code, 0);
+
+        // v0.4: out-of-range Datadog first values yield 0 without falling through to OTel.
+        for invalid in [-1.0, 99.0, 600.0, 999.0, f64::from(u32::MAX) + 1.0] {
+            let span = SpanBytes {
+                metrics: vec![("http.status_code".into(), invalid)].into(),
+                meta: vec![("http.response.status_code".into(), "418".into())].into(),
+                ..Default::default()
+            };
+            assert_eq!(
+                v04_key_of(&span, &[]).fixed.http_status_code,
+                0,
+                "v0.4 metric http.status_code={invalid} with valid OTel"
+            );
+        }
+
+        // v0.4: out-of-range Datadog string values yield 0 without falling through to OTel.
+        for invalid in ["-5", "99", "600", "999"] {
+            let span = SpanBytes {
+                meta: vec![
+                    ("http.status_code".into(), invalid.into()),
+                    ("http.response.status_code".into(), "418".into()),
+                ]
+                .into(),
+                ..Default::default()
+            };
+            assert_eq!(
+                v04_key_of(&span, &[]).fixed.http_status_code,
+                0,
+                "v0.4 meta http.status_code={invalid} with valid OTel"
+            );
+        }
+
+        // v0.4: NaN / fractional / non-numeric Datadog values fall through to OTel.
+        let dd_nan = SpanBytes {
+            metrics: vec![("http.status_code".into(), f64::NAN)].into(),
+            meta: vec![("http.response.status_code".into(), "418".into())].into(),
+            ..Default::default()
+        };
+        assert_eq!(v04_key_of(&dd_nan, &[]).fixed.http_status_code, 418);
+
+        let dd_frac = SpanBytes {
+            metrics: vec![("http.status_code".into(), 1.5)].into(),
+            meta: vec![("http.response.status_code".into(), "418".into())].into(),
+            ..Default::default()
+        };
+        assert_eq!(v04_key_of(&dd_frac, &[]).fixed.http_status_code, 418);
+
+        let dd_non_num = SpanBytes {
+            meta: vec![
+                ("http.status_code".into(), "bad".into()),
+                ("http.response.status_code".into(), "418".into()),
+            ]
+            .into(),
+            ..Default::default()
+        };
+        assert_eq!(v04_key_of(&dd_non_num, &[]).fixed.http_status_code, 418);
+
+        // V1: valid HTTP status code boundaries (100 and 599) are kept for both names.
+        for key in ["http.status_code", "http.response.status_code"] {
+            for code in [100u32, 599] {
+                assert_eq!(
+                    v1_key_of(vec![(key, AttributeValue::Int(i64::from(code)))])
+                        .fixed
+                        .http_status_code,
+                    code,
+                    "V1 int {key}={code}"
+                );
+                assert_eq!(
+                    v1_key_of(vec![(key, AttributeValue::String(code.to_string().into()))])
+                        .fixed
+                        .http_status_code,
+                    code,
+                    "V1 string {key}={code}"
+                );
+            }
+        }
+
+        // V1: status codes outside 100..600 yield 0 for both names.
+        for key in ["http.status_code", "http.response.status_code"] {
+            for code in [-1i64, 0, 99, 600, 999, i64::from(u32::MAX) + 1] {
+                assert_eq!(
+                    v1_key_of(vec![(key, AttributeValue::Int(code))])
+                        .fixed
+                        .http_status_code,
+                    0,
+                    "V1 int {key}={code}"
+                );
+            }
+        }
+
+        // V1: NaN / fractional / non-numeric Datadog values fall through to OTel.
+        assert_eq!(
+            v1_key_of(vec![
+                ("http.status_code", AttributeValue::Float(f64::NAN)),
+                ("http.response.status_code", AttributeValue::Int(418)),
+            ])
+            .fixed
+            .http_status_code,
+            418
+        );
+        assert_eq!(
+            v1_key_of(vec![
+                ("http.status_code", AttributeValue::Float(1.5)),
+                ("http.response.status_code", AttributeValue::Int(418)),
+            ])
+            .fixed
+            .http_status_code,
+            418
+        );
+        assert_eq!(
+            v1_key_of(vec![
+                ("http.status_code", AttributeValue::String("bad".into())),
+                ("http.response.status_code", AttributeValue::Int(418)),
+            ])
+            .fixed
+            .http_status_code,
+            418
+        );
+
+        // V1: out-of-range Datadog first values give 0 with no fall-through to OTel.
+        for invalid in [-1i64, 99, 600, 999, i64::from(u32::MAX) + 1] {
+            assert_eq!(
+                v1_key_of(vec![
+                    ("http.status_code", AttributeValue::Int(invalid)),
+                    ("http.response.status_code", AttributeValue::Int(418)),
+                ])
+                .fixed
+                .http_status_code,
+                0,
+                "V1 int http.status_code={invalid} with valid OTel"
+            );
+        }
+        assert_eq!(
+            v1_key_of(vec![
+                ("http.status_code", AttributeValue::Float(999.0)),
+                ("http.response.status_code", AttributeValue::Int(418)),
+            ])
+            .fixed
+            .http_status_code,
+            0
+        );
+    }
+
+    #[test]
+    fn test_grpc_status_code_registry_behavior() {
+        use libdd_trace_utils::span::v1::AttributeValue;
+
+        // v0.4: Registry order across names:
+        // rpc.grpc.status_code > grpc.code > rpc.grpc.status.code > grpc.status.code >
+        // rpc.response.status_code (when grpc)
+        type Meta = &'static [(&'static str, &'static str)];
+        let order_cases: &[(Meta, Option<u8>)] = &[
+            (
+                &[
+                    ("rpc.grpc.status_code", "1"),
+                    ("grpc.code", "2"),
+                    ("rpc.grpc.status.code", "3"),
+                    ("grpc.status.code", "4"),
+                    ("rpc.system.name", "grpc"),
+                    ("rpc.response.status_code", "5"),
+                ],
+                Some(1),
+            ),
+            (
+                &[
+                    ("grpc.code", "2"),
+                    ("rpc.grpc.status.code", "3"),
+                    ("grpc.status.code", "4"),
+                    ("rpc.system.name", "grpc"),
+                    ("rpc.response.status_code", "5"),
+                ],
+                Some(2),
+            ),
+            (
+                &[
+                    ("rpc.grpc.status.code", "3"),
+                    ("grpc.status.code", "4"),
+                    ("rpc.system.name", "grpc"),
+                    ("rpc.response.status_code", "5"),
+                ],
+                Some(3),
+            ),
+            (
+                &[
+                    ("grpc.status.code", "4"),
+                    ("rpc.system.name", "grpc"),
+                    ("rpc.response.status_code", "5"),
+                ],
+                Some(4),
+            ),
+            // Unparseable first value gives None without falling through.
+            (
+                &[("rpc.grpc.status_code", "NOPE"), ("grpc.code", "OK")],
+                None,
+            ),
+            // Empty first value is skipped and falls through.
+            (
+                &[("rpc.grpc.status_code", ""), ("grpc.code", "OK")],
+                Some(0),
+            ),
+            // rpc.response.status_code with rpc.system.name == "grpc".
+            (
+                &[
+                    ("rpc.system.name", "grpc"),
+                    ("rpc.response.status_code", "UNAVAILABLE"),
+                ],
+                Some(14),
+            ),
+            // rpc.response.status_code with rpc.system == "grpc" and no rpc.system.name.
+            (
+                &[("rpc.system", "grpc"), ("rpc.response.status_code", "5")],
+                Some(5),
+            ),
+            // rpc.response.status_code with rpc.system == "grpc" and empty rpc.system.name.
+            (
+                &[
+                    ("rpc.system", "grpc"),
+                    ("rpc.system.name", ""),
+                    ("rpc.response.status_code", "5"),
+                ],
+                Some(5),
+            ),
+            // Ignored when rpc.system == "grpc" but rpc.system.name is set to another system.
+            (
+                &[
+                    ("rpc.system", "grpc"),
+                    ("rpc.system.name", "http"),
+                    ("rpc.response.status_code", "5"),
+                ],
+                None,
+            ),
+            // Ignored when neither rpc.system.name nor rpc.system is "grpc".
+            (&[("rpc.response.status_code", "5")], None),
+            (
+                &[
+                    ("rpc.system.name", "connect_rpc"),
+                    ("rpc.response.status_code", "5"),
+                ],
+                None,
+            ),
+        ];
+        for (meta, expected) in order_cases {
+            let span = SpanBytes {
+                meta: meta
+                    .iter()
+                    .map(|&(k, v)| (k.into(), v.into()))
+                    .collect::<Vec<_>>()
+                    .into(),
+                ..Default::default()
+            };
+            assert_eq!(
+                v04_key_of(&span, &[]).fixed.grpc_status_code,
+                *expected,
+                "v0.4 meta={meta:?}"
+            );
+        }
+
+        // v0.4: Numeric metric on an earlier name beats a string on a later name.
+        let metric_earlier = SpanBytes {
+            metrics: vec![("rpc.grpc.status_code".into(), 2.0)].into(),
+            meta: vec![("grpc.code".into(), "OK".into())].into(),
+            ..Default::default()
+        };
+        assert_eq!(
+            v04_key_of(&metric_earlier, &[]).fixed.grpc_status_code,
+            Some(2)
+        );
+
+        // v0.4: Out-of-range numeric metric gives None without falling through.
+        let metric_out_of_range = SpanBytes {
+            metrics: vec![("rpc.grpc.status_code".into(), 300.0)].into(),
+            meta: vec![("grpc.code".into(), "OK".into())].into(),
+            ..Default::default()
+        };
+        assert_eq!(
+            v04_key_of(&metric_out_of_range, &[]).fixed.grpc_status_code,
+            None
+        );
+
+        // v0.4: rpc.response.status_code as numeric metric when rpc.system.name == "grpc".
+        let metric_otel = SpanBytes {
+            metrics: vec![("rpc.response.status_code".into(), 13.0)].into(),
+            meta: vec![("rpc.system.name".into(), "grpc".into())].into(),
+            ..Default::default()
+        };
+        assert_eq!(
+            v04_key_of(&metric_otel, &[]).fixed.grpc_status_code,
+            Some(13)
+        );
+
+        // V1: Registry order, unparseable no-fallthrough, numeric earlier beats string later,
+        // and rpc.response.status_code conditions.
+        assert_eq!(
+            v1_key_of(vec![
+                ("rpc.grpc.status_code", AttributeValue::Int(2)),
+                ("grpc.code", AttributeValue::String("OK".into())),
+            ])
+            .fixed
+            .grpc_status_code,
+            Some(2)
+        );
+        assert_eq!(
+            v1_key_of(vec![
+                ("rpc.grpc.status_code", AttributeValue::Int(-1)),
+                ("grpc.code", AttributeValue::String("OK".into())),
+            ])
+            .fixed
+            .grpc_status_code,
+            None
+        );
+        assert_eq!(
+            v1_key_of(vec![
+                (
+                    "rpc.grpc.status_code",
+                    AttributeValue::String("NOPE".into())
+                ),
+                ("grpc.code", AttributeValue::String("OK".into())),
+            ])
+            .fixed
+            .grpc_status_code,
+            None
+        );
+        assert_eq!(
+            v1_key_of(vec![
+                ("rpc.system.name", AttributeValue::String("grpc".into())),
+                ("rpc.response.status_code", AttributeValue::Int(14)),
+            ])
+            .fixed
+            .grpc_status_code,
+            Some(14)
+        );
+        assert_eq!(
+            v1_key_of(vec![
+                ("rpc.system", AttributeValue::String("grpc".into())),
+                ("rpc.response.status_code", AttributeValue::Int(5)),
+            ])
+            .fixed
+            .grpc_status_code,
+            Some(5)
+        );
+        assert_eq!(
+            v1_key_of(vec![
+                ("rpc.system", AttributeValue::String("grpc".into())),
+                ("rpc.system.name", AttributeValue::String("http".into())),
+                ("rpc.response.status_code", AttributeValue::Int(5)),
+            ])
+            .fixed
+            .grpc_status_code,
+            None
+        );
+        assert_eq!(
+            v1_key_of(vec![("rpc.response.status_code", AttributeValue::Int(5))])
+                .fixed
+                .grpc_status_code,
+            None
+        );
     }
 }

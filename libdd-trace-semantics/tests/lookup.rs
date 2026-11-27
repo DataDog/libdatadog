@@ -9,7 +9,9 @@ use alloc::borrow::Cow;
 use std::collections::HashMap;
 
 use libdd_trace_model::{AttributeValue, Attributes, StringData};
-use libdd_trace_semantics::{Concept, lookup_f64, lookup_i64, lookup_str};
+use libdd_trace_semantics::{
+    Concept, LookupValue, lookup_f64, lookup_i64, lookup_str, lookup_value,
+};
 
 type V = AttributeValue<StringData>;
 
@@ -158,6 +160,74 @@ fn string_lookup_ignores_values_of_another_type() {
         lookup_str(&attrs, Concept::HttpMethod).as_deref(),
         Some("GET")
     );
+}
+
+#[test]
+fn value_lookup_types_values_by_entry() {
+    // http.method: string entries.
+    let method = Typed::new([("http.method", s("GET"))]);
+    assert_eq!(
+        lookup_value(&method, Concept::HttpMethod),
+        Some(LookupValue::String("GET"))
+    );
+
+    // http.status_code: int64 first, then string.
+    let int = Typed::new([("http.status_code", V::Int(200))]);
+    assert_eq!(
+        lookup_value(&int, Concept::HttpStatusCode),
+        Some(LookupValue::Int(200))
+    );
+    let v04 = V04::new([], [("http.status_code", 404.0)]);
+    assert_eq!(
+        lookup_value(&v04, Concept::HttpStatusCode),
+        Some(LookupValue::Int(404))
+    );
+    let meta = V04::new([("http.status_code", "200")], []);
+    assert_eq!(
+        lookup_value(&meta, Concept::HttpStatusCode),
+        Some(LookupValue::String("200"))
+    );
+
+    // _dd.top_level is float64.
+    let float = Typed::new([("_dd.top_level", V::Float(1.5))]);
+    assert_eq!(
+        lookup_value(&float, Concept::DdTopLevel),
+        Some(LookupValue::Float(1.5))
+    );
+
+    assert_eq!(lookup_value(&Typed::default(), Concept::HttpMethod), None);
+}
+
+#[test]
+fn value_lookup_skips_empty_strings() {
+    let attrs = Typed::new([("http.request.method", s("")), ("http.method", s("GET"))]);
+    assert_eq!(
+        lookup_value(&attrs, Concept::HttpMethod),
+        Some(LookupValue::String("GET"))
+    );
+}
+
+#[test]
+fn value_lookup_checks_conditions() {
+    let grpc = Typed::new([
+        ("rpc.response.status_code", V::Int(7)),
+        ("rpc.system.name", s("grpc")),
+    ]);
+    assert_eq!(
+        lookup_value(&grpc, Concept::RpcGrpcStatusCode),
+        Some(LookupValue::Int(7))
+    );
+
+    let jsonrpc = Typed::new([
+        ("rpc.response.status_code", V::Int(7)),
+        ("rpc.system.name", s("jsonrpc")),
+    ]);
+    assert_eq!(lookup_value(&jsonrpc, Concept::RpcGrpcStatusCode), None);
+
+    assert_eq!(lookup_i64(&grpc, Concept::RpcGrpcStatusCode), Some(7));
+    assert_eq!(lookup_i64(&jsonrpc, Concept::RpcGrpcStatusCode), None);
+    assert_eq!(lookup_f64(&grpc, Concept::RpcGrpcStatusCode), Some(7.0));
+    assert_eq!(lookup_f64(&jsonrpc, Concept::RpcGrpcStatusCode), None);
 }
 
 #[test]

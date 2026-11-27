@@ -3809,6 +3809,7 @@ dependencies = [
  "libdd-trace-model",
  "libdd-trace-obfuscation",
  "libdd-trace-protobuf",
+ "libdd-trace-semantics",
  "libdd-trace-utils",
  "rand 0.8.8",
  "rmp-serde",
