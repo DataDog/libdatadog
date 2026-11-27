@@ -5,10 +5,7 @@ use libdd_trace_protobuf::deserializers::deserialize_null_into_default;
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 
-use crate::{
-    json::JsonObfuscator,
-    replacer::{self, ReplaceRule},
-};
+use crate::{json::JsonObfuscator, replacer::ReplaceRule};
 
 #[derive(Clone, Serialize, Deserialize, Debug, PartialEq, Eq)]
 #[serde(default)]
@@ -169,6 +166,7 @@ impl ObfuscationConfig {
     /// Returns an error if one of the regular expressions used by the config cannot be compiled.
     #[cfg(not(target_arch = "wasm32"))]
     pub fn new_from_env() -> Result<Self, Box<dyn core::error::Error>> {
+        use crate::replacer;
         use log::{debug, error};
         use std::env;
 

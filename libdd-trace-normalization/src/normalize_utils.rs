@@ -51,9 +51,14 @@ pub fn normalize_name(name: &mut String) {
 
 #[allow(clippy::ptr_arg)]
 pub fn normalize_resource(resource: &mut String, name: &str) {
-    if resource.is_empty() {
-        name.clone_into(resource);
+    if let Some(fallback) = resource_fallback(resource, name) {
+        fallback.clone_into(resource);
     }
+}
+
+/// Returns the operation name when the span resource is empty.
+pub fn resource_fallback<'a>(resource: &str, name: &'a str) -> Option<&'a str> {
+    resource.is_empty().then_some(name)
 }
 
 pub fn normalize_span_type(span_type: &mut String) {

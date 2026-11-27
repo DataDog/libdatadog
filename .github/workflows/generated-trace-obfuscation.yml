@@ -1,0 +1,48 @@
+name: Generated trace obfuscation
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+jobs:
+  build-agentless-policy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-node@1d0ff469b7ec7b3cb9d8673fde0c81c44821de2a
+        with:
+          node-version: 22
+      - name: Build and verify the agentless policy
+        shell: bash
+        env:
+          CARGO_PROFILE_RELEASE_OPT_LEVEL: '3'
+          CARGO_PROFILE_RELEASE_STRIP: symbols
+        run: |
+          RUSTC=$(rustup which rustc)
+          export RUSTC PATH="${RUSTC%/*}:$PATH"
+          rustup target add wasm32-wasip1
+          cargo rustc --release --locked --target wasm32-wasip1 --crate-type cdylib \
+            -p libdd-data-pipeline-core --example agentless_policy
+          output=target/generated-trace-obfuscation
+          node libdd-data-pipeline-core/examples/package-agentless-policy.cjs \
+            target/wasm32-wasip1/release/examples/agentless_policy.wasm "$output"
+          AGENTLESS_POLICY_WASM="$output/agentless_policy.wasm" AGENTLESS_POLICY_HOST="$output/agentless-policy.cjs" \
+            node --test libdd-data-pipeline-core/tests/agentless-policy.test.cjs
+          policy_digest=$(sha256sum "$output/agentless_policy.wasm" | cut -d " " -f 1)
+          host_digest=$(sha256sum "$output/agentless-policy.cjs" | cut -d " " -f 1)
+          bytes_digest=$(sha256sum "$output/agentless-policy-bytes.cjs" | cut -d " " -f 1)
+          printf '{"schemaVersion":2,"revision":"%s","policyWasmAbi":1,"policyWasmSha256":"%s","policyHostSha256":"%s","policyNodeBytesSha256":"%s"}\n' \
+            "$(git rev-parse HEAD)" "$policy_digest" "$host_digest" "$bytes_digest" > "$output/manifest.json"
+          cp LICENSE NOTICE "$output/"
+      - uses: actions/upload-artifact@4cec3d8aa04e39d1a68397de0c4cd6fb9dce8ec1
+        with:
+          name: trace-obfuscation-js-${{ github.event.pull_request.head.sha || github.sha }}
+          path: target/generated-trace-obfuscation/
+          if-no-files-found: error

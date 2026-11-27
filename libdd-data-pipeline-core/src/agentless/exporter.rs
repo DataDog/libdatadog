@@ -7,13 +7,16 @@ use super::config::AgentlessTraceConfig;
 use http::HeaderMap;
 use libdd_capabilities::{HttpClientCapability, SleepCapability};
 use libdd_common::Endpoint;
+use libdd_trace_obfuscation::obfuscation_config::ObfuscationConfig;
 use libdd_trace_utils::send_with_retry::{
     CompressionStrategy, RetryBackoffType, RetryStrategy, SendWithRetryError, SendWithRetryResult,
     send_with_retry_and_size,
 };
 use libdd_trace_utils::span::span_pool::PooledChunks;
 use libdd_trace_utils::span::v1::span_pool::PooledTraceChunks;
-use libdd_trace_utils::span::{TraceData, trace_utils::compute_top_level_span, trace_utils_v1};
+use libdd_trace_utils::span::{
+    TraceData, trace_utils::compute_top_level_span, trace_utils_v1, v04,
+};
 use libdd_trace_utils::tracer_metadata::TracerMetadata;
 use thiserror::Error;
 
@@ -81,32 +84,43 @@ where
     T: TraceData,
     F: FnOnce(&SendWithRetryResult, usize),
 {
+    let trace_count = traces.len();
+    let json_body = prepare_v04_payload(
+        traces.as_mut_slice(),
+        metadata,
+        &config.obfuscation_config,
+        client_side_stats,
+    )
+    .map_err(AgentlessError::Serialization)?;
+    let headers = build_agentless_headers(metadata, trace_count);
+    send_agentless_json(capabilities, config, headers, json_body, observer).await
+}
+
+/// Obfuscates decoded v0.4 traces and encodes the agentless JSON body without transport.
+pub fn prepare_v04_payload<T: TraceData>(
+    traces: &mut [Vec<v04::Span<T>>],
+    metadata: &TracerMetadata,
+    obfuscation: &ObfuscationConfig,
+    client_side_stats: bool,
+) -> Result<Vec<u8>, serde_json::Error> {
     // Top-level tagging is already done before sending when client-side stats
     // are active
     if !metadata.client_computed_top_level && !client_side_stats {
-        for chunk in traces.as_mut_slice() {
+        for chunk in traces.iter_mut() {
             compute_top_level_span(chunk);
         }
     }
     for chunk in traces.iter_mut() {
         for span in chunk.iter_mut() {
             // Obfuscate every span we are about to send to the intake
-            libdd_trace_obfuscation::obfuscate::obfuscate_v04_span(
-                span,
-                &config.obfuscation_config,
-            );
+            libdd_trace_obfuscation::obfuscate::obfuscate_v04_span(span, obfuscation);
 
             // Remove duplicate attributes before serialization
             span.dedup();
         }
     }
 
-    let trace_count = traces.len();
-    let json_body =
-        libdd_trace_utils::agentless_encoder::encode_payload(&traces, metadata, client_side_stats)
-            .map_err(AgentlessError::Serialization)?;
-    let headers = build_agentless_headers(metadata, trace_count);
-    send_agentless_json(capabilities, config, headers, json_body, observer).await
+    libdd_trace_utils::agentless_encoder::encode_payload(traces, metadata, client_side_stats)
 }
 
 /// Encodes and sends already-decoded v1 trace chunks.
