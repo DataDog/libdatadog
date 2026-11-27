@@ -60,6 +60,7 @@ impl BasicRuntime {
         pausable_worker: PausableWorker<BoxedWorker>,
     ) -> WorkerHandle {
         let worker_id = self.next_worker_id.fetch_add(1, Ordering::Relaxed);
+        let flush_requester = pausable_worker.flush_requester();
         workers_guard.push(WorkerEntry {
             id: worker_id,
             restart_on_fork: false,
@@ -68,6 +69,7 @@ impl BasicRuntime {
         WorkerHandle {
             worker_id,
             workers: self.workers.clone(),
+            flush_requester,
         }
     }
 }
