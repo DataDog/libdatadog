@@ -1,7 +1,7 @@
 // Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-#[cfg(feature = "agentless")]
+#[cfg(feature = "agentless-custom-transport")]
 use super::agentless;
 #[cfg(not(target_arch = "wasm32"))]
 use super::shared::RefcountedFile;
@@ -18,12 +18,13 @@ use libdd_capabilities::{HttpClientCapability, SleepCapability};
 use libdd_common::Endpoint;
 use libdd_common::MutexExt;
 use libdd_trace_protobuf::remoteconfig::{
-    ClientGetConfigsRequest, ClientGetConfigsResponse, ClientState, ClientTracer, ConfigState,
-    ConfigStatus, TargetFileHash, TargetFileMeta,
+    Client, ClientGetConfigsRequest, ClientGetConfigsResponse, ClientState, ClientTracer,
+    ConfigState, ConfigStatus, TargetFileHash, TargetFileMeta,
 };
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256, Sha512};
 use std::collections::HashSet;
+use std::io;
 use std::marker::PhantomData;
 use std::ops::Add;
 #[cfg(not(target_arch = "wasm32"))]
@@ -38,6 +39,16 @@ use tracing::{debug, trace, warn};
 /// a lock across all ConfigFetchers referencing the same ConfigFetcherState is held.
 pub trait FileStorage {
     type StoredFile;
+
+    /// Whether a sole consumer may update a stored file in place.
+    fn update_in_place(&self) -> bool {
+        true
+    }
+
+    /// Whether files are acknowledged on receipt rather than after application.
+    fn acknowledge_on_receipt(&self) -> bool {
+        true
+    }
 
     /// A file was received for which the fetcher holds no stored file to update.
     ///
@@ -63,6 +74,12 @@ pub trait FileStorage {
         version: u64,
         contents: Vec<u8>,
     ) -> anyhow::Result<()>;
+
+    /// Creates a new immutable revision of already verified bytes.
+    /// Storage that treats identical payloads as unchanged can keep the default.
+    fn reissue_cached(&self, _: &Arc<Self::StoredFile>, _: u64) -> Option<Arc<Self::StoredFile>> {
+        None
+    }
 }
 
 /// Fundamental configuration of the RC client, which always must be set.
@@ -71,11 +88,11 @@ pub struct ConfigInvariants {
     pub language: String,
     pub tracer_version: String,
     pub endpoint: Endpoint,
-    #[cfg(feature = "agentless")]
+    #[cfg(feature = "agentless-custom-transport")]
     /// Enables and configures agentless mode. If some the fetcher will
     /// talk directly to the RC backend
     pub agentless: Option<agentless::AgentlessConfig>,
-    #[cfg(not(feature = "agentless"))]
+    #[cfg(not(feature = "agentless-custom-transport"))]
     pub agentless: Option<std::convert::Infallible>,
 }
 
@@ -91,6 +108,24 @@ pub(crate) struct StoredTargetFile<S> {
     pub(crate) state: ConfigState,
     pub(crate) meta: TargetFileMeta,
     pub(crate) expiring: bool,
+}
+
+impl<S> StoredTargetFile<S> {
+    pub(super) fn reissue<Storage: FileStorage<StoredFile = S>>(
+        &mut self,
+        storage: &Storage,
+        version: u64,
+        hashes: impl IntoIterator<Item = TargetFileHash>,
+    ) {
+        if self.state.version != version
+            && let Some(handle) = storage.reissue_cached(&self.handle, version)
+        {
+            self.handle = handle;
+            self.state.version = version;
+            set_apply_state(&mut self.state, ConfigApplyState::Unacknowledged);
+            self.meta.hashes = hashes.into_iter().collect();
+        }
+    }
 }
 
 pub enum ConfigApplyState {
@@ -193,9 +228,17 @@ impl<S: RefcountedFile> ConfigFetcherFilesLock<'_, S> {
 
 impl<S, C: HttpClientCapability + SleepCapability> ConfigFetcherState<S, C> {
     pub fn with_client(invariants: ConfigInvariants, http_client: C) -> Self {
+        Self::with_agent_path_prefix(invariants, http_client, false)
+    }
+
+    pub(super) fn with_agent_path_prefix(
+        invariants: ConfigInvariants,
+        http_client: C,
+        preserve_agent_path_prefix: bool,
+    ) -> Self {
         let (endpoint, agentless) = match &invariants.agentless {
             Some(agentless_cfg) => {
-                #[cfg(feature = "agentless")]
+                #[cfg(feature = "agentless-custom-transport")]
                 {
                     (
                         agentless_cfg.agentless_endpoint().clone(),
@@ -203,10 +246,13 @@ impl<S, C: HttpClientCapability + SleepCapability> ConfigFetcherState<S, C> {
                     )
                 }
 
-                #[cfg(not(feature = "agentless"))]
+                #[cfg(not(feature = "agentless-custom-transport"))]
                 match *agentless_cfg {}
             }
-            None => (make_agent_configs_endpoint(&invariants.endpoint), None),
+            None => (
+                make_agent_configs_endpoint(&invariants.endpoint, preserve_agent_path_prefix),
+                None,
+            ),
         };
         ConfigFetcherState {
             target_files_by_path: Default::default(),
@@ -265,6 +311,113 @@ impl<S, C: HttpClientCapability + SleepCapability> ConfigFetcherState<S, C> {
     }
 }
 
+const MAX_PROCESSING_DIAGNOSTIC_BYTES: usize = 4096;
+
+fn bounded_processing_diagnostic(message: String) -> String {
+    if message.len() <= MAX_PROCESSING_DIAGNOSTIC_BYTES {
+        return message;
+    }
+    message[..message.floor_char_boundary(MAX_PROCESSING_DIAGNOSTIC_BYTES)].to_owned()
+}
+
+pub(super) fn omit_request_diagnostics(client: &mut Client) -> bool {
+    let Some(state) = client.state.as_mut() else {
+        return false;
+    };
+    let mut changed = !state.error.is_empty();
+    state.error.clear();
+    for config in &mut state.config_states {
+        changed |= !config.apply_error.is_empty();
+        config.apply_error.clear();
+    }
+    changed
+}
+
+struct BoundedJsonRequest {
+    bytes: Vec<u8>,
+    written: usize,
+    limit: usize,
+}
+
+impl BoundedJsonRequest {
+    fn encode(self, request: &ClientGetConfigsRequest) -> (Self, serde_json::Result<()>) {
+        let mut serializer = serde_json::Serializer::new(self);
+        let result = request.serialize(&mut serializer);
+        (serializer.into_inner(), result)
+    }
+
+    #[cold]
+    fn grow(&mut self, required: usize) -> io::Result<()> {
+        if required > self.limit {
+            return Err(io::Error::other(
+                "remote config request body exceeds transport limit",
+            ));
+        }
+        let capacity = self
+            .bytes
+            .len()
+            .saturating_mul(2)
+            .max(required)
+            .min(self.limit);
+        self.bytes.resize(capacity, 0);
+        Ok(())
+    }
+}
+
+impl io::Write for BoundedJsonRequest {
+    fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
+        self.write_all(bytes)?;
+        Ok(bytes.len())
+    }
+
+    fn write_all(&mut self, bytes: &[u8]) -> io::Result<()> {
+        let end = self.written + bytes.len();
+        if end > self.bytes.len() {
+            self.grow(end)?;
+        }
+        self.bytes[self.written..end].copy_from_slice(bytes);
+        self.written = end;
+        Ok(())
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        Ok(())
+    }
+}
+
+fn encode_agent_request(
+    mut request: ClientGetConfigsRequest,
+    limit: Option<usize>,
+) -> anyhow::Result<bytes::Bytes> {
+    let Some(limit) = limit else {
+        return Ok(bytes::Bytes::from(serde_json::to_vec(&request)?));
+    };
+    let limit = limit.min(isize::MAX as usize);
+    let output = BoundedJsonRequest {
+        bytes: vec![0; 128.min(limit)],
+        written: 0,
+        limit,
+    };
+    let (mut output, result) = output.encode(&request);
+    match result {
+        Err(error)
+            if error.is_io()
+                && request
+                    .client
+                    .as_mut()
+                    .is_some_and(omit_request_diagnostics) =>
+        {
+            output.written = 0;
+            let (retry, result) = output.encode(&request);
+            result?;
+            output = retry;
+        }
+        result => result?,
+    }
+    output.bytes.truncate(output.written);
+    Ok(bytes::Bytes::from(output.bytes))
+}
+
 fn set_apply_state(target: &mut ConfigState, state: ConfigApplyState) {
     match state {
         ConfigApplyState::Unacknowledged => {
@@ -285,7 +438,7 @@ fn set_apply_state(target: &mut ConfigState, state: ConfigApplyState) {
 #[allow(clippy::large_enum_variant)]
 enum FetcherMode<C: HttpClientCapability + SleepCapability> {
     Agent(PhantomData<C>),
-    #[cfg(feature = "agentless")]
+    #[cfg(feature = "agentless-custom-transport")]
     Agentless(agentless::AgentlessFetcher<C>),
 }
 
@@ -293,6 +446,7 @@ pub struct ConfigFetcher<S: FileStorage, C: HttpClientCapability + SleepCapabili
     pub file_storage: S,
     state: Arc<ConfigFetcherState<S::StoredFile, C>>,
     mode: FetcherMode<C>,
+    retain_agent_assignment: bool,
 }
 
 pub struct ConfigClientState {
@@ -343,6 +497,7 @@ impl<S: FileStorage, C: HttpClientCapability + SleepCapability> ConfigFetcher<S,
             file_storage,
             state,
             mode: FetcherMode::Agent(PhantomData),
+            retain_agent_assignment: false,
         }
     }
 
@@ -351,7 +506,7 @@ impl<S: FileStorage, C: HttpClientCapability + SleepCapability> ConfigFetcher<S,
         file_storage: S,
         state: Arc<ConfigFetcherState<S::StoredFile, C>>,
     ) -> anyhow::Result<Self> {
-        #[cfg(feature = "agentless")]
+        #[cfg(feature = "agentless-custom-transport")]
         let mode: FetcherMode<C> = match &state.invariants.agentless {
             Some(agentless_cfg) => FetcherMode::Agentless(
                 agentless::AgentlessFetcher::new(
@@ -363,19 +518,62 @@ impl<S: FileStorage, C: HttpClientCapability + SleepCapability> ConfigFetcher<S,
             ),
             None => FetcherMode::Agent(PhantomData),
         };
-        #[cfg(not(feature = "agentless"))]
+        #[cfg(not(feature = "agentless-custom-transport"))]
         let mode: FetcherMode<C> = FetcherMode::Agent(PhantomData);
 
         Ok(ConfigFetcher {
             file_storage,
             state,
             mode,
+            retain_agent_assignment: false,
         })
+    }
+
+    pub(super) fn retain_agent_assignment(&mut self) {
+        self.retain_agent_assignment = true;
     }
 
     /// Sets the apply state on a stored file.
     pub fn set_config_state(&self, file: &RemoteConfigPath, state: ConfigApplyState) {
         self.state.set_config_state(file, state)
+    }
+
+    pub(super) fn file_hashes(&self, path: &RemoteConfigPath) -> Option<Vec<TargetFileHash>> {
+        self.state
+            .target_files_by_path
+            .lock_or_panic()
+            .get(path)
+            .map(|file| file.meta.hashes.clone())
+    }
+
+    pub(super) fn complete_file(
+        &self,
+        path: &RemoteConfigPath,
+        revision: &Arc<S::StoredFile>,
+        state: ConfigApplyState,
+    ) -> bool {
+        let mut files = self.state.target_files_by_path.lock_or_panic();
+        if let Some(file) = files.get_mut(path)
+            && Arc::ptr_eq(&file.handle, revision)
+        {
+            set_apply_state(&mut file.state, state);
+            return true;
+        }
+        false
+    }
+
+    pub(super) fn restart_assignment(&mut self, client_state: &mut ConfigClientState) {
+        #[cfg(feature = "agentless-custom-transport")]
+        if let FetcherMode::Agentless(fetcher) = &mut self.mode {
+            fetcher.restart_assignment();
+        }
+        client_state.last_config_paths.clear();
+        client_state.targets_version = 0;
+        client_state.opaque_backend_state.clear();
+        client_state.last_error = None;
+        for file in self.state.target_files_by_path.lock_or_panic().values_mut() {
+            set_apply_state(&mut file.state, ConfigApplyState::Unacknowledged);
+        }
     }
 
     /// Destructures the fetcher into its file storage and state.
@@ -475,13 +673,15 @@ impl<S: FileStorage, C: HttpClientCapability + SleepCapability> ConfigFetcher<S,
                 http::header::CONTENT_TYPE,
                 libdd_common::header::APPLICATION_JSON,
             )
-            .body(bytes::Bytes::from(serde_json::to_string(&config_req)?))?;
-        let sleeper = <C as SleepCapability>::new();
+            .body(encode_agent_request(
+                config_req,
+                self.state.http_client.max_request_body_bytes(),
+            )?)?;
         let response = tokio::select! {
             biased;
             result = self.state.http_client.request(req) => result
                 .map_err(|e| anyhow::Error::msg(e).context(format!("Url: {:?}", self.state.endpoint)))?,
-            _ = sleeper.sleep(Duration::from_millis(self.state.endpoint.timeout_ms)) => {
+            _ = self.state.http_client.sleep(Duration::from_millis(self.state.endpoint.timeout_ms)) => {
                 anyhow::bail!(
                     "Remote config request timed out after {}ms. Url: {:?}",
                     self.state.endpoint.timeout_ms,
@@ -492,6 +692,15 @@ impl<S: FileStorage, C: HttpClientCapability + SleepCapability> ConfigFetcher<S,
         let status = response.status();
         let body_bytes = response.into_body();
         if status != StatusCode::OK {
+            if self.retain_agent_assignment
+                && matches!(status, StatusCode::NO_CONTENT | StatusCode::NOT_FOUND)
+            {
+                if status == StatusCode::NO_CONTENT {
+                    client_state.last_error = None;
+                }
+                return Ok(None);
+            }
+
             // Not active
             if status == StatusCode::NOT_FOUND {
                 trace!("Requested remote config and but remote config not active");
@@ -513,7 +722,7 @@ impl<S: FileStorage, C: HttpClientCapability + SleepCapability> ConfigFetcher<S,
         if let Err(e) = &result {
             // Contrary to transport errors, failures to process the response are reported back
             // to the agent with the next request.
-            client_state.last_error = Some(format!("{e:#}"));
+            client_state.last_error = Some(bounded_processing_diagnostic(format!("{e:#}")));
         }
         result
     }
@@ -546,34 +755,27 @@ impl<S: FileStorage, C: HttpClientCapability + SleepCapability> ConfigFetcher<S,
 
         let decoded_targets =
             base64::engine::general_purpose::STANDARD.decode(response.targets.as_slice())?;
-        let targets_list = TargetsList::try_parse(decoded_targets.as_slice()).map_err(|e| {
-            anyhow::Error::msg(e).context(format!(
-                "Decoded targets reply: {}",
-                String::from_utf8_lossy(decoded_targets.as_slice())
-            ))
-        })?;
+        let targets_list = TargetsList::try_parse(decoded_targets.as_slice())
+            .map_err(|error| anyhow::Error::msg(error).context("Invalid targets metadata"))?;
 
-        client_state.root_version = response.roots.iter().try_fold(
+        let root_version = response.roots.iter().try_fold(
             client_state.root_version,
             |max, cur| -> anyhow::Result<_> {
                 let decoded_root =
                     base64::engine::general_purpose::STANDARD.decode(cur.as_slice())?;
-                let root = Root::try_parse(decoded_root.as_slice()).map_err(|e| {
-                    anyhow::Error::msg(e).context(format!(
-                        "Decoded roots reply: {}",
-                        String::from_utf8_lossy(decoded_root.as_slice())
-                    ))
-                })?;
+                let root = Root::try_parse(decoded_root.as_slice())
+                    .map_err(|error| anyhow::Error::msg(error).context("Invalid roots metadata"))?;
                 Ok(std::cmp::max(max, root.signed.version))
             },
         )?;
 
-        client_state.opaque_backend_state = targets_list
-            .signed
-            .custom
-            .opaque_backend_state
-            .as_bytes()
-            .to_vec();
+        let opaque_backend_state = targets_list.signed.custom.opaque_backend_state.as_bytes();
+        let update_in_place = self.file_storage.update_in_place();
+        let acknowledge_on_receipt = self.file_storage.acknowledge_on_receipt();
+        if update_in_place {
+            client_state.root_version = root_version;
+            client_state.opaque_backend_state = opaque_backend_state.to_vec();
+        }
 
         debug!(
             "Received remote config of length {}, containing {:?} paths for target {:?}",
@@ -594,16 +796,19 @@ impl<S: FileStorage, C: HttpClientCapability + SleepCapability> ConfigFetcher<S,
         let mut target_files = self.state.target_files_by_path.lock_or_panic();
 
         let mut config_paths: HashSet<RemoteConfigPath> = HashSet::new();
+        let mut assignment_order = Vec::with_capacity(response.client_configs.len());
         for path in response.client_configs.iter() {
             match RemoteConfigPath::try_parse(path) {
                 Ok(parsed) => {
-                    config_paths.insert(parsed.into());
+                    if config_paths.insert(parsed.into()) {
+                        assignment_order.push(path.as_str());
+                    }
                 }
                 Err(e) => warn!("Failed parsing remote config path: {path} - {e:?}"),
             }
         }
 
-        if self.state.expire_unused_files {
+        if update_in_place && self.state.expire_unused_files {
             target_files.retain(|k, _| config_paths.contains(k.as_ref()));
         }
 
@@ -611,6 +816,16 @@ impl<S: FileStorage, C: HttpClientCapability + SleepCapability> ConfigFetcher<S,
         // the agent, and retried with the next response.
         let mut errors = vec![];
         let mut failed_paths = HashSet::new();
+        let mut cached_reissues = HashMap::new();
+        let mut replacements = HashMap::new();
+        fn agent_hashes(
+            hashes: std::collections::HashMap<&str, &str>,
+        ) -> impl Iterator<Item = TargetFileHash> {
+            hashes.into_iter().map(|(algorithm, hash)| TargetFileHash {
+                algorithm: algorithm.to_owned(),
+                hash: hash.to_owned(),
+            })
+        }
         for (path, target_file) in targets_list.signed.targets {
             fn hash_sha256(v: &[u8]) -> String {
                 format!("{:x}", Sha256::digest(v))
@@ -636,10 +851,17 @@ impl<S: FileStorage, C: HttpClientCapability + SleepCapability> ConfigFetcher<S,
             let handle = if let Some(StoredTargetFile {
                 hash: old_hash,
                 handle,
+                state,
                 ..
             }) = target_files.get(&parsed_path)
             {
                 if old_hash == hash {
+                    if !acknowledge_on_receipt
+                        && let Some(version) = target_file.try_parse_version()
+                        && version != state.version
+                    {
+                        cached_reissues.insert(path, (version, target_file.hashes));
+                    }
                     continue;
                 }
                 Some(handle.clone())
@@ -659,6 +881,14 @@ impl<S: FileStorage, C: HttpClientCapability + SleepCapability> ConfigFetcher<S,
                 fail(format!("Failed base64 decoding config for path {path}"));
                 continue;
             };
+            let length = decoded.len() as i64;
+            let target_length = i64::from(target_file.length);
+            if length != target_length {
+                fail(format!(
+                    "Decoded length {length} did not match target length {target_length} for path {path}"
+                ));
+                continue;
+            }
             let computed_hash = hasher(decoded.as_slice());
             if hash != computed_hash {
                 fail(format!(
@@ -676,10 +906,9 @@ impl<S: FileStorage, C: HttpClientCapability + SleepCapability> ConfigFetcher<S,
             debug!("Fetched new remote config file at path {path} targeting {target:?}");
 
             let parsed_path: Arc<RemoteConfigPath> = Arc::new(parsed_path.into());
-            let length = decoded.len() as i64;
             let stored = match handle {
                 // Only this fetcher's target uses the file: replace its contents.
-                Some(handle) if self.state.expire_unused_files => self
+                Some(handle) if self.state.expire_unused_files && update_in_place => self
                     .file_storage
                     .update(&handle, version, decoded)
                     .map(|()| handle),
@@ -697,47 +926,78 @@ impl<S: FileStorage, C: HttpClientCapability + SleepCapability> ConfigFetcher<S,
                     continue;
                 }
             };
-            target_files.insert(
-                parsed_path.clone(),
-                StoredTargetFile {
-                    hash: computed_hash,
-                    state: ConfigState {
-                        id: parsed_path.config_id().to_string(),
-                        version,
-                        product: parsed_path.product().to_string(),
-                        apply_state: 2, // Acknowledged
-                        apply_error: "".to_string(),
-                    },
-                    meta: TargetFileMeta {
-                        path: path.to_string(),
-                        length,
-                        hashes: target_file
-                            .hashes
-                            .iter()
-                            .map(|(algorithm, hash)| TargetFileHash {
-                                algorithm: algorithm.to_string(),
-                                hash: hash.to_string(),
-                            })
-                            .collect(),
-                    },
-                    handle,
-                    expiring: false,
+            let file = StoredTargetFile {
+                hash: computed_hash,
+                state: ConfigState {
+                    id: parsed_path.config_id().to_string(),
+                    version,
+                    product: parsed_path.product().to_string(),
+                    apply_state: if acknowledge_on_receipt { 2 } else { 1 },
+                    apply_error: "".to_string(),
                 },
-            );
+                meta: TargetFileMeta {
+                    path: path.to_string(),
+                    length,
+                    hashes: agent_hashes(target_file.hashes).collect(),
+                },
+                handle,
+                expiring: false,
+            };
+            if update_in_place {
+                target_files.insert(parsed_path, file);
+            } else {
+                replacements.insert(parsed_path, file);
+            }
         }
 
         let mut configs = Vec::with_capacity(config_paths.len());
-        for config in config_paths.iter() {
-            if let Some(target_file) = target_files.get_mut(config) {
-                target_file.expiring = false;
+        let mut reissues = Vec::new();
+        for path in assignment_order {
+            let Some(config) = config_paths.get(path) else {
+                continue;
+            };
+            let target_file = replacements.get(config).or_else(|| {
+                target_files.get_mut(config).map(|file| {
+                    if update_in_place {
+                        file.expiring = false;
+                    }
+                    &*file
+                })
+            });
+            if let Some(target_file) = target_file {
+                if let Some((version, hashes)) = cached_reissues.remove(path) {
+                    reissues.push((config, configs.len(), version, hashes));
+                }
                 configs.push(target_file.handle.clone());
             } else if !failed_paths.contains(config.as_str()) {
                 anyhow::bail!("Found {config} in client_configs response, but it isn't stored.");
             }
         }
 
+        if !update_in_place {
+            if self.state.expire_unused_files {
+                target_files.retain(|path, _| config_paths.contains(path.as_ref()));
+            } else {
+                for path in &config_paths {
+                    if let Some(file) = target_files.get_mut(path) {
+                        file.expiring = false;
+                    }
+                }
+            }
+            target_files.extend(replacements);
+            client_state.root_version = root_version;
+            client_state.opaque_backend_state = opaque_backend_state.to_vec();
+        }
+
+        for (path, index, version, hashes) in reissues {
+            if let Some(file) = target_files.get_mut(path) {
+                file.reissue(&self.file_storage, version, agent_hashes(hashes));
+                configs[index] = file.handle.clone();
+            }
+        }
+
         if !errors.is_empty() {
-            client_state.last_error = Some(errors.join("\n"));
+            client_state.last_error = Some(bounded_processing_diagnostic(errors.join("\n")));
         }
         client_state.targets_version = targets_list.signed.version as u64;
         client_state.last_config_paths = config_paths;
@@ -772,7 +1032,7 @@ impl<S: FileStorage, C: HttpClientCapability + SleepCapability> ConfigFetcher<S,
         );
         match &mut self.mode {
             FetcherMode::Agent(_) => self.fetch_agent(config_req, target, client_state).await,
-            #[cfg(feature = "agentless")]
+            #[cfg(feature = "agentless-custom-transport")]
             FetcherMode::Agentless(agentless_fetcher) => {
                 #[allow(clippy::expect_used)]
                 let client = config_req.client.expect(
@@ -781,9 +1041,14 @@ impl<S: FileStorage, C: HttpClientCapability + SleepCapability> ConfigFetcher<S,
 
                 let cache = agentless::TargetCache::new(&self.state, &self.file_storage);
                 let res = match agentless_fetcher.fetch_config(client, &cache).await {
-                    Ok(r) => r,
+                    Ok(Some(response)) => response,
+                    Ok(None) => {
+                        client_state.last_error = None;
+                        return Ok(None);
+                    }
                     Err(e) => {
-                        client_state.last_error = Some(format!("{e:#}"));
+                        client_state.last_error =
+                            Some(bounded_processing_diagnostic(format!("{e:#}")));
                         // Surface the recommended backoff to the consumer of
                         // `ConfigClientState::server_recommended_refresh_interval`
                         // so it waits before the next attempt. `None` means
@@ -818,12 +1083,27 @@ impl<S: FileStorage, C: HttpClientCapability + SleepCapability> ConfigFetcher<S,
     }
 }
 
-fn make_agent_configs_endpoint(endpoint: &Endpoint) -> Endpoint {
+fn make_agent_configs_endpoint(endpoint: &Endpoint, preserve_path_prefix: bool) -> Endpoint {
+    const CONFIG_PATH: &str = "/v0.7/config";
     let mut parts = endpoint.url.clone().into_parts();
-    parts.path_and_query = Some(PathAndQuery::from_static("/v0.7/config"));
+    let prefix = endpoint.url.path().trim_end_matches('/');
+    // The prefix comes from an already validated URI path.
     #[allow(clippy::unwrap_used)]
+    let url = {
+        parts.path_and_query = Some(
+            if preserve_path_prefix
+                && !prefix.is_empty()
+                && matches!(endpoint.url.scheme_str(), Some("http" | "https"))
+            {
+                PathAndQuery::try_from(format!("{prefix}{CONFIG_PATH}")).unwrap()
+            } else {
+                PathAndQuery::from_static(CONFIG_PATH)
+            },
+        );
+        http::Uri::from_parts(parts).unwrap()
+    };
     Endpoint {
-        url: http::Uri::from_parts(parts).unwrap(),
+        url,
         // Nullify the api key since we talk only to the agent
         api_key: None,
         test_token: endpoint.test_token.clone(),
@@ -840,6 +1120,51 @@ pub mod tests {
     use libdd_networking::http_common;
     use std::mem::transmute;
     use std::sync::LazyLock;
+
+    #[test]
+    fn agent_configs_endpoint_preserves_http_prefix() {
+        for (base, expected) in [
+            ("http://agent.example", "/v0.7/config"),
+            ("http://agent.example/prefix", "/prefix/v0.7/config"),
+            (
+                "https://agent.example/prefix%2Ftenant/?unused=1",
+                "/prefix%2Ftenant/v0.7/config",
+            ),
+            ("unix://socket/transport-path", "/v0.7/config"),
+        ] {
+            let endpoint = Endpoint {
+                url: base.parse().unwrap(),
+                ..Default::default()
+            };
+            let config_endpoint = make_agent_configs_endpoint(&endpoint, true);
+            assert_eq!(config_endpoint.url.path_and_query().unwrap(), expected);
+            assert_eq!(config_endpoint.url.authority(), endpoint.url.authority());
+        }
+    }
+
+    #[test]
+    fn existing_agent_fetchers_use_the_root_config_route() {
+        for url in [
+            "http://agent.example/v0.7/config",
+            "https://agent.example/prefix/?unused=1",
+            "unix://socket/transport-path",
+        ] {
+            let invariants = ConfigInvariants {
+                language: "rust".into(),
+                tracer_version: "1".into(),
+                endpoint: Endpoint {
+                    url: url.parse().unwrap(),
+                    ..Default::default()
+                },
+                agentless: None,
+            };
+            let state = ConfigFetcherState::<(), _>::with_client(
+                invariants,
+                NativeCapabilities::new_periodic(),
+            );
+            assert_eq!(state.endpoint.url.path_and_query().unwrap(), "/v0.7/config");
+        }
+    }
 
     pub(crate) static PATH_FIRST: LazyLock<RemoteConfigPath> = LazyLock::new(|| {
         RemoteConfigPath::parse("employee/APM_TRACING/1234/config")
@@ -943,6 +1268,23 @@ pub mod tests {
             };
             Ok(())
         }
+    }
+
+    #[test]
+    fn storage_works_through_a_trait_object() {
+        let storage = Arc::new(Storage::default());
+        let storage: &dyn FileStorage<StoredFile = PathStore> = &storage;
+        let stored = storage
+            .store(1, Arc::new(PATH_FIRST.clone()), b"initial".to_vec())
+            .unwrap();
+        storage.update(&stored, 2, b"updated".to_vec()).unwrap();
+        assert_eq!(
+            *stored.data.lock().unwrap(),
+            DataStore {
+                version: 2,
+                contents: "updated".to_owned(),
+            }
+        );
     }
 
     #[tokio::test]

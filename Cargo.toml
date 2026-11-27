@@ -30,6 +30,7 @@ members = [
   "libdd-profiling-protobuf",
   "datadog-profiling-replayer",
   "libdd-remote-config",
+  "libdd-remote-config-wasm",
   "datadog-sidecar",
   "datadog-sidecar-ffi",
   "datadog-sidecar-macros",

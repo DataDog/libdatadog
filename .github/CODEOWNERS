@@ -38,6 +38,7 @@ libdd-ipc*/                          @DataDog/libdatadog-php
 libdd-live-debugger*/                @DataDog/libdatadog-php @DataDog/apm-common-components-core-reviewers
 datadog-profiling-replayer           @DataDog/libdatadog-profiling
 libdd-remote-config                  @DataDog/libdatadog-php @DataDog/remote-config @DataDog/apm-common-components-core-reviewers
+libdd-remote-config-wasm             @DataDog/remote-config @DataDog/apm-common-components-core-reviewers
 datadog-sidecar                      @DataDog/libdatadog-php @DataDog/apm-common-components-core-reviewers
 datadog-sidecar-ffi                  @DataDog/libdatadog-php @DataDog/apm-common-components-core-reviewers
 datadog-sidecar-macros               @DataDog/libdatadog-php

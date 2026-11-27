@@ -130,7 +130,16 @@ pub enum RemoteConfigCapabilities {
     FfeFlagConfigurationRules = 46,
     DdDataStreamsTransactionExtractors = 47,
     LlmObsActivation = 48,
+    SdkConfiguration = 49,
     /// The consumer evaluates prerequisite conditions against a flag's selected variant key.
     /// Register only when the evaluator implements the dependent-flag variant-key contract.
     FfeFlagDependentFlagVariantKeyV1 = 50,
+}
+
+impl RemoteConfigCapabilities {
+    pub fn from_index(index: u8) -> Option<Self> {
+        use strum::IntoEnumIterator;
+
+        Self::iter().find(|capability| *capability as usize == usize::from(index))
+    }
 }

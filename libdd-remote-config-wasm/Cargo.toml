@@ -1,0 +1,29 @@
+# Copyright 2026-Present Datadog, Inc. https://www.datadoghq.com/
+# SPDX-License-Identifier: Apache-2.0
+
+[package]
+name = "libdd-remote-config-wasm"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish = false
+
+[lib]
+crate-type = ["cdylib"]
+
+[target."cfg(target_os = \"wasi\")".dependencies]
+anyhow = { workspace = true, features = ["std"] }
+bytes = { workspace = true, features = ["std"] }
+futures-channel = { workspace = true, features = ["std"] }
+futures-util = { workspace = true, features = ["std"] }
+http = { workspace = true, features = ["std"] }
+libdd-capabilities = { path = "../libdd-capabilities" }
+libdd-common = { path = "../libdd-common", default-features = false, features = ["std"] }
+libdd-remote-config = { path = "../libdd-remote-config", default-features = false, features = ["agentless-custom-transport"] }
+serde = { workspace = true, features = ["derive", "std"] }
+serde_json = { workspace = true, features = ["std"] }
+
+[build-dependencies]
+serde = { workspace = true, features = ["derive", "std"] }
+serde_json = { workspace = true, features = ["std"] }

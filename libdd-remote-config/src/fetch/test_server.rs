@@ -131,13 +131,13 @@ impl RemoteConfigServer {
                         },
                         targets: target_info
                             .iter()
-                            .map(|(p, hash, version, _)| {
+                            .map(|(p, hash, version, file)| {
                                 (
                                     p.as_str(),
                                     TargetData {
                                         custom: HashMap::from([("v", &**version)]),
                                         hashes: HashMap::from([("sha256", hash.as_str())]),
-                                        length: 0,
+                                        length: u32::try_from(file.len()).unwrap(),
                                     },
                                 )
                             })

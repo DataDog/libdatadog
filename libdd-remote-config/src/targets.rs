@@ -19,18 +19,19 @@ pub struct TargetsList<'a> {
 #[derive(Deserialize)]
 #[cfg_attr(any(test, feature = "test"), derive(serde::Serialize))]
 pub struct TargetsData<'a> {
-    #[serde(borrow)]
+    #[serde(default, borrow)]
     pub custom: TargetsCustom<'a>,
     #[serde(borrow)]
     pub targets: HashMap<&'a str, TargetData<'a>>,
     pub version: i64,
 }
 
-#[derive(Deserialize)]
+#[derive(Default, Deserialize)]
 #[cfg_attr(any(test, feature = "test"), derive(serde::Serialize))]
 #[allow(dead_code)]
 pub struct TargetsCustom<'a> {
     pub agent_refresh_interval: Option<u64>,
+    #[serde(default)]
     pub opaque_backend_state: &'a str,
 }
 

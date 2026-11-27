@@ -3,6 +3,7 @@
 
 use crate::RemoteConfigPath;
 use crate::fetch::FileStorage;
+use crate::fetch::fetcher::omit_request_diagnostics;
 use libdd_host_identity::entity_id::EntityHeadersExt;
 use libdd_networking::endpoint::EndpointExt;
 
@@ -10,6 +11,7 @@ use std::{fmt, ops::RangeInclusive, time::Duration};
 
 use anyhow::{bail, format_err};
 use base64::Engine;
+use futures::io::AsyncReadExt;
 use hashbrown::{HashMap, HashSet};
 use http::{
     Method, Request, Uri, header,
@@ -24,7 +26,7 @@ use tracing::debug;
 use tuf::metadata::{
     Metadata, MetadataPath, MetadataVersion, RawSignedMetadata, TargetDescription, TargetPath,
 };
-use tuf::repository::RepositoryStorage;
+use tuf::repository::{RepositoryProvider, RepositoryStorage};
 
 /// Embedded TUF trust roots, per site
 ///
@@ -223,12 +225,13 @@ impl AgentlessConfig {
     }
 }
 
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(all(feature = "agentless", not(target_arch = "wasm32")))]
 pub type NativeAgentlessFetcher = AgentlessFetcher<libdd_capabilities_impl::NativeCapabilities>;
 
 pub struct AgentlessFetcher<C: HttpClientCapability + SleepCapability> {
     http: C,
     opaque_backend_state: Vec<u8>,
+    awaiting_assignment: bool,
     director_client: TUFClient,
     config_client: TUFClient,
     /// The embedded (or override) config root this fetcher was anchored at
@@ -315,6 +318,15 @@ struct TrustedTarget<'a> {
 const CUSTOM_METADATA_EXPIRY_PATH: &str = "expires";
 
 impl<'a> TrustedTarget<'a> {
+    fn hashes(&self) -> impl Iterator<Item = remoteconfig::TargetFileHash> {
+        self.all_hashes
+            .iter()
+            .map(|(algorithm, hash)| remoteconfig::TargetFileHash {
+                algorithm: hash_algorithm_to_str(algorithm).to_owned(),
+                hash: hash.to_string(),
+            })
+    }
+
     fn try_create(path: &'a TargetPath, desc: &'a TargetDescription) -> anyhow::Result<Self> {
         let parsed_path = RemoteConfigPath::parse(path.as_str())?;
 
@@ -405,6 +417,7 @@ impl<C: HttpClientCapability + SleepCapability> AgentlessFetcher<C> {
             products: HashSet::new(),
 
             opaque_backend_state: Vec::new(),
+            awaiting_assignment: false,
             refresh_interval: Duration::from_secs(60),
             consecutive_failures: 0,
         })
@@ -420,6 +433,12 @@ impl<C: HttpClientCapability + SleepCapability> AgentlessFetcher<C> {
     /// applies (i.e. either no failures yet, or only a single one).
     pub fn next_backoff(&self) -> Option<Duration> {
         compute_backoff(self.consecutive_failures)
+    }
+
+    pub(crate) fn restart_assignment(&mut self) {
+        self.awaiting_assignment = true;
+        self.opaque_backend_state.clear();
+        self.products.clear();
     }
 
     /// Drop all trusted non-root TUF metadata and per-fetch caches so a partially
@@ -675,7 +694,7 @@ impl<C: HttpClientCapability + SleepCapability> AgentlessFetcher<C> {
         &mut self,
         c: remoteconfig::Client,
         cache: &TargetCache<'_, Storage>,
-    ) -> anyhow::Result<ClientResponse> {
+    ) -> anyhow::Result<Option<ClientResponse>> {
         // Derive the versions we report to the backend directly from the live
         // trusted databases. A freshly built or just-reset client has no
         // trusted snapshot yet, so it reports snapshot version 0 and the embedded
@@ -755,19 +774,21 @@ impl<C: HttpClientCapability + SleepCapability> AgentlessFetcher<C> {
         // During first poll only fetch org data in parallel with the config request
         // to hide its latency. Later polls (and prefetch failures) fall back to
         // the sequential fetch in `verify_org_uuid`.
-        let (response_result, prefetched_org_uuid) = if !self.org_data_prefetched {
-            self.org_data_prefetched = true;
-            let (r, org) = futures::join!(self.get_latest_config(request), self.get_org_data());
-            let org_uuid = match org {
-                Ok(d) => Some(d.uuid),
-                Err(e) => {
-                    debug!("org data prefetch failed, will fetch lazily: {e:#}");
-                    None
-                }
-            };
-            (r, org_uuid)
-        } else {
-            (self.get_latest_config(request).await, None)
+        let (response_result, prefetched_org_uuid) = match self.encode_config_request(request) {
+            Ok(body) if !self.org_data_prefetched => {
+                self.org_data_prefetched = true;
+                let (r, org) = futures::join!(self.get_latest_config(body), self.get_org_data());
+                let org_uuid = match org {
+                    Ok(d) => Some(d.uuid),
+                    Err(e) => {
+                        debug!("org data prefetch failed, will fetch lazily: {e:#}");
+                        None
+                    }
+                };
+                (r, org_uuid)
+            }
+            Ok(body) => (self.get_latest_config(body).await, None),
+            Err(error) => (Err(error), None),
         };
         let response = match response_result {
             Ok(r) => r,
@@ -776,15 +797,16 @@ impl<C: HttpClientCapability + SleepCapability> AgentlessFetcher<C> {
                 return Err(e);
             }
         };
+        let supplied_director_targets = response
+            .director_metas
+            .as_ref()
+            .and_then(|metas| metas.targets.as_ref());
+        if self.awaiting_assignment && supplied_director_targets.is_none() {
+            return Ok(None);
+        }
 
-        // During a DC switch recovery, verify the fresh-join payload in scratch
-        // clients anchored at the embedded roots before letting it anywhere
-        // near the live state. Only a payload that proves to be a genuine DC
-        // switch (different root keys on both repositories, and the same org;
-        // root versions are deliberately not compared) replaces the live
-        // clients; a valid fresh join for
-        // the current chain means the earlier failure was transient and it is
-        // applied normally.
+        // Verify the fresh-join payload against the embedded roots and the
+        // current org before replacing the live clients during DC recovery.
         if self.dc_switch_recovery {
             match self
                 .recover_from_dc_switch(&response, prefetched_org_uuid.clone())
@@ -820,6 +842,16 @@ impl<C: HttpClientCapability + SleepCapability> AgentlessFetcher<C> {
             }
         };
         self.consecutive_failures = 0;
+        if self.awaiting_assignment
+            && let Some(supplied) = supplied_director_targets
+        {
+            let confirmed = self.confirm_assignment(supplied).await;
+            if !matches!(confirmed, Ok(true)) {
+                self.opaque_backend_state.clear();
+                return confirmed.map(|_| None);
+            }
+            self.awaiting_assignment = false;
+        }
         self.products = all_products;
 
         // TODO:
@@ -828,7 +860,7 @@ impl<C: HttpClientCapability + SleepCapability> AgentlessFetcher<C> {
         // This means we will need to dispatch the different files based on filter predicates
         // which we currently do not parse.
 
-        Ok(ClientResponse {
+        Ok(Some(ClientResponse {
             root_version: self.config_client.database().trusted_root().version(),
             target_version: self
                 .config_client
@@ -839,7 +871,24 @@ impl<C: HttpClientCapability + SleepCapability> AgentlessFetcher<C> {
             opaque_backend_state: self.opaque_backend_state.clone(),
             targets: active_targets,
             refresh_interval: self.refresh_interval,
-        })
+        }))
+    }
+
+    async fn confirm_assignment(&self, supplied: &remoteconfig::TopMeta) -> anyhow::Result<bool> {
+        let Some(trusted) = self.director_client.database().trusted_targets() else {
+            return Ok(false);
+        };
+        if trusted.version() != supplied.version || trusted.expires() <= &chrono::Utc::now() {
+            return Ok(false);
+        }
+        let mut stored = self
+            .director_client
+            .local_repo()
+            .fetch_metadata(&MetadataPath::targets(), MetadataVersion::None)
+            .await?;
+        let mut verified_raw = Vec::new();
+        stored.read_to_end(&mut verified_raw).await?;
+        Ok(verified_raw == supplied.raw)
     }
 
     async fn get_org_data(&self) -> anyhow::Result<remoteconfig::OrgDataResponse> {
@@ -848,16 +897,34 @@ impl<C: HttpClientCapability + SleepCapability> AgentlessFetcher<C> {
         parse_rc_response(res)
     }
 
+    fn encode_config_request(
+        &self,
+        mut req: remoteconfig::LatestConfigsRequest,
+    ) -> anyhow::Result<Bytes> {
+        if let Some(limit) = self.http.max_request_body_bytes()
+            && req.encoded_len() > limit
+        {
+            req.error.clear();
+            for client in &mut req.active_clients {
+                omit_request_diagnostics(client);
+            }
+            anyhow::ensure!(
+                req.encoded_len() <= limit,
+                "remote config request body exceeds transport limit"
+            );
+        }
+        Ok(Bytes::from(req.encode_to_vec()))
+    }
+
     /// Fetch the latest Remote Config for this client.
     ///
     /// # Errors
     /// Returns an error if the HTTP request fails or the response cannot be decoded.
     async fn get_latest_config(
         &self,
-        req: remoteconfig::LatestConfigsRequest,
+        body: Bytes,
     ) -> anyhow::Result<remoteconfig::LatestConfigsResponse> {
         let path = PathAndQuery::from_static("/api/v0.1/configurations");
-        let body = Bytes::from(req.encode_to_vec());
         let res = self.send_request(Method::POST, path, body).await?;
         let res = parse_rc_response(res)?;
         Ok(res)
@@ -1003,35 +1070,33 @@ impl<C: HttpClientCapability + SleepCapability> AgentlessFetcher<C> {
 
         // Hold the cache lock for the entire fetch/verify/store cycle.
         // Prevents another agentless fetcher sharing the same
-        // `ConfigFetcherState` from interleaving between `is_cached_batch`
+        // `ConfigFetcherState` from interleaving between `cached_version`
         // and `store_batch`
         let mut files_guard = cache.lock();
+        let acknowledge_on_receipt = files_guard.acknowledge_on_receipt();
 
-        let cached_paths: HashSet<&RemoteConfigPath> = files_guard.is_cached_batch(
-            targets
-                .iter()
-                .map(|t| (&t.parsed_path, t.primary_hash.as_str(), t.length)),
-        );
-
-        let mut new_targets: Vec<NewTarget> = Vec::new();
-        for t in &targets {
-            if cached_paths.contains(&t.parsed_path) {
+        let mut reissues = Vec::new();
+        let mut new_targets = Vec::new();
+        for target in &targets {
+            if let Some(version) = files_guard.cached_version(target) {
+                if !acknowledge_on_receipt && version != target.version {
+                    reissues.push(target);
+                }
                 continue;
             }
-            let content = self.fetch_target(t)?;
+            let content = self.fetch_target(target)?;
             new_targets.push(NewTarget {
-                path: t.parsed_path.clone(),
-                version: t.version,
-                primary_hash: t.primary_hash.clone(),
-                hashes: t
-                    .all_hashes
-                    .iter()
-                    .map(|(alg, hash)| (hash_algorithm_to_str(alg).to_owned(), hash.to_string()))
-                    .collect(),
+                path: target.parsed_path.clone(),
+                version: target.version,
+                primary_hash: target.primary_hash.clone(),
+                hashes: target.hashes().collect(),
                 content: content.to_owned(),
             });
         }
         files_guard.store_batch(new_targets)?;
+        for target in reissues {
+            files_guard.reissue(target);
+        }
 
         let active_paths: HashSet<&RemoteConfigPath> =
             targets.iter().map(|t| &t.parsed_path).collect();
@@ -1385,7 +1450,7 @@ pub(crate) struct NewTarget {
     /// Lowercase hex of the primary hash.
     pub primary_hash: String,
     /// All `(algorithm_name, hex_hash)` pairs for the target.
-    pub hashes: Vec<(String, String)>,
+    pub hashes: Vec<remoteconfig::TargetFileHash>,
     pub content: Vec<u8>,
 }
 
@@ -1406,7 +1471,9 @@ mod cache {
     use hashbrown::HashMap;
     use libdd_capabilities::{HttpClientCapability, SleepCapability};
     use libdd_common::MutexExt as _;
-    use libdd_trace_protobuf::remoteconfig::{ConfigState, TargetFileHash, TargetFileMeta};
+    use libdd_trace_protobuf::remoteconfig::{ConfigState, TargetFileMeta};
+
+    use super::TrustedTarget;
 
     /// Wrapper over the shared [`ConfigFetcherState::target_files_by_path`]
     /// map giving `AgentlessFetcher::apply` a set of small, self-contained
@@ -1445,7 +1512,7 @@ mod cache {
         }
 
         /// Acquire the cache lock. Hold the returned guard for the whole
-        /// read cycle so `is_cached_batch`, `store_batch`, `retain_only`
+        /// read cycle so `cached_version`, `store_batch`, `retain_only`
         /// and `collect_handles` all run under one critical section.
         pub(crate) fn lock(&self) -> LockedTargetCache<'a, S> {
             LockedTargetCache {
@@ -1457,29 +1524,29 @@ mod cache {
     }
 
     impl<'a, S: FileStorage> LockedTargetCache<'a, S> {
-        /// Returns the set of paths whose `(primary_hash, len)` already matches the cache.
-        pub(crate) fn is_cached_batch<'b>(
-            &self,
-            candidates: impl IntoIterator<Item = (&'b RemoteConfigPath, &'b str, u64)>,
-        ) -> hashbrown::HashSet<&'b RemoteConfigPath> {
-            candidates
-                .into_iter()
-                .filter_map(|(parsed_path, primary_hash, len)| {
-                    let stored = self.files.get(parsed_path)?;
-                    // `stored.meta.length` is an `i64` coming from protobuf. A
-                    // negative value should never appear, but if it does treat the
-                    // entry as "not cached" so the caller re-fetches instead of
-                    // matching a wrapped u64.
-                    let stored_len = u64::try_from(stored.meta.length).ok()?;
-                    (stored.hash == primary_hash && stored_len == len).then_some(parsed_path)
-                })
-                .collect()
+        pub(super) fn acknowledge_on_receipt(&self) -> bool {
+            self.storage.acknowledge_on_receipt()
+        }
+
+        pub(super) fn cached_version(&self, target: &TrustedTarget<'_>) -> Option<u64> {
+            let stored = self.files.get(&target.parsed_path)?;
+            let stored_len = u64::try_from(stored.meta.length).ok()?;
+            (stored.hash == target.primary_hash && stored_len == target.length)
+                .then_some(stored.state.version)
+        }
+
+        pub(super) fn reissue(&mut self, target: &TrustedTarget<'_>) {
+            if let Some(file) = self.files.get_mut(&target.parsed_path) {
+                file.reissue(self.storage, target.version, target.hashes());
+            }
         }
 
         pub(crate) fn store_batch(
             &mut self,
             targets: impl IntoIterator<Item = NewTarget>,
         ) -> anyhow::Result<()> {
+            let update_in_place = self.storage.update_in_place();
+            let acknowledge_on_receipt = self.acknowledge_on_receipt();
             for NewTarget {
                 path,
                 version,
@@ -1496,7 +1563,7 @@ mod cache {
                     )
                 })?;
                 let path: Arc<crate::RemoteConfigPath> = Arc::new(path);
-                let new_handle = if let Some(existing) = self.files.get(&path) {
+                let new_handle = if update_in_place && let Some(existing) = self.files.get(&path) {
                     self.storage
                         .update(&existing.handle, version, content)
                         .map(|()| existing.handle.clone())?
@@ -1509,16 +1576,13 @@ mod cache {
                         id: path.config_id().to_string(),
                         version,
                         product: path.product().to_string(),
-                        apply_state: 2, // Acknowledged
+                        apply_state: if acknowledge_on_receipt { 2 } else { 1 },
                         apply_error: String::new(),
                     },
                     meta: TargetFileMeta {
                         path: path.to_string(),
                         length,
-                        hashes: hashes
-                            .into_iter()
-                            .map(|(algorithm, hash)| TargetFileHash { algorithm, hash })
-                            .collect(),
+                        hashes,
                     },
                     handle: new_handle,
                     expiring: false,
@@ -1710,11 +1774,13 @@ mod tests {
     use libdd_common::Endpoint;
 
     use crate::fetch::AgentlessConfig;
+    #[cfg(feature = "agentless")]
     use crate::fetch::NativeAgentlessFetcher;
 
     use super::Site;
     use super::trim_hash_target_path;
 
+    #[cfg(feature = "agentless")]
     #[tokio::test]
     #[cfg_attr(miri, ignore)]
     async fn test_create_fetcher_for_site() {

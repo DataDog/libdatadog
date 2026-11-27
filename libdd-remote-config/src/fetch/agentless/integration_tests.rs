@@ -321,6 +321,7 @@ async fn fetcher(
         agent_uuid_override: Some("test-uuid".to_string()),
         products: HashSet::new(),
         opaque_backend_state: Vec::new(),
+        awaiting_assignment: false,
         refresh_interval: Duration::from_secs(60),
         consecutive_failures: 0,
         dc_switch_recovery: false,
@@ -343,6 +344,103 @@ fn config_snapshot_version(f: &AgentlessFetcher<MockHttp>) -> Option<u64> {
         .database()
         .trusted_snapshot()
         .map(|s| s.version())
+}
+
+#[tokio::test]
+#[cfg_attr(miri, ignore)]
+async fn retarget_preserves_trusted_roots_and_requires_explicit_verified_targets() {
+    use crate::fetch::{ConfigOptions, Session};
+    use crate::{RemoteConfigProduct, Target};
+
+    let config_key = new_key();
+    let config = build_v1(&config_key).await;
+    let rotated = rotate_root(&config_key, &config).await;
+    let director = build_v1(&new_key()).await;
+    let mut explicit = response(
+        &[rotated.root().unwrap().as_bytes()],
+        config.timestamp().unwrap().as_bytes(),
+        config.snapshot().unwrap().as_bytes(),
+        Some(config.targets().unwrap().as_bytes()),
+        vec![],
+        &director,
+    );
+
+    let http = MockHttp::new();
+    http.push(&explicit);
+    explicit.config_metas.as_mut().unwrap().roots.clear();
+    explicit.config_metas.as_mut().unwrap().top_targets = None;
+    explicit.director_metas.as_mut().unwrap().roots.clear();
+    let mut no_assignment = explicit.clone();
+    no_assignment.director_metas.as_mut().unwrap().targets = None;
+    http.push(&no_assignment);
+    let mut unverified = explicit.clone();
+    unverified
+        .director_metas
+        .as_mut()
+        .unwrap()
+        .targets
+        .as_mut()
+        .unwrap()
+        .raw
+        .push(0);
+    http.push(&unverified);
+    http.push(&explicit);
+
+    let endpoint = Endpoint {
+        api_key: Some("test-key".into()),
+        ..Endpoint::from_slice("https://test.invalid/")
+    };
+    let agentless = AgentlessConfig::new("test-host".into(), &endpoint)
+        .unwrap()
+        .with_config_root(config.root().unwrap().as_bytes().to_vec())
+        .with_director_root(director.root().unwrap().as_bytes().to_vec());
+    let mut session = Session::open(
+        Target::new("original".into(), "test".into(), "1".into(), vec![], vec![]),
+        "runtime".into(),
+        "client".into(),
+        ConfigOptions {
+            invariants: ConfigInvariants {
+                language: "rust".into(),
+                tracer_version: "1".into(),
+                endpoint,
+                agentless: Some(agentless),
+            },
+            products: vec![RemoteConfigProduct::ApmTracing],
+            capabilities: vec![],
+        },
+        http.clone(),
+    )
+    .await
+    .unwrap();
+    let original = session.poll().await.result.unwrap().unwrap().desired;
+    let generation = session
+        .retarget(Target::new(
+            "updated".into(),
+            "test".into(),
+            "1".into(),
+            vec![],
+            vec![],
+        ))
+        .unwrap();
+    assert!(session.snapshot().is_none());
+
+    for poll in [1, 2] {
+        assert!(session.poll().await.result.unwrap().is_none());
+        assert!(session.snapshot().is_none());
+        let request = http.request_at(poll);
+        assert_eq!(request.current_config_root_version, 2);
+        assert_eq!(request.current_config_snapshot_version, 1);
+        assert_eq!(request.new_products, ["APM_TRACING"]);
+        assert!(request.backend_client_state.is_empty());
+        let tracer = request.active_clients[0].client_tracer.as_ref().unwrap();
+        assert_eq!(tracer.service, "updated");
+    }
+
+    let next = session.poll().await.result.unwrap().unwrap().desired;
+    assert_eq!(next.target_generation, generation);
+    assert!(next.generation > original.generation);
+    assert_eq!(next.files().len(), 0);
+    assert_eq!(http.org_request_count(), 1);
 }
 
 // ---- tests ---------------------------------------------------------------
@@ -1294,7 +1392,8 @@ async fn test_unknown_product_target_is_not_stuck_known_targets() {
     let res = f
         .fetch_config(dummy_client(), &cache)
         .await
-        .expect("a config-authorized unknown-product target must not stuck the fetch");
+        .expect("a config-authorized unknown-product target must not stuck the fetch")
+        .unwrap();
 
     let returned: Vec<String> = res.targets.iter().map(|t| t.path.to_string()).collect();
     assert_eq!(

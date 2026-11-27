@@ -45,7 +45,7 @@ use std::process::Command;
 use std::task::{Context, Poll};
 use std::time::{Duration, Instant};
 
-#[cfg(feature = "agentless")]
+#[cfg(feature = "agentless-custom-transport")]
 use libdd_remote_config::fetch::AgentlessConfig;
 
 const RUNTIME_ID: &str = "23e76587-5ae1-410c-a05c-137cae600a10";
@@ -119,8 +119,8 @@ fn print_row(label: &str, s: Sample) {
 async fn run_one_iteration(
     iter: usize,
     endpoint: Endpoint,
-    #[cfg(feature = "agentless")] agentless: Option<AgentlessConfig>,
-    #[cfg(not(feature = "agentless"))] agentless: Option<std::convert::Infallible>,
+    #[cfg(feature = "agentless-custom-transport")] agentless: Option<AgentlessConfig>,
+    #[cfg(not(feature = "agentless-custom-transport"))] agentless: Option<std::convert::Infallible>,
 ) -> anyhow::Result<(Sample, Sample, Sample)> {
     let target = Target::new(
         SERVICE.to_string(),

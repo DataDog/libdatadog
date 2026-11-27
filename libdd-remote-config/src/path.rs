@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use serde::{Deserialize, Serialize};
+use std::borrow::Borrow;
 use std::fmt::{Display, Formatter};
 use std::hash::{Hash, Hasher};
 use std::str::FromStr;
@@ -77,6 +78,12 @@ impl Eq for RemoteConfigPath {}
 impl Hash for RemoteConfigPath {
     fn hash<H: Hasher>(&self, state: &mut H) {
         self.raw.hash(state);
+    }
+}
+
+impl Borrow<str> for RemoteConfigPath {
+    fn borrow(&self) -> &str {
+        self.as_str()
     }
 }
 

@@ -77,6 +77,11 @@ pub trait HttpClientCapability: Clone + std::fmt::Debug {
     /// multiple consecutive requests, while avoiding the race condition.
     fn new_periodic() -> Self;
 
+    /// A local body-size limit, if the transport cannot send larger requests.
+    fn max_request_body_bytes(&self) -> Option<usize> {
+        None
+    }
+
     fn request(
         &self,
         req: http::Request<bytes::Bytes>,

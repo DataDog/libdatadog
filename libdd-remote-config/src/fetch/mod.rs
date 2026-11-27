@@ -1,12 +1,13 @@
 // Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-#[cfg(feature = "agentless")]
+#[cfg(feature = "agentless-custom-transport")]
 mod agentless;
 
 mod fetcher;
 #[cfg(not(target_arch = "wasm32"))]
 mod multitarget;
+mod session;
 #[cfg(not(target_arch = "wasm32"))]
 mod shared;
 mod single;
@@ -14,7 +15,7 @@ mod single;
 #[cfg(any(test, feature = "test"))]
 pub mod test_server;
 
-#[cfg(feature = "agentless")]
+#[cfg(feature = "agentless-custom-transport")]
 pub use agentless::*;
 
 #[allow(clippy::useless_attribute)] // different clippy versions are differently picky
@@ -22,6 +23,7 @@ pub use agentless::*;
 pub use fetcher::*;
 #[cfg(not(target_arch = "wasm32"))]
 pub use multitarget::*;
+pub use session::*;
 #[cfg(not(target_arch = "wasm32"))]
 pub use shared::*;
 pub use single::*;

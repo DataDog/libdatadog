@@ -3608,6 +3608,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "libdd-remote-config-wasm"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "bytes",
+ "futures-channel",
+ "futures-util",
+ "http 1.1.0",
+ "libdd-capabilities",
+ "libdd-common",
+ "libdd-remote-config",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "libdd-sampling"
 version = "10.0.0"
 dependencies = [

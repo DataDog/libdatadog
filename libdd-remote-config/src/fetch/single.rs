@@ -17,7 +17,7 @@ const DEFAULT_REFRESH_INTERVAL: Duration = Duration::from_secs(5);
 
 /// Simple implementation
 pub struct SingleFetcher<S: FileStorage, C: HttpClientCapability + SleepCapability> {
-    fetcher: ConfigFetcher<S, C>,
+    pub(super) fetcher: ConfigFetcher<S, C>,
     target: Target,
     product_capabilities: ConfigProductCapabilities,
     runtime_id: String,
@@ -40,12 +40,25 @@ impl<S: FileStorage, C: HttpClientCapability + SleepCapability> SingleFetcher<S,
         options: ConfigOptions,
         http_client: C,
     ) -> anyhow::Result<Self> {
+        Self::new_with_agent_path_prefix(sink, target, runtime_id, options, http_client, false)
+            .await
+    }
+
+    pub(super) async fn new_with_agent_path_prefix(
+        sink: S,
+        target: Target,
+        runtime_id: String,
+        options: ConfigOptions,
+        http_client: C,
+        preserve_agent_path_prefix: bool,
+    ) -> anyhow::Result<Self> {
         Ok(SingleFetcher {
             fetcher: ConfigFetcher::new(
                 sink,
-                Arc::new(ConfigFetcherState::with_client(
+                Arc::new(ConfigFetcherState::with_agent_path_prefix(
                     options.invariants,
                     http_client,
+                    preserve_agent_path_prefix,
                 )),
             )
             .await?,
@@ -96,6 +109,15 @@ impl<S: FileStorage, C: HttpClientCapability + SleepCapability> SingleFetcher<S,
         self.client_id = client_id;
         self.runtime_id = runtime_id;
         self.target.tags = tags;
+    }
+
+    pub(super) fn set_process_tags(&mut self, process_tags: Vec<String>) {
+        self.target.process_tags = process_tags;
+    }
+
+    pub(super) fn retarget(&mut self, target: Target) {
+        self.fetcher.restart_assignment(&mut self.client_state);
+        self.target = target;
     }
 
     /// Switches to another target or Endpoint, keeping the known-files state
