@@ -33,7 +33,7 @@ extern crate alloc;
 
 mod lookup;
 
-pub use lookup::{lookup_f64, lookup_i64, lookup_str};
+pub use lookup::{LookupValue, lookup_f64, lookup_i64, lookup_str, lookup_value};
 
 include!(concat!(env!("OUT_DIR"), "/registry.rs"));
 
@@ -55,7 +55,7 @@ pub enum ValueType {
     Float64,
 }
 
-/// A check on another attribute that must pass before an [`Entry`] is read.
+/// A check on another attribute that must pass for an [`Entry`] to be used.
 ///
 /// Conditions read the string value of the attribute by its exact name, and treat an empty string
 /// as absent, like the Agent.
@@ -69,7 +69,7 @@ pub enum ValueType {
 /// ```
 ///
 /// which becomes the condition `rpc.system.name` [`Predicate::Equals`] `"grpc"`: the entry is only
-/// read on gRPC spans.
+/// used on gRPC spans.
 #[non_exhaustive]
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct Condition {
@@ -101,7 +101,7 @@ pub struct Entry {
     /// The semantic convention version that introduced the name, if any
     pub version: Option<&'static str>,
     pub value_type: ValueType,
-    /// Conditions that must all hold for this entry to be read
+    /// Conditions that must all hold for this entry to be used
     pub when: &'static [Condition],
 }
 
