@@ -143,6 +143,12 @@ mod tests {
         fn attribute_f64(&self, _: &str) -> Option<f64> {
             None
         }
+
+        fn attribute(&self, key: &str) -> Option<libdd_trace_model::AttributeRef<'_, StringData>> {
+            self.0
+                .get(key)
+                .map(|s| libdd_trace_model::AttributeRef::String(s))
+        }
     }
 
     const fn entry(name: &'static str, when: &'static [Condition]) -> Entry {

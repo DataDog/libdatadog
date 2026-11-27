@@ -8,7 +8,7 @@ extern crate alloc;
 use alloc::borrow::Cow;
 use std::collections::HashMap;
 
-use libdd_trace_model::{AttributeValue, Attributes, StringData};
+use libdd_trace_model::{AttributeRef, AttributeValue, Attributes, StringData};
 use libdd_trace_semantics::{Concept, lookup_f64, lookup_i64, lookup_str};
 
 type V = AttributeValue<StringData>;
@@ -43,6 +43,10 @@ impl Attributes for Typed {
     fn attribute_i64(&self, key: &str) -> Option<i64> {
         self.0.get(key)?.as_i64()
     }
+
+    fn attribute(&self, key: &str) -> Option<AttributeRef<'_, StringData>> {
+        self.0.get(key).map(Into::into)
+    }
 }
 
 /// Strings in `meta` and floats in `metrics`, like a v0.4 span.
@@ -75,6 +79,13 @@ impl Attributes for V04 {
 
     fn attribute_f64(&self, key: &str) -> Option<f64> {
         self.metrics.get(key).copied()
+    }
+
+    fn attribute(&self, key: &str) -> Option<AttributeRef<'_, StringData>> {
+        match self.meta.get(key) {
+            Some(s) => Some(AttributeRef::String(s)),
+            None => self.metrics.get(key).copied().map(AttributeRef::Float),
+        }
     }
 }
 

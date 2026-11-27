@@ -3,7 +3,7 @@
 
 use crate::span::{BytesData, SliceData, SpanKeyParseError, TraceData};
 use crate::tracer_payload::TraceChunks;
-use libdd_trace_model::{Attributes, SPAN_LINK_FLAGS_SET_SENTINEL, f64_to_exact_i64};
+use libdd_trace_model::{AttributeRef, Attributes, SPAN_LINK_FLAGS_SET_SENTINEL, f64_to_exact_i64};
 use serde::Serialize;
 use serde::ser::SerializeStruct;
 use std::borrow::Borrow;
@@ -149,6 +149,14 @@ impl<T: TraceData> Attributes for Span<T> {
     fn attribute_f64(&self, key: &str) -> Option<f64> {
         self.metrics.get(key).copied()
     }
+
+    /// A `meta` string first, then a `metrics` float, as the typed getters read them.
+    fn attribute(&self, key: &str) -> Option<AttributeRef<'_, T>> {
+        if let Some(s) = self.meta.get(key) {
+            return Some(AttributeRef::String(s.borrow()));
+        }
+        self.metrics.get(key).copied().map(AttributeRef::Float)
+    }
 }
 
 impl<T: TraceData> libdd_trace_model::Span for Span<T> {
@@ -230,6 +238,12 @@ impl<T: TraceData> Attributes for SpanLink<T> {
     fn attribute_f64(&self, _key: &str) -> Option<f64> {
         None
     }
+
+    fn attribute(&self, key: &str) -> Option<AttributeRef<'_, T>> {
+        self.attributes
+            .get(key)
+            .map(|s| AttributeRef::String(s.borrow()))
+    }
 }
 
 impl<T: TraceData> libdd_trace_model::SpanLink for SpanLink<T> {
@@ -250,7 +264,8 @@ impl<T: TraceData> libdd_trace_model::SpanLink for SpanLink<T> {
     }
 }
 
-/// Typed reads only see single values; array attributes read as missing.
+/// Typed reads only see single values; array attributes read as missing, also through
+/// [`Attributes::attribute`].
 impl<T: TraceData> Attributes for SpanEvent<T> {
     type Text = T::Text;
     type Bytes = T::Bytes;
@@ -278,6 +293,19 @@ impl<T: TraceData> Attributes for SpanEvent<T> {
             AttributeAnyValue::SingleValue(AttributeArrayValue::Integer(i)) => Some(*i),
             AttributeAnyValue::SingleValue(AttributeArrayValue::Double(f)) => f64_to_exact_i64(*f),
             _ => None,
+        }
+    }
+
+    fn attribute(&self, key: &str) -> Option<AttributeRef<'_, T>> {
+        match self.attributes.get(key)? {
+            AttributeAnyValue::SingleValue(value) => Some(match value {
+                AttributeArrayValue::String(s) => AttributeRef::String(s.borrow()),
+                AttributeArrayValue::Boolean(b) => AttributeRef::Bool(*b),
+                AttributeArrayValue::Integer(i) => AttributeRef::Int(*i),
+                AttributeArrayValue::Double(f) => AttributeRef::Float(*f),
+            }),
+            // A v04 array isn't stored as the `T::Array` type.
+            AttributeAnyValue::Array(_) => None,
         }
     }
 }
@@ -503,7 +531,7 @@ mod tests {
     #[test]
     fn model_traits_expose_v04_links_and_events() {
         use libdd_trace_model::{
-            Attributes, SPAN_LINK_FLAGS_SET_SENTINEL, Span as _, SpanLink as _,
+            AttributeRef, Attributes, SPAN_LINK_FLAGS_SET_SENTINEL, Span as _, SpanLink as _,
         };
 
         let link = SpanLink::<SliceData> {
@@ -533,9 +561,22 @@ mod tests {
                     Cow::Borrowed("frac"),
                     AttributeAnyValue::SingleValue(AttributeArrayValue::Double(4.5)),
                 ),
+                (
+                    Cow::Borrowed("bool"),
+                    AttributeAnyValue::SingleValue(AttributeArrayValue::Boolean(true)),
+                ),
+                (
+                    Cow::Borrowed("array"),
+                    AttributeAnyValue::Array(vec![AttributeArrayValue::Integer(1)]),
+                ),
             ]),
             ..Default::default()
         };
+        assert_eq!(event.attribute("int"), Some(AttributeRef::Int(i64::MAX)));
+        assert_eq!(event.attribute("frac"), Some(AttributeRef::Float(4.5)));
+        assert_eq!(event.attribute("bool"), Some(AttributeRef::Bool(true)));
+        assert_eq!(event.attribute("array"), None);
+        assert_eq!(link.attribute("k"), Some(AttributeRef::String("v")));
         assert_eq!(event.attribute_i64("int"), Some(i64::MAX));
         assert_eq!(event.attribute_i64("whole"), Some(4));
         assert_eq!(event.attribute_i64("frac"), None);
@@ -544,8 +585,13 @@ mod tests {
         let span = Span::<SliceData> {
             span_links: vec![link],
             span_events: vec![event],
+            meta: vec![(Cow::Borrowed("shared"), Cow::Borrowed("str"))].into(),
+            metrics: vec![(Cow::Borrowed("shared"), 2.0), (Cow::Borrowed("m"), 3.0)].into(),
             ..Default::default()
         };
+        assert_eq!(span.attribute("shared"), Some(AttributeRef::String("str")));
+        assert_eq!(span.attribute("m"), Some(AttributeRef::Float(3.0)));
+        assert_eq!(span.attribute("missing"), None);
         assert_eq!(span.span_links().count(), 1);
         assert_eq!(span.span_events().count(), 1);
     }

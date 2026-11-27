@@ -21,3 +21,15 @@ path = "fuzz_targets/fuzz_normalize_span.rs"
 test = false
 doc = false
 
+
+[[bin]]
+name = "fuzz_normalize_span_v1"
+path = "fuzz_targets/fuzz_normalize_span_v1.rs"
+test = false
+doc = false
+
+[[bin]]
+name = "fuzz_normalize_strings"
+path = "fuzz_targets/fuzz_normalize_strings.rs"
+test = false
+doc = false

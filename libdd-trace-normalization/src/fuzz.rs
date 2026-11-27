@@ -1,7 +1,8 @@
 // Copyright 2025-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-use crate::normalizer;
+use crate::invariants;
+use crate::test_model::{TestLink, TestSpan, Value};
 use arbitrary::{Arbitrary, Unstructured};
 use libdd_trace_protobuf::pb;
 use std::collections::HashMap;
@@ -13,6 +14,10 @@ const MAX_ATTRS_SIZE: u8 = 10;
 const MAX_META_STRUCT_SIZE: u8 = 100;
 const MAX_LINKS_SIZE: u8 = 10;
 const MAX_EVENTS_SIZE: u8 = 10;
+/// The maximum nesting of V1 arrays and maps.
+const MAX_VALUE_DEPTH: u8 = 3;
+/// Languages for the fallback service name, `unnamed-<lang>-service`.
+const LANGS: [&str; 4] = ["", "php", "python", "dotnet"];
 
 /// Helper function to generate an arbitrary AttributeAnyValue
 fn arbitrary_attribute_any_value(u: &mut Unstructured) -> arbitrary::Result<pb::AttributeAnyValue> {
@@ -208,11 +213,157 @@ impl<'a> Arbitrary<'a> for FuzzSpan {
     }
 }
 
-/// Main fuzzing function that tests normalize_span with arbitrary data
+/// Normalizes `fuzz_span` with the v0.4 normalizer and checks the result: the fuzzer catches the
+/// panic of a failed check, as well as crashes and infinite loops.
 pub fn fuzz_normalize_span(fuzz_span: FuzzSpan) {
-    let mut span = fuzz_span.span;
+    invariants::check_normalize_span(&fuzz_span.span);
+}
 
-    // Call normalize_span - it may succeed or fail, both are valid
-    // The fuzzer will catch panics, crashes, or infinite loops
-    let _ = normalizer::normalize_span(&mut span);
+/// An arbitrary V1 attribute value, nesting arrays and maps up to `depth` levels.
+fn arbitrary_value(u: &mut Unstructured, depth: u8) -> arbitrary::Result<Value> {
+    let max_kind = if depth == 0 { 4 } else { 6 };
+    Ok(match u.int_in_range(0..=max_kind)? {
+        0 => Value::String(u.arbitrary()?),
+        1 => Value::Bool(u.arbitrary()?),
+        2 => Value::Int(u.arbitrary()?),
+        3 => Value::Float(u.arbitrary()?),
+        4 => Value::Bytes(u.arbitrary()?),
+        5 => {
+            let len = u.int_in_range(0..=MAX_ATTRS_SIZE)?;
+            Value::Array(
+                (0..len)
+                    .map(|_| arbitrary_value(u, depth - 1))
+                    .collect::<arbitrary::Result<_>>()?,
+            )
+        }
+        _ => Value::KeyValueList(arbitrary_attrs(u, depth - 1)?),
+    })
+}
+
+/// Arbitrary V1 attributes, with values nesting up to `depth` levels.
+fn arbitrary_attrs(u: &mut Unstructured, depth: u8) -> arbitrary::Result<HashMap<String, Value>> {
+    let len = u.int_in_range(0..=MAX_ATTRS_SIZE)?;
+    (0..len)
+        .map(|_| Ok((u.arbitrary()?, arbitrary_value(u, depth)?)))
+        .collect()
+}
+
+/// An arbitrary value for an attribute the normalizer reads as a string, more likely than
+/// [`arbitrary_value`] to be a status code or a name.
+fn arbitrary_string_like(u: &mut Unstructured) -> arbitrary::Result<Value> {
+    Ok(match u.int_in_range(0..=2)? {
+        0 => Value::Int(u.int_in_range(0..=700)?),
+        1 => Value::String(u.int_in_range(0..=700u16)?.to_string()),
+        _ => arbitrary_value(u, MAX_VALUE_DEPTH)?,
+    })
+}
+
+/// Inserts an arbitrary value at `key` in `attrs`, half of the time.
+fn maybe_insert(
+    u: &mut Unstructured,
+    attrs: &mut HashMap<String, Value>,
+    key: &str,
+    value: impl FnOnce(&mut Unstructured) -> arbitrary::Result<Value>,
+) -> arbitrary::Result<()> {
+    if u.arbitrary()? {
+        attrs.insert(key.to_owned(), value(u)?);
+    }
+    Ok(())
+}
+
+/// An arbitrary V1 span, and the language of the tracer that sent it.
+#[derive(Debug)]
+pub struct FuzzV1Span {
+    span: TestSpan,
+    lang: &'static str,
+}
+
+impl<'a> Arbitrary<'a> for FuzzV1Span {
+    fn arbitrary(u: &mut Unstructured<'a>) -> arbitrary::Result<Self> {
+        let mut attrs = arbitrary_attrs(u, MAX_VALUE_DEPTH)?;
+        // The attributes the normalizer reads.
+        for key in ["peer.service", "_dd.base_service"] {
+            maybe_insert(u, &mut attrs, key, |u| Ok(Value::String(u.arbitrary()?)))?;
+        }
+        maybe_insert(u, &mut attrs, "http.status_code", arbitrary_string_like)?;
+
+        let links_size = u.int_in_range(0..=MAX_LINKS_SIZE)?;
+        let mut links = Vec::new();
+        for _ in 0..links_size {
+            let mut attrs = arbitrary_attrs(u, MAX_VALUE_DEPTH)?;
+            maybe_insert(u, &mut attrs, "link.name", arbitrary_string_like)?;
+            links.push(TestLink { attrs });
+        }
+
+        Ok(FuzzV1Span {
+            span: TestSpan {
+                service: u.arbitrary()?,
+                name: u.arbitrary()?,
+                resource: u.arbitrary()?,
+                typ: u.arbitrary()?,
+                span_id: u.arbitrary()?,
+                parent_id: u.arbitrary()?,
+                start: u.arbitrary()?,
+                duration: u.arbitrary()?,
+                env: u.arbitrary()?,
+                attrs,
+                links,
+            },
+            lang: u.choose(&LANGS)?,
+        })
+    }
+}
+
+/// Normalizes `fuzz_span` with the V1 normalizer and checks the result.
+pub fn fuzz_normalize_span_v1(fuzz_span: FuzzV1Span) {
+    invariants::check_normalize_span_v1(&fuzz_span.span, fuzz_span.lang);
+}
+
+/// Runs each string normalizer on the valid UTF-8 prefix of `data` and checks the result.
+pub fn fuzz_normalize_strings(data: &[u8]) {
+    let s = match std::str::from_utf8(data) {
+        Ok(s) => s,
+        Err(e) => std::str::from_utf8(&data[..e.valid_up_to()]).unwrap_or_default(),
+    };
+    invariants::check_normalize_tag(s);
+    invariants::check_normalize_tag_value(s);
+    invariants::check_normalize_name(s);
+    invariants::check_normalize_peer_service(s);
+    for lang in LANGS {
+        invariants::check_normalize_service(s, lang);
+    }
+    invariants::check_normalize_span_type(s);
+    for limit in [0, 1, 2, 3, s.len() / 2, s.len()] {
+        invariants::check_truncate_utf8(s, limit);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use proptest::prelude::{any, prop, proptest};
+
+    /// Runs `target` on the value that `bytes` gives, as the fuzzer does.
+    fn run<'a, T: Arbitrary<'a>>(bytes: &'a [u8], target: fn(T)) {
+        if let Ok(value) = T::arbitrary_take_rest(Unstructured::new(bytes)) {
+            target(value);
+        }
+    }
+
+    proptest! {
+        #[test]
+        fn normalize_span(bytes in prop::collection::vec(any::<u8>(), 0..4096)) {
+            run(&bytes, fuzz_normalize_span);
+        }
+
+        #[test]
+        fn normalize_span_v1(bytes in prop::collection::vec(any::<u8>(), 0..4096)) {
+            run(&bytes, fuzz_normalize_span_v1);
+        }
+
+        #[test]
+        fn normalize_strings(bytes in prop::collection::vec(any::<u8>(), 0..1024)) {
+            fuzz_normalize_strings(&bytes);
+        }
+    }
 }

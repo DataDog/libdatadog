@@ -7,7 +7,7 @@ use std::time::SystemTime;
 pub(crate) const MAX_TYPE_LEN: usize = 100;
 /// an arbitrary cutoff to spot weird-looking values
 /// nanoseconds since epoch on Jan 1, 2000
-const YEAR_2000_NANOSEC_TS: i64 = 946684800000000000;
+pub(crate) const YEAR_2000_NANOSEC_TS: i64 = 946684800000000000;
 /// DEFAULT_SPAN_NAME is the default name we assign a span if it's missing and we have no reasonable
 /// fallback
 pub(crate) const DEFAULT_SPAN_NAME: &str = "unnamed_operation";
@@ -18,8 +18,8 @@ pub(crate) const DEFAULT_SERVICE_NAME: &str = "unnamed-service";
 pub(crate) const MAX_NAME_LEN: usize = 100;
 /// MAX_SERVICE_LEN the maximum length a service can have
 pub(crate) const MAX_SERVICE_LEN: usize = 100;
-/// MAX_SERVICE_LEN the maximum length a tag can have
-const MAX_TAG_LEN: usize = 200;
+/// MAX_TAG_LEN the maximum length a tag can have
+pub(crate) const MAX_TAG_LEN: usize = 200;
 
 // normalize_service normalizes a span service
 pub fn normalize_service(svc: &mut String) {
@@ -28,9 +28,11 @@ pub fn normalize_service(svc: &mut String) {
 
 /// Like [`normalize_service`], but falls back to `unnamed-<lang>-service` as the agent does when
 /// `lang` is not empty.
+///
+/// The service is normalized as a tag value (see [`normalize_tag_value`]), as the agent's
+/// `NormalizeService` does.
 pub fn normalize_service_with_lang(svc: &mut String, lang: &str) {
-    truncate_utf8(svc, MAX_SERVICE_LEN);
-    normalize_tag(svc);
+    normalize_peer_service(svc);
     if svc.is_empty() {
         if lang.is_empty() {
             DEFAULT_SERVICE_NAME.clone_into(svc);
@@ -38,6 +40,13 @@ pub fn normalize_service_with_lang(svc: &mut String, lang: &str) {
             *svc = format!("unnamed-{lang}-service");
         }
     }
+}
+
+/// Normalizes a `peer.service` or `_dd.base_service` value, as the agent's `NormalizePeerService`
+/// does: like [`normalize_service`], but a value that normalizes to nothing stays empty.
+pub fn normalize_peer_service(svc: &mut String) {
+    truncate_utf8(svc, MAX_SERVICE_LEN);
+    normalize_tag_value(svc);
 }
 
 // normalize_name normalizes a span name or an error describing why normalization failed.
@@ -99,193 +108,174 @@ pub fn normalize_tag_cloned(tag: &str) -> String {
     tag
 }
 
+/// Normalizes a full `key:value` tag, as the agent's `NormalizeTag` does.
+///
+/// Characters that can't start a tag, such as digits, `.`, `/` and `-`, are removed from the start.
+/// Use [`normalize_tag_value`] for a value without its key.
 pub fn normalize_tag(tag: &mut String) {
-    // Since we know that we're only going to write valid utf8 we can work with the Vec directly
-    let bytes = unsafe { tag.as_mut_vec() };
-    if bytes.is_empty() {
-        return;
-    }
-    let mut read_cursor = 0;
-    let mut write_cursor = 0;
-    let mut is_in_illegal_span = true;
-    let mut codepoints_written = 0;
-
-    loop {
-        if read_cursor >= bytes.len()
-            || write_cursor >= 2 * MAX_TAG_LEN
-            || codepoints_written >= MAX_TAG_LEN
-        {
-            break;
-        }
-
-        let b = bytes[read_cursor];
-        // ascii fast-path
-        match b {
-            b'a'..=b'z' | b':' => {
-                bytes[write_cursor] = b;
-                is_in_illegal_span = false;
-                write_cursor += 1;
-                codepoints_written += 1;
-                read_cursor += 1;
-                continue;
-            }
-            b'A'..=b'Z' => {
-                bytes[write_cursor] = b - b'A' + b'a';
-                is_in_illegal_span = false;
-                write_cursor += 1;
-                codepoints_written += 1;
-                read_cursor += 1;
-                continue;
-            }
-            b'0'..=b'9' | b'.' | b'/' | b'-' => {
-                if write_cursor != 0 {
-                    bytes[write_cursor] = b;
-                    is_in_illegal_span = false;
-                    write_cursor += 1;
-                    codepoints_written += 1;
-                }
-                read_cursor += 1;
-                continue;
-            }
-            b'_' if !is_in_illegal_span => {
-                if write_cursor != 0 {
-                    bytes[write_cursor] = b;
-                    is_in_illegal_span = true;
-                    write_cursor += 1;
-                    codepoints_written += 1;
-                }
-                read_cursor += 1;
-                continue;
-            }
-            // ASCII range
-            0x00..=0x7F if !is_in_illegal_span => {
-                bytes[write_cursor] = b'_';
-                is_in_illegal_span = true;
-                write_cursor += 1;
-                codepoints_written += 1;
-                read_cursor += 1;
-                continue;
-            }
-            0x00..=0x7F if is_in_illegal_span => {
-                read_cursor += 1;
-                continue;
-            }
-            _ => {}
-        }
-
-        // Grab current unicode codepoint
-        let mut c = {
-            let mut it = bytes[read_cursor..].iter();
-            // This won't panic because we now bytes is a valid utf8 array, and next_code_point
-            // returns and actual utf8 codepoint
-            #[allow(clippy::unwrap_used)]
-            std::char::from_u32(crate::utf8_helpers::next_code_point(&mut it).unwrap()).unwrap()
-        };
-        let mut len_utf8 = c.len_utf8();
-        read_cursor += len_utf8;
-
-        if c.is_lowercase() {
-            c.encode_utf8(&mut bytes[write_cursor..write_cursor + len_utf8]);
-            is_in_illegal_span = false;
-            write_cursor += len_utf8;
-            codepoints_written += 1;
-            continue;
-        }
-        if c.is_uppercase() {
-            // Take only first codepoint of the lowercase conversion
-            // Lowercase the current character if it has the same width as it's lower
-            if let Some(lower) = c.to_lowercase().next()
-                && lower.len_utf8() <= len_utf8
-            {
-                c = lower;
-                len_utf8 = c.len_utf8();
-            }
-        }
-
-        // The method in the agent checks if the character is of a Letter unicode class,
-        // which is not exactly the same. Alphabetics also contains Nl and Other_aplhabetics
-        // unicode character classes https://www.unicode.org/reports/tr44/#Alphabetic , but
-        // close enough
-        if c.is_alphabetic() {
-            c.encode_utf8(&mut bytes[write_cursor..write_cursor + len_utf8]);
-            is_in_illegal_span = false;
-            write_cursor += len_utf8;
-            codepoints_written += 1;
-        } else if c.is_numeric() {
-            if write_cursor != 0 {
-                c.encode_utf8(&mut bytes[write_cursor..write_cursor + len_utf8]);
-                is_in_illegal_span = false;
-                write_cursor += len_utf8;
-                codepoints_written += 1;
-            }
-        } else if !is_in_illegal_span {
-            bytes[write_cursor] = b'_';
-            is_in_illegal_span = true;
-            write_cursor += 1;
-            codepoints_written += 1;
-        }
-    }
-    // If we end up in an illegal span, remove the last written _
-    if is_in_illegal_span && write_cursor > 0 {
-        write_cursor -= 1;
-    }
-    bytes.truncate(write_cursor);
+    normalize(tag, true);
 }
 
+/// Normalizes a tag value, as the agent's `NormalizeTagValue` does.
+///
+/// Unlike [`normalize_tag`], it keeps leading digits, `.`, `/` and `-`: `1password` stays
+/// `1password`. The agent uses it for the service, `peer.service`, `_dd.base_service` and `env`.
+pub fn normalize_tag_value(value: &mut String) {
+    normalize(value, false);
+}
+
+/// Normalizes `tag` in place, as the agent's `normalize` (`pkg/trace/traceutil/normalize`) does.
+///
+/// - Uppercase characters are lowercased, if the lowercase character has the same UTF-8 width.
+/// - Letters, `:`, digits, `.`, `/` and `-` are kept.
+/// - If `remove_digit_start_char` is set, characters up to the first letter or `:` are removed.
+/// - Each run of other characters, `_` included, becomes one `_`. A run at the end is removed.
+/// - Processing stops after [`MAX_TAG_LEN`] characters, or once it reaches `2 * MAX_TAG_LEN` bytes
+///   of the input. Removed leading characters don't count toward the first limit.
+fn normalize(tag: &mut String, remove_digit_start_char: bool) {
+    // SAFETY: the loop below only writes complete UTF-8 encoded characters and `_` bytes, at a
+    // write position that is never ahead of the read position, so the buffer stays valid UTF-8.
+    let bytes = unsafe { tag.as_mut_vec() };
+    let mut read = 0;
+    let mut write = 0;
+    // Number of characters processed, removed leading characters excluded.
+    let mut chars = 0;
+    // Whether the characters since the last written one were illegal.
+    let mut pending_underscore = false;
+
+    while read < bytes.len() {
+        let b = bytes[read];
+        let (c, len) = if b.is_ascii() {
+            (char::from(b), 1)
+        } else {
+            let mut it = bytes[read..].iter();
+            // The input is valid UTF-8 from `read` on, as nothing was written there yet.
+            #[allow(clippy::unwrap_used)]
+            let c = char::from_u32(crate::utf8_helpers::next_code_point(&mut it).unwrap()).unwrap();
+            (c, c.len_utf8())
+        };
+        read += len;
+
+        let keep = match c {
+            'a'..='z' | ':' => {
+                chars += 1;
+                Some(c)
+            }
+            'A'..='Z' => {
+                chars += 1;
+                Some(c.to_ascii_lowercase())
+            }
+            _ => {
+                let mut c = c;
+                // Lowercase only if the width is the same, as the agent does: some lowercase
+                // characters are narrower, such as `i` for `İ`.
+                if c.is_uppercase()
+                    && let Some(lower) = c.to_lowercase().next()
+                    && lower.len_utf8() == len
+                {
+                    c = lower;
+                }
+                if c.is_alphabetic() {
+                    chars += 1;
+                    Some(c)
+                } else if remove_digit_start_char && chars == 0 {
+                    None
+                } else if c.is_numeric() || matches!(c, '.' | '/' | '-') {
+                    chars += 1;
+                    Some(c)
+                } else {
+                    chars += 1;
+                    pending_underscore = true;
+                    None
+                }
+            }
+        };
+
+        if let Some(c) = keep {
+            if pending_underscore {
+                bytes[write] = b'_';
+                write += 1;
+                pending_underscore = false;
+            }
+            write += c.encode_utf8(&mut bytes[write..]).len();
+        }
+
+        if read >= 2 * MAX_TAG_LEN || chars >= MAX_TAG_LEN {
+            break;
+        }
+    }
+    // A pending `_` at the end is dropped, as the agent removes trailing illegal characters.
+    bytes.truncate(write);
+}
+
+/// Whether `name` is a normalized metric name, as the agent's `isValidNormalizedMetricName`
+/// checks: an ASCII letter, then ASCII letters, digits, `.` and `_`, with no `__` and no `_.`.
+fn is_valid_normalized_metric_name(name: &[u8]) -> bool {
+    let Some((first, rest)) = name.split_first() else {
+        return false;
+    };
+    if !first.is_ascii_alphabetic() {
+        return false;
+    }
+    let mut prev = *first;
+    for &b in rest {
+        let valid = b.is_ascii_alphanumeric() || (matches!(b, b'.' | b'_') && prev != b'_');
+        if !valid {
+            return false;
+        }
+        prev = b;
+    }
+    true
+}
+
+/// Normalizes a span name, as the agent's `normMetricNameParse` does.
+///
+/// Characters up to the first ASCII letter are removed: if there is none, the name becomes
+/// empty. Then each run of characters other than ASCII letters, digits and `.` becomes one `_`, an
+/// `_` before a `.` is removed, and no `_` follows a `.`. Consecutive periods are kept. A trailing
+/// `_` is removed.
 fn normalize_metric_name(name: &mut String) {
-    // Since we know that we're only going to write valid utf8 we can work with the Vec directly
+    // SAFETY: only ASCII bytes are written, so the buffer stays valid UTF-8. Non-ASCII bytes are
+    // either removed or replaced as a whole run, as no ASCII byte is part of a multi-byte
+    // character.
     let bytes = unsafe { name.as_mut_vec() };
-    if bytes.is_empty() {
+    let Some(start) = bytes.iter().position(u8::is_ascii_alphabetic) else {
+        bytes.clear();
+        return;
+    };
+    if is_valid_normalized_metric_name(&bytes[start..]) {
+        bytes.drain(..start);
+        if bytes.last() == Some(&b'_') {
+            bytes.pop();
+        }
         return;
     }
 
-    // Find first alpha character, if none is found the metric name is empty
-    let Some((mut read_cursor, _)) = bytes
-        .iter()
-        .enumerate()
-        .find(|(_, c)| c.is_ascii_alphabetic())
-    else {
-        *name = String::new();
-        return;
-    };
-    let mut write_cursor = 0;
-    let mut last_written_char = 0;
-    loop {
-        if read_cursor >= bytes.len() {
-            break;
+    // `bytes[start]` is a letter, so `write` is at least 1 after the first iteration, and the write
+    // position never passes the read position.
+    let mut write = 0;
+    for read in start..bytes.len() {
+        let b = bytes[read];
+        if b.is_ascii_alphanumeric() {
+            bytes[write] = b;
+            write += 1;
+        } else if b == b'.' {
+            if bytes[write - 1] == b'_' {
+                // An `_` before a `.` is replaced by the `.`.
+                bytes[write - 1] = b'.';
+            } else {
+                bytes[write] = b'.';
+                write += 1;
+            }
+        } else if !matches!(bytes[write - 1], b'.' | b'_') {
+            bytes[write] = b'_';
+            write += 1;
         }
-        match (bytes[read_cursor], last_written_char) {
-            (b @ (b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9'), _) => {
-                bytes[write_cursor] = b;
-                last_written_char = b;
-            }
-            // If we've written a _ last, replace it with a .
-            (b'.', b'_') => {
-                // This safe because the first character is alpha so
-                // we don't go back to the beginning
-                write_cursor -= 1;
-                bytes[write_cursor] = b'.';
-                last_written_char = b'.'
-            }
-            // If we've written a _ or a . last, do nothing
-            (_, b'_' | b'.') => {}
-            (b @ (b'_' | b'.'), _) => {
-                bytes[write_cursor] = b;
-                last_written_char = b;
-            }
-            // Otherwise write _ instead of any non conforming char
-            (_, _) => {
-                bytes[write_cursor] = b'_';
-                last_written_char = b'_';
-            }
-        }
-        write_cursor += 1;
-        read_cursor += 1;
     }
-    if last_written_char == b'_' {
-        write_cursor -= 1;
+    if bytes[write - 1] == b'_' {
+        write -= 1;
     }
-    bytes.truncate(write_cursor);
+    bytes.truncate(write);
 }
 
 // truncate_utf8 truncates the given string to make sure it uses less than limit bytes.
@@ -327,6 +317,20 @@ mod tests {
         [test_normalize_dash_string]    ["bad-name"]                        ["bad_name"];
         [test_normalize_invalid_string] ["&***"]                            ["unnamed_operation"];
         [test_normalize_invalid_prefix] ["&&&&&&&_test-name-"]              ["test_name"];
+        // From TestNormalizeName in the agent's normalize_test.go.
+        [test_normalize_last_underscore] ["last.underscore_trunc_"]         ["last.underscore_trunc"];
+        [test_normalize_last_double_underscore] ["last.double_underscore_trunc__"] ["last.double_underscore_trunc"];
+        [test_normalize_double_point]   ["double..point"]                   ["double..point"];
+        [test_normalize_other_char]     ["other_^.character^^_than_underscore"] ["other.character_than_underscore"];
+        [test_normalize_non_alpha_prefix] ["^^_.non_alpha.prefix"]          ["non_alpha.prefix"];
+        [test_normalize_underscore]     ["_"]                               ["unnamed_operation"];
+        // Consecutive periods are kept, as in the agent.
+        [test_normalize_double_point_repaired] ["http..request!"]           ["http..request"];
+        [test_normalize_underscore_double_point] ["a_..b!"]                 ["a..b"];
+        // A valid name is kept as is, but a repaired one has no `_` after a `.`.
+        [test_normalize_point_underscore_valid] ["a._b"]                    ["a._b"];
+        [test_normalize_point_underscore_repaired] ["a._b!"]                ["a.b"];
+        [test_normalize_non_ascii]      ["a\u{e9}b"]                        ["a_b"];
     )]
     #[test]
     fn test_name() {
@@ -398,5 +402,182 @@ mod tests {
         let mut v = input.to_owned();
         normalize_tag(&mut v);
         assert_eq!(v, expected)
+    }
+
+    #[test]
+    fn test_normalize_tag_lowercases_only_with_the_same_width() {
+        // `İ` (2 bytes) lowercases to `i` (1 byte), the Ohm and Kelvin signs (3 bytes) to `ω`
+        // (2 bytes) and `k` (1 byte): the agent keeps them as they are.
+        for (input, expected) in [
+            ("İstanbul", "İstanbul"),
+            ("\u{2126}x", "\u{2126}x"),
+            ("a\u{212A}b", "a\u{212A}b"),
+            ("ΩMEGA ÀÉÎ", "ωmega_àéî"),
+        ] {
+            let mut v = input.to_owned();
+            normalize_tag(&mut v);
+            assert_eq!(v, expected, "{input}");
+        }
+    }
+
+    #[test]
+    fn test_normalize_tag_counts_illegal_characters() {
+        // As in the agent, each illegal character counts toward the limit of 200 characters, even
+        // though a run of them only writes one `_`.
+        let mut v = format!("a{}b", "!".repeat(250));
+        normalize_tag(&mut v);
+        assert_eq!(v, "a");
+        // Removed leading characters don't count toward the character limit, but do count toward
+        // the byte limit of 400.
+        let mut v = format!("{}{}", "1".repeat(150), "a".repeat(300));
+        normalize_tag(&mut v);
+        assert_eq!(v, "a".repeat(200));
+        let mut v = format!("{}{}", "1".repeat(350), "a".repeat(300));
+        normalize_tag(&mut v);
+        assert_eq!(v, "a".repeat(50));
+    }
+
+    // `svcNormCases` of the agent's `normalize_test.go`.
+    const SERVICE_CASES: &[(&str, &str)] = &[
+        ("good", "good"),
+        ("127.0.0.1", "127.0.0.1"),
+        (
+            "127.site.platform-db-replica1",
+            "127.site.platform-db-replica1",
+        ),
+        ("hyphenated-service-name", "hyphenated-service-name"),
+        ("🐨animal-db🐶", "_animal-db"),
+        ("🐨1animal-db🐶", "_1animal-db"),
+        ("1🐨1animal-db🐶", "1_1animal-db"),
+        (
+            "Too$Long$.Too$Long$.Too$Long$.Too$Long$.Too$Long$.Too$Long$.Too$Long$.Too$Long$.Too$Long$.Too$Long$.Too$Long$.",
+            "too_long_.too_long_.too_long_.too_long_.too_long_.too_long_.too_long_.too_long_.too_long_.too_long_.",
+        ),
+        ("bad$service", "bad_service"),
+    ];
+
+    #[test]
+    fn test_normalize_service_as_tag_value() {
+        for (input, expected) in SERVICE_CASES {
+            let mut v = (*input).to_owned();
+            normalize_service(&mut v);
+            assert_eq!(v, *expected, "{input}");
+        }
+        let mut v = "!!!".to_owned();
+        normalize_service_with_lang(&mut v, "go");
+        assert_eq!(v, "unnamed-go-service");
+    }
+
+    #[test]
+    fn test_normalize_peer_service() {
+        for (input, expected) in SERVICE_CASES.iter().chain(&[("", ""), ("!!!", "")]) {
+            let mut v = (*input).to_owned();
+            normalize_peer_service(&mut v);
+            assert_eq!(v, *expected, "{input}");
+        }
+    }
+
+    #[duplicate_item(
+        test_name                     input                expected;
+        [test_normalize_tag_value_1]  ["1love"]            ["1love"];
+        [test_normalize_tag_value_2]  ["12.:trim@"]        ["12.:trim"];
+        [test_normalize_tag_value_3]  ["---fun:k####y"]    ["---fun:k_y"];
+        [test_normalize_tag_value_4]  ["_foo"]             ["_foo"];
+        [test_normalize_tag_value_5]  ["___trim"]          ["_trim"];
+        [test_normalize_tag_value_6]  ["#test"]            ["_test"];
+        [test_normalize_tag_value_7]  ["123DEVELOPMENT"]   ["123development"];
+        [test_normalize_tag_value_8]  [" spaces   "]       ["_spaces"];
+        [test_normalize_tag_value_9]  [""]                 [""];
+        [test_normalize_tag_value_10] ["/"]                ["/"];
+    )]
+    #[test]
+    fn test_name() {
+        let mut v = input.to_owned();
+        normalize_tag_value(&mut v);
+        assert_eq!(v, expected)
+    }
+}
+
+/// Property tests: each normalizer keeps the guarantees checked in [`crate::invariants`], on
+/// inputs mixing ASCII, characters whose lowercase has another width, and strings long enough to
+/// reach the length limits.
+#[cfg(test)]
+mod proptests {
+    use super::*;
+    use crate::invariants;
+    use proptest::prelude::{Just, Strategy, any, prop, prop_oneof, proptest};
+
+    /// Characters that the normalizers treat specially. The last three have a narrower lowercase:
+    /// `i`, `ω` and `k`.
+    const TRICKY_CHARS: &[char] = &[
+        '_', '.', ':', '/', '-', ' ', '\0', 'é', 'É', 'ß', 'ſ', 'Σ', 'ǅ', '٣', '²', '\u{FFFD}',
+        '😀', 'İ', '\u{2126}', '\u{212A}',
+    ];
+
+    fn tricky_char() -> impl Strategy<Value = char> {
+        prop_oneof![
+            4 => proptest::char::range('\0', '\x7f'),
+            2 => prop::sample::select(TRICKY_CHARS),
+            1 => any::<char>(),
+        ]
+    }
+
+    /// Strings of up to 600 characters, past the limits of 200 characters and 400 bytes.
+    fn tricky_string() -> impl Strategy<Value = String> {
+        prop_oneof![
+            prop::collection::vec(tricky_char(), 0..600).prop_map(String::from_iter),
+            "[a-zA-Z0-9._:/-]{150,450}",
+            "\\PC{0,300}",
+        ]
+    }
+
+    proptest! {
+        #[test]
+        fn tag(s in tricky_string()) {
+            invariants::check_normalize_tag(&s);
+        }
+
+        #[test]
+        fn tag_value(s in tricky_string()) {
+            invariants::check_normalize_tag_value(&s);
+        }
+
+        #[test]
+        fn name(s in tricky_string()) {
+            invariants::check_normalize_name(&s);
+        }
+
+        #[test]
+        fn peer_service(s in tricky_string()) {
+            invariants::check_normalize_peer_service(&s);
+        }
+
+        #[test]
+        fn service(s in tricky_string(), lang in prop_oneof![Just(String::new()), "\\PC{0,10}"]) {
+            invariants::check_normalize_service(&s, &lang);
+        }
+
+        #[test]
+        fn span_type(s in tricky_string()) {
+            invariants::check_normalize_span_type(&s);
+        }
+
+        #[test]
+        fn truncate(s in tricky_string(), limit in 0usize..700) {
+            invariants::check_truncate_utf8(&s, limit);
+        }
+
+        #[test]
+        fn start_duration(
+            start in prop_oneof![
+                any::<i64>(),
+                Just(YEAR_2000_NANOSEC_TS - 1),
+                Just(YEAR_2000_NANOSEC_TS),
+                Just(i64::MAX),
+            ],
+            duration in prop_oneof![any::<i64>(), Just(0), Just(i64::MAX)],
+        ) {
+            invariants::check_normalize_span_start_duration(start, duration);
+        }
     }
 }

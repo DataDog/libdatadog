@@ -63,6 +63,13 @@ impl<C: TraceChunk> Attributes for ChunkSpanView<'_, C> {
     fn has_attribute(&self, key: &str) -> bool {
         self.span.has_attribute(key) || (!is_promoted(key) && self.chunk.has_attribute(key))
     }
+
+    fn attribute(&self, key: &str) -> Option<AttributeRef<'_, Self::Values>> {
+        self.span.attribute(key).or_else(|| {
+            let value = self.chunk.attribute(key)?;
+            self.falls_back(key).then_some(value)
+        })
+    }
 }
 
 /// Yields the span attributes, then the chunk attributes whose key the span doesn't have (promoted

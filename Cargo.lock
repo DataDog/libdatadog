@@ -3724,6 +3724,9 @@ dependencies = [
 [[package]]
 name = "libdd-trace-model"
 version = "1.0.0"
+dependencies = [
+ "proptest",
+]
 
 [[package]]
 name = "libdd-trace-normalization"
@@ -3735,6 +3738,7 @@ dependencies = [
  "duplicate",
  "libdd-trace-model",
  "libdd-trace-protobuf",
+ "proptest",
  "rand 0.8.8",
 ]
 

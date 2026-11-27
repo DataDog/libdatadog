@@ -12,5 +12,10 @@ pub mod normalizer;
 pub mod normalizer_v1;
 pub(crate) mod utf8_helpers;
 
-#[cfg(feature = "fuzzing")]
+#[cfg(any(test, feature = "fuzzing"))]
+pub(crate) mod invariants;
+#[cfg(any(test, feature = "fuzzing"))]
+pub(crate) mod test_model;
+
+#[cfg(any(test, feature = "fuzzing"))]
 pub mod fuzz;

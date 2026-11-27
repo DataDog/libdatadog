@@ -95,6 +95,14 @@ impl<S: Span> Attributes for CompatSpan<S> {
             self.0.has_attribute(key)
         }
     }
+
+    fn attribute(&self, key: &str) -> Option<AttributeRef<'_, Self::Values>> {
+        if is_promoted(key) {
+            self.promoted(key).map(AttributeRef::String)
+        } else {
+            self.0.attribute(key)
+        }
+    }
 }
 
 /// Yields the span's attributes, then its promoted tags.
