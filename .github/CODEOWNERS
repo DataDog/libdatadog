@@ -109,6 +109,7 @@ scripts/release-version-major-bumps.sh  @DataDog/apm-common-components-core
 scripts/run-ast-grep.sh              @DataDog/apm-common-components-core
 scripts/_add_ffi_panic_allows.py     @DataDog/apm-common-components-core
 scripts/semver-level.sh              @DataDog/apm-common-components-core
+scripts/semver-rustdoc.sh            @DataDog/apm-common-components-core
 scripts/split_lcov.sh                @DataDog/apm-common-components-core
 scripts/test_sidecar_ffi.sh          @DataDog/libdatadog-php @DataDog/apm-common-components-core-reviewers
 scripts/update_license_3rdparty.sh   @DataDog/apm-common-components-core

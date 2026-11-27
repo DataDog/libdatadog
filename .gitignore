@@ -15,6 +15,8 @@ release
 target
 tmp
 __fuzz__
+# semver pipeline rustdoc-JSON cache (scripts/semver-rustdoc.sh)
+.semver-rustdoc-cache/
 
 #==============================================================================#
 # Files to ignore
