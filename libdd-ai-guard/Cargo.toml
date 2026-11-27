@@ -1,0 +1,29 @@
+# Copyright 2026-Present Datadog, Inc. https://www.datadoghq.com/
+# SPDX-License-Identifier: Apache-2.0
+
+[package]
+name = "libdd-ai-guard"
+version = "0.1.0"
+rust-version.workspace = true
+edition.workspace = true
+license.workspace = true
+homepage = "https://github.com/DataDog/libdatadog/tree/main/libdd-ai-guard"
+repository = "https://github.com/DataDog/libdatadog/tree/main/libdd-ai-guard"
+description = "AI Guard RC x509 Magic Tunnel client, dispatch handler, and local policy evaluator (POC)"
+
+[lib]
+bench = false
+
+[dependencies]
+bytes = { workspace = true, features = ["std"] }
+futures = { workspace = true, features = ["std"] }
+pbjson-types = { workspace = true }
+rc-x509-client = { workspace = true, features = ["non-fips"] }
+rc-x509-proto = { workspace = true }
+rc-x509-roots = { workspace = true }
+tokio = { workspace = true, features = ["sync", "time"] }
+tracing = { workspace = true, features = ["std"] }
+
+[dev-dependencies]
+rc-x509-test-client-harness = { workspace = true, features = ["non-fips"] }
+tokio = { workspace = true, features = ["macros", "rt-multi-thread", "sync", "time"] }

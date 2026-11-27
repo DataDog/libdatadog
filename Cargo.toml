@@ -10,6 +10,7 @@ members = [
   "libdd-gotter",
   "libdd-profiling-heap-gotter",
   "libdd-profiling-heap-gotter-ffi",
+  "libdd-ai-guard",
   "libdd-ai-usage",
   "libdd-ai-usage-ffi",
   "libdd-crashtracker",
@@ -116,7 +117,7 @@ ignored = [
 # The RHEL restrictions are for the dd-trace-php repository. Someone in the
 # community, Remi Collet, packages the extension for these systems.
 [workspace.package]
-rust-version = "1.91.1"
+rust-version = "1.95.0"
 edition = "2024"
 version = "51.0.0"
 license = "Apache-2.0"
@@ -249,6 +250,7 @@ os_info = { version = "3.14.0", default-features = false }
 page_size = { version = "0.6.0", default-features = false }
 parking_lot = { version = "0.12", default-features = false }
 paste = { version = "1", default-features = false }
+pbjson-types = { version = "0.9", default-features = false }
 percent-encoding = { version = "2.1", default-features = false }
 pico-args = { version = "0.5.0", default-features = false }
 pin-project = { version = "1", default-features = false }
@@ -269,6 +271,10 @@ rand_chacha = { version = "0.3.1", default-features = false }
 # Test-only: self-signed certificate generation for local TLS servers in integration tests.
 # allow(workspace-deps-features): `pem` is required for certificate generation and `ring` selects
 # the ring backend instead of rcgen's default aws-lc-rs, which the workspace avoids outside fips.
+rc-x509-client = { version = "0.3.0", default-features = false }
+rc-x509-proto = { version = "0.5.0", default-features = false }
+rc-x509-roots = { version = "1.1.0", default-features = false }
+rc-x509-test-client-harness = { version = "0.3.0", default-features = false }
 rcgen = { version = "0.13", default-features = false, features = ["pem", "ring"] }
 regex = { version = "1.5", default-features = false }
 regex-lite = { version = "0.1", default-features = false }
@@ -389,11 +395,7 @@ codegen-units = 1
 inherits = "dev"
 panic = "abort"
 
-[patch.crates-io]
-# proptest pulls in a dependency on libm, which changes the runtime of some math functions
-# so benchmarks are not measuring the same thing as the release build. This patch removes
-# the default dependency on libm. A PR will be opened to proptest to make this optional.
-proptest = { git = 'https://github.com/bantonsson/proptest.git', branch = "ban/avoid-libm-in-std" }
+# POC note: removed `[patch.crates-io] proptest` (pinned 1.5.0) because rc-x509-proto requires proptest ^1.11.0.
 
 
 # Using `warn` instead of `deny` for iterating in local without blocking the build. Warnings fail CI anyway
