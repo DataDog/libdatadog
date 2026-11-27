@@ -4,5 +4,5 @@
 mod local;
 mod shm;
 
-pub use local::{LocalLimiter, now};
+pub use local::{LocalLimiter, SamplingThreshold, now};
 pub use shm::{ShmLimiter, ShmLimiterMemory, ShmSafe};
