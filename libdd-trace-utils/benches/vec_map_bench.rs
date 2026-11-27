@@ -9,10 +9,17 @@
 //! degrade with size and with duplicates rate.
 
 use criterion::{BatchSize, BenchmarkId, Criterion, criterion_group, criterion_main};
+use foldhash::fast::FixedState;
 use libdd_tinybytes::BytesString;
 use libdd_trace_utils::span::vec_map::VecMap;
 use std::hint::black_box;
 use std::time::Duration;
+
+/// Deterministic hasher version of hashbrown's default hasher. Avoid random noise in the
+/// measurements.
+type DetBuildHasher = FixedState;
+
+type DetVecMap<K, V> = VecMap<K, V, DetBuildHasher>;
 
 /// Representative map sizes: the small end is the common case (a span carries a handful of tags),
 /// the larger end covers heavily-tagged spans. Deliberately bounded — `VecMap` is never expected
@@ -51,12 +58,12 @@ fn values(n: usize) -> Vec<BytesString> {
 }
 
 /// A pre-populated `meta`-shaped map (`BytesString -> BytesString`) with `n` unique keys.
-fn populated_meta(n: usize) -> VecMap<BytesString, BytesString> {
+fn populated_meta(n: usize) -> DetVecMap<BytesString, BytesString> {
     keys(n).into_iter().zip(values(n)).collect()
 }
 
 /// A `metrics`-shaped map (`BytesString -> f64`) with `n` unique keys.
-fn populated_metrics(n: usize) -> VecMap<BytesString, f64> {
+fn populated_metrics(n: usize) -> DetVecMap<BytesString, f64> {
     keys(n)
         .into_iter()
         .enumerate()
@@ -92,7 +99,8 @@ fn bench_insert(c: &mut Criterion) {
             b.iter_batched(
                 || (ks.clone(), vs.clone()),
                 |(ks, vs)| {
-                    let mut map = VecMap::with_capacity(n);
+                    let mut map = DetVecMap::default();
+                    map.reserve(n);
                     for (k, v) in ks.into_iter().zip(vs) {
                         map.insert(black_box(k), black_box(v));
                     }
@@ -205,8 +213,9 @@ fn bench_iter(c: &mut Criterion) {
 /// A `meta`-shaped map where roughly one in `period` of the inserts is a duplicate key (a tag being
 /// overwritten). This is the realistic "has duplicates" shape that `dedup` has to compact; a
 /// smaller `period` means more duplicates.
-fn meta_with_duplicates(n: usize, period: usize) -> VecMap<BytesString, BytesString> {
-    let mut map = VecMap::with_capacity(n + n / period);
+fn meta_with_duplicates(n: usize, period: usize) -> DetVecMap<BytesString, BytesString> {
+    let mut map = DetVecMap::default();
+    map.reserve(n + n / period);
 
     for (i, (k, v)) in keys(n).into_iter().zip(values(n)).enumerate() {
         // Re-insert every `period`-th key first to create a duplicate (the earlier value gets

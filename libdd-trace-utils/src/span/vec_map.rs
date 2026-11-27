@@ -261,6 +261,12 @@ impl<K, V, S> VecMap<K, V, S> {
         self.data.capacity()
     }
 
+    /// Reserve space for at least `additional` more entries. Like [Vec::reserve].
+    #[inline]
+    pub fn reserve(&mut self, additional: usize) {
+        self.data.reserve(additional);
+    }
+
     /// Return `true` if the map hasn't been extended since the last call to [Self::dedup],
     /// guaranteeing that the underlying vector doesn't have any duplicate key.
     ///

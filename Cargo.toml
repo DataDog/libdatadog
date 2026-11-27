@@ -190,6 +190,7 @@ faststr = { version = "0.2.23", default-features = false }
 # (no compression backend at all). `rust_backend` (pure Rust, no C dependency)
 # is the baseline we want everywhere.
 flate2 = { version = "1.0", default-features = false, features = ["rust_backend"] }
+foldhash = { version = "0.2", default-features = false }
 fluent-uri = { version = "0.4.1", default-features = false }
 function_name = { version = "0.3.0", default-features = false }
 futures = { version = "0.3", default-features = false }
