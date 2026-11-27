@@ -100,6 +100,7 @@ impl TrimmedObservation {
     }
 
     /// Safety: the ObservationLength must have come from the same profile as the Observation
+    #[cfg(test)]
     pub(super) unsafe fn into_vec(mut self, len: ObservationLength) -> Vec<i64> {
         unsafe {
             // We built this from a vec.  Put it back together again.
