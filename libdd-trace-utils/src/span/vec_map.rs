@@ -13,7 +13,8 @@ use hashbrown::{HashMap, hash_map};
 use libdd_trace_model::{AttributeValue, TraceText, ValueMap, ValueMapMut, ValueTypes};
 use serde::ser::{Serialize, Serializer};
 use std::borrow::Borrow;
-use std::hash::Hash;
+use std::hash::{BuildHasher, Hash};
+use std::marker::PhantomData;
 use std::slice;
 use std::sync::atomic::{AtomicBool, Ordering};
 
@@ -41,12 +42,26 @@ use allocator_api2::vec::Vec as AllocVec;
 /// In the future, we could trigger deduplication on other events, for example at insertion if the
 /// size is bigger than a threshold (and we haven't deduped for `x` operations).
 ///
+/// # Hasher
+///
+/// The `S` type parameter selects the [`BuildHasher`] used by the internal deduplication tables
+/// ([VecMap::dedup], [VecMap::as_deduped_map], and the `PartialEq` implementation). It defaults to
+/// `hashbrown`'s `DefaultHashBuilder`. Use a deterministic hasher when
+/// reproducible timing matters, typically in benchmarks.
+///
+/// Like [std::collections::HashMap], [VecMap::new] and [VecMap::with_capacity] are only available
+/// for the default hasher. Build a custom-hasher map with `Default::default()` or a type
+/// annotation.
+///
+/// The tables used by the `PartialEq` implementation always use the default builder, since equality
+/// semantics don't depend on the hasher.
+///
 /// # Ordering
 ///
 /// As this is a map, iteration order is not defined nor guaranteed. In practice, iteration follows
 /// insertion order, but [Self::dedup] will reverse the underlying vector.
 #[derive(Clone, Debug)]
-pub struct VecMap<K, V> {
+pub struct VecMap<K, V, S = hashbrown::DefaultHashBuilder> {
     data: Vec<(K, V)>,
     /// Deduped is a flag that is set after entry deduplication. It is dirtied (set to `false`)
     /// when any modification that could create duplicates is performed (`deduped == false`
@@ -54,20 +69,25 @@ pub struct VecMap<K, V> {
     /// avoid performing deduplication several times in a row, for example in the export
     /// pipeline.
     deduped: bool,
+    /// Tie the hasher type parameter to the map without storing a hasher instance: the hasher is
+    /// instantiated on demand (`S::default()`) when a deduplication table is built. `fn() -> S`
+    /// keeps the map zero-cost for `S`, and doesn't affect `Send`/`Sync`/`Drop`.
+    _hasher: PhantomData<fn() -> S>,
 }
 
-impl<K, V> Default for VecMap<K, V> {
+impl<K, V, S> Default for VecMap<K, V, S> {
     fn default() -> Self {
         Self {
             data: Default::default(),
             deduped: true,
+            _hasher: PhantomData,
         }
     }
 }
 
 /// Upholds the [ValueMap] contract of yielding each key once: reads skip shadowed duplicates (see
 /// [VecMap::iter_unique]), and mutable traversals first drop them (see [VecMap::dedup]).
-impl<T: ValueTypes> ValueMap<T> for VecMap<T::Text, AttributeValue<T>> {
+impl<T: ValueTypes, S> ValueMap<T> for VecMap<T::Text, AttributeValue<T>, S> {
     fn get(&self, key: &str) -> Option<&AttributeValue<T>> {
         VecMap::get(self, key)
     }
@@ -88,7 +108,9 @@ impl<T: ValueTypes> ValueMap<T> for VecMap<T::Text, AttributeValue<T>> {
     }
 }
 
-impl<T: ValueTypes> ValueMapMut<T> for VecMap<T::Text, AttributeValue<T>> {
+impl<T: ValueTypes, S: BuildHasher + Default> ValueMapMut<T>
+    for VecMap<T::Text, AttributeValue<T>, S>
+{
     fn get_mut(&mut self, key: &str) -> Option<&mut AttributeValue<T>> {
         VecMap::get_mut(self, key)
     }
@@ -118,7 +140,12 @@ impl<T: ValueTypes> ValueMapMut<T> for VecMap<T::Text, AttributeValue<T>> {
 
 /// Compares two maps for equality, ignoring insertion order and duplicate entries (the last value
 /// for a given key wins on both sides). Note that this allocates two intermediate `HashMap`s.
-impl<K: Eq + Hash, V: PartialEq> PartialEq for VecMap<K, V> {
+/// Compares two maps for equality, ignoring insertion order and duplicate entries (the last value
+/// for a given key wins on both sides). Note that this allocates two intermediate `HashMap`s. As
+/// in `hashbrown`'s own `PartialEq`, this doesn't require anything from the hasher type parameter
+/// `S`: the transient tables always use `hashbrown`'s default builder, since equality semantics
+/// don't depend on it.
+impl<K: Eq + Hash, V: PartialEq, S> PartialEq for VecMap<K, V, S> {
     fn eq(&self, other: &Self) -> bool {
         let lhs: HashMap<&K, &V> = self.data.iter().map(|(k, v)| (k, v)).collect();
         let rhs: HashMap<&K, &V> = other.data.iter().map(|(k, v)| (k, v)).collect();
@@ -126,27 +153,12 @@ impl<K: Eq + Hash, V: PartialEq> PartialEq for VecMap<K, V> {
     }
 }
 
-impl<K: Eq + Hash, V: Eq> Eq for VecMap<K, V> {}
+impl<K: Eq + Hash, V: Eq, S> Eq for VecMap<K, V, S> {}
 
-impl<K, V> VecMap<K, V> {
-    #[must_use]
-    #[inline]
-    pub fn new() -> Self {
-        Self::default()
-    }
-
+impl<K, V, S> VecMap<K, V, S> {
     /// Dirty the `dedup` flag after a mutation that could introduce duplicates.
     fn dirty(&mut self) {
         self.deduped = false;
-    }
-
-    #[must_use]
-    #[inline]
-    pub fn with_capacity(capacity: usize) -> Self {
-        VecMap {
-            data: Vec::with_capacity(capacity),
-            deduped: false,
-        }
     }
 
     #[inline]
@@ -283,7 +295,27 @@ impl<K, V> VecMap<K, V> {
     }
 }
 
-impl<K: PartialEq, V> VecMap<K, V> {
+// `new` and `with_capacity` are implemented for the default hasher only, like in
+// [std::collections::HashMap], for type-inference and ergonomics reasons.
+impl<K, V> VecMap<K, V, hashbrown::DefaultHashBuilder> {
+    #[must_use]
+    #[inline]
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    #[must_use]
+    #[inline]
+    pub fn with_capacity(capacity: usize) -> Self {
+        VecMap {
+            data: Vec::with_capacity(capacity),
+            deduped: false,
+            _hasher: PhantomData,
+        }
+    }
+}
+
+impl<K: PartialEq, V, S> VecMap<K, V, S> {
     /// Returns true if the entry at `index` is shadowed by a later entry with the same key.
     fn is_shadowed(&self, index: usize) -> bool {
         !self.deduped
@@ -329,7 +361,7 @@ impl<K: PartialEq, V> VecMap<K, V> {
 /// Size of the inline [StackBump] buffer used by [VecMap::dedup].
 const DEDUP_STACK_BYTES: usize = 1024;
 
-impl<K: Eq + Hash, V> VecMap<K, V> {
+impl<K: Eq + Hash, V, S: BuildHasher + Default> VecMap<K, V, S> {
     /// Retains only the entries for which `f` returns `true`, allowing values to be mutated.
     /// Shadowed entries are dropped first (see [VecMap::dedup]), so `f` sees each key once with
     /// the value [VecMap::get] returns, and dropping that value can't expose a shadowed one. Keys
@@ -343,18 +375,19 @@ impl<K: Eq + Hash, V> VecMap<K, V> {
     /// map is already deduped, or dedup the entries in a new separate vec otherwise. As opposed to
     /// [Self::dedup], `as_deduped_map` takes an immutable reference to `self` but might allocate.
     /// Prefer [Self::dedup] when applicable.
-    pub fn as_deduped_map(&self) -> DedupedVecMap<'_, K, V> {
+    pub fn as_deduped_map(&self) -> DedupedVecMap<'_, K, V, S> {
         if self.deduped {
             DedupedVecMap::Borrowed(self)
         } else {
-            DedupedVecMap::Owned(self.data.iter().map(|(k, v)| (k, v)).collect())
+            let map: HashMap<&K, &V, S> = self.data.iter().map(|(k, v)| (k, v)).collect();
+            DedupedVecMap::Owned(map)
         }
     }
 
     /// This is a convenience wrapper around [Self::as_deduped_map] used in the msgpack encoder,
     /// where we expect the map to be deduped, but call `as_deduped_map` as a defensive measure. If
     /// the latter had to deduplicate and allocate a new vec, we log a warning (at most once).
-    pub fn defensive_dedup(&self) -> DedupedVecMap<'_, K, V> {
+    pub fn defensive_dedup(&self) -> DedupedVecMap<'_, K, V, S> {
         if !self.is_deduped() {
             static WARNED: AtomicBool = AtomicBool::new(false);
             if !WARNED.swap(true, Ordering::Relaxed) {
@@ -399,11 +432,11 @@ impl<K: Eq + Hash, V> VecMap<K, V> {
         // the future, the unsafe one-pass approach can be implemented.
         let stack = StackBump::<DEDUP_STACK_BYTES>::new();
         let keep: AllocVec<bool, _> = {
-            let mut seen =
-                hashbrown::HashSet::<&K, hashbrown::DefaultHashBuilder, _>::with_capacity_in(
-                    self.data.len(),
-                    &stack,
-                );
+            let mut seen = hashbrown::HashSet::<&K, S, _>::with_capacity_and_hasher_in(
+                self.data.len(),
+                S::default(),
+                &stack,
+            );
             let mut keep = AllocVec::with_capacity_in(self.data.len(), &stack);
 
             for (k, _) in self.data.iter().rev() {
@@ -425,31 +458,33 @@ impl<K: Eq + Hash, V> VecMap<K, V> {
     }
 }
 
-impl<K, V> From<Vec<(K, V)>> for VecMap<K, V> {
+impl<K, V, S> From<Vec<(K, V)>> for VecMap<K, V, S> {
     fn from(data: Vec<(K, V)>) -> Self {
         Self {
             data,
             deduped: false,
+            _hasher: PhantomData,
         }
     }
 }
 
-impl<K, V> From<VecMap<K, V>> for Vec<(K, V)> {
-    fn from(value: VecMap<K, V>) -> Self {
+impl<K, V, S> From<VecMap<K, V, S>> for Vec<(K, V)> {
+    fn from(value: VecMap<K, V, S>) -> Self {
         value.data
     }
 }
 
-impl<K, V> FromIterator<(K, V)> for VecMap<K, V> {
+impl<K, V, S> FromIterator<(K, V)> for VecMap<K, V, S> {
     fn from_iter<I: IntoIterator<Item = (K, V)>>(iter: I) -> Self {
         Self {
             data: iter.into_iter().collect(),
             deduped: false,
+            _hasher: PhantomData,
         }
     }
 }
 
-impl<K, V> IntoIterator for VecMap<K, V> {
+impl<K, V, S> IntoIterator for VecMap<K, V, S> {
     type Item = (K, V);
     type IntoIter = std::vec::IntoIter<(K, V)>;
 
@@ -458,7 +493,7 @@ impl<K, V> IntoIterator for VecMap<K, V> {
     }
 }
 
-impl<'a, K, V> IntoIterator for &'a VecMap<K, V> {
+impl<'a, K, V, S> IntoIterator for &'a VecMap<K, V, S> {
     type Item = &'a (K, V);
     type IntoIter = slice::Iter<'a, (K, V)>;
 
@@ -467,7 +502,7 @@ impl<'a, K, V> IntoIterator for &'a VecMap<K, V> {
     }
 }
 
-impl<'a, K, V> IntoIterator for &'a mut VecMap<K, V> {
+impl<'a, K, V, S> IntoIterator for &'a mut VecMap<K, V, S> {
     type Item = &'a mut (K, V);
     type IntoIter = slice::IterMut<'a, (K, V)>;
 
@@ -478,15 +513,17 @@ impl<'a, K, V> IntoIterator for &'a mut VecMap<K, V> {
     }
 }
 
-impl<K, V> Extend<(K, V)> for VecMap<K, V> {
+impl<K, V, S> Extend<(K, V)> for VecMap<K, V, S> {
     fn extend<I: IntoIterator<Item = (K, V)>>(&mut self, iter: I) {
         self.dirty();
         self.data.extend(iter);
     }
 }
 
-impl<K: Serialize + Eq + Hash, V: Serialize> Serialize for VecMap<K, V> {
-    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+impl<K: Serialize + Eq + Hash, V: Serialize, S: BuildHasher + Default> Serialize
+    for VecMap<K, V, S>
+{
+    fn serialize<Se: Serializer>(&self, serializer: Se) -> Result<Se::Ok, Se::Error> {
         use serde::ser::SerializeMap;
 
         let deduped = self.as_deduped_map();
@@ -500,12 +537,12 @@ impl<K: Serialize + Eq + Hash, V: Serialize> Serialize for VecMap<K, V> {
     }
 }
 
-pub enum DedupedVecMap<'a, K, V> {
-    Borrowed(&'a VecMap<K, V>),
-    Owned(HashMap<&'a K, &'a V>),
+pub enum DedupedVecMap<'a, K, V, S = hashbrown::DefaultHashBuilder> {
+    Borrowed(&'a VecMap<K, V, S>),
+    Owned(HashMap<&'a K, &'a V, S>),
 }
 
-impl<'a, K, V> DedupedVecMap<'a, K, V> {
+impl<'a, K, V, S> DedupedVecMap<'a, K, V, S> {
     #[inline]
     pub fn iter(&self) -> DedupedVecMapIter<'_, 'a, K, V> {
         match self {
