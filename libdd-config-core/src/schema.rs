@@ -80,7 +80,7 @@ impl Manifest {
             })
             .collect();
         self.supported_configurations.retain(|name, definitions| {
-            names.contains(name.as_str())
+            let selected = names.contains(name.as_str())
                 || definitions.iter().any(|definition| {
                     definition
                         .aliases
@@ -90,7 +90,15 @@ impl Manifest {
                             .configuration_names
                             .iter()
                             .any(|option| options.contains(option.as_str()))
-                })
+                });
+            if selected {
+                for definition in definitions {
+                    definition
+                        .aliases
+                        .retain(|alias| available_aliases.contains(alias.as_str()));
+                }
+            }
+            selected
         });
     }
 }

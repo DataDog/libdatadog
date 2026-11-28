@@ -104,6 +104,36 @@ fn one_shot_skips_aliases_shadowed_by_the_supplied_canonical_name() {
 }
 
 #[test]
+fn one_shot_drops_unrequested_aliases_shadowed_in_the_full_schema() {
+    let mut resolver = WireResolver::default();
+    let mut request = json!({
+        "operation": "initialize",
+        "manifest": {"kind": "json", "value": r#"{"version":"2","supportedConfigurations":{
+            "DD_STYLE":[{"type":"string"}],
+            "DD_STYLE_EXTRACT":[{"type":"string","aliases":["DD_STYLE"]}],
+            "DD_STYLE_INJECT":[{"type":"string","aliases":["DD_STYLE"]}]
+        }}"#},
+        "inputs": {
+            "skip_defaults": true,
+            "layers": [{"origin":"env_var","entries":[
+                {"name":"DD_STYLE_EXTRACT","value":"datadog"},
+                {"name":"DD_STYLE_INJECT","value":"tracecontext"}
+            ]}],
+        },
+    });
+    let full = invoke(&mut resolver, request.clone()).unwrap();
+    assert_eq!(full["status"], "complete", "{full}");
+
+    request["operation"] = "resolve_once".into();
+    let selected = invoke(&mut resolver, request).unwrap();
+    assert_eq!(selected["status"], "complete", "{selected}");
+    assert_eq!(
+        selected["settings"],
+        json!(full["settings"].as_array().unwrap()[1..])
+    );
+}
+
+#[test]
 fn applies_parser_policy_on_raw_and_typed_inputs() {
     let result = initialize(
         r#"{"version":"2","supportedConfigurations":{
