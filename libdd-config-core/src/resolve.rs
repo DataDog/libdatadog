@@ -111,6 +111,9 @@ pub struct SourceEvent {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub input_name: Option<String>,
     pub origin: Origin,
+    /// The configuration ID supplied for this attempt, when present.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub config_id: Option<String>,
     pub input: Option<InputValue>,
     /// The parsed input when validation or transformation changed or rejected it.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -278,6 +281,7 @@ impl PendingResolution {
                 name: rule.name.clone(),
                 input_name: input_name.cloned(),
                 origin: write.origin,
+                config_id: write.config_id.clone(),
                 input: write.input,
                 parsed: write.parsed.filter(|parsed| Some(parsed) != value.as_ref()),
                 value: value.clone(),

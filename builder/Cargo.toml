@@ -36,7 +36,7 @@ data-pipeline-stats-obfuscation = ["data-pipeline"]
 # to change or being remove entirely.
 data-pipeline-external-observations = ["data-pipeline"]
 symbolizer = []
-library-config = []
+library-config = ["profiling"]
 config-core = ["library-config"]
 log = []
 ddsketch = []

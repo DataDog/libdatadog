@@ -119,6 +119,12 @@ jobs:
       - name: sccache
         id: sccache
         uses: ./.github/actions/setup-sccache
+      - name: Verify config core builder features
+        shell: bash
+        run: |
+          config_core_features=$(cargo tree --locked -p builder --no-default-features \
+            --features config-core -e features -i builder --prefix none --color never)
+          grep -Fxq 'builder feature "profiling"' <<< "$config_core_features"
       - name: "Generate profiling FFI"
         shell: bash
         env:

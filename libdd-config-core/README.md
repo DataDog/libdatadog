@@ -37,7 +37,9 @@ back the result for each request in order to finish the snapshot.
 
 A resolved value carries its origin, supplied name, and stable configuration
 ID when applicable. Enable source events for telemetry that needs overridden
-sources. Sensitive entries stay available in the snapshot and are omitted
+sources. Each event carries the `config_id` of its own attempt when supplied.
+This applies to rejected attempts and values that a later source overrides.
+Sensitive entries stay available in the snapshot and are omitted
 from source events. The resolver clears detail from sensitive transform
 diagnostics.
 

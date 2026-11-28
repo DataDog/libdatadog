@@ -230,6 +230,42 @@ fn reports_the_supplied_spelling_for_each_programmatic_attempt() {
 }
 
 #[test]
+fn reports_configuration_ids_for_overridden_and_rejected_attempts() {
+    let result = initialize(
+        r#"{"version":"2","supportedConfigurations":{
+            "DD_MODE":[{"type":"string","default":"info","allowed":"info|debug",
+                "configurationNames":["logMode"]}]
+        }}"#,
+        &json!({"report_sources":true,"layers":[
+            {"origin":"local_stable_config","entries":[
+                {"name":"DD_MODE","value":"debug","config_id":"local-policy"}
+            ]},
+            {"origin":"fleet_stable_config","entries":[
+                {"name":"DD_MODE","value":"invalid","config_id":"fleet-policy"}
+            ]},
+            {"origin":"code","entries":[
+                {"name":"logMode","value":{"kind":"string","value":"info"}}
+            ]}
+        ]}),
+        &json!([]),
+    )
+    .unwrap();
+    assert_eq!(result["status"], "complete");
+    let [default, local, fleet, code] = result["sources"].as_array().unwrap().as_slice() else {
+        panic!("all attempts must be reported");
+    };
+    assert_eq!(local["config_id"], "local-policy");
+    assert_eq!(local["value"]["value"], "debug");
+    assert_eq!(fleet["config_id"], "fleet-policy");
+    assert!(fleet["value"].is_null());
+    assert!(default.get("config_id").is_none());
+    assert!(code.get("config_id").is_none());
+    let winner = &result["settings"][0]["resolved"];
+    assert_eq!(winner["origin"], "code");
+    assert!(winner.get("config_id").is_none());
+}
+
+#[test]
 fn formats_ecmascript_numbers_for_string_coercion_and_allowed_patterns() {
     let mut resolver = WireResolver::default();
     let midpoint = 1_571_277_825_824_000.0 + 0.25;

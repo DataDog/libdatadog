@@ -51,7 +51,10 @@ const initialization = {
     report_sources: true,
     layers: [{
       origin: 'env_var',
-      entries: [{ name: 'DD_MODE', value: 'DEBUG' }, { name: 'DD_CONTENT', value: 'file' }],
+      entries: [{ name: 'DD_MODE', value: 'DEBUG' }],
+    }, {
+      origin: 'fleet_stable_config',
+      entries: [{ name: 'DD_CONTENT', value: 'file', config_id: 'fleet-policy' }],
     }],
   },
 }
@@ -61,7 +64,7 @@ assert.equal(first.status, 'pending')
 assert.deepEqual(first.requests, [{
   slot: 12,
   key: 'DD_CONTENT',
-  origin: 'env_var',
+  origin: 'fleet_stable_config',
   value: { kind: 'string', value: 'file' },
 }])
 
@@ -73,9 +76,10 @@ const complete = request({
 assert.equal(complete.status, 'complete')
 assert.deepEqual(complete.settings.map(({ resolved }) => [resolved.value.value, resolved.origin]), [
   ['debug', 'env_var'],
-  ['contents', 'env_var'],
+  ['contents', 'fleet_stable_config'],
 ])
 assert.equal(complete.sources.length, 4)
+assert.deepEqual(complete.sources.map(event => event.config_id), [undefined, undefined, undefined, 'fleet-policy'])
 assert.deepEqual(complete.diagnostics, [])
 
 const defaults = request({ operation: 'resolve', inputs: {} })
@@ -109,6 +113,7 @@ const onceComplete = request({
 })
 assert.equal(onceComplete.settings[1].resolved.value.value, 'one-time contents')
 assert.equal(onceComplete.sources.length, 2)
+assert.equal(onceComplete.sources[1].config_id, 'fleet-policy')
 assert.deepEqual(request({ operation: 'resolve', inputs: {} }), defaults)
 
 const typedNumber = 0.00037037037037037035

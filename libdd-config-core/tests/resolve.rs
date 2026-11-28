@@ -8,6 +8,11 @@ use libdd_config_core::{
 };
 
 fn layer(origin: Origin, entries: &[(&str, &str)]) -> Layer {
+    let config_id = match origin {
+        Origin::LocalStableConfig => Some("local-match"),
+        Origin::FleetStableConfig => Some("fleet-match"),
+        _ => None,
+    };
     Layer {
         origin,
         entries: entries
@@ -15,7 +20,7 @@ fn layer(origin: Origin, entries: &[(&str, &str)]) -> Layer {
             .map(|&(name, raw)| Entry {
                 name: name.to_owned(),
                 value: InputValue::Raw(raw.to_owned()),
-                config_id: (origin == Origin::LocalStableConfig).then(|| "local-match".to_owned()),
+                config_id: config_id.map(str::to_owned),
             })
             .collect(),
         skip_empty: false,
@@ -56,14 +61,13 @@ fn selects_and_validates_one_name_per_source() {
 
     let inputs = ResolveInputs {
         layers: vec![
-            layer(Origin::LocalStableConfig, &[("OLD_MODE", "DEBUG")]),
+            layer(
+                Origin::LocalStableConfig,
+                &[("OLD_MODE", "DEBUG"), ("DD_SECRET", "private")],
+            ),
             layer(
                 Origin::EnvVar,
-                &[
-                    ("OLD_MODE", "INFO"),
-                    ("DD_MODE", "invalid"),
-                    ("DD_SECRET", "private"),
-                ],
+                &[("OLD_MODE", "INFO"), ("DD_MODE", "invalid")],
             ),
             layer(Origin::FleetStableConfig, &[("DD_MODE", "bad")]),
         ],
@@ -92,6 +96,13 @@ fn selects_and_validates_one_name_per_source() {
     );
     assert_eq!(config.source_events().len(), 4);
     let events = config.source_events();
+    assert_eq!(
+        events
+            .iter()
+            .map(|event| event.config_id.as_deref())
+            .collect::<Vec<_>>(),
+        [None, Some("local-match"), None, Some("fleet-match")]
+    );
     assert_eq!(
         events[0].parsed.as_ref().and_then(Value::as_str),
         Some("INFO")
