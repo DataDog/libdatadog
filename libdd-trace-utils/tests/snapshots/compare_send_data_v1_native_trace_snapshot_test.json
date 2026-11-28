@@ -14,14 +14,19 @@
       "component": "http",
       "env": "test-env",
       "http.method": "GET",
+      "http.request.header.accept.0": "text/html",
+      "http.request.header.accept.1": "application/json",
+      "http.request.id": "req-123",
       "span.kind": "server",
+      "user.name": "alice",
       "version": "1.2.3"
     },
     "metrics": {
       "_sampling_priority_v1": 1,
       "http.duration_ms": 12.5,
       "http.status_code": 200,
-      "http.success": 1
+      "http.success": 1,
+      "user.id": 42
     },
     "span_links": [
       {
