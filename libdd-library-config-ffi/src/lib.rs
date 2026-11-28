@@ -63,7 +63,11 @@ mod no_std_support {
     pub extern "C" fn rust_eh_personality() {}
 }
 
+#[cfg(feature = "config-core")]
+mod config_core;
 pub mod tracer_metadata;
+#[cfg(feature = "config-core")]
+pub use config_core::*;
 
 use libdd_common_ffi::{self as ffi, slice::AsBytes};
 

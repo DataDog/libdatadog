@@ -14,6 +14,9 @@ pragma_once = true
 no_includes = true
 includes = ["common.h"]
 
+[defines]
+"feature = config-core" = "DDOG_HAS_CONFIG_CORE"
+
 [export]
 prefix = "ddog_"
 exclude = ["rust_eh_personality"]

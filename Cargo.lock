@@ -2884,6 +2884,25 @@ dependencies = [
 ]
 
 [[package]]
+name = "libdd-config-core"
+version = "0.1.0"
+dependencies = [
+ "indexmap 2.12.1",
+ "libdd-regex",
+ "ryu",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.17",
+]
+
+[[package]]
+name = "libdd-config-core-wasi"
+version = "0.1.0"
+dependencies = [
+ "libdd-config-core",
+]
+
+[[package]]
 name = "libdd-crashtracker"
 version = "3.0.0"
 dependencies = [
@@ -3284,6 +3303,7 @@ dependencies = [
  "function_name",
  "libc_alloc",
  "libdd-common-ffi",
+ "libdd-config-core",
  "libdd-library-config",
  "libdd-regex",
 ]

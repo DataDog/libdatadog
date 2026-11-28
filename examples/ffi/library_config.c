@@ -28,6 +28,28 @@ int setenv(const char *name, const char *value, int overwrite) {
 
 ddog_CStr from_null_terminated(char *str) { return (ddog_CStr){.ptr = str, .length = strlen(str)}; }
 
+#ifdef DDOG_HAS_CONFIG_CORE
+static bool resolve_startup_config(void) {
+  static const uint8_t request[] =
+      "{\"version\":1,\"operation\":\"initialize\",\"manifest\":{\"kind\":\"json\","
+      "\"value\":\"{\\\"version\\\":\\\"2\\\",\\\"supportedConfigurations\\\":{}}\"}}";
+  struct ddog_CoreConfigResolver *resolver = ddog_config_core_new();
+  ddog_StringWrapperResult response = ddog_config_core_request(
+      resolver, (ddog_ByteSlice){.ptr = request, .len = sizeof(request) - 1});
+  ddog_config_core_drop(resolver);
+
+  if (response.tag == DDOG_STRING_WRAPPER_RESULT_ERR) {
+    ddog_Error_drop(&response.err);
+    return false;
+  }
+  ddog_CharSlice reply = ddog_StringWrapper_message(&response.ok);
+  const char expected[] = "{\"status\":\"complete\",\"settings\":[],\"diagnostics\":[],\"sources\":[]}";
+  bool matches = reply.len == sizeof(expected) - 1 && memcmp(reply.ptr, expected, reply.len) == 0;
+  ddog_StringWrapper_drop(&response.ok);
+  return matches;
+}
+#endif
+
 struct arguments {
   bool infer;
   bool help;
@@ -61,6 +83,13 @@ void parse_args(int argc, const char *const *argv, struct arguments *args) {
 }
 
 int main(int argc, const char *const *argv) {
+#ifdef DDOG_HAS_CONFIG_CORE
+  if (!resolve_startup_config()) {
+    fputs("Startup configuration request failed\n", stderr);
+    return EXIT_FAILURE;
+  }
+#endif
+
   struct arguments args = {0};
   parse_args(argc, argv, &args);
   if (args.help) {

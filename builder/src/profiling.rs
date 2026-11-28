@@ -93,6 +93,13 @@ impl Profiling {
                 .collect::<Vec<&str>>()),
         );
 
+        #[cfg(feature = "config-core")]
+        {
+            let path = Path::new(self.target_include.as_ref()).join("library-config.h");
+            let header = fs::read_to_string(&path)?;
+            fs::write(path, format!("#define DDOG_HAS_CONFIG_CORE 1\n{header}"))?;
+        }
+
         Ok(())
     }
 

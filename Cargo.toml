@@ -19,6 +19,8 @@ members = [
   "libdd-ffe-ffi",
   "libdd-ipc",
   "libdd-ipc-macros",
+  "libdd-config-core",
+  "libdd-config-core/wasi",
   "libdd-library-config",
   "libdd-library-config-ffi",
   "libdd-live-debugger",
@@ -283,6 +285,7 @@ rustc-hash = { version = "2.1.1", default-features = false }
 rustls = { version = "0.23", default-features = false }
 rustls-platform-verifier = { version = "0.6", default-features = false }
 rustls-webpki = { version = ">=0.103.13", default-features = false }
+ryu = { version = "1.0", default-features = false }
 schemars = { version = "0.8.21", default-features = false }
 semver = { version = "1.0", default-features = false }
 serde = { version = "1.0", default-features = false }

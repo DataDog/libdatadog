@@ -18,6 +18,7 @@ pub struct Selection {
     pub crashtracker: bool,
     pub symbolizer: bool,
     pub library_config: bool,
+    pub config_core: bool,
     pub log: bool,
     pub ddsketch: bool,
     pub ffe: bool,
@@ -43,6 +44,7 @@ impl Selection {
             crashtracker: cfg!(feature = "crashtracker"),
             symbolizer: cfg!(feature = "symbolizer"),
             library_config: cfg!(feature = "library-config"),
+            config_core: cfg!(feature = "config-core"),
             log: cfg!(feature = "log"),
             ddsketch: cfg!(feature = "ddsketch"),
             ffe: cfg!(feature = "ffe"),
@@ -96,8 +98,11 @@ pub fn profiling_features(selection: &Selection) -> Vec<String> {
     if selection.symbolizer {
         features.push("symbolizer");
     }
-    if selection.library_config {
+    if selection.library_config || selection.config_core {
         features.push("datadog-library-config-ffi");
+    }
+    if selection.config_core {
+        features.push("datadog-config-core-ffi");
     }
     if selection.log {
         features.push("datadog-log-ffi");
@@ -139,6 +144,7 @@ mod tests {
         |s| s.crashtracker = true,
         |s| s.symbolizer = true,
         |s| s.library_config = true,
+        |s| s.config_core = true,
         |s| s.log = true,
         |s| s.ddsketch = true,
         |s| s.ffe = true,
@@ -198,6 +204,7 @@ mod tests {
             crashtracker: true,
             symbolizer: true,
             library_config: true,
+            config_core: true,
             log: true,
             ddsketch: true,
             ffe: true,
@@ -224,6 +231,7 @@ mod tests {
                 "demangler",
                 "symbolizer",
                 "datadog-library-config-ffi",
+                "datadog-config-core-ffi",
                 "datadog-log-ffi",
                 "ddsketch-ffi",
                 "libdd-ffe-ffi",

@@ -119,6 +119,12 @@ jobs:
       - name: sccache
         id: sccache
         uses: ./.github/actions/setup-sccache
+      - name: Verify config core builder features
+        shell: bash
+        run: |
+          config_core_features=$(cargo tree --locked -p builder --no-default-features \
+            --features config-core -e features -i builder --prefix none --color never)
+          grep -Fxq 'builder feature "profiling"' <<< "$config_core_features"
       - name: "Generate profiling FFI"
         shell: bash
         env:
@@ -127,7 +133,8 @@ jobs:
           if [[ "${{ matrix.platform }}" == "windows-latest" ]]; then
               git config --global core.longpaths true
           fi
-          cargo run --bin release --profile ${{ matrix.profile }} --features http-client -- --profile ${{ matrix.profile }} --out $LIBDD_OUTPUT_FOLDER
+          cargo run --bin release --profile ${{ matrix.profile }} --features http-client,config-core -- --profile ${{ matrix.profile }} --out $LIBDD_OUTPUT_FOLDER
+          grep -Fxq '#define DDOG_HAS_CONFIG_CORE 1' "$LIBDD_OUTPUT_FOLDER/include/datadog/library-config.h"
       - name: 'Publish libdatadog'
         uses: actions/upload-artifact@4cec3d8aa04e39d1a68397de0c4cd6fb9dce8ec1 # 4.6.1
         if: success() || failure()
