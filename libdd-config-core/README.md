@@ -42,8 +42,10 @@ from source events. The resolver clears detail from sensitive transform
 diagnostics.
 
 When a transform or regexp changes or rejects a parsed value, the source
-event includes that parsed value. Use `skip_defaults` when applying a new
-layer over defaults already materialized by the caller.
+event includes that parsed value. Source events and diagnostics carry
+`input_name` when the caller used a spelling other than the canonical name.
+Use `skip_defaults` when applying a new layer over defaults already
+materialized by the caller.
 
 ## WASI Preview 1
 

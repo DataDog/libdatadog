@@ -170,6 +170,6 @@ fn sample_rate(value: Value, _: TransformContext<'_>) -> TransformResult {
     }
     TransformResult::Accept {
         value: Value::Number(Number::Float(supplied.clamp(0.0, 1.0))),
-        warning: Some("sample rate outside the range 0 to 1".to_owned()),
+        warning: Some("Sample rate out of range between 0 and 1".to_owned()),
     }
 }

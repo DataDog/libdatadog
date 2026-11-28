@@ -182,6 +182,54 @@ fn applies_parser_policy_on_raw_and_typed_inputs() {
 }
 
 #[test]
+fn reports_the_supplied_spelling_for_each_programmatic_attempt() {
+    let result = initialize(
+        r#"{"version":"2","supportedConfigurations":{
+            "DD_TRACE_SAMPLE_RATE":[{"type":"decimal","transform":"sampleRate",
+                "configurationNames":["sampleRate","ingestion.sampleRate"]}]
+        }}"#,
+        &json!({"skip_defaults":true,"report_sources":true,"layers":[
+            {"origin":"env_var","entries":[{"name":"DD_TRACE_SAMPLE_RATE","value":"invalid"}]},
+            {"origin":"code","entries":[
+                {"name":"sampleRate","value":{"kind":"number","value":1.2}},
+                {"name":"ingestion.sampleRate","value":{"kind":"number","value":-0.5}}
+            ]}
+        ]}),
+        &json!([]),
+    )
+    .unwrap();
+    assert_eq!(result["status"], "complete");
+    let [canonical, first, second] = result["sources"].as_array().unwrap().as_slice() else {
+        panic!("all attempts must be reported");
+    };
+    assert_eq!(canonical["name"], "DD_TRACE_SAMPLE_RATE");
+    assert!(canonical.get("input_name").is_none());
+    assert_eq!(first["name"], "DD_TRACE_SAMPLE_RATE");
+    assert_eq!(first["input_name"], "sampleRate");
+    assert_eq!(first["parsed"]["value"], 1.2);
+    assert_eq!(first["value"]["value"], 1.0);
+    assert_eq!(second["name"], "DD_TRACE_SAMPLE_RATE");
+    assert_eq!(second["input_name"], "ingestion.sampleRate");
+    assert_eq!(second["parsed"]["value"], -0.5);
+    assert_eq!(second["value"]["value"], 0.0);
+    let [canonical, first, second] = result["diagnostics"].as_array().unwrap().as_slice() else {
+        panic!("all attempts must have a diagnostic");
+    };
+    assert!(canonical.get("input_name").is_none());
+    assert_eq!(canonical["problem"]["kind"], "invalid_value");
+    assert_eq!(first["input_name"], "sampleRate");
+    assert_eq!(
+        first["problem"]["message"],
+        "Sample rate out of range between 0 and 1"
+    );
+    assert_eq!(second["input_name"], "ingestion.sampleRate");
+    assert_eq!(
+        result["settings"][0]["resolved"]["input_name"],
+        "ingestion.sampleRate"
+    );
+}
+
+#[test]
 fn formats_ecmascript_numbers_for_string_coercion_and_allowed_patterns() {
     let mut resolver = WireResolver::default();
     let midpoint = 1_571_277_825_824_000.0 + 0.25;
@@ -268,6 +316,7 @@ fn reports_later_unknown_options_after_pending_diagnostics() {
     );
     assert!(reply["diagnostics"][0]["problem"]["message"].is_null());
     assert_eq!(reply["diagnostics"][1]["problem"]["kind"], "unknown_option");
+    assert!(reply["diagnostics"][1].get("input_name").is_none());
     assert_eq!(reply["sources"], json!([]));
     assert!(reply["settings"][0]["resolved"].is_null());
 }

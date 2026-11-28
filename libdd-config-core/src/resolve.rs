@@ -97,6 +97,9 @@ pub enum DiagnosticKind {
 #[derive(Debug, Serialize)]
 pub struct Diagnostic {
     pub name: String,
+    /// The supplied name when it differs from the canonical name.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub input_name: Option<String>,
     pub origin: Origin,
     pub problem: DiagnosticKind,
 }
@@ -104,6 +107,9 @@ pub struct Diagnostic {
 #[derive(Debug, Serialize)]
 pub struct SourceEvent {
     pub name: String,
+    /// The supplied name when it differs from the canonical name.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub input_name: Option<String>,
     pub origin: Origin,
     pub input: Option<InputValue>,
     /// The parsed input when validation or transformation changed or rejected it.
@@ -257,9 +263,11 @@ impl PendingResolution {
 
     fn apply(&mut self, write: Write, Decision { value, diagnostic }: Decision) {
         let rule = &self.snapshot.schema.0.rules[write.slot];
+        let input_name = write.input_name.as_ref().filter(|name| **name != rule.name);
         if let Some(problem) = diagnostic {
             self.snapshot.diagnostics.push(Diagnostic {
                 name: rule.name.clone(),
+                input_name: input_name.cloned(),
                 origin: write.origin,
                 problem,
             });
@@ -268,6 +276,7 @@ impl PendingResolution {
         if self.report_sources && !rule.sensitive {
             self.snapshot.sources.push(SourceEvent {
                 name: rule.name.clone(),
+                input_name: input_name.cloned(),
                 origin: write.origin,
                 input: write.input,
                 parsed: write.parsed.filter(|parsed| Some(parsed) != value.as_ref()),
@@ -334,6 +343,7 @@ impl ConfigSchema {
                     } else {
                         pending.add_diagnostic(Diagnostic {
                             name: entry.name,
+                            input_name: None,
                             origin: layer.origin,
                             problem: DiagnosticKind::UnknownOption,
                         });
