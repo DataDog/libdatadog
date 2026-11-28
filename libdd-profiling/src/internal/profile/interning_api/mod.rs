@@ -7,8 +7,8 @@ pub use generational_ids::*;
 use crate::api::ManagedStringId;
 use crate::collections::identifiable::{Dedup, StringId};
 use crate::internal::{
-    Function, FunctionId, Label, LabelId, LabelSet, LabelSetId, Location, LocationId, Mapping,
-    MappingId, Profile, Sample, StackTrace, StackTraceId, Timestamp,
+    Function, FunctionId, Label, LabelId, LabelSetId, Location, LocationId, Mapping, MappingId,
+    Profile, Sample, StackTraceId, Timestamp,
 };
 use std::sync::atomic::Ordering::SeqCst;
 
@@ -55,13 +55,9 @@ impl Profile {
         &mut self,
         labels: &[GenerationalId<LabelId>],
     ) -> anyhow::Result<GenerationalId<LabelSetId>> {
-        let mut vec = Vec::new();
-        vec.try_reserve_exact(labels.len())?;
-        for l in labels.iter() {
-            vec.push(l.get(self.generation)?);
-        }
-        let labels = LabelSet::new(vec.into_boxed_slice());
-        let id = self.label_sets.dedup(labels);
+        let id = self
+            .label_sets
+            .intern_generational(labels, self.generation)?;
         Ok(GenerationalId::new(id, self.generation))
     }
 
@@ -146,16 +142,9 @@ impl Profile {
         &mut self,
         locations: &[GenerationalId<LocationId>],
     ) -> anyhow::Result<GenerationalId<StackTraceId>> {
-        let locations = {
-            let mut vec = Vec::new();
-            vec.try_reserve_exact(locations.len())?;
-            for l in locations.iter() {
-                vec.push(l.get(self.generation)?);
-            }
-            vec
-        };
-        let stacktrace = StackTrace { locations };
-        let id = self.stack_traces.dedup(stacktrace);
+        let id = self
+            .stack_traces
+            .intern_generational(locations, self.generation)?;
         Ok(GenerationalId::new(id, self.generation))
     }
 

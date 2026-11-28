@@ -2,7 +2,13 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use super::*;
+use crate::internal::interning_api::{Generation, GenerationalId};
+use anyhow::Context;
+use hashbrown::HashTable;
+use hashbrown::hash_table::Entry;
 use libdd_profiling_protobuf::{Record, StringOffset, prost_impls};
+use std::hash::{BuildHasher, BuildHasherDefault};
+use std::mem::MaybeUninit;
 
 #[derive(Copy, Clone, Debug, Eq, PartialEq, Hash, PartialOrd, Ord)]
 pub enum LabelValue {
@@ -128,6 +134,153 @@ impl LabelId {
 #[derive(Clone, Debug, Default, Eq, PartialEq, Hash)]
 pub struct LabelSet {
     labels: Box<[LabelId]>,
+}
+
+/// Compact contiguous storage for deduplicated label sets.
+///
+/// Stores all `LabelId`s in a single flat `Vec<LabelId>` (`data`) indexed by end offsets
+/// (`ends`) and deduplicated by exact slice equality via `table`.
+#[derive(Default)]
+pub struct LabelSetStore {
+    data: Vec<LabelId>,
+    ends: Vec<u32>,
+    table: HashTable<u32>,
+}
+
+#[inline]
+fn hash_label_ids(labels: &[LabelId]) -> u64 {
+    BuildHasherDefault::<rustc_hash::FxHasher>::default().hash_one(labels)
+}
+
+impl LabelSetStore {
+    const STACK_LABELS_LIMIT: usize = 32;
+
+    #[inline]
+    fn slice_at(&self, idx: u32) -> &[LabelId] {
+        let i = idx as usize;
+        let start = if i == 0 { 0 } else { self.ends[i - 1] as usize };
+        let end = self.ends[i] as usize;
+        &self.data[start..end]
+    }
+
+    pub fn intern_slice(&mut self, labels: &[LabelId]) -> anyhow::Result<LabelSetId> {
+        let hash = hash_label_ids(labels);
+
+        if self.table.len() == self.table.capacity() {
+            if let Some(&idx) = self.table.find(hash, |&i| self.slice_at(i) == labels) {
+                return Ok(LabelSetId::from_offset(idx as usize));
+            }
+            let data = &self.data;
+            let ends = &self.ends;
+            self.table
+                .try_reserve(1, |&i| {
+                    let i = i as usize;
+                    let start = if i == 0 { 0 } else { ends[i - 1] as usize };
+                    hash_label_ids(&data[start..ends[i] as usize])
+                })
+                .map_err(|e| anyhow::anyhow!("failed to reserve label set table: {e}"))?;
+        }
+
+        let data = &self.data;
+        let ends = &self.ends;
+        let entry = self.table.entry(
+            hash,
+            |&i| {
+                let i = i as usize;
+                let start = if i == 0 { 0 } else { ends[i - 1] as usize };
+                &data[start..ends[i] as usize] == labels
+            },
+            |&i| {
+                let i = i as usize;
+                let start = if i == 0 { 0 } else { ends[i - 1] as usize };
+                hash_label_ids(&data[start..ends[i] as usize])
+            },
+        );
+
+        match entry {
+            Entry::Occupied(occ) => Ok(LabelSetId::from_offset(*occ.get() as usize)),
+            Entry::Vacant(vac) => {
+                let idx =
+                    u32::try_from(self.ends.len()).context("label set count exceeded u32::MAX")?;
+                let new_end = self
+                    .data
+                    .len()
+                    .checked_add(labels.len())
+                    .context("label set slab length overflow")?;
+                let new_end =
+                    u32::try_from(new_end).context("label set slab exceeded u32::MAX entries")?;
+
+                self.data.try_reserve(labels.len())?;
+                self.ends.try_reserve(1)?;
+
+                self.data.extend_from_slice(labels);
+                self.ends.push(new_end);
+                vac.insert(idx);
+                Ok(LabelSetId::from_offset(idx as usize))
+            }
+        }
+    }
+
+    pub fn intern_generational(
+        &mut self,
+        labels: &[GenerationalId<LabelId>],
+        generation: Generation,
+    ) -> anyhow::Result<LabelSetId> {
+        if labels.len() <= Self::STACK_LABELS_LIMIT {
+            let mut buf = [MaybeUninit::<LabelId>::uninit(); Self::STACK_LABELS_LIMIT];
+            for (slot, l) in buf.iter_mut().zip(labels.iter()) {
+                slot.write(l.get(generation)?);
+            }
+            // SAFETY: The first `labels.len()` elements were initialized in the loop above.
+            let slice =
+                unsafe { std::slice::from_raw_parts(buf.as_ptr().cast::<LabelId>(), labels.len()) };
+            return self.intern_slice(slice);
+        }
+
+        let mut vec = Vec::new();
+        vec.try_reserve_exact(labels.len())?;
+        for l in labels {
+            vec.push(l.get(generation)?);
+        }
+        self.intern_slice(&vec)
+    }
+
+    #[inline]
+    pub fn len(&self) -> usize {
+        self.ends.len()
+    }
+
+    #[inline]
+    pub fn is_empty(&self) -> bool {
+        self.ends.is_empty()
+    }
+
+    #[cfg(test)]
+    pub fn clear(&mut self) {
+        self.data.clear();
+        self.ends.clear();
+        self.table.clear();
+    }
+
+    #[inline]
+    #[allow(dead_code)]
+    pub fn get(&self, id: LabelSetId) -> Option<&[LabelId]> {
+        let i = id.to_offset();
+        if i >= self.ends.len() {
+            return None;
+        }
+        let start = if i == 0 { 0 } else { self.ends[i - 1] as usize };
+        let end = self.ends[i] as usize;
+        Some(&self.data[start..end])
+    }
+
+    pub fn iter(&self) -> impl ExactSizeIterator<Item = &[LabelId]> {
+        (0..self.ends.len()).map(|i| {
+            let start = if i == 0 { 0 } else { self.ends[i - 1] as usize };
+            let end = self.ends[i] as usize;
+            &self.data[start..end]
+        })
+    }
 }
 
 impl LabelSet {

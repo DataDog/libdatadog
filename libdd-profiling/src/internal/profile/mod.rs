@@ -41,14 +41,14 @@ pub struct Profile {
     functions: FxIndexSet<Function>,
     generation: interning_api::Generation,
     labels: FxIndexSet<Label>,
-    label_sets: FxIndexSet<LabelSet>,
+    label_sets: LabelSetStore,
     locations: FxIndexSet<Location>,
     mappings: FxIndexSet<Mapping>,
     observations: Observations,
     period: Option<api::Period>,
     sample_types: Box<[api::SampleType]>,
     sample_type_overrides: HashMap<api::SampleType, OwnedValueType>,
-    stack_traces: FxIndexSet<StackTrace>,
+    stack_traces: StackTraceStore,
     start_time: SystemTime,
     strings: StringTable,
     string_storage: Option<Arc<Mutex<ManagedStringStorage>>>,
@@ -335,7 +335,7 @@ impl Profile {
             values.len(),
         );
 
-        let labels = self.label_sets.try_dedup(LabelSet::new(labels))?;
+        let labels = self.label_sets.intern_slice(&labels)?;
 
         let stacktrace = self.try_add_stacktrace(locations)?;
         self.observations
@@ -565,7 +565,7 @@ impl Profile {
 
     /// Resolves label ids into labels and appends the endpoint label, leaving
     /// one spare slot for a sample timestamp label.
-    fn expand_label_set(&self, label_set: &LabelSet) -> anyhow::Result<Vec<Label>> {
+    fn expand_label_set(&self, label_set: &[LabelId]) -> anyhow::Result<Vec<Label>> {
         let endpoint_label = self.get_endpoint_for_label_set(label_set)?;
         let mut labels = Vec::new();
         // +1 for the timestamp label
@@ -605,26 +605,29 @@ impl Profile {
         let mut extended_label_sets: Vec<Vec<Label>> = Vec::new();
         extended_label_sets.try_reserve_exact(label_sets.len())?;
 
-        for label_set in label_sets {
-            extended_label_sets.push(self.expand_label_set(&label_set)?);
+        for label_set in label_sets.iter() {
+            extended_label_sets.push(self.expand_label_set(label_set)?);
         }
 
         let omit_local_root_span_id = self.experimental_omit_local_root_span_id_when_serializing;
         let local_root_span_id_label = self.endpoints.local_root_span_id_label;
-        let iter = std::mem::take(&mut self.observations).try_into_iter()?;
-        for (sample, timestamp, mut values) in iter {
+
+        let locations_len = u64::try_from(self.locations.len())?;
+        let max_location_id = u64::from(self.stack_traces.max_location_id());
+        anyhow::ensure!(
+            max_location_id <= locations_len,
+            "invalid location id found during serialization {:?}, len was {:?}",
+            max_location_id,
+            locations_len
+        );
+
+        let mut sample_encoder = protobuf::SampleEncoder::new();
+        let observations = std::mem::take(&mut self.observations);
+        observations.try_for_each(|sample, timestamp, values| {
             let off = sample.labels.to_offset();
             let labels = extended_label_sets.get_mut(off).ok_or_else(oob_label_set)?;
-            let locations = &self.get_stacktrace(sample.stacktrace)?.locations;
-            let mut location_ids = Vec::new();
-            location_ids.try_reserve_exact(locations.len())?;
-            location_ids.extend(locations.iter().map(LocationId::to_raw_id));
-            self.check_location_ids_are_valid(&location_ids, self.locations.len())?;
-            self.upscaling_rules.upscale_values(&mut values, labels);
-
-            let mut pprof_labels: Vec<_> = Vec::new();
-            // + 1 for the timestamp (which hasn't ben pushed yet)
-            pprof_labels.try_reserve_exact(labels.len() + 1)?;
+            let packed_location_ids = self.stack_traces.get_packed(sample.stacktrace)?;
+            self.upscaling_rules.upscale_values(values, labels);
 
             // Try not to fail between labels.push and labels.pop, which would
             // leave the push.
@@ -632,33 +635,32 @@ impl Profile {
                 // The memory was reserved by `expand_label_set`.
                 labels.push(Label::num(self.timestamp_key, ts.get(), StringId::ZERO))
             }
-            if omit_local_root_span_id {
-                pprof_labels.extend(
+            let encode_res = if omit_local_root_span_id {
+                sample_encoder.encode_sample_record(
+                    packed_location_ids,
+                    values,
                     labels
                         .iter()
                         .filter(|label| label.get_key() != local_root_span_id_label)
                         .map(protobuf::Label::from),
-                );
+                    writer,
+                )
             } else {
-                pprof_labels.extend(labels.iter().map(protobuf::Label::from));
-            }
+                sample_encoder.encode_sample_record(
+                    packed_location_ids,
+                    values,
+                    labels.iter().map(protobuf::Label::from),
+                    writer,
+                )
+            };
             if timestamp.is_some() {
                 labels.pop();
             }
-
-            let item = protobuf::Sample {
-                location_ids: Record::from(location_ids.as_slice()),
-                values: Record::from(values.as_slice()),
-                // SAFETY: converting &[Label] to &[Field<Label,..>] which is
-                // safe, because Field is repr(transparent).
-                labels: unsafe {
-                    &*(pprof_labels.as_slice() as *const [protobuf::Label]
-                        as *const [Record<protobuf::Label, 3, NO_OPT_ZERO>])
-                },
-            };
-
-            Record::<_, 2, NO_OPT_ZERO>::from(item).encode(writer)?;
-        }
+            encode_res?;
+            Ok(())
+        })?;
+        // Release stack trace slab memory before encoding remaining profile tables.
+        drop(std::mem::take(&mut self.stack_traces));
 
         for sample_type in self.sample_types.iter().copied() {
             self.ensure_custom_sample_type_resolved(sample_type, "sample")?;
@@ -761,24 +763,6 @@ impl Profile {
     pub fn with_start_time(mut self, start_time: SystemTime) -> anyhow::Result<Self> {
         self.set_start_time(start_time)?;
         Ok(self)
-    }
-
-    /// In incident 35390 (JIRA PROF-11456) we observed invalid location_ids being present in
-    /// emitted profiles. We're doing extra checks here so that if we see incorrect ids again,
-    /// we are 100% sure they were not introduced prior to this stage.
-    fn check_location_ids_are_valid(&self, location_ids: &[u64], len: usize) -> anyhow::Result<()> {
-        let len: u64 = u64::try_from(len)?;
-        for id in location_ids.iter() {
-            let id = *id;
-            // Location ids start from 1, that's why they're <= len instead of < len
-            anyhow::ensure!(
-                id > 0 && id <= len,
-                "invalid location id found during serialization {:?}, len was {:?}",
-                id,
-                len
-            )
-        }
-        Ok(())
     }
 }
 
@@ -907,7 +891,7 @@ impl Profile {
     }
 
     fn try_add_stacktrace(&mut self, locations: Vec<LocationId>) -> anyhow::Result<StackTraceId> {
-        self.stack_traces.try_dedup(StackTrace { locations })
+        self.stack_traces.intern_slice(&locations)
     }
 
     fn ensure_custom_sample_type_resolved(
@@ -980,7 +964,7 @@ impl Profile {
             .map(|v| Label::str(self.endpoints.endpoint_label, *v)))
     }
 
-    fn get_endpoint_for_label_set(&self, label_set: &LabelSet) -> anyhow::Result<Option<Label>> {
+    fn get_endpoint_for_label_set(&self, label_set: &[LabelId]) -> anyhow::Result<Option<Label>> {
         if let Some(label) = label_set.iter().find_map(|id| {
             if let Ok(label) = self.get_label(*id)
                 && label.get_key() == self.endpoints.local_root_span_id_label
@@ -1002,16 +986,10 @@ impl Profile {
     }
 
     #[allow(dead_code)]
-    fn get_label_set(&self, id: LabelSetId) -> anyhow::Result<&LabelSet> {
+    fn get_label_set(&self, id: LabelSetId) -> anyhow::Result<&[LabelId]> {
         self.label_sets
-            .get_index(id.to_offset())
+            .get(id)
             .context("LabelSetId to have a valid interned index")
-    }
-
-    fn get_stacktrace(&self, st: StackTraceId) -> anyhow::Result<&StackTrace> {
-        self.stack_traces
-            .get_index(st.to_raw_id())
-            .with_context(|| format!("StackTraceId {st:?} to exist in profile"))
     }
 
     /// Interns the `str` as a string, returning the id in the string table.

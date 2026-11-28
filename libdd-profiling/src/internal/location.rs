@@ -24,6 +24,13 @@ impl Item for Location {
 #[repr(C)]
 pub struct LocationId(NonZeroU32);
 
+impl LocationId {
+    #[inline]
+    pub fn as_u32(&self) -> u32 {
+        self.0.get()
+    }
+}
+
 impl Id for LocationId {
     type RawId = u64;
 

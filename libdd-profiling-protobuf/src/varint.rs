@@ -4,25 +4,38 @@
 use crate::{Value, WireType};
 use std::io::{self, Write};
 
-/// Encodes a [`varint`] according to protobuf semantics.
-///
-/// Serialization happens one byte at a time; use a buffered writer.
+/// Encodes a [`varint`] into a stack buffer and returns the number of bytes
+/// written (1..=10).
 ///
 /// [`varint`]: https://protobuf.dev/programming-guides/encoding/#varints
 #[inline]
-pub(crate) fn encode(mut value: u64, writer: &mut impl Write) -> io::Result<()> {
-    loop {
-        let byte = if value < 0x80 {
-            value as u8
-        } else {
-            ((value & 0x7F) | 0x80) as u8
-        };
-        writer.write_all(&[byte])?;
-        if value < 0x80 {
-            return Ok(());
-        }
+pub(crate) fn encode_to_slice(mut value: u64, buf: &mut [u8; 10]) -> usize {
+    let mut i = 0;
+    while value >= 0x80 {
+        buf[i] = ((value & 0x7F) | 0x80) as u8;
         value >>= 7;
+        i += 1;
     }
+    buf[i] = value as u8;
+    i + 1
+}
+
+/// Appends a protobuf varint to `out`.
+#[inline]
+pub(crate) fn encode_to_vec(value: u64, out: &mut Vec<u8>) {
+    let mut buf = [0u8; 10];
+    let len = encode_to_slice(value, &mut buf);
+    out.extend_from_slice(&buf[..len]);
+}
+
+/// Encodes a [`varint`] according to protobuf semantics in a single `write_all` call.
+///
+/// [`varint`]: https://protobuf.dev/programming-guides/encoding/#varints
+#[inline]
+pub(crate) fn encode(value: u64, writer: &mut impl Write) -> io::Result<()> {
+    let mut buf = [0u8; 10];
+    let len = encode_to_slice(value, &mut buf);
+    writer.write_all(&buf[..len])
 }
 
 /// Returns the number of bytes it takes to varint encode the number, between
