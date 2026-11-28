@@ -27,22 +27,22 @@ struct Request {
 #[derive(Deserialize)]
 #[serde(tag = "operation", rename_all = "snake_case")]
 enum Operation {
-    Initialize {
-        manifest: Manifest,
-        #[serde(default)]
-        policy: ParsePolicy,
-        #[serde(default)]
-        host_transforms: Vec<HostTransform>,
-        #[serde(default)]
-        inputs: ResolveInputs,
-    },
-    Resolve {
-        inputs: ResolveInputs,
-    },
-    Resume {
-        outcomes: Vec<TransformResult>,
-    },
+    Initialize(ManifestRequest),
+    ResolveOnce(ManifestRequest),
+    Resolve { inputs: ResolveInputs },
+    Resume { outcomes: Vec<TransformResult> },
     Cancel,
+}
+
+#[derive(Deserialize)]
+struct ManifestRequest {
+    manifest: Manifest,
+    #[serde(default)]
+    policy: ParsePolicy,
+    #[serde(default)]
+    host_transforms: Vec<HostTransform>,
+    #[serde(default)]
+    inputs: ResolveInputs,
 }
 
 #[derive(Deserialize)]
@@ -143,30 +143,8 @@ impl WireResolver {
         }
 
         match request.operation {
-            Operation::Initialize {
-                manifest,
-                policy,
-                host_transforms,
-                inputs,
-            } => {
-                let mut transforms = TransformRegistry::with_builtins();
-                for transform in host_transforms {
-                    transforms.register(
-                        transform.name,
-                        Transform::host(transform.input, transform.output, transform.slot),
-                    )?;
-                }
-                let schema = match manifest {
-                    Manifest::Path(path) => ConfigSchema::from_path(path, policy, &transforms)?,
-                    Manifest::Json(json) => {
-                        ConfigSchema::from_bytes(json.as_bytes(), policy, &transforms)?
-                    }
-                };
-                let result = schema.resolve(inputs)?;
-                let response = self.reply(result)?;
-                self.schema = Some(schema);
-                Ok(response)
-            }
+            Operation::Initialize(request) => self.resolve_manifest(request, true),
+            Operation::ResolveOnce(request) => self.resolve_manifest(request, false),
             Operation::Resolve { inputs } => {
                 let schema = self.schema.as_ref().ok_or(WireError::MissingSchema)?;
                 self.reply(schema.resolve(inputs)?).map_err(WireError::from)
@@ -181,6 +159,41 @@ impl WireResolver {
                 Ok(serde_json::to_string(&Reply::Cancelled)?)
             }
         }
+    }
+
+    fn resolve_manifest(
+        &mut self,
+        request: ManifestRequest,
+        retain_schema: bool,
+    ) -> Result<String, WireError> {
+        let ManifestRequest {
+            manifest,
+            policy,
+            host_transforms,
+            inputs,
+        } = request;
+        let mut transforms = TransformRegistry::with_builtins();
+        for transform in host_transforms {
+            transforms.register(
+                transform.name,
+                Transform::host(transform.input, transform.output, transform.slot),
+            )?;
+        }
+        let active_layers =
+            (!retain_schema && inputs.skip_defaults).then_some(inputs.layers.as_slice());
+        let schema = match manifest {
+            Manifest::Path(path) => {
+                ConfigSchema::compile_path(&path, policy, &transforms, active_layers)?
+            }
+            Manifest::Json(json) => {
+                ConfigSchema::compile_bytes(json.as_bytes(), policy, &transforms, active_layers)?
+            }
+        };
+        let response = self.reply(schema.resolve(inputs)?)?;
+        if retain_schema {
+            self.schema = Some(schema);
+        }
+        Ok(response)
     }
 
     fn reply(&mut self, resolution: Resolution) -> Result<String, serde_json::Error> {

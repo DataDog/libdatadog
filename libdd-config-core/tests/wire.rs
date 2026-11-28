@@ -29,6 +29,81 @@ fn invoke(resolver: &mut WireResolver, mut request: Value) -> serde_json::Result
 }
 
 #[test]
+fn resolves_a_manifest_once_using_active_rules_and_preserves_the_installed_schema() {
+    let mut resolver = WireResolver::default();
+    let previous = invoke(
+        &mut resolver,
+        json!({
+            "operation": "initialize",
+            "manifest": {"kind": "json", "value": r#"{"version":"2","supportedConfigurations":{
+                "DD_PREVIOUS":[{"type":"string","default":"previous"}]
+            }}"#},
+        }),
+    )
+    .unwrap();
+    assert_eq!(previous["status"], "complete");
+
+    let mut request = json!({
+        "operation": "resolve_once",
+        "manifest": {"kind": "json", "value": r#"{"version":"2","supportedConfigurations":{
+            "DD_CANONICAL":[{"type":"string","aliases":["DD_ALIAS"],"configurationNames":["name"]}],
+                "DD_ALIAS":[{"type":"string","aliasOnly":true}],
+            "DD_CODE":[{"type":"int","configurationNames":["limit"],"default":"invalid"}],
+            "DD_DORMANT":[{"type":"string","allowed":"["}]
+        }}"#},
+        "inputs": {
+            "skip_defaults": true,
+            "layers": [
+                {"origin": "env_var", "entries": [{"name": "DD_ALIAS", "value": "env"}]},
+                {"origin": "code", "entries": [
+                    {"name": "limit", "value": {"kind": "number", "value": 5}}
+                ]}
+            ],
+        },
+    });
+    let snapshot = invoke(&mut resolver, request.clone()).unwrap();
+    assert_eq!(snapshot["status"], "complete", "{snapshot}");
+    let settings = snapshot["settings"].as_array().unwrap();
+    assert_eq!(settings.len(), 2);
+    assert_eq!(settings[0]["resolved"]["input_name"], "DD_ALIAS");
+    assert_eq!(settings[0]["resolved"]["value"]["value"], "env");
+    assert_eq!(settings[1]["resolved"]["value"]["value"], 5);
+
+    request["inputs"]["skip_defaults"] = false.into();
+    let invalid = invoke(&mut resolver, request).unwrap();
+    assert_eq!(invalid["status"], "error");
+    assert!(invalid["message"].as_str().unwrap().contains("DD_CODE"));
+
+    let saved = invoke(&mut resolver, json!({"operation": "resolve", "inputs": {}})).unwrap();
+    assert_eq!(saved, previous);
+}
+
+#[test]
+fn one_shot_skips_aliases_shadowed_by_the_supplied_canonical_name() {
+    let mut resolver = WireResolver::default();
+    let result = invoke(
+        &mut resolver,
+        json!({
+            "operation": "resolve_once",
+            "manifest": {"kind": "json", "value": r#"{"version":"2","supportedConfigurations":{
+                "DD_MODE":[{"type":"string"}],
+                "DD_MODE_EXTRACT":[{"type":"string","aliases":["DD_MODE"],"transform":"fixture.unbound"}]
+            }}"#},
+            "inputs": {
+                "skip_defaults": true,
+                "layers": [{"origin":"env_var","entries":[{"name":"DD_MODE","value":"test"}]}],
+            },
+        }),
+    )
+    .unwrap();
+    assert_eq!(result["status"], "complete", "{result}");
+    let settings = result["settings"].as_array().unwrap();
+    assert_eq!(settings.len(), 1);
+    assert_eq!(settings[0]["name"], "DD_MODE");
+    assert_eq!(settings[0]["resolved"]["value"]["value"], "test");
+}
+
+#[test]
 fn applies_parser_policy_on_raw_and_typed_inputs() {
     let result = initialize(
         r#"{"version":"2","supportedConfigurations":{

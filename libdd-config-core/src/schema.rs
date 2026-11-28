@@ -2,7 +2,11 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use alloc::sync::Arc;
-use std::{collections::HashMap, fs, path::Path};
+use std::{
+    collections::{HashMap, HashSet},
+    fs,
+    path::Path,
+};
 
 use indexmap::IndexMap;
 use libdd_regex::full::{Regex, RegexBuilder};
@@ -10,7 +14,8 @@ use serde::Deserialize;
 use serde_json::value::RawValue;
 
 use crate::{
-    Error, ParsePolicy, Transform, TransformRegistry, Value, ValueKind, value::ParseOptions,
+    Error, Layer, Origin, ParsePolicy, Transform, TransformRegistry, Value, ValueKind,
+    value::ParseOptions,
 };
 
 #[derive(Clone, Debug)]
@@ -48,6 +53,46 @@ pub struct Name {
 struct Manifest {
     version: String,
     supported_configurations: IndexMap<String, Vec<Definition>>,
+}
+
+impl Manifest {
+    fn retain_input_rules(&mut self, layers: &[Layer]) {
+        let mut names = HashSet::new();
+        let mut options = HashSet::new();
+        for layer in layers {
+            let keys = if layer.origin == Origin::Code {
+                &mut options
+            } else {
+                &mut names
+            };
+            keys.extend(layer.entries.iter().map(|entry| entry.name.as_str()));
+        }
+
+        let available_aliases: HashSet<_> = names
+            .iter()
+            .copied()
+            .filter(|name| {
+                self.supported_configurations
+                    .get(*name)
+                    .is_none_or(|definitions| {
+                        definitions.iter().all(|definition| definition.alias_only)
+                    })
+            })
+            .collect();
+        self.supported_configurations.retain(|name, definitions| {
+            names.contains(name.as_str())
+                || definitions.iter().any(|definition| {
+                    definition
+                        .aliases
+                        .iter()
+                        .any(|alias| available_aliases.contains(alias.as_str()))
+                        || definition
+                            .configuration_names
+                            .iter()
+                            .any(|option| options.contains(option.as_str()))
+                })
+        });
+    }
 }
 
 #[derive(Deserialize)]
@@ -95,12 +140,20 @@ impl ConfigSchema {
         policy: ParsePolicy,
         transforms: &TransformRegistry,
     ) -> Result<Self, Error> {
-        let path = path.as_ref();
+        Self::compile_path(path.as_ref(), policy, transforms, None)
+    }
+
+    pub(crate) fn compile_path(
+        path: &Path,
+        policy: ParsePolicy,
+        transforms: &TransformRegistry,
+        active_layers: Option<&[Layer]>,
+    ) -> Result<Self, Error> {
         let bytes = fs::read(path).map_err(|source| Error::Read {
             path: path.to_owned(),
             source,
         })?;
-        Self::from_bytes(&bytes, policy, transforms)
+        Self::compile_bytes(&bytes, policy, transforms, active_layers)
     }
 
     /// Compile the same manifest from a packaged or virtual asset.
@@ -112,9 +165,21 @@ impl ConfigSchema {
         policy: ParsePolicy,
         transforms: &TransformRegistry,
     ) -> Result<Self, Error> {
-        let manifest: Manifest = serde_json::from_slice(bytes)?;
+        Self::compile_bytes(bytes, policy, transforms, None)
+    }
+
+    pub(crate) fn compile_bytes(
+        bytes: &[u8],
+        policy: ParsePolicy,
+        transforms: &TransformRegistry,
+        active_layers: Option<&[Layer]>,
+    ) -> Result<Self, Error> {
+        let mut manifest: Manifest = serde_json::from_slice(bytes)?;
         if manifest.version != "2" {
             return Err(Error::UnsupportedManifest(manifest.version));
+        }
+        if let Some(layers) = active_layers {
+            manifest.retain_input_rules(layers);
         }
 
         let mut rules = Vec::with_capacity(manifest.supported_configurations.len());
@@ -152,13 +217,17 @@ impl ConfigSchema {
                 .map(|allowed| allowed.compile(&name, &mut patterns))
                 .transpose()?
                 .unzip();
-            let default = read_default(
-                &name,
-                definition.default.as_deref(),
-                definition.kind,
-                definition.parse,
-                policy,
-            )?;
+            let default = if active_layers.is_none() {
+                read_default(
+                    &name,
+                    definition.default.as_deref(),
+                    definition.kind,
+                    definition.parse,
+                    policy,
+                )?
+            } else {
+                None
+            };
 
             for option in definition.configuration_names {
                 if options.insert(option.clone(), slot).is_some() {

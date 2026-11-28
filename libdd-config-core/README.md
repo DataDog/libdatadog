@@ -68,11 +68,16 @@ first request can load that guest path and resolve one snapshot together.
 
 Use a manifest of kind `json` and put the UTF-8 JSON text in `value` when
 the host provides a virtual asset. A `resolve` request reuses the compiled
-schema with fresh inputs. Each reactor supports one pending resolution at a
-time. A `pending` reply includes the ordered host requests. Send a `resume`
+schema with fresh inputs. Use `resolve_once` with the same request fields
+for one snapshot. With `skip_defaults`, it compiles only the rules
+referenced by the supplied names and skips default validation. It does
+not install a schema for later `resolve` requests.
+
+Each reactor supports one pending resolution at a time. A `pending` reply
+includes the ordered host requests. Send a `resume`
 request with `outcomes`, or send `cancel` to discard the pending request.
 A `resume` with the wrong outcome count or an incompatible value discards
-the pending request. Send another `resolve` with the same inputs to retry.
+the pending request. Repeat the original request to retry.
 
 Allocate a request buffer and a separate eight-byte result descriptor with
 `config_v1_alloc(length)`. Then call

@@ -97,6 +97,20 @@ assert.equal(invalid.status, 'error')
 assert.match(invalid.message, /host returned 0 transform results/)
 assert.deepEqual(request({ operation: 'resolve', inputs: {} }), defaults)
 
+const once = request({
+  ...initialization,
+  operation: 'resolve_once',
+  inputs: { ...initialization.inputs, skip_defaults: true },
+})
+assert.deepEqual(once, first)
+const onceComplete = request({
+  operation: 'resume',
+  outcomes: [{ status: 'accept', value: { kind: 'string', value: 'one-time contents' } }],
+})
+assert.equal(onceComplete.settings[1].resolved.value.value, 'one-time contents')
+assert.equal(onceComplete.sources.length, 2)
+assert.deepEqual(request({ operation: 'resolve', inputs: {} }), defaults)
+
 const typedNumber = 0.00037037037037037035
 const radixInteger = BigInt('0x1000000000000081')
 const numericManifest = {
